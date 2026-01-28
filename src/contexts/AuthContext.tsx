@@ -6,7 +6,6 @@ import { useToast } from "@/hooks/use-toast";
 
 // --- Types ---
 
-// Define the structure for the user profile fetched from DB
 interface UserProfile {
   role: string | null;
   allowedProgrammes: Record<string, boolean> | null;
@@ -15,7 +14,7 @@ interface UserProfile {
 interface AuthContextType {
   user: User | null;
   userRole: string | null;
-  allowedProgrammes: Record<string, boolean> | null; // NEW: Exposes programmes to the app
+  allowedProgrammes: Record<string, boolean> | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<void>;
   signOutUser: () => Promise<void>;
@@ -36,14 +35,14 @@ const ROLE_STORAGE_KEY = "user_role";
 export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [userRole, setUserRole] = useState<string | null>(null);
-  const [allowedProgrammes, setAllowedProgrammes] = useState<Record<string, boolean> | null>(null); // NEW State
+  const [allowedProgrammes, setAllowedProgrammes] = useState<Record<string, boolean> | null>(null);
   const [loading, setLoading] = useState(true);
   const { toast } = useToast();
 
-  // UPDATED: Fetches both Role and Allowed Programmes
+  // Fetches Role and Allowed Programmes from DB
   const fetchUserProfile = async (uid: string): Promise<UserProfile> => {
     try {
-      // ATTEMPT 1: Direct UID lookup
+      // ATTEMPT 1: Direct UID lookup (Optimal structure)
       const userRef = ref(db, `users/${uid}`);
       const snapshot = await get(userRef);
 
@@ -51,11 +50,12 @@ export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
         const userData = snapshot.val();
         return {
           role: userData.role || null,
-          allowedProgrammes: userData.allowedProgrammes || {}
+          allowedProgrammes: userData.allowedProgrammes || null
         };
       }
 
-      // ATTEMPT 2: Fallback query (if users stored with Push IDs)
+      // ATTEMPT 2: Fallback query (Legacy structure: users stored with Push IDs)
+      // Note: This requires an index on 'uid' in Firebase Database rules for performance on large datasets.
       console.warn("User not found at direct UID path, falling back to query...");
       const usersRef = ref(db, "users");
       const q = query(usersRef, orderByChild("uid"), equalTo(uid));
@@ -63,12 +63,12 @@ export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
 
       if (querySnapshot.exists()) {
         const data = querySnapshot.val();
-        const userKeys = Object.keys(data);
-        if (userKeys.length > 0) {
-          const firstUserKey = userKeys[0];
+        // Get the first matching key
+        const firstUserKey = Object.keys(data)[0];
+        if (firstUserKey) {
           return {
             role: data[firstUserKey].role || null,
-            allowedProgrammes: data[firstUserKey].allowedProgrammes || {}
+            allowedProgrammes: data[firstUserKey].allowedProgrammes || null
           };
         }
       }
@@ -81,48 +81,55 @@ export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
   };
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      setUser(user);
-      
-      if (user) {
-        // 1. Check Local Storage for Role (Performance optimization)
-        const storedRole = localStorage.getItem(ROLE_STORAGE_KEY);
-        
-        // We set loading to false immediately if we have a cached role to allow UI to render
-        // but we will update state once DB fetch completes
-        if (storedRole) {
-          setUserRole(storedRole);
-        }
+    let isMounted = true; // 1. Prevents state updates on unmounted components
 
-        // 2. Fetch fresh data from Database (Role + Programmes)
-        // We do this regardless to ensure 'allowedProgrammes' is up to date
-        const profile = await fetchUserProfile(user.uid);
-        
-        setUserRole(profile.role);
-        setAllowedProgrammes(profile.allowedProgrammes); // Set the programmes signal
-        
-        if (profile.role) {
-          localStorage.setItem(ROLE_STORAGE_KEY, profile.role);
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (!isMounted) return;
+
+      setUser(user);
+
+      if (user) {
+        try {
+          // We need to fetch profile data before setting loading to false
+          // to ensure the app doesn't render without permissions (role/programmes).
+          const profile = await fetchUserProfile(user.uid);
+          
+          if (isMounted) {
+            setUserRole(profile.role);
+            setAllowedProgrammes(profile.allowedProgrammes);
+            
+            if (profile.role) {
+              localStorage.setItem(ROLE_STORAGE_KEY, profile.role);
+            }
+          }
+        } catch (error) {
+          console.error("Auth initialization error:", error);
+          // Optionally keep cached role if DB fails, depending on strictness requirements
+        } finally {
+          if (isMounted) setLoading(false);
         }
-        
-        setLoading(false);
       } else {
-        setUserRole(null);
-        setAllowedProgrammes(null); // Clear programmes on logout
-        localStorage.removeItem(ROLE_STORAGE_KEY);
-        setLoading(false);
+        // User is logged out
+        if (isMounted) {
+          setUserRole(null);
+          setAllowedProgrammes(null);
+          localStorage.removeItem(ROLE_STORAGE_KEY);
+          setLoading(false);
+        }
       }
     });
 
-    return unsubscribe;
+    return () => {
+      isMounted = false;
+      unsubscribe();
+    };
   }, []);
 
   const signIn = async (email: string, password: string) => {
     try {
-      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      await signInWithEmailAndPassword(auth, email, password);
       
-      // NOTE: The onAuthStateChanged listener in useEffect will handle 
-      // fetching the role and allowedProgrammes automatically.
+      // The onAuthStateChanged listener will handle state updates automatically.
       
       toast({
         title: "Welcome back!",
@@ -131,12 +138,19 @@ export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
     } catch (error: any) {
       console.error("Sign in error:", error);
       
-      let message = error.message || "Invalid credentials. Please try again.";
+      let message = "Invalid credentials. Please try again.";
       
-      if (error.code === 'auth/user-not-found') {
-        message = "No account found with this email.";
-      } else if (error.code === 'auth/wrong-password') {
-        message = "Incorrect password.";
+      // 2. Updated error handling for newer Firebase Auth behaviors
+      // Firebase often masks specific errors (wrong-password/user-not-found) 
+      // into 'auth/invalid-credential' for security.
+      if (error.code === 'auth/invalid-credential' || 
+          error.code === 'auth/user-not-found' || 
+          error.code === 'auth/wrong-password') {
+        message = "Incorrect email or password.";
+      } else if (error.code === 'auth/too-many-requests') {
+        message = "Too many failed attempts. Please try again later.";
+      } else if (error.message) {
+        message = error.message;
       }
 
       toast({
@@ -150,11 +164,10 @@ export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
 
   const signOutUser = async () => {
     try {
+      // 3. Removed manual state clearing. 
+      // Relying solely on onAuthStateChanged prevents race conditions 
+      // where the UI updates twice (once here, once in the listener).
       await signOut(auth);
-      
-      setUserRole(null);
-      setAllowedProgrammes(null);
-      localStorage.removeItem(ROLE_STORAGE_KEY);
       
       toast({
         title: "Signed Out",
