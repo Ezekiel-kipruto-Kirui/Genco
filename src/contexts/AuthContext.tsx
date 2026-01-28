@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useState, type FC, type ReactNode } from "react";
 import { User, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "firebase/auth";
 import { ref, get, query, orderByChild, equalTo } from "firebase/database";
 import { auth, db } from "@/lib/firebase";
@@ -33,7 +33,7 @@ export const useAuth = () => {
 
 const ROLE_STORAGE_KEY = "user_role";
 
-export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [userRole, setUserRole] = useState<string | null>(null);
   const [allowedProgrammes, setAllowedProgrammes] = useState<Record<string, boolean> | null>(null); // NEW State

@@ -11,7 +11,7 @@ export default defineConfig(({ mode }) => ({
     // Add this line to allow your ngrok domain
     allowedHosts: [
       'stumpiest-caudally-eloy.ngrok-free.dev', // your current ngrok link
-      '.ngrok-free.dev',
+      // '.ngrok-free.dev',
        // optional: allow all ngrok subdomains
     ],
   },
