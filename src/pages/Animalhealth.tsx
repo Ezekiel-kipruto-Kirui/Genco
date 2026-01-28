@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
-import { collection, getDocs, addDoc, query, orderBy, deleteDoc, doc, updateDoc, where } from "firebase/firestore";
+// REALTIME DATABASE IMPORTS
+import { ref, get, push, remove, update, DatabaseReference } from "firebase/database";
 import { db } from "@/lib/firebase";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -111,56 +112,67 @@ const AnimalHealthPage = () => {
     fetchActivities();
   }, []);
 
+  // --- REALTIME DATABASE FETCH ---
   const fetchActivities = async () => {
     try {
-      const activitiesQuery = query(
-        collection(db, "AnimalHealthActivities"),
-        orderBy("createdAt", "desc")
-      );
-      const activitiesSnapshot = await getDocs(activitiesQuery);
-      const activitiesData = activitiesSnapshot.docs.map(doc => {
-        const data = doc.data();
-        console.log("Raw activity data:", data);
-        
-        // Handle backward compatibility - convert old structure to new
-        let vaccines: Vaccine[] = [];
-        
-        if (data.vaccines && Array.isArray(data.vaccines)) {
-          // New structure with vaccines array
-          vaccines = data.vaccines.map((v: any) => ({
-            type: v.type || 'Unknown',
-            doses: Number(v.doses) || 0
-          })).filter(v => v.type && v.doses > 0);
-        } else if (data.vaccinetype) {
-          // Old structure with vaccinetype and number_doses
-          vaccines = [{
-            type: data.vaccinetype,
-            doses: Number(data.number_doses) || 0
-          }];
-        }
-        
-        // Ensure fieldofficers is always an array
-        const fieldofficers = (data.fieldofficers && Array.isArray(data.fieldofficers)) 
-          ? data.fieldofficers 
-          : [];
-
-        return {
-          id: doc.id,
-          date: data.date || '',
-          county: data.county || '',
-          subcounty: data.subcounty || '',
-          location: data.location || '',
-          comment: data.comment || '',
-          vaccines,
-          fieldofficers,
-          createdAt: data.createdAt,
-          createdBy: data.createdBy || 'unknown',
-          status: data.status || 'completed'
-        } as AnimalHealthActivity;
-      });
+      setLoading(true);
+      const activitiesRef = ref(db, "AnimalHealthActivities");
+      const snapshot = await get(activitiesRef);
       
-      console.log("Processed activities:", activitiesData);
-      setActivities(activitiesData);
+      if (snapshot.exists()) {
+        const data = snapshot.val();
+        
+        // Transform object from RTDB to array
+        const activitiesData = Object.keys(data).map((key) => {
+          const item = data[key];
+          // Handle backward compatibility - convert old structure to new
+          let vaccines: Vaccine[] = [];
+          
+          if (item.vaccines && Array.isArray(item.vaccines)) {
+            // New structure with vaccines array
+            vaccines = item.vaccines.map((v: any) => ({
+              type: v.type || 'Unknown',
+              doses: Number(v.doses) || 0
+            })).filter((v: Vaccine) => v.type && v.doses > 0);
+          } else if (item.vaccinetype) {
+            // Old structure with vaccinetype and number_doses
+            vaccines = [{
+              type: item.vaccinetype,
+              doses: Number(item.number_doses) || 0
+            }];
+          }
+          
+          // Ensure fieldofficers is always an array
+          const fieldofficers = (item.fieldofficers && Array.isArray(item.fieldofficers)) 
+            ? item.fieldofficers 
+            : [];
+
+          return {
+            id: key,
+            date: item.date || '',
+            county: item.county || '',
+            subcounty: item.subcounty || '',
+            location: item.location || '',
+            comment: item.comment || '',
+            vaccines,
+            fieldofficers,
+            createdAt: item.createdAt,
+            createdBy: item.createdBy || 'unknown',
+            status: item.status || 'completed'
+          } as AnimalHealthActivity;
+        });
+        
+        // Sort by date descending (client-side sort for RTDB)
+        activitiesData.sort((a, b) => {
+          const dateA = a.date ? new Date(a.date).getTime() : 0;
+          const dateB = b.date ? new Date(b.date).getTime() : 0;
+          return dateB - dateA;
+        });
+
+        setActivities(activitiesData);
+      } else {
+        setActivities([]);
+      }
     } catch (error) {
       console.error("Error fetching animal health activities:", error);
       toast({
@@ -233,6 +245,7 @@ const AnimalHealthPage = () => {
     }));
   };
 
+  // --- REALTIME DATABASE ADD FUNCTION ---
   const handleAddActivity = async () => {
     // Validation checks
     if (fieldOfficers.length === 0) {
@@ -283,14 +296,15 @@ const AnimalHealthPage = () => {
         fieldofficers: fieldOfficers,
         status: 'completed' as const,
         createdBy: user?.email || 'unknown',
-        createdAt: new Date(),
+        createdAt: new Date().toISOString(),
       };
 
       console.log("Saving activity data:", activityData);
 
-      const docRef = await addDoc(collection(db, "AnimalHealthActivities"), activityData);
+      // Add to Realtime Database
+      await push(ref(db, "AnimalHealthActivities"), activityData);
       
-      console.log("Activity saved with ID:", docRef.id);
+      console.log("Activity saved successfully");
 
       toast({
         title: "Success",
@@ -324,6 +338,7 @@ const AnimalHealthPage = () => {
     }
   };
 
+  // --- REALTIME DATABASE UPDATE FUNCTION ---
   const handleEditActivity = async () => {
     if (!editingActivity) return;
 
@@ -341,7 +356,8 @@ const AnimalHealthPage = () => {
 
       console.log("Updating activity:", editingActivity.id, activityData);
 
-      await updateDoc(doc(db, "AnimalHealthActivities", editingActivity.id), activityData);
+      // Update in Realtime Database
+      await update(ref(db, "AnimalHealthActivities/" + editingActivity.id), activityData);
       
       toast({
         title: "Success",
@@ -373,9 +389,10 @@ const AnimalHealthPage = () => {
     }
   };
 
+  // --- REALTIME DATABASE DELETE FUNCTION ---
   const handleDeleteActivity = async (activityId: string) => {
     try {
-      await deleteDoc(doc(db, "AnimalHealthActivities", activityId));
+      await remove(ref(db, "AnimalHealthActivities/" + activityId));
       toast({
         title: "Success",
         description: "Vaccination activity deleted successfully.",
@@ -397,7 +414,7 @@ const AnimalHealthPage = () => {
 
     try {
       const deletePromises = selectedActivities.map(activityId => 
-        deleteDoc(doc(db, "AnimalHealthActivities", activityId))
+        remove(ref(db, "AnimalHealthActivities/" + activityId))
       );
       
       await Promise.all(deletePromises);

@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
-import { collection, getDocs, addDoc, query, orderBy, deleteDoc, doc, updateDoc } from "firebase/firestore";
+// REALTIME DATABASE IMPORTS
+import { ref, get, push, update, remove } from "firebase/database";
 import { db } from "@/lib/firebase";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -82,18 +83,32 @@ const ActivitiesPage = () => {
     fetchActivities();
   }, []);
 
+  // --- REALTIME DATABASE FETCH ---
   const fetchActivities = async () => {
     try {
-      const activitiesQuery = query(
-        collection(db, "Recent Activities"),
-        orderBy("createdAt", "desc")
-      );
-      const activitiesSnapshot = await getDocs(activitiesQuery);
-      const activitiesData = activitiesSnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as Activity[];
-      setActivities(activitiesData);
+      setLoading(true);
+      const activitiesRef = ref(db, "Recent Activities");
+      const snapshot = await get(activitiesRef);
+
+      if (snapshot.exists()) {
+        const data = snapshot.val();
+        // Transform object from RTDB to array
+        const activitiesData = Object.keys(data).map((key) => ({
+          id: key,
+          ...data[key]
+        })) as Activity[];
+
+        // Sort by createdAt descending (client-side sort for RTDB)
+        activitiesData.sort((a, b) => {
+          const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+          const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+          return dateB - dateA;
+        });
+
+        setActivities(activitiesData);
+      } else {
+        setActivities([]);
+      }
     } catch (error) {
       console.error("Error fetching activities:", error);
       toast({
@@ -118,6 +133,7 @@ const ActivitiesPage = () => {
     setParticipants(updatedParticipants);
   };
 
+  // --- REALTIME DATABASE ADD FUNCTION ---
   const handleAddActivity = async () => {
     if (participants.length === 0) {
       toast({
@@ -129,13 +145,13 @@ const ActivitiesPage = () => {
     }
 
     try {
-      await addDoc(collection(db, "Recent Activities"), {
+      await push(ref(db, "Recent Activities"), {
         ...activityForm,
         numberOfPersons: participants.length,
         participants: participants,
         status: 'pending',
         createdBy: user?.email,
-        createdAt: new Date(),
+        createdAt: new Date().toISOString(), // RTDB stores dates as ISO strings
       });
       toast({
         title: "Success",
@@ -163,11 +179,12 @@ const ActivitiesPage = () => {
     }
   };
 
+  // --- REALTIME DATABASE UPDATE FUNCTION ---
   const handleEditActivity = async () => {
     if (!editingActivity) return;
 
     try {
-      await updateDoc(doc(db, "Recent Activities", editingActivity.id), {
+      await update(ref(db, "Recent Activities/" + editingActivity.id), {
         ...activityForm,
         numberOfPersons: participants.length,
         participants: participants,
@@ -199,9 +216,10 @@ const ActivitiesPage = () => {
     }
   };
 
+  // --- REALTIME DATABASE DELETE FUNCTION ---
   const handleDeleteActivity = async (activityId: string) => {
     try {
-      await deleteDoc(doc(db, "Recent Activities", activityId));
+      await remove(ref(db, "Recent Activities/" + activityId));
       toast({
         title: "Success",
         description: "Activity deleted successfully.",
@@ -220,7 +238,7 @@ const ActivitiesPage = () => {
 
   const handleStatusChange = async (activityId: string, newStatus: Activity['status']) => {
     try {
-      await updateDoc(doc(db, "Recent Activities", activityId), {
+      await update(ref(db, "Recent Activities/" + activityId), {
         status: newStatus
       });
       toast({
@@ -280,6 +298,7 @@ const ActivitiesPage = () => {
   const completedActivitiesCount = activities.filter(activity => activity.status === 'completed').length;
 
   const formatDate = (dateString: string) => {
+    if (!dateString) return 'No date';
     return new Date(dateString).toLocaleDateString('en-US', {
       year: 'numeric',
       month: 'short',

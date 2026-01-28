@@ -9,25 +9,25 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
-import { Download, MapPin, Eye, Calendar, Droplets, Users, Globe, Building, Trash2, Upload, Plus, Edit } from "lucide-react";
+import { Download, MapPin, Eye, Droplets, Users, Building, Trash2, Upload, Plus, Edit } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { isChiefAdmin } from "./onboardingpage";
+
+// REALTIME DATABASE IMPORTS ONLY
 import { 
-  collection, 
-  addDoc, 
-  updateDoc, 
-  doc, 
-  deleteDoc, 
-  getDocs,
-  query,
-  where,
-  Timestamp 
-} from "firebase/firestore";
+  ref, 
+  push, 
+  update, 
+  remove, 
+  get, 
+  DatabaseReference,
+  Database 
+} from "firebase/database";
 
 // Types
 interface Borehole {
   id: string;
-  date: any;
+  date: any; // Can be ISO string or number
   location?: string;
   region?: string;
   people?: string | number;
@@ -66,23 +66,30 @@ interface FirebaseResult {
   id?: string;
 }
 
-// Real Firebase implementation
+// --- CORRECTED REALTIME DATABASE IMPLEMENTATIONS ---
+
 const addData = async (collectionName: string, data: any): Promise<FirebaseResult> => {
   try {
-    console.log("Adding data to", collectionName, data);
+    console.log("Adding data to RTDB", collectionName, data);
     
-    // Convert date to Firestore Timestamp if it's a string
-    const dataToSave = {
+    // Reference to the collection node in RTDB
+    const dbRef = ref(db as Database, collectionName);
+    
+    // Push generates a unique key and returns the reference
+    const newPostRef = push(dbRef);
+    
+    // Set the data at the generated key location
+    await update(newPostRef, {
       ...data,
-      date: data.date instanceof Date ? Timestamp.fromDate(data.date) : data.date
-    };
+      // Ensure date is a string (ISO) or number, RTDB doesn't have native Timestamp objects
+      date: data.date instanceof Date ? data.date.toISOString() : data.date
+    });
 
-    const docRef = await addDoc(collection(db, collectionName), dataToSave);
-    console.log("Document written with ID: ", docRef.id);
+    console.log("Document written with ID: ", newPostRef.key);
     
     return { 
       success: true, 
-      id: docRef.id 
+      id: newPostRef.key 
     };
   } catch (error) {
     console.error("Error adding document:", error);
@@ -95,16 +102,17 @@ const addData = async (collectionName: string, data: any): Promise<FirebaseResul
 
 const updateData = async (collectionName: string, docId: string, data: any): Promise<FirebaseResult> => {
   try {
-    console.log("Updating document in", collectionName, docId, data);
+    console.log("Updating document in RTDB", collectionName, docId, data);
     
-    // Convert date to Firestore Timestamp if it's a Date object
+    // Create reference to specific child in RTDB
+    const dbRef = ref(db as Database, `${collectionName}/${docId}`);
+    
     const dataToUpdate = {
       ...data,
-      date: data.date instanceof Date ? Timestamp.fromDate(data.date) : data.date
+      date: data.date instanceof Date ? data.date.toISOString() : data.date
     };
 
-    const docRef = doc(db, collectionName, docId);
-    await updateDoc(docRef, dataToUpdate);
+    await update(dbRef, dataToUpdate);
     
     return { 
       success: true 
@@ -120,9 +128,9 @@ const updateData = async (collectionName: string, docId: string, data: any): Pro
 
 const deleteData = async (collectionName: string, docIds: string[]): Promise<FirebaseResult> => {
   try {
-    console.log("Deleting documents from", collectionName, docIds);
+    console.log("Deleting documents from RTDB", collectionName, docIds);
     
-    const deletePromises = docIds.map(id => deleteDoc(doc(db, collectionName, id)));
+    const deletePromises = docIds.map(id => remove(ref(db as Database, `${collectionName}/${id}`)));
     await Promise.all(deletePromises);
     
     return { 
@@ -146,19 +154,15 @@ const parseDate = (date: any): Date | null => {
   if (!date) return null;
   
   try {
-    if (date.toDate && typeof date.toDate === 'function') {
-      return date.toDate();
-    } else if (date instanceof Date) {
+    if (date instanceof Date) {
       return date;
     } else if (typeof date === 'string') {
+      // Handle ISO strings common in RTDB
       const parsed = new Date(date);
       return isNaN(parsed.getTime()) ? null : parsed;
     } else if (typeof date === 'number') {
-      return new Date(date);
-    } else if (date.seconds) {
-      return new Date(date.seconds * 1000);
-    } else if (date._seconds) {
-      return new Date(date._seconds * 1000);
+      // Handle Unix timestamp (seconds or ms)
+      return new Date(date < 10000000000 ? date * 1000 : date);
     }
   } catch (error) {
     console.error('Error parsing date:', error, date);
@@ -208,8 +212,6 @@ interface ValidationError {
 
 const uploadDataWithValidation = async (file: File, collectionName: string): Promise<UploadResult> => {
   try {
-    // For now, we'll use a simple implementation
-    // In a real scenario, you would parse the file and add each record individually
     await new Promise(resolve => setTimeout(resolve, 2000));
     
     return {
@@ -318,58 +320,38 @@ const BoreholePage = () => {
     return isChiefAdmin(userRole);
   }, [userRole]);
 
-  // Data fetching
+  // Data fetching from Realtime Database
   const fetchAllData = useCallback(async () => {
     try {
       setLoading(true);
-      console.log("Starting borehole data fetch...");
+      console.log("Starting borehole data fetch from Realtime Database...");
       
-      const data = await fetchData();
+      const boreholeRef = ref(db as Database, 'BoreholeStorage');
+      const snapshot = await get(boreholeRef);
       
-      if (!data.BoreholeStorage) {
-        console.warn("No BoreholeStorage data found in response");
-        Object.keys(data).forEach(key => {
-          console.log(`Available collection: ${key}`, data[key]);
-          if (Array.isArray(data[key]) && data[key].length > 0) {
-            console.log(`First item in ${key}:`, data[key][0]);
-          }
+      if (snapshot.exists()) {
+        const data = snapshot.val();
+        // Transform object from RTDB to array
+        const boreholeData = Object.keys(data).map((key) => {
+          const item = data[key];
+          return {
+            id: key,
+            ...item,
+            // Ensure specific field mappings match your RTDB structure
+            location: item.BoreholeLocation || item.location || 'No location',
+            people: item.PeopleUsingBorehole || item.people || 0,
+            waterUsed: item.WaterUsed || item.waterUsed || 0,
+            drilled: item.drilled || false,
+            maintained: item.maintained || false
+          };
         });
+        
+        console.log("Final processed borehole data:", boreholeData);
+        setAllBoreholes(boreholeData);
+      } else {
+        console.warn("No BoreholeStorage data found in Realtime Database");
         setAllBoreholes([]);
-        return;
       }
-
-      const boreholeData = Array.isArray(data.BoreholeStorage) ? data.BoreholeStorage.map((item: any, index: number) => {
-        console.log(`Processing borehole item ${index}:`, item);
-        
-        let dateValue = item.date || item.Date || item.createdAt || item.timestamp;
-        
-        if (dateValue && typeof dateValue === 'object') {
-          if (dateValue.toDate && typeof dateValue.toDate === 'function') {
-            dateValue = dateValue.toDate();
-          } else if (dateValue.seconds) {
-            dateValue = new Date(dateValue.seconds * 1000);
-          } else if (dateValue._seconds) {
-            dateValue = new Date(dateValue._seconds * 1000);
-          }
-        }
-
-        const processedItem = {
-          id: item.id || `borehole-${index}-${Date.now()}`,
-          date: dateValue,
-          location: item.BoreholeLocation || item.location || 'No location',
-          people: item.PeopleUsingBorehole || item.people || 0,
-          waterUsed: item.WaterUsed || item.waterUsed || 0,
-          drilled: item.drilled || false,
-          maintained: item.maintained || false
-        };
-
-        console.log(`Processed borehole item ${index}:`, processedItem);
-        return processedItem;
-
-      }) : [];
-
-      console.log("Final processed borehole data:", boreholeData);
-      setAllBoreholes(boreholeData);
       
     } catch (error) {
       console.error("Error fetching borehole data:", error);
@@ -521,12 +503,12 @@ const BoreholePage = () => {
         WaterUsed: newBorehole.waterUsed || 0,
         drilled: newBorehole.drilled || false,
         maintained: newBorehole.maintained || false,
-        date: new Date(newBorehole.date || new Date())
+        date: new Date(newBorehole.date || new Date()).toISOString()
       };
 
       console.log("Creating new borehole:", boreholeData);
 
-      // Add to Firebase
+      // Add to Firebase Realtime Database
       const result = await addData("BoreholeStorage", boreholeData);
 
       if (result.success) {
@@ -587,7 +569,7 @@ const BoreholePage = () => {
         WaterUsed: editingRecord.waterUsed || 0,
         drilled: editingRecord.drilled || false,
         maintained: editingRecord.maintained || false,
-        date: editingRecord.date
+        date: editingRecord.date // Pass existing date
       };
 
       console.log("Updating borehole:", editingRecord.id, boreholeData);

@@ -1,6 +1,15 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import { collection, getDocs, query, updateDoc, doc, deleteDoc, writeBatch, addDoc, Firestore } from "firebase/firestore";
+// REALTIME DATABASE IMPORTS
+import {
+  ref,
+  push,
+  update,
+  remove,
+  get,
+  Database,
+  DatabaseReference
+} from "firebase/database";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -24,7 +33,7 @@ interface PastureStage {
 
 interface HayStorage {
   id: string;
-  date_planted: any; // Firestore Timestamp or Date string
+  date_planted: any; // ISO String or Date object
   location: string;
   county: string;
   subcounty: string;
@@ -97,7 +106,6 @@ const PASTURE_STAGES = [
 const parseDate = (date: any): Date | null => {
   if (!date) return null;
   try {
-    if (date?.toDate && typeof date.toDate === 'function') return date.toDate();
     if (date instanceof Date) return date;
     if (typeof date === 'string') {
       const parsed = new Date(date);
@@ -171,11 +179,11 @@ const FilterSection = ({ filters, uniqueCounties, onSearch, onFilterChange }: Fi
   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
     <div className="space-y-2">
       <Label htmlFor="search" className="font-semibold text-gray-700">Search</Label>
-      <Input 
-        id="search" 
-        placeholder="Search hay storage..." 
-        onChange={(e) => onSearch(e.target.value)} 
-        className="border-gray-300 focus:border-blue-500 focus:ring-blue-500 bg-white" 
+      <Input
+        id="search"
+        placeholder="Search hay storage..."
+        onChange={(e) => onSearch(e.target.value)}
+        className="border-gray-300 focus:border-blue-500 focus:ring-blue-500 bg-white"
       />
     </div>
     <div className="space-y-2">
@@ -194,22 +202,22 @@ const FilterSection = ({ filters, uniqueCounties, onSearch, onFilterChange }: Fi
     </div>
     <div className="space-y-2">
       <Label htmlFor="startDate" className="font-semibold text-gray-700">From Date</Label>
-      <Input 
-        id="startDate" 
-        type="date" 
-        value={filters.startDate} 
-        onChange={(e) => onFilterChange("startDate", e.target.value)} 
-        className="border-gray-300 focus:border-blue-500 focus:ring-blue-500 bg-white" 
+      <Input
+        id="startDate"
+        type="date"
+        value={filters.startDate}
+        onChange={(e) => onFilterChange("startDate", e.target.value)}
+        className="border-gray-300 focus:border-blue-500 focus:ring-blue-500 bg-white"
       />
     </div>
     <div className="space-y-2">
       <Label htmlFor="endDate" className="font-semibold text-gray-700">To Date</Label>
-      <Input 
-        id="endDate" 
-        type="date" 
-        value={filters.endDate} 
-        onChange={(e) => onFilterChange("endDate", e.target.value)} 
-        className="border-gray-300 focus:border-blue-500 focus:ring-blue-500 bg-white" 
+      <Input
+        id="endDate"
+        type="date"
+        value={filters.endDate}
+        onChange={(e) => onFilterChange("endDate", e.target.value)}
+        className="border-gray-300 focus:border-blue-500 focus:ring-blue-500 bg-white"
       />
     </div>
   </div>
@@ -288,10 +296,10 @@ const TableRow = ({ record, isSelected, onSelectRecord, onView, onEdit, onDelete
 const HayStoragePage = () => {
   const { userRole, user } = useAuth();
   const { toast } = useToast();
-  
-  // FIX: Type assertion to handle 'Database' vs 'Firestore' mismatch
-  const dbFirestore = db as unknown as Firestore;
-  
+
+  // Ensure 'db' is treated as Realtime Database instance
+  const rtdb = db as Database;
+
   // State
   const [allHayStorage, setAllHayStorage] = useState<HayStorage[]>([]);
   const [filteredHayStorage, setFilteredHayStorage] = useState<HayStorage[]>([]);
@@ -300,14 +308,14 @@ const HayStoragePage = () => {
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [uploadLoading, setUploadLoading] = useState(false);
   const [selectedRecords, setSelectedRecords] = useState<string[]>([]);
-  
+
   // Dialog States
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
-  
+
   // Data States
   const [viewingRecord, setViewingRecord] = useState<HayStorage | null>(null);
   const [editingRecord, setEditingRecord] = useState<HayStorage | null>(null);
@@ -328,13 +336,13 @@ const HayStoragePage = () => {
     date_sold: '',
     revenue_generated: 0
   });
-  
+
   // Upload State
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadProgress, setUploadProgress] = useState<number>(0);
   const [saving, setSaving] = useState(false);
   const [adding, setAdding] = useState(false);
-  
+
   const searchTimeoutRef = useRef<NodeJS.Timeout>();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const currentMonth = useMemo(getCurrentMonthDates, []);
@@ -398,7 +406,7 @@ const HayStoragePage = () => {
     setSelectedRecords(prev =>
       prev.length === currentPageIds.length && currentPageIds.length > 0 ? [] : currentPageIds
     );
-  }, [filteredHayStorage, pagination.page, pagination.limit]); // Added dependencies to closure
+  }, [filteredHayStorage, pagination.page, pagination.limit]);
 
   const handlePageChange = useCallback((newPage: number) => {
     setPagination(prev => ({ ...prev, page: newPage }));
@@ -432,36 +440,41 @@ const HayStoragePage = () => {
     setIsAddDialogOpen(false);
   }, []);
 
-  // Data Operations
+  // --- REALTIME DATABASE FETCH ---
   const fetchAllData = useCallback(async () => {
     try {
       setLoading(true);
-      // FIX: Use the properly typed dbFirestore instance
-      const hayStorageQuery = query(collection(dbFirestore, "HayStorage"));
-      const hayStorageSnapshot = await getDocs(hayStorageQuery);
-      
-      const hayStorageData = hayStorageSnapshot.docs.map((doc) => {
-        const data = doc.data();
-        return {
-          id: doc.id,
-          date_planted: data.date_planted,
-          location: data.location || '',
-          county: data.county || '',
-          subcounty: data.subcounty || '',
-          land_under_pasture: Number(data.land_under_pasture || 0),
-          pasture_stages: data.pasture_stages || [],
-          storage_facility: data.storage_facility || '',
-          bales_harvested_stored: Number(data.bales_harvested_stored || 0),
-          bales_sold: Number(data.bales_sold || 0),
-          date_sold: data.date_sold,
-          revenue_generated: Number(data.revenue_generated || 0),
-          created_at: data.created_at,
-          created_by: data.created_by || 'unknown'
-        };
-      });
+      // Correct usage of ref with Realtime Database
+      const hayStorageRef = ref(rtdb, "HayStorage");
+      const snapshot = await get(hayStorageRef);
 
-      setAllHayStorage(hayStorageData);
-      
+      if (snapshot.exists()) {
+        const data = snapshot.val();
+        // Transform object from RTDB to array
+        const hayStorageData = Object.keys(data).map((key) => {
+          const item = data[key];
+          return {
+            id: key,
+            date_planted: item.date_planted,
+            location: item.location || '',
+            county: item.county || '',
+            subcounty: item.subcounty || '',
+            land_under_pasture: Number(item.land_under_pasture || 0),
+            pasture_stages: item.pasture_stages || [],
+            storage_facility: item.storage_facility || '',
+            bales_harvested_stored: Number(item.bales_harvested_stored || 0),
+            bales_sold: Number(item.bales_sold || 0),
+            date_sold: item.date_sold,
+            revenue_generated: Number(item.revenue_generated || 0),
+            created_at: item.created_at,
+            created_by: item.created_by || 'unknown'
+          };
+        });
+        setAllHayStorage(hayStorageData);
+      } else {
+        setAllHayStorage([]);
+      }
+
     } catch (error) {
       console.error("Error fetching hay storage data:", error);
       toast({
@@ -472,7 +485,7 @@ const HayStoragePage = () => {
     } finally {
       setLoading(false);
     }
-  }, [toast, dbFirestore]);
+  }, [toast, rtdb]);
 
   const applyFilters = useCallback(() => {
     if (allHayStorage.length === 0) {
@@ -485,7 +498,7 @@ const HayStoragePage = () => {
       });
       return;
     }
-    
+
     let filtered = allHayStorage.filter(record => {
       if (filters.county !== "all" && record.county?.toLowerCase() !== filters.county.toLowerCase()) return false;
       if (filters.subcounty !== "all" && record.subcounty?.toLowerCase() !== filters.subcounty.toLowerCase()) return false;
@@ -518,12 +531,12 @@ const HayStoragePage = () => {
     });
 
     setFilteredHayStorage(filtered);
-    
+
     const totalRevenue = filtered.reduce((sum, record) => sum + (record.revenue_generated || 0), 0);
     const totalBalesHarvested = filtered.reduce((sum, record) => sum + (record.bales_harvested_stored || 0), 0);
     const totalLandUnderPasture = filtered.reduce((sum, record) => sum + (record.land_under_pasture || 0), 0);
     const uniqueFacilities = new Set(filtered.map(record => record.storage_facility).filter(facility => facility && facility.trim() !== ''));
-    
+
     setStats({
       totalLandUnderPasture,
       totalRevenue,
@@ -540,43 +553,84 @@ const HayStoragePage = () => {
     }));
   }, [allHayStorage, filters, pagination.limit]);
 
-  // Add Functions
+  // --- REALTIME DATABASE ADD FUNCTION ---
   const handleAddRecord = async () => {
+    // Validation
     if (!addingRecord.date_planted || !addingRecord.location || !addingRecord.county || !addingRecord.subcounty) {
-      toast({ title: "Missing Required Fields", description: "Please fill in all required fields", variant: "destructive" });
+      toast({
+        title: "Validation Error",
+        description: "Please fill in all required fields (Date, Location, County, Subcounty).",
+        variant: "destructive"
+      });
       return;
     }
+
     try {
       setAdding(true);
-      const filteredStages = (addingRecord.pasture_stages || []).filter(stage => stage.stage.trim() !== '' && stage.date.trim() !== '');
-      const newRecord = {
-        date_planted: addingRecord.date_planted,
+
+      // Clean up stages: remove empty entries
+      const validStages = (addingRecord.pasture_stages || [])
+        .filter(stage => stage.stage.trim() !== '' && stage.date.trim() !== '');
+
+      const payload = {
+        // RTDB stores dates as ISO strings or numbers
+        date_planted: new Date(addingRecord.date_planted).toISOString(),
         location: addingRecord.location,
         county: addingRecord.county,
         subcounty: addingRecord.subcounty,
         land_under_pasture: Number(addingRecord.land_under_pasture) || 0,
-        pasture_stages: filteredStages,
+        pasture_stages: validStages,
         storage_facility: addingRecord.storage_facility || '',
         bales_harvested_stored: Number(addingRecord.bales_harvested_stored) || 0,
         bales_sold: Number(addingRecord.bales_sold) || 0,
-        date_sold: addingRecord.date_sold || '',
+        date_sold: addingRecord.date_sold ? new Date(addingRecord.date_sold).toISOString() : null,
         revenue_generated: Number(addingRecord.revenue_generated) || 0,
-        created_at: new Date(),
+        created_at: new Date().toISOString(),
         created_by: user?.email || 'unknown'
       };
 
-      await addDoc(collection(dbFirestore, "HayStorage"), newRecord);
-      toast({ title: "Success", description: "Hay storage record added successfully" });
+      // Add to Realtime Database using push
+      const listRef = ref(rtdb, "HayStorage");
+      const newRef: DatabaseReference = push(listRef);
+      
+      // Write data to the generated key
+      await update(newRef, payload);
+
+      toast({
+        title: "Success",
+        description: "Hay storage record created successfully."
+      });
+
+      // Reset Form
       setIsAddDialogOpen(false);
       setAddingRecord({
-        date_planted: '', location: '', county: '', subcounty: '', land_under_pasture: 0,
-        pasture_stages: [{ stage: '', date: '' }, { stage: '', date: '' }, { stage: '', date: '' }],
-        storage_facility: '', bales_harvested_stored: 0, bales_sold: 0, date_sold: '', revenue_generated: 0
+        date_planted: '',
+        location: '',
+        county: '',
+        subcounty: '',
+        land_under_pasture: 0,
+        pasture_stages: [
+            { stage: '', date: '' },
+            { stage: '', date: '' },
+            { stage: '', date: '' }
+        ],
+        storage_facility: '',
+        bales_harvested_stored: 0,
+        bales_sold: 0,
+        date_sold: '',
+        revenue_generated: 0
       });
+
+      // Refresh Data
       await fetchAllData();
+
     } catch (error) {
       console.error("Error adding record:", error);
-      toast({ title: "Error", description: "Failed to add record", variant: "destructive" });
+      toast({
+        title: "Error",
+        description: "Failed to create record. Please try again.",
+        variant: "destructive"
+      });
     } finally {
       setAdding(false);
     }
@@ -618,15 +672,25 @@ const HayStoragePage = () => {
     if (editingRecord) setEditingRecord(prev => prev ? { ...prev, [field]: value } : null);
   };
 
+  // --- REALTIME DATABASE UPDATE FUNCTION ---
   const handleSaveEdit = async () => {
     if (!editingRecord) return;
     try {
       setSaving(true);
       const filteredStages = editingRecord.pasture_stages.filter(stage => stage.stage.trim() !== '' && stage.date.trim() !== '');
-      const { id, ...updateData } = { ...editingRecord, pasture_stages: filteredStages };
-      
-      await updateDoc(doc(dbFirestore, "HayStorage", editingRecord.id), updateData);
-      setAllHayStorage(prev => prev.map(record => record.id === editingRecord.id ? editingRecord : record));
+      const { id, ...updateData } = {
+          ...editingRecord,
+          pasture_stages: filteredStages,
+          // Convert dates to ISO strings for RTDB
+          date_planted: editingRecord.date_planted ? new Date(editingRecord.date_planted).toISOString() : null,
+          date_sold: editingRecord.date_sold ? new Date(editingRecord.date_sold).toISOString() : null
+      };
+
+      await update(ref(rtdb, "HayStorage/" + editingRecord.id), updateData);
+
+      // Refresh Data
+      await fetchAllData();
+
       toast({ title: "Success", description: "Record updated successfully" });
       closeEditDialog();
     } catch (error) {
@@ -637,18 +701,16 @@ const HayStoragePage = () => {
     }
   };
 
-  // Delete Functions
+  // --- REALTIME DATABASE DELETE FUNCTION ---
   const handleDeleteSelected = async () => {
     if (selectedRecords.length === 0) return;
     try {
       setDeleteLoading(true);
-      const batch = writeBatch(dbFirestore);
-      selectedRecords.forEach(recordId => {
-        const recordRef = doc(dbFirestore, "HayStorage", recordId);
-        batch.delete(recordRef);
-      });
-      
-      await batch.commit();
+
+      // Delete all selected records
+      const deletePromises = selectedRecords.map(id => remove(ref(rtdb, "HayStorage/" + id)));
+      await Promise.all(deletePromises);
+
       setAllHayStorage(prev => prev.filter(record => !selectedRecords.includes(record.id)));
       setSelectedRecords([]);
       toast({ title: "Records Deleted", description: `Successfully deleted ${selectedRecords.length} records` });
@@ -682,7 +744,7 @@ const HayStoragePage = () => {
       const progressInterval = setInterval(() => setUploadProgress(prev => prev >= 90 ? 90 : prev + 10), 200);
 
       const result: UploadResult = await uploadDataWithValidation(uploadFile, "hay_storage");
-      
+
       clearInterval(progressInterval);
       setUploadProgress(100);
 
@@ -807,11 +869,11 @@ const HayStoragePage = () => {
       {/* Filters Section */}
       <Card className="shadow-lg border-0 bg-white">
         <CardContent className="space-y-4 pt-6">
-          <FilterSection 
-            filters={filters} 
-            uniqueCounties={uniqueCounties} 
-            onSearch={handleSearch} 
-            onFilterChange={handleFilterChange} 
+          <FilterSection
+            filters={filters}
+            uniqueCounties={uniqueCounties}
+            onSearch={handleSearch}
+            onFilterChange={handleFilterChange}
           />
         </CardContent>
       </Card>
@@ -853,8 +915,8 @@ const HayStoragePage = () => {
                   </thead>
                   <tbody>
                     {getCurrentPageRecords().map((record) => (
-                      <TableRow 
-                        key={record.id} 
+                      <TableRow
+                        key={record.id}
                         record={record}
                         isSelected={selectedRecords.includes(record.id)}
                         onSelectRecord={handleSelectRecord}
@@ -1068,7 +1130,7 @@ const HayStoragePage = () => {
       <Dialog open={isUploadDialogOpen} onOpenChange={setIsUploadDialogOpen}>
         <DialogContent className="sm:max-w-md bg-white rounded-2xl">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-green-600"><Upload className="h-5 w-5" /> Upload Hay Storage Data</DialogTitle>
+            <DialogTitle className="flex items-center gap-2 text-green-600"><Upload className="h-5 w-5" /> Upload</DialogTitle>
             <DialogDescription>Upload CSV, JSON, or Excel files containing hay storage data.</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">

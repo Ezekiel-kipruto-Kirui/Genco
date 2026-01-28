@@ -1,15 +1,14 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { 
-  collection, 
-  getDocs, 
-  query, 
-  addDoc, 
-  updateDoc, 
-  doc, 
-  deleteDoc, 
-  writeBatch, 
-  Firestore 
-} from "firebase/firestore";
+  ref, 
+  get, 
+  push, 
+  update, 
+  remove, 
+  set,
+  DatabaseReference,
+  Database 
+} from "firebase/database";
 import { db } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,7 +26,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import * as XLSX from 'xlsx';
 
 // --- Constants ---
-const COLLECTION_NAME = "Onboarding";
+const COLLECTION_NAME = "Onboarding"; // In RTDB, this is the path key
 const CARDS_PER_PAGE = 3;
 
 // --- Interfaces ---
@@ -331,9 +330,6 @@ const OnboardingPage = () => {
   const { toast } = useToast();
   const { user, userRole } = useAuth();
 
-  // Fix for TypeScript errors: Ensure db is treated as Firestore
-  const firestore = db as unknown as Firestore;
-
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
 
@@ -390,22 +386,28 @@ const OnboardingPage = () => {
   const fetchOnboardingData = async () => {
     try {
       setLoading(true);
-      // Using fixed firestore variable
-      const q = query(collection(firestore, COLLECTION_NAME));
-      const querySnapshot = await getDocs(q);
-      const data = querySnapshot.docs.map(doc => {
-        const docData = doc.data();
-        return {
-          id: doc.id,
-          date: docData.date?.toDate() || new Date(),
-          topic: docData.topic || "",
-          comment: docData.comment || "",
-          staff: docData.staff || [],
-          farmers: docData.farmers || [],
-          createdAt: docData.createdAt?.toDate() || new Date(),
-          status: docData.status || 'pending'
-        } as OnboardingData;
-      });
+      // Realtime Database fetch
+      const dbRef = ref(db, COLLECTION_NAME);
+      const snapshot = await get(dbRef);
+      
+      const data: OnboardingData[] = [];
+      
+      if (snapshot.exists()) {
+        snapshot.forEach((childSnapshot) => {
+          const docData = childSnapshot.val();
+          data.push({
+            id: childSnapshot.key,
+            date: docData.date ? new Date(docData.date) : new Date(),
+            topic: docData.topic || "",
+            comment: docData.comment || "",
+            staff: docData.staff || [],
+            farmers: docData.farmers || [],
+            createdAt: docData.createdAt ? new Date(docData.createdAt) : new Date(),
+            status: docData.status || 'pending'
+          });
+        });
+      }
+      
       setOnboarding(data);
       setFilteredOnboarding(data);
       setSelectedRecords([]);
@@ -508,12 +510,11 @@ const OnboardingPage = () => {
     if (selectedRecords.length === 0) return;
     try {
       setLoading(true);
-      const batch = writeBatch(firestore); // Using fixed firestore variable
-      selectedRecords.forEach(id => {
-        const recordRef = doc(firestore, COLLECTION_NAME, id); // Using fixed firestore variable
-        batch.delete(recordRef);
-      });
-      await batch.commit();
+      // RTDB does not have batch writes in the same sense, use Promise.all
+      const deletePromises = selectedRecords.map(id => remove(ref(db, `${COLLECTION_NAME}/${id}`)));
+      
+      await Promise.all(deletePromises);
+      
       toast({ title: "Success", description: `Successfully deleted ${selectedRecords.length} records` });
       setIsBulkDeleteDialogOpen(false);
       setSelectedRecords([]);
@@ -542,22 +543,26 @@ const OnboardingPage = () => {
       }
 
       setLoading(true);
+      
+      // Convert Date objects to ISO strings for RTDB
       const data = {
         ...onboardingForm,
-        date: new Date(onboardingForm.date),
+        date: new Date(onboardingForm.date).toISOString(),
         staff: validStaff,
         farmers: validFarmers,
-        createdAt: new Date()
+        createdAt: new Date().toISOString()
       };
 
       if (onboardingForm.id) {
-        await updateDoc(doc(firestore, COLLECTION_NAME, onboardingForm.id), { // Using fixed firestore variable
-          ...data,
-          updatedAt: new Date()
+        // Update existing
+        await update(ref(db, `${COLLECTION_NAME}/${onboardingForm.id}`), {
+            ...data,
+            updatedAt: new Date().toISOString()
         });
         toast({ title: "Success", description: "Record updated successfully" });
       } else {
-        await addDoc(collection(firestore, COLLECTION_NAME), data); // Using fixed firestore variable
+        // Add new
+        await push(ref(db, COLLECTION_NAME), data);
         toast({ title: "Success", description: "Record added successfully" });
       }
 
@@ -582,7 +587,7 @@ const OnboardingPage = () => {
     if (!selectedRecord?.id) return;
     try {
       setLoading(true);
-      await deleteDoc(doc(firestore, COLLECTION_NAME, selectedRecord.id)); // Using fixed firestore variable
+      await remove(ref(db, `${COLLECTION_NAME}/${selectedRecord.id}`));
       toast({ title: "Success", description: "Record deleted successfully" });
       setIsDeleteDialogOpen(false);
       setSelectedRecord(null);
@@ -773,7 +778,7 @@ const OnboardingPage = () => {
                   isSelected={!!record.id && selectedRecords.includes(record.id)}
                   userIsChiefAdmin={userIsChiefAdmin}
                   onSelectRecord={handleSelectRecord}
-                  onView={setSelectedRecord} // Reusing setRecord state to open view dialog
+                  onView={setSelectedRecord} 
                   onEdit={() => { 
                       setOnboardingForm({
                         id: record.id || "",
