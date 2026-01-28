@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
 import ProtectedRoute from "@/components/ProtectedRoute";
-import DashboardLayout from "./components/DashboardLayout";
+import DashboardLayout from "@/components/DashboardLayout";
 
 // Lazy load page components to split code
 const Auth = lazy(() => import("./pages/Auth"));
@@ -37,11 +37,11 @@ const PageLoader = () => (
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
-    <TooltipProvider>
+    <BrowserRouter>
       <AuthProvider>
-        <Toaster />
-        <Sonner />
-        <BrowserRouter>
+        <TooltipProvider>
+          <Toaster />
+          <Sonner />
           <Suspense fallback={<PageLoader />}>
             <Routes>
               {/* Public Routes */}
@@ -60,15 +60,8 @@ const App = () => (
                 {/* Nested routes under DashboardLayout */}
                 <Route index element={<DashboardOverview />} />
                 
-                {/* Report route */}
-                <Route
-                  path="reports"
-                  element={
-                    <ProtectedRoute allowedRoles={["admin", "chief-admin"]}>
-                      <PerformanceReport/>
-                    </ProtectedRoute>
-                  }
-                />
+                {/* Report route - Removed inner ProtectedRoute as parent handles auth */}
+                <Route path="reports" element={<PerformanceReport />} />
                 
                 <Route path="livestock">
                   <Route index element={<LivestockFarmersPage />} />
@@ -83,34 +76,25 @@ const App = () => (
                 
                 <Route path="capacity" element={<CapacityBuildingPage />} />
                 
-                {/* Offtake Routes */}
-                <Route path="livestock-offtake">
-                  <Route index element={<LivestockOfftakePage />} />
-                </Route>
+                {/* Offtake Routes - Simplified structure */}
+                <Route path="livestock-offtake" element={<LivestockOfftakePage />} />
                 <Route path="fodder-offtake" element={<FodderOfftakePage />} />
                 
                 <Route path="activities" element={<ActivitiesPage />} />
                 <Route path="onboarding" element={<OnboardingPage />} />
                 <Route path="animalhealth" element={<AnimalHealthPage />} />
 
-                {/* Admin Only Routes */}
-                <Route 
-                  path="users" 
-                  element={
-                    <ProtectedRoute allowedRoles={["chief-admin", "admin"]}>
-                      <UserManagementPage />
-                    </ProtectedRoute>
-                  } 
-                />
+                {/* Admin Only Routes - Removed inner ProtectedRoute as parent handles auth */}
+                <Route path="users" element={<UserManagementPage />} />
               </Route>
 
               {/* Catch-all route for 404 */}
               <Route path="*" element={<NotFound />} />
             </Routes>
           </Suspense>
-        </BrowserRouter>
+        </TooltipProvider>
       </AuthProvider>
-    </TooltipProvider>
+    </BrowserRouter>
   </QueryClientProvider>
 );
 

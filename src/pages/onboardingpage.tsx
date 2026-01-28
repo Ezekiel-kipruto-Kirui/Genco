@@ -15,7 +15,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
+import { 
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription 
+} from "@/components/ui/dialog";
+import { 
+  Tabs, TabsContent, TabsList, TabsTrigger 
+} from "@/components/ui/tabs"; // Added Tabs
 import { 
   Download, Users, Edit, Trash2, GraduationCap, Eye, MapPin, Upload, Plus, 
   Calendar, X, UserPlus, User, Phone, Map, FileText, MessageSquare, BookOpen, 
@@ -26,12 +31,11 @@ import { useAuth } from "@/contexts/AuthContext";
 import * as XLSX from 'xlsx';
 
 // --- Constants ---
-const COLLECTION_NAME = "Onboarding"; // In RTDB, this is the path key
+const COLLECTION_NAME = "Onboarding";
 const CARDS_PER_PAGE = 3;
 
 // --- Interfaces ---
 interface FarmerData {
-  id?: string;
   name: string;
   idNo: string;
   phoneNo: string;
@@ -186,7 +190,7 @@ const OnboardingCard = ({
           <div className="flex-1">
             <div className="flex items-center gap-2 mb-2">
               {getTopicIcon(record.topic)}
-              <CardTitle className="text-lg font-bold text-gray-800">{record.topic}</CardTitle>
+              <CardTitle className="text-md font-bold text-gray-800">{record.topic}</CardTitle>
             </div>
             <div className="flex items-center justify-between mt-2">
               <div className="flex items-center gap-2 text-sm text-gray-600">
@@ -510,7 +514,6 @@ const OnboardingPage = () => {
     if (selectedRecords.length === 0) return;
     try {
       setLoading(true);
-      // RTDB does not have batch writes in the same sense, use Promise.all
       const deletePromises = selectedRecords.map(id => remove(ref(db, `${COLLECTION_NAME}/${id}`)));
       
       await Promise.all(deletePromises);
@@ -554,14 +557,12 @@ const OnboardingPage = () => {
       };
 
       if (onboardingForm.id) {
-        // Update existing
         await update(ref(db, `${COLLECTION_NAME}/${onboardingForm.id}`), {
             ...data,
             updatedAt: new Date().toISOString()
         });
         toast({ title: "Success", description: "Record updated successfully" });
       } else {
-        // Add new
         await push(ref(db, COLLECTION_NAME), data);
         toast({ title: "Success", description: "Record added successfully" });
       }
@@ -696,7 +697,7 @@ const OnboardingPage = () => {
   return (
     <div className="container mx-auto p-6 space-y-6">
       <div className="flex justify-between items-center">
-        <h1 className="text-3xl font-bold">Additional Training</h1>
+        <h1 className="text-xl font-bold">Additional Training</h1>
         <div className="flex gap-2">
           {userIsChiefAdmin && selectedRecords.length > 0 && (
             <Button variant="destructive" onClick={() => setIsBulkDeleteDialogOpen(true)}>
@@ -802,69 +803,82 @@ const OnboardingPage = () => {
       {/* Dialogs */}
       {userIsChiefAdmin && (
         <>
-          {/* Add/Edit Dialog */}
+          {/* Add/Edit Dialog - Optimized with Tabs */}
           <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-            <DialogContent className="max-w-6xl max-h-[90vh]">
-              <DialogHeader><DialogTitle>{onboardingForm.id ? "Edit" : "Add New"} Onboarding</DialogTitle></DialogHeader>
-              <div className="grid grid-cols-1 gap-6 max-h-[70vh] overflow-y-auto">
-                <div className="grid grid-cols-1 gap-4">
-                  <div className="space-y-2"><Label>Topic *</Label><Input value={onboardingForm.topic} onChange={e => setOnboardingForm(p => ({ ...p, topic: e.target.value }))} placeholder="Enter topic" /></div>
-                  <div className="space-y-2"><Label>Comment/Notes</Label><textarea value={onboardingForm.comment} onChange={e => setOnboardingForm(p => ({ ...p, comment: e.target.value }))} rows={3} className="w-full px-3 py-2 border rounded-md" /></div>
-                  <div className="space-y-2"><Label>Date *</Label><Input type="date" value={onboardingForm.date} onChange={e => setOnboardingForm(p => ({ ...p, date: e.target.value }))} /></div>
-                  <div className="space-y-2">
-                    <Label>Status</Label>
-                    <div className="flex gap-2">
-                      <Button type="button" variant={onboardingForm.status === 'pending' ? 'default' : 'outline'} onClick={() => setOnboardingForm(p => ({ ...p, status: 'pending' }))} className="flex-1"><Clock className="h-4 w-4 mr-2" /> Pending</Button>
-                      <Button type="button" variant={onboardingForm.status === 'completed' ? 'default' : 'outline'} onClick={() => setOnboardingForm(p => ({ ...p, status: 'completed' }))} className="flex-1"><CheckCircle className="h-4 w-4 mr-2" /> Completed</Button>
-                    </div>
-                  </div>
-                </div>
+            <DialogContent className="max-w-4xl max-h-[90vh] flex flex-col">
+              <DialogHeader><DialogTitle>{onboardingForm.id ? "Edit" : "Add New"} Training</DialogTitle></DialogHeader>
+              
+              <Tabs defaultValue="details" className="flex-1 flex flex-col overflow-hidden">
+                <TabsList className="grid w-full grid-cols-3">
+                  <TabsTrigger value="details">Details</TabsTrigger>
+                  <TabsTrigger value="trainers">Trainers ({staff.filter(s => s.name.trim() !== "").length})</TabsTrigger>
+                  <TabsTrigger value="farmers">Farmers ({farmers.filter(f => f.name.trim() !== "").length})</TabsTrigger>
+                </TabsList>
                 
-                {/* Staff */}
-                <div className="space-y-4">
-                  <div className="flex justify-between items-center">
-                    <Label className="text-lg font-semibold">Trainers ({staff.filter(s => s.name.trim() !== "").length})</Label>
-                    <Button type="button" variant="outline" size="sm" onClick={() => setStaff(p => [...p, { name: "", role: "" }])}><UserPlus className="w-4 h-4 mr-1" /> Add trainer</Button>
-                  </div>
-                  <div className="space-y-3 max-h-48 overflow-y-auto border rounded-lg p-4 bg-gray-50">
-                    {staff.map((s, i) => (
-                      <div key={i} className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end p-3 border rounded bg-white">
-                        <Input placeholder="Trainer Name *" value={s.name} onChange={e => { const newStaff = [...staff]; newStaff[i].name = e.target.value; setStaff(newStaff); }} />
-                        <Input placeholder="Role *" value={s.role} onChange={e => { const newStaff = [...staff]; newStaff[i].role = e.target.value; setStaff(newStaff); }} />
-                        <div className="flex justify-end">{staff.length > 1 && <Button variant="outline" size="sm" className="h-10 w-10 p-0 text-red-500" onClick={() => setStaff(p => p.filter((_, idx) => idx !== i))}><X className="h-4 w-4" /></Button>}</div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Farmers */}
-                <div className="space-y-4">
-                  <div className="flex justify-between items-center">
-                    <Label className="text-lg font-semibold">Farmers ({farmers.filter(f => f.name.trim() !== "").length})</Label>
-                    <div className="flex gap-2">
-                      <Button type="button" variant="outline" size="sm" onClick={() => setIsUploadDialogOpen(true)}><Upload className="w-4 h-4 mr-1" /> Upload Excel</Button>
-                      <Button type="button" variant="outline" size="sm" onClick={() => setFarmers(p => [...p, { name: "", idNo: "", phoneNo: "", location: "", region: "", gender: "", county: "" }])}><UserPlus className="w-4 h-4 mr-1" /> Add Farmer</Button>
-                    </div>
-                  </div>
-                  <div className="space-y-3 max-h-64 overflow-y-auto border rounded-lg p-4 bg-gray-50">
-                    {farmers.map((f, i) => (
-                      <div key={i} className="grid grid-cols-1 md:grid-cols-7 gap-2 items-end p-3 border rounded bg-white">
-                        <Input placeholder="Name *" value={f.name} onChange={e => { const newF = [...farmers]; newF[i].name = e.target.value; setFarmers(newF); }} />
-                        <select value={f.gender} onChange={e => { const newF = [...farmers]; newF[i].gender = e.target.value; setFarmers(newF); }} className="w-full px-3 py-2 border rounded-md bg-white"><option value="">Select</option><option value="Male">Male</option><option value="Female">Female</option></select>
-                        <Input placeholder="ID Number" value={f.idNo} onChange={e => { const newF = [...farmers]; newF[i].idNo = e.target.value; setFarmers(newF); }} />
-                        <Input placeholder="Phone" value={f.phoneNo} onChange={e => { const newF = [...farmers]; newF[i].phoneNo = e.target.value; setFarmers(newF); }} />
-                        <Input placeholder="Location" value={f.location} onChange={e => { const newF = [...farmers]; newF[i].location = e.target.value; setFarmers(newF); }} />
-                        <Input placeholder="Region" value={f.region} onChange={e => { const newF = [...farmers]; newF[i].region = e.target.value; setFarmers(newF); }} />
+                <div className="flex-1 overflow-y-auto mt-4 pr-2">
+                  {/* Tab 1: General Details */}
+                  <TabsContent value="details" className="space-y-4">
+                    <div className="grid grid-cols-1 gap-4">
+                      <div className="space-y-2"><Label>Topic *</Label><Input value={onboardingForm.topic} onChange={e => setOnboardingForm(p => ({ ...p, topic: e.target.value }))} placeholder="Enter topic" /></div>
+                      <div className="space-y-2"><Label>Comment/Notes</Label><textarea value={onboardingForm.comment} onChange={e => setOnboardingForm(p => ({ ...p, comment: e.target.value }))} rows={3} className="w-full px-3 py-2 border rounded-md" /></div>
+                      <div className="space-y-2"><Label>Date *</Label><Input type="date" value={onboardingForm.date} onChange={e => setOnboardingForm(p => ({ ...p, date: e.target.value }))} /></div>
+                      <div className="space-y-2">
+                        <Label>Status</Label>
                         <div className="flex gap-2">
-                           <Input placeholder="County" value={f.county} onChange={e => { const newF = [...farmers]; newF[i].county = e.target.value; setFarmers(newF); }} />
-                           {farmers.length > 1 && <Button variant="outline" size="sm" className="h-10 w-10 p-0 text-red-500" onClick={() => setFarmers(p => p.filter((_, idx) => idx !== i))}><X className="h-4 w-4" /></Button>}
+                          <Button type="button" variant={onboardingForm.status === 'pending' ? 'default' : 'outline'} onClick={() => setOnboardingForm(p => ({ ...p, status: 'pending' }))} className="flex-1"><Clock className="h-4 w-4 mr-2" /> Pending</Button>
+                          <Button type="button" variant={onboardingForm.status === 'completed' ? 'default' : 'outline'} onClick={() => setOnboardingForm(p => ({ ...p, status: 'completed' }))} className="flex-1"><CheckCircle className="h-4 w-4 mr-2" /> Completed</Button>
                         </div>
                       </div>
-                    ))}
-                  </div>
+                    </div>
+                  </TabsContent>
+
+                  {/* Tab 2: Staff/Trainers */}
+                  <TabsContent value="trainers" className="space-y-4">
+                    <div className="flex justify-between items-center">
+                      <h4 className="text-sm font-medium text-muted-foreground">Manage Trainers</h4>
+                      <Button type="button" variant="outline" size="sm" onClick={() => setStaff(p => [...p, { name: "", role: "" }])}><UserPlus className="w-4 h-4 mr-1" /> Add Trainer</Button>
+                    </div>
+                    <div className="space-y-3">
+                      {staff.map((s, i) => (
+                        <div key={i} className="grid grid-cols-12 gap-3 items-end p-3 border rounded bg-white">
+                          <div className="col-span-5"><Input placeholder="Trainer Name *" value={s.name} onChange={e => { const newStaff = [...staff]; newStaff[i].name = e.target.value; setStaff(newStaff); }} /></div>
+                          <div className="col-span-5"><Input placeholder="Role *" value={s.role} onChange={e => { const newStaff = [...staff]; newStaff[i].role = e.target.value; setStaff(newStaff); }} /></div>
+                          <div className="col-span-2 flex justify-end">{staff.length > 1 && <Button variant="outline" size="sm" className="h-10 w-10 p-0 text-red-500" onClick={() => setStaff(p => p.filter((_, idx) => idx !== i))}><X className="h-4 w-4" /></Button>}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </TabsContent>
+
+                  {/* Tab 3: Farmers */}
+                  <TabsContent value="farmers" className="space-y-4">
+                    <div className="flex justify-between items-center">
+                      <h4 className="text-sm font-medium text-muted-foreground">Manage Farmers</h4>
+                      <div className="flex gap-2">
+                        <Button type="button" variant="outline" size="sm" onClick={() => setIsUploadDialogOpen(true)}><Upload className="w-4 h-4 mr-1" /> Upload Excel</Button>
+                        <Button type="button" variant="outline" size="sm" onClick={() => setFarmers(p => [...p, { name: "", idNo: "", phoneNo: "", location: "", region: "", gender: "", county: "" }])}><UserPlus className="w-4 h-4 mr-1" /> Add Farmer</Button>
+                      </div>
+                    </div>
+                    <div className="space-y-3">
+                      {farmers.map((f, i) => (
+                        <div key={i} className="grid grid-cols-1 md:grid-cols-7 gap-2 items-end p-3 border rounded bg-white">
+                          <Input placeholder="Name *" value={f.name} onChange={e => { const newF = [...farmers]; newF[i].name = e.target.value; setFarmers(newF); }} />
+                          <select value={f.gender} onChange={e => { const newF = [...farmers]; newF[i].gender = e.target.value; setFarmers(newF); }} className="w-full px-3 py-2 border rounded-md bg-white"><option value="">Select</option><option value="Male">Male</option><option value="Female">Female</option></select>
+                          <Input placeholder="ID Number" value={f.idNo} onChange={e => { const newF = [...farmers]; newF[i].idNo = e.target.value; setFarmers(newF); }} />
+                          <Input placeholder="Phone" value={f.phoneNo} onChange={e => { const newF = [...farmers]; newF[i].phoneNo = e.target.value; setFarmers(newF); }} />
+                          <Input placeholder="Location" value={f.location} onChange={e => { const newF = [...farmers]; newF[i].location = e.target.value; setFarmers(newF); }} />
+                          <Input placeholder="Region" value={f.region} onChange={e => { const newF = [...farmers]; newF[i].region = e.target.value; setFarmers(newF); }} />
+                          <div className="flex gap-2">
+                             <Input placeholder="County" value={f.county} onChange={e => { const newF = [...farmers]; newF[i].county = e.target.value; setFarmers(newF); }} />
+                             {farmers.length > 1 && <Button variant="outline" size="sm" className="h-10 w-10 p-0 text-red-500" onClick={() => setFarmers(p => p.filter((_, idx) => idx !== i))}><X className="h-4 w-4" /></Button>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </TabsContent>
                 </div>
-              </div>
-              <DialogFooter>
+              </Tabs>
+
+              <DialogFooter className="mt-4">
                 <Button variant="outline" onClick={() => setIsDialogOpen(false)}>Cancel</Button>
                 <Button onClick={handleAddOnboarding} disabled={loading}>{loading ? "Saving..." : (onboardingForm.id ? "Update" : "Add")} Onboarding</Button>
               </DialogFooter>
@@ -903,58 +917,96 @@ const OnboardingPage = () => {
         </>
       )}
 
-      {/* View Dialog - Available for all users */}
+      {/* View Dialog - Available for all users - Fixed Rendering */}
       <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
-        <DialogContent className="max-w-6xl max-h-[80vh]">
+        <DialogContent className="max-w-4xl max-h-[85vh] flex flex-col">
           <DialogHeader>
             <DialogTitle>Additional Training Details</DialogTitle>
-            <DialogDescription>
-              {selectedRecord && (
-                <div className="grid grid-cols-1 gap-2 mt-2 text-sm">
-                  <div><strong>Date:</strong> {selectedRecord.date.toLocaleDateString()}</div>
-                  <div><strong>Topic:</strong> {selectedRecord.topic}</div>
-                  <div><strong>Status:</strong> {getStatusBadge(selectedRecord.status)}</div>
-                </div>
-              )}
-            </DialogDescription>
+            <DialogDescription>Full details for the selected training session.</DialogDescription>
           </DialogHeader>
-          <div className="grid grid-cols-1 gap-6 max-h-96 overflow-y-auto">
-            <div>
-              <h4 className="font-semibold mb-3">Trainers ({selectedRecord?.staff.length || 0})</h4>
-              <div className="space-y-2">
-                {selectedRecord?.staff.map((s, i) => (
-                  <div key={i} className="flex justify-between items-center p-2 border rounded bg-gray-50"><span className="font-medium">{s.name}</span><Badge variant="secondary">{s.role}</Badge></div>
-                ))}
+          
+          {selectedRecord ? (
+            <div className="flex-1 overflow-y-auto space-y-6">
+              {/* Summary Section */}
+              <div className="p-4 bg-gray-50 rounded-lg border space-y-2">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div>
+                    <span className="text-xs text-muted-foreground block">Date</span>
+                    <span className="font-medium">{selectedRecord.date.toLocaleDateString()}</span>
+                  </div>
+                  <div>
+                    <span className="text-xs text-muted-foreground block">Topic</span>
+                    <span className="font-medium">{selectedRecord.topic}</span>
+                  </div>
+                  <div>
+                    <span className="text-xs text-muted-foreground block">Status</span>
+                    {getStatusBadge(selectedRecord.status)}
+                  </div>
+                  <div>
+                    <span className="text-xs text-muted-foreground block">Comment</span>
+                    <span className="font-medium text-sm truncate block" title={selectedRecord.comment}>{selectedRecord.comment || 'N/A'}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Trainers Section */}
+              <div>
+                <h4 className="font-semibold mb-3 flex items-center gap-2">
+                  <GraduationCap className="h-4 w-4" />
+                  Trainers ({selectedRecord.staff.length})
+                </h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {selectedRecord.staff.map((s, i) => (
+                    <div key={i} className="flex justify-between items-center p-3 border rounded bg-white shadow-sm">
+                      <span className="font-medium">{s.name}</span>
+                      <Badge variant="secondary">{s.role}</Badge>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Farmers Section */}
+              <div>
+                <h4 className="font-semibold mb-3 flex items-center gap-2">
+                  <Users className="h-4 w-4" />
+                  Farmers ({selectedRecord.farmers.length})
+                </h4>
+                <div className="border rounded overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full border-collapse text-sm">
+                      <thead>
+                        <tr className="bg-gray-100 text-gray-600">
+                          <th className="text-left py-2 px-3 font-medium border">Name</th>
+                          <th className="text-left py-2 px-3 font-medium border">Gender</th>
+                          <th className="text-left py-2 px-3 font-medium border">ID No</th>
+                          <th className="text-left py-2 px-3 font-medium border">Phone</th>
+                          <th className="text-left py-2 px-3 font-medium border">Location</th>
+                          <th className="text-left py-2 px-3 font-medium border">Region</th>
+                          <th className="text-left py-2 px-3 font-medium border">County</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedRecord.farmers.map((f, i) => (
+                          <tr key={i} className="hover:bg-gray-50 border-b last:border-0">
+                            <td className="py-2 px-3 border text-gray-700">{f.name}</td>
+                            <td className="py-2 px-3 border text-gray-700"><Badge variant={f.gender === 'Male' ? 'default' : 'secondary'} className={f.gender === 'Male' ? 'bg-blue-100 text-blue-800' : 'bg-pink-100 text-pink-800'}>{f.gender || 'N/A'}</Badge></td>
+                            <td className="py-2 px-3 border text-gray-700"><code className="bg-gray-100 px-2 py-1 rounded text-xs">{f.idNo || 'N/A'}</code></td>
+                            <td className="py-2 px-3 border text-gray-700">{f.phoneNo || 'N/A'}</td>
+                            <td className="py-2 px-3 border text-gray-700">{f.location || 'N/A'}</td>
+                            <td className="py-2 px-3 border text-gray-700"><Badge variant="secondary">{f.region || 'N/A'}</Badge></td>
+                            <td className="py-2 px-3 border text-gray-700"><Badge variant="outline" className="bg-purple-50 text-purple-700">{f.county || 'N/A'}</Badge></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
               </div>
             </div>
-            <div>
-              <h4 className="font-semibold mb-3">Farmers ({selectedRecord?.farmers.length || 0})</h4>
-              <div className="max-h-64 overflow-y-auto">
-                <table className="w-full border-collapse border border-gray-300 text-sm">
-                  <thead>
-                    <tr className="bg-gray-100">
-                      {['Name', 'Gender', 'ID Number', 'Phone', 'Location', 'Region', 'County'].map(h => (
-                        <th key={h} className="text-left py-2 px-3 font-medium text-gray-600 border">{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {selectedRecord?.farmers.map((f, i) => (
-                      <tr key={i} className="border-b hover:bg-gray-50">
-                        <td className="py-2 px-3 border text-gray-700">{f.name}</td>
-                        <td className="py-2 px-3 border text-gray-700"><Badge variant={f.gender === 'Male' ? 'default' : 'secondary'} className={f.gender === 'Male' ? 'bg-blue-100 text-blue-800' : 'bg-pink-100 text-pink-800'}>{f.gender || 'N/A'}</Badge></td>
-                        <td className="py-2 px-3 border text-gray-700"><code className="bg-gray-100 px-2 py-1 rounded text-sm">{f.idNo || 'N/A'}</code></td>
-                        <td className="py-2 px-3 border text-gray-700">{f.phoneNo || 'N/A'}</td>
-                        <td className="py-2 px-3 border text-gray-700">{f.location || 'N/A'}</td>
-                        <td className="py-2 px-3 border text-gray-700"><Badge variant="secondary">{f.region || 'N/A'}</Badge></td>
-                        <td className="py-2 px-3 border text-gray-700"><Badge variant="outline" className="bg-purple-50 text-purple-700">{f.county || 'N/A'}</Badge></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
+          ) : (
+            <div className="text-center py-10 text-muted-foreground">No record selected</div>
+          )}
+
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsViewDialogOpen(false)}>Close</Button>
           </DialogFooter>

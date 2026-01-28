@@ -9,6 +9,7 @@ interface ProtectedRouteProps {
 const ProtectedRoute = ({ children, allowedRoles }: ProtectedRouteProps) => {
   const { user, userRole, loading } = useAuth();
 
+  // 1️⃣ Show loader while waiting for auth/role
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
@@ -20,16 +21,17 @@ const ProtectedRoute = ({ children, allowedRoles }: ProtectedRouteProps) => {
     );
   }
 
-  // User not logged in → take to login page
+  // 2️⃣ If user is not logged in, redirect to login
   if (!user) {
     return <Navigate to="/auth" replace />;
   }
 
-  // User logged in but role not allowed → send them to the dashboard home
-  if (allowedRoles && userRole && !allowedRoles.includes(userRole)) {
+  // 3️⃣ If allowedRoles is defined and the user role is NOT in it, redirect
+  if (allowedRoles && (!userRole || !allowedRoles.includes(userRole))) {
     return <Navigate to="/dashboard" replace />;
   }
 
+  // 4️⃣ Otherwise render children
   return <>{children}</>;
 };
 
