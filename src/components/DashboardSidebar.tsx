@@ -13,7 +13,6 @@ import {
   UserPlus,
   LineChart,
   HeartPulse
-
 } from "lucide-react";
 
 import { NavLink } from "@/components/NavLink";
@@ -34,6 +33,7 @@ import {
 
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
 import { useAuth } from "@/contexts/AuthContext";
+// ✅ FIXED: Import from the new helper file instead of the page
 import { isChiefAdmin } from "@/pages/onboardingpage";
 
 // Base menu items without User Management
