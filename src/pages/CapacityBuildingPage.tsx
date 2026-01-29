@@ -13,7 +13,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Download, Users, BookOpen, Edit, Trash2, Calendar, Eye, MapPin, GraduationCap, Upload, User, UserCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { isChiefAdmin } from "./onboardingpage";
+import { isChiefAdmin } from "@/contexts/authhelper";
 
 // --- Types ---
 interface TrainingRecord {

@@ -11,7 +11,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Download, MapPin, Eye, Droplets, Users, Building, Trash2, Upload, Plus, Edit } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { isChiefAdmin } from "./onboardingpage";
+import { isChiefAdmin } from "@/contexts/authhelper";
 
 // REALTIME DATABASE IMPORTS ONLY
 import { 

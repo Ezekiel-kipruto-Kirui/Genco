@@ -10,7 +10,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Download, User, Phone, MapPin, Globe, Calendar, DollarSign, Eye, Edit, Save, X, Upload, Trash2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { isChiefAdmin } from "./onboardingpage";
+import { isChiefAdmin } from "@/contexts/authhelper";
 import { uploadDataWithValidation, formatValidationErrors, UploadResult } from "@/lib/uploads-util";
 
 // Types

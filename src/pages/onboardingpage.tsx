@@ -29,6 +29,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import * as XLSX from 'xlsx';
+import { isChiefAdmin } from "@/contexts/authhelper";
 
 // --- Constants ---
 const COLLECTION_NAME = "Onboarding";
@@ -79,9 +80,7 @@ interface Stats {
 
 // --- Utility Functions ---
 
-export const isChiefAdmin = (userRole: string | null): boolean => {
-  return userRole === 'chief-admin';
-};
+
 
 const getTopicIcon = (topic: string) => {
   const topicLower = topic.toLowerCase();

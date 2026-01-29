@@ -20,7 +20,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Download, Warehouse, Eye, Calendar, Building, DollarSign, Package, Archive, Edit, Save, X, Upload, Trash2, Plus, LandPlot } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { isChiefAdmin } from "./onboardingpage";
+import { isChiefAdmin } from "@/contexts/authhelper";
 import { uploadDataWithValidation, formatValidationErrors, UploadResult } from "@/lib/uploads-util";
 import { db } from "@/lib/firebase";
 

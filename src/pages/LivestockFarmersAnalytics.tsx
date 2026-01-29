@@ -12,7 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { isChiefAdmin } from "./onboardingpage";
+import { isChiefAdmin } from "@/contexts/authhelper";
 import { useAuth } from "@/contexts/AuthContext";
 
 const COLORS = {
