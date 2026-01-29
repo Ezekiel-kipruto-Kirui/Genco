@@ -20,7 +20,7 @@ import { isChiefAdmin } from "@/contexts/authhelper";
 interface AgeDistribution {
   "1-4"?: number;
   "5-8"?: number;
-  "8+"?: number;
+  "8+ "?: number;
 }
 
 interface GoatsData {
