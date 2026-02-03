@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef, ChangeEvent } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import { getAuth } from "firebase/auth"; // Import to get UID
+import { getAuth } from "firebase/auth";
 import { ref, set, update, remove, push, onValue, query, orderByChild, equalTo } from "firebase/database";
 import { db } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
@@ -30,20 +30,23 @@ interface TrainingRecord {
   programme?: string; 
   username?: string;
   fieldOfficer?: string;
+  
+  // Manual fields (Optional)
+  numberOfTrainers?: number;
+  numberOfSubCounties?: number;
+
   // Legacy
   Gender?: string;
   Modules?: string;
   Name?: string;
   Phone?: string;
   region?: string;
-  // Note: Assuming maleFarmers and femaleFarmers might exist in DB for stats
   maleFarmers?: number;
   femaleFarmers?: number;
 }
 
 interface Filters {
   search: string;
-  gender: string;
   startDate: string;
   endDate: string;
   modules: string;
@@ -52,8 +55,8 @@ interface Filters {
 
 interface Stats {
   totalParticipants: number;
-  totalMaleFarmers: number;
-  totalFemaleFarmers: number;
+  totalTrainers: number;      // Derived from unique officers
+  totalSubCounties: number;    // Derived from unique subcounties
 }
 
 interface Pagination {
@@ -73,6 +76,8 @@ interface EditForm {
   endDate: string;
   totalFarmers: number;
   programme: string;
+  numberOfTrainers: number;
+  numberOfSubCounties: number;
 }
 
 // --- Constants & Helpers ---
@@ -80,7 +85,7 @@ const PAGE_LIMIT = 15;
 
 const EXPORT_HEADERS = [
   'Date Created', 'Topic/Module', 'County/Region', 'Subcounty/Location', 
-  'Start Date', 'End Date', 'Total Farmers', 'Male Farmers', 'Female Farmers', 'Officer', 'Programme'
+  'Start Date', 'End Date', 'Total Farmers', 'Officers (Trainers)', 'Sub Counties', 'Officer', 'Programme'
 ];
 
 const parseDate = (date: any): Date | null => {
@@ -133,7 +138,7 @@ const CapacityBuildingPage = () => {
   const [allRecords, setAllRecords] = useState<TrainingRecord[]>([]);
   const [filteredRecords, setFilteredRecords] = useState<TrainingRecord[]>([]);
   const [activeProgram, setActiveProgram] = useState<string>(""); 
-  const [availablePrograms, setAvailablePrograms] = useState<string[]>([]); // Dynamic permissions
+  const [availablePrograms, setAvailablePrograms] = useState<string[]>([]); 
   
   const [loading, setLoading] = useState(true);
   const [exportLoading, setExportLoading] = useState(false);
@@ -161,7 +166,6 @@ const CapacityBuildingPage = () => {
 
   const [filters, setFilters] = useState<Filters>({
     search: "",
-    gender: "all",
     startDate: currentMonth.startDate,
     endDate: currentMonth.endDate,
     modules: "all",
@@ -170,8 +174,8 @@ const CapacityBuildingPage = () => {
 
   const [stats, setStats] = useState<Stats>({
     totalParticipants: 0,
-    totalMaleFarmers: 0,
-    totalFemaleFarmers: 0
+    totalTrainers: 0,
+    totalSubCounties: 0
   });
 
   const [pagination, setPagination] = useState<Pagination>({
@@ -190,7 +194,9 @@ const CapacityBuildingPage = () => {
     startDate: "",
     endDate: "",
     totalFarmers: 0,
-    programme: ""
+    programme: "",
+    numberOfTrainers: 0,
+    numberOfSubCounties: 0
   });
 
   // --- 1. Fetch User Permissions & Determine Available Programmes ---
@@ -198,13 +204,11 @@ const CapacityBuildingPage = () => {
     if (!userRole) return;
 
     if (isChiefAdmin(userRole)) {
-      // Chief Admins see both programmes
       setAvailablePrograms(["RANGE", "KPMD"]);
-      if (!activeProgram) setActiveProgram("KPMD"); // Default to KPMD
+      if (!activeProgram) setActiveProgram("KPMD");
       return;
     }
 
-    // For other roles, fetch specific permissions from DB
     const auth = getAuth();
     const uid = auth.currentUser?.uid;
     
@@ -214,13 +218,11 @@ const CapacityBuildingPage = () => {
     const unsubscribe = onValue(userRef, (snapshot) => {
       const data = snapshot.val();
       if (data && data.allowedProgrammes) {
-        // Extract keys where value is true
         const programs = Object.keys(data.allowedProgrammes).filter(
           key => data.allowedProgrammes[key] === true
         );
         setAvailablePrograms(programs);
         
-        // Auto-select the first available programme if current activeProgram is invalid or empty
         if (programs.length > 0 && !programs.includes(activeProgram)) {
           setActiveProgram(programs[0]);
         } else if (programs.length === 0) {
@@ -236,7 +238,7 @@ const CapacityBuildingPage = () => {
     return () => unsubscribe();
   }, [userRole, activeProgram]);
 
-  // --- 2. Data Fetching (Realtime with Programme Query) ---
+  // --- 2. Data Fetching ---
   useEffect(() => {
     if (!activeProgram) {
         setAllRecords([]);
@@ -245,7 +247,6 @@ const CapacityBuildingPage = () => {
     }
 
     setLoading(true);
-    // Query specifically for active programme using index defined in rules
     const dbQuery = query(
         ref(db, "capacityBuilding"), 
         orderByChild("programme"), 
@@ -286,28 +287,25 @@ const CapacityBuildingPage = () => {
     };
   }, [activeProgram, toast]);
 
-  // --- Filtering Logic ---
+  // --- Filtering Logic & Stats Calculation ---
   useEffect(() => {
     if (allRecords.length === 0) {
       setFilteredRecords([]);
-      setStats({ totalParticipants: 0, totalMaleFarmers: 0, totalFemaleFarmers: 0 });
+      setStats({ totalParticipants: 0, totalTrainers: 0, totalSubCounties: 0 });
       return;
     }
 
     const filtered = allRecords.filter(record => {
-      // 1. Region Filter
       const recordRegion = record.county || record.region;
       if (filters.region !== "all" && recordRegion?.toLowerCase() !== filters.region.toLowerCase()) {
         return false;
       }
 
-      // 2. Modules Filter
       const recordModules = record.topicTrained || record.Modules;
       if (filters.modules !== "all" && recordModules?.toLowerCase() !== filters.modules.toLowerCase()) {
         return false;
       }
 
-      // 3. Date Filter
       const recordDate = parseDate(record.startDate) || parseDate(record.createdAt) || parseDate(record.rawTimestamp);
       
       if (filters.startDate || filters.endDate) {
@@ -327,7 +325,6 @@ const CapacityBuildingPage = () => {
         }
       }
 
-      // 4. Search Filter
       if (debouncedSearch) {
         const lowerTerm = debouncedSearch.toLowerCase();
         const searchable = [
@@ -343,18 +340,25 @@ const CapacityBuildingPage = () => {
 
     setFilteredRecords(filtered);
 
-    const uniqueModules = new Set(filtered.map(r => r.topicTrained || r.Modules).filter(Boolean));
-    
-    // Update Stats
+    // --- CORRECTED STATS CALCULATION ---
+    // Derive counts from actual string data (unique officers, unique subcounties)
+    // rather than summing empty numeric fields.
     const totalParticipants = filtered.reduce((sum, r) => sum + (Number(r.totalFarmers) || 0), 0);
-    // Using optional chaining and defaulting to 0, assuming these fields might exist in DB
-    const totalMaleFarmers = filtered.reduce((sum, r) => sum + (Number((r as any).maleFarmers) || 0), 0);
-    const totalFemaleFarmers = filtered.reduce((sum, r) => sum + (Number((r as any).femaleFarmers) || 0), 0);
+    
+    // Count unique officers (Trainers)
+    const allOfficers = filtered.map(r => r.fieldOfficer || r.username).filter(Boolean);
+    const uniqueOfficersSet = new Set(allOfficers);
+    const totalTrainers = uniqueOfficersSet.size;
+
+    // Count unique subcounties
+    const allSubCounties = filtered.map(r => r.subcounty).filter(Boolean);
+    const uniqueSubCountiesSet = new Set(allSubCounties);
+    const totalSubCounties = uniqueSubCountiesSet.size;
 
     setStats({
       totalParticipants,
-      totalMaleFarmers,
-      totalFemaleFarmers
+      totalTrainers,
+      totalSubCounties
     });
 
     const totalPages = Math.ceil(filtered.length / pagination.limit);
@@ -374,7 +378,6 @@ const CapacityBuildingPage = () => {
     setFilters(prev => ({ 
         ...prev, 
         search: "", 
-        gender: "all",
         startDate: currentMonth.startDate, 
         endDate: currentMonth.endDate, 
         modules: "all", 
@@ -426,7 +429,9 @@ const CapacityBuildingPage = () => {
       startDate: record.startDate || "",
       endDate: record.endDate || "",
       totalFarmers: record.totalFarmers || 0,
-      programme: record.programme || activeProgram
+      programme: record.programme || activeProgram,
+      numberOfTrainers: record.numberOfTrainers || 0,
+      numberOfSubCounties: record.numberOfSubCounties || 0
     });
     setIsEditDialogOpen(true);
   };
@@ -442,7 +447,9 @@ const CapacityBuildingPage = () => {
         startDate: editForm.startDate,
         endDate: editForm.endDate,
         totalFarmers: Number(editForm.totalFarmers),
-        programme: editForm.programme
+        programme: editForm.programme,
+        numberOfTrainers: Number(editForm.numberOfTrainers),
+        numberOfSubCounties: Number(editForm.numberOfSubCounties)
       });
       
       toast({ title: "Success", description: "Record updated." });
@@ -491,6 +498,30 @@ const CapacityBuildingPage = () => {
     }
   };
 
+  const parseCSVLine = (line: string): string[] => {
+    const result: string[] = [];
+    let current = "";
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i];
+      if (char === '"') {
+        if (inQuotes && line[i + 1] === '"') {
+          current += '"';
+          i++;
+        } else {
+          inQuotes = !inQuotes;
+        }
+      } else if (char === ',' && !inQuotes) {
+        result.push(current);
+        current = "";
+      } else {
+        current += char;
+      }
+    }
+    result.push(current);
+    return result;
+  };
+
   const handleFileSelect = (e: ChangeEvent<HTMLInputElement>) => {
     if (e.target.files?.[0]) setUploadFile(e.target.files[0]);
   };
@@ -506,12 +537,52 @@ const CapacityBuildingPage = () => {
       if (isJSON) {
         parsedData = JSON.parse(text);
       } else {
-        const lines = text.split('\n').filter(l => l.trim());
-        const headers = lines[0].split(',').map(h => h.trim());
+        const lines = text.split(/\r?\n/).filter(l => l.trim());
+        if (lines.length < 2) throw new Error("CSV file is empty or has no data rows");
+
+        const rawHeaders = parseCSVLine(lines[0]);
+        const headers = rawHeaders.map(h => h.trim());
+        const cleanHeaders = headers.map(h =>
+          h
+            .replace(/^﻿/, '')
+            .trim()
+            .toLowerCase()
+            .replace(/\(.*?\)/g, '')
+            .replace(/[^a-z0-9 ]/g, '')
+            .replace(/\s+/g, ' ')
+        );
+
+        const findIndex = (keys: string[]) =>
+          cleanHeaders.findIndex(h => keys.some(k => h.includes(k)));
+
+        const idxTopic = findIndex(['topic trained', 'topic', 'module', 'modules', 'training']);
+        const idxCounty = findIndex(['county', 'region']);
+        const idxSub = findIndex(['subcounty', 'sub county', 'location', 'ward']);
+        const idxStart = findIndex(['start date', 'start']);
+        const idxEnd = findIndex(['end date', 'end']);
+        const idxTotal = findIndex(['total farmers', 'farmers', 'participants', 'number of farmers', 'no of farmers']);
+        const idxOfficer = findIndex(['field officer', 'trainer', 'facilitator', 'officer', 'username']);
+
+        const valAt = (values: string[], idx: number) => (idx >= 0 && idx < values.length ? values[idx] : '').trim();
+
         for (let i = 1; i < lines.length; i++) {
-          const values = lines[i].split(',').map(v => v.trim());
+          const values = parseCSVLine(lines[i]);
+          if (!values.some(v => v.trim() !== '')) continue;
+
           const obj: any = {};
-          headers.forEach((h, idx) => obj[h] = values[idx]);
+
+          headers.forEach((h, idx) => {
+            obj[h] = values[idx] !== undefined ? values[idx].trim() : '';
+          });
+
+          if (idxTopic !== -1) obj.topicTrained = valAt(values, idxTopic);
+          if (idxCounty !== -1) obj.county = valAt(values, idxCounty);
+          if (idxSub !== -1) obj.subcounty = valAt(values, idxSub);
+          if (idxStart !== -1) obj.startDate = valAt(values, idxStart);
+          if (idxEnd !== -1) obj.endDate = valAt(values, idxEnd);
+          if (idxTotal !== -1) obj.totalFarmers = Number(valAt(values, idxTotal)) || 0;
+          if (idxOfficer !== -1) obj.fieldOfficer = valAt(values, idxOfficer);
+
           parsedData.push(obj);
         }
       }
@@ -532,6 +603,7 @@ const CapacityBuildingPage = () => {
       toast({ title: "Success", description: `Uploaded ${count} records to ${activeProgram}.` });
       setIsUploadDialogOpen(false);
       setUploadFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = '';
     } catch (error) {
       console.error(error);
       toast({ title: "Error", description: "Invalid file format", variant: "destructive" });
@@ -553,8 +625,8 @@ const CapacityBuildingPage = () => {
         r.startDate || 'N/A',
         r.endDate || 'N/A',
         r.totalFarmers || 0,
-        (r as any).maleFarmers || 0,
-        (r as any).femaleFarmers || 0,
+        r.fieldOfficer || r.username || 'N/A', // Exporting Officer name instead of count
+        r.subcounty || 'N/A', // Exporting Subcounty name instead of count
         r.fieldOfficer || r.username || 'N/A',
         r.programme || activeProgram
       ]);
@@ -625,7 +697,6 @@ const CapacityBuildingPage = () => {
           <Button variant="outline" size="sm" onClick={() => { 
              setFilters({ 
                 search: "", 
-                gender: "all", 
                 startDate: "", 
                 endDate: "", 
                 modules: "all", 
@@ -665,14 +736,14 @@ const CapacityBuildingPage = () => {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <StatsCard title="TOTAL PARTICIPANTS" value={stats.totalParticipants.toLocaleString()} icon={Users} description="Total attendance" />
-        <StatsCard title="MALE FARMERS" value={stats.totalMaleFarmers.toLocaleString()} icon={User} description="Male attendees" />
-        <StatsCard title="FEMALE FARMERS" value={stats.totalFemaleFarmers.toLocaleString()} icon={UserCircle} description="Female attendees" />
+        <StatsCard title="TOTAL PARTICIPANTS" value={stats.totalParticipants.toLocaleString()} icon={Users} description="Total farmers trained" />
+        <StatsCard title="TOTAL OFFICERS (TRAINERS)" value={stats.totalTrainers.toLocaleString()} icon={User} description="Officers Involved" />
+        <StatsCard title="SUB COUNTIES COVERED" value={stats.totalSubCounties.toLocaleString()} icon={MapPin} description="Sub-counties reached" />
       </div>
 
       <Card className="shadow-lg bg-white">
         <CardContent className="pt-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             <div className="space-y-2">
               <Label>Search</Label>
               <Input placeholder="Topic, region, officer..." value={searchValue} onChange={(e) => handleSearch(e.target.value)} />
@@ -692,12 +763,11 @@ const CapacityBuildingPage = () => {
               </Select>
             </div>
             <div className="space-y-2">
-              <Label>From Date</Label>
-              <Input type="date" value={filters.startDate} onChange={(e) => handleFilterChange("startDate", e.target.value)} />
-            </div>
-            <div className="space-y-2">
-              <Label>To Date</Label>
-              <Input type="date" value={filters.endDate} onChange={(e) => handleFilterChange("endDate", e.target.value)} />
+              <Label>Date Range</Label>
+              <div className="flex gap-2">
+                 <Input type="date" value={filters.startDate} onChange={(e) => handleFilterChange("startDate", e.target.value)} className="flex-1" />
+                 <Input type="date" value={filters.endDate} onChange={(e) => handleFilterChange("endDate", e.target.value)} className="flex-1" />
+              </div>
             </div>
           </div>
         </CardContent>
@@ -735,7 +805,7 @@ const CapacityBuildingPage = () => {
                         <td className="p-4">{record.county || 'N/A'}</td>
                         <td className="p-4">{record.subcounty || 'N/A'}</td>
                         <td className="p-4">{ record.location || 'N/A'}</td>
-                        <td className="p-4"><Badge>{record.totalFarmers || 0}</Badge></td>
+                        <td className="p-4"><Badge variant="outline">{record.totalFarmers || 0}</Badge></td>
                         <td className="p-4 text-gray-600">{record.fieldOfficer || record.username || 'N/A'}</td>
                         <td className="p-4">
                           <div className="flex gap-2">
@@ -772,6 +842,10 @@ const CapacityBuildingPage = () => {
             <div className="space-y-4 py-4">
               <div className="grid grid-cols-2 gap-4"><div><Label>Topic</Label><p>{viewingRecord.topicTrained || viewingRecord.Modules}</p></div><div><Label>Date</Label><p>{formatDate(viewingRecord.createdAt)}</p></div></div>
               <div className="grid grid-cols-2 gap-4"><div><Label>Region</Label><p>{viewingRecord.county}</p></div><div><Label>Location</Label><p>{viewingRecord.subcounty}</p></div></div>
+              <div className="grid grid-cols-2 gap-4">
+                 <div><Label>Farmers Trained</Label><p>{viewingRecord.totalFarmers}</p></div>
+                 <div><Label>Officer</Label><p>{viewingRecord.fieldOfficer}</p></div>
+              </div>
               <div className="bg-gray-50 p-4 rounded"><Label>Details</Label><p className="text-sm mt-1">{viewingRecord.totalFarmers} farmers trained by {viewingRecord.fieldOfficer}.</p></div>
             </div>
           )}

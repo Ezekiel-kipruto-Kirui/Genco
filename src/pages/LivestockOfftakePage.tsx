@@ -12,7 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Download, Users, MapPin, Eye, Calendar, Scale, Phone, CreditCard, Edit, Trash2, Weight, Upload, Loader2 } from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
+import { toast, useToast } from "@/hooks/use-toast";
 import { isChiefAdmin } from "@/contexts/authhelper";
 
 // Types
@@ -53,6 +53,9 @@ interface Stats {
   averageCarcassWeight: number;
   averageRevenue: number;
   totalFarmers: number;
+  totalMaleFarmers: number;
+  totalFemaleFarmers: number;
+  avgPricePerCarcassKg: number;
 }
 
 interface Pagination {
@@ -82,6 +85,13 @@ interface WeightEditForm {
 // Constants
 const PAGE_LIMIT = 15;
 const AVAILABLE_PROGRAMS = ["KPMD", "RANGE"];
+
+// --- HELPER: Clean Number for Currency/Weight ---
+const cleanNumber = (val: string): number => {
+  if (!val) return 0;
+  const cleaned = String(val).replace(/[^0-9.-]/g, '');
+  return parseFloat(cleaned) || 0;
+};
 
 // Helper functions
 const parseDate = (date: any): Date | null => {
@@ -199,7 +209,10 @@ const LivestockOfftakePage = () => {
     averageLiveWeight: 0,
     averageCarcassWeight: 0,
     averageRevenue: 0,
-    totalFarmers: 0
+    totalFarmers: 0,
+    totalMaleFarmers: 0,
+    totalFemaleFarmers: 0,
+    avgPricePerCarcassKg: 0
   });
 
   const [pagination, setPagination] = useState<Pagination>({
@@ -228,7 +241,249 @@ const LivestockOfftakePage = () => {
 
   const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
 
-  // --- NEW: Fetch User Permissions ---
+  // --- HELPER: Parse CSV Line (Handles quotes) ---
+  const parseCSVLine = (text: string): string[] => {
+    const result: string[] = [];
+    let current = '';
+    let inQuotes = false;
+    for (let i = 0; i < text.length; i++) {
+      const char = text[i];
+      if (char === '"') {
+        inQuotes = !inQuotes;
+      } else if (char === ',' && !inQuotes) {
+        result.push(current);
+        current = '';
+      } else {
+        current += char;
+      }
+    }
+    result.push(current);
+    return result;
+  };
+const parseCSVFile = (file: File) => {
+  const reader = new FileReader();
+
+  reader.onload = (e) => {
+    const text = e.target?.result as string;
+    const rows = text.split('\n').filter(r => r.trim() !== '');
+
+    if (rows.length < 2) {
+      toast({
+        title: "Error",
+        description: "CSV file is empty or invalid.",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    // ===============================
+    // 1. PARSE & NORMALIZE HEADERS
+    // ===============================
+    const rawHeaders = parseCSVLine(rows[0]);
+
+    const headers = rawHeaders.map(h => ({
+      original: h.trim(),
+      clean: h
+        .trim()
+        .toLowerCase()
+        .replace(/\(.*?\)/g, '')   // remove (kg), (KES)
+        .replace(/[^a-z0-9 ]/g, '') // remove symbols
+        .replace(/\s+/g, ' ')
+    }));
+
+    const findIndex = (keys: string[]) =>
+      headers.findIndex(h => keys.some(k => h.clean.includes(k)));
+
+    // ===============================
+    // 2. TRANSACTION COLUMNS
+    // ===============================
+    const idxDate = findIndex(['date']);
+    const idxName = findIndex(['farmer name', 'name']);
+    const idxGender = findIndex(['gender']);
+    const idxId = findIndex(['id number', 'idnumber', 'id']);
+    const idxPhone = findIndex(['phone number', 'phone']);
+    const idxCounty = findIndex(['county', 'region']);
+    const idxSub = findIndex(['subcounty', 'sub county']);
+    const idxLoc = findIndex(['location', 'village']);
+    const idxProg = findIndex(['programme']);
+    const idxUser = findIndex(['username', 'user']);
+    const idxUserId = findIndex(['user id', 'offtake user id']);
+
+    // ===============================
+    // 3. GOAT COLUMNS (PER ROW OR MULTI-COLUMN)
+    // ===============================
+    const idxLive = headers.findIndex(h => h.clean.startsWith('live weight'));
+    const idxCarcass = headers.findIndex(h => h.clean.startsWith('carcass weight'));
+    const idxPrice = headers.findIndex(h => h.clean.includes('price'));
+
+    const animalColumnMap = new Map<number, { live?: number; carcass?: number; price?: number; number?: number }>();
+
+    headers.forEach((h, i) => {
+      const match = h.clean.match(/(\d+)/);
+      if (!match) return;
+      const num = parseInt(match[1], 10);
+      if (Number.isNaN(num)) return;
+
+      const isLive = h.clean.includes('live weight');
+      const isCarcass = h.clean.includes('carcass weight') || h.clean.includes('carcass');
+      const isPrice = h.clean.includes('price');
+      const isGoatNo = h.clean.includes('goat') && (h.clean.includes('number') || h.clean.includes('no'));
+
+      if (!isLive && !isCarcass && !isPrice && !isGoatNo) return;
+
+      const existing = animalColumnMap.get(num) || {};
+      if (isLive) existing.live = i;
+      if (isCarcass) existing.carcass = i;
+      if (isPrice) existing.price = i;
+      if (isGoatNo) existing.number = i;
+      animalColumnMap.set(num, existing);
+    });
+
+    const animalColumnIndices = Array.from(animalColumnMap.keys()).sort((a, b) => a - b);
+    const hasMultiAnimalColumns = animalColumnIndices.length > 0;
+
+    if (idxId === -1) {
+      toast({
+        title: "CSV Error",
+        description: "ID Number column is missing.",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    const transactionsMap = new Map<string, any>();
+    let lastTransactionKey: string | null = null;
+
+    const buildGoatsFromRow = (cols: string[]) => {
+      const goats: { live: string; carcass: string; price: string }[] = [];
+
+      if (hasMultiAnimalColumns) {
+        for (const idx of animalColumnIndices) {
+          const col = animalColumnMap.get(idx);
+          const liveVal = col?.live !== undefined ? cols[col.live] : '';
+          const carcassVal = col?.carcass !== undefined ? cols[col.carcass] : '';
+          const priceVal = col?.price !== undefined ? cols[col.price] : '';
+
+          if (![liveVal, carcassVal, priceVal].some(v => v && v.trim() !== '')) continue;
+
+          goats.push({
+            live: liveVal ? cleanNumber(liveVal).toFixed(1) : '',
+            carcass: carcassVal ? cleanNumber(carcassVal).toFixed(2) : '',
+            price: priceVal ? cleanNumber(priceVal).toFixed(2) : ''
+          });
+        }
+
+        return goats;
+      }
+
+      const liveVal = idxLive !== -1 ? cols[idxLive] : '';
+      const carcassVal = idxCarcass !== -1 ? cols[idxCarcass] : '';
+      const priceVal = idxPrice !== -1 ? cols[idxPrice] : '';
+
+      if (![liveVal, carcassVal, priceVal].some(v => v && v.trim() !== '')) return goats;
+
+      goats.push({
+        live: liveVal ? cleanNumber(liveVal).toFixed(1) : '',
+        carcass: carcassVal ? cleanNumber(carcassVal).toFixed(2) : '',
+        price: priceVal ? cleanNumber(priceVal).toFixed(2) : ''
+      });
+
+      return goats;
+    };
+
+    // ===============================
+    // 4. PROCESS ROWS
+    // ===============================
+    for (let i = 1; i < rows.length; i++) {
+      const cols = parseCSVLine(rows[i]);
+      if (!cols || cols.every(c => !c.trim())) continue;
+
+      const id = cols[idxId]?.trim();
+      const rawDate = cols[idxDate]?.trim() || '';
+      const uniqueKey = id ? `${id}_${rawDate}` : (lastTransactionKey || '');
+
+      if (!uniqueKey) continue;
+
+      // -------------------------------
+      // CREATE TRANSACTION (ONCE)
+      // -------------------------------
+      if (id && !transactionsMap.has(uniqueKey)) {
+        const loc = cols[idxLoc] || cols[idxCounty] || 'UNK';
+        const prefix = loc.substring(0, 3).toUpperCase();
+        const generatedUserId = `${prefix}${Math.floor(1000 + Math.random() * 9000)}`;
+
+        let formattedDate = rawDate;
+        const parsedDate = parseDate(rawDate);
+        if (parsedDate) {
+          formattedDate = parsedDate
+            .toLocaleDateString('en-GB', {
+              day: '2-digit',
+              month: 'short',
+              year: 'numeric'
+            })
+            .replace(/ /g, ' ');
+        }
+
+        transactionsMap.set(uniqueKey, {
+          date: formattedDate,
+          name: cols[idxName] || '',
+          gender: cols[idxGender] || '',
+          idNumber: id,
+          phone: cols[idxPhone] || '',
+          county: cols[idxCounty] || '',
+          subcounty: cols[idxSub] || '',
+          location: cols[idxLoc] || '',
+          programme: cols[idxProg] || activeProgram,
+          username:
+            cols[idxUser] ||
+            auth.currentUser?.displayName ||
+            auth.currentUser?.email ||
+            'admin',
+          createdAt: Date.now(),
+          offtakeUserId: idxUserId !== -1 ? cols[idxUserId] : generatedUserId,
+          goats: []
+        });
+      }
+
+      const transaction = transactionsMap.get(uniqueKey);
+      if (!transaction) continue;
+
+      lastTransactionKey = uniqueKey;
+
+      // -------------------------------
+      // ROW GOATS (SINGLE OR MULTI-COLUMN)
+      // -------------------------------
+      const goats = buildGoatsFromRow(cols);
+      if (goats.length === 0) continue;
+
+      goats.forEach(goat => transaction.goats.push(goat));
+    }
+
+    // ===============================
+    // 5. FINAL RESULT
+    // ===============================
+    const transactions = Array.from(transactionsMap.values());
+
+    if (transactions.length === 0) {
+      toast({
+        title: "No Data",
+        description: "No valid transactions found.",
+        variant: "destructive"
+      });
+    } else {
+      setUploadPreview(transactions);
+      toast({
+        title: "Parsed Successfully",
+        description: `Found ${transactions.length} transactions`
+      });
+    }
+  };
+
+  reader.readAsText(file);
+};
+
+
+  // --- Fetch User Permissions ---
   useEffect(() => {
     const uid = auth.currentUser?.uid;
     if (!uid) {
@@ -346,7 +601,10 @@ const LivestockOfftakePage = () => {
         averageLiveWeight: 0,
         averageCarcassWeight: 0,
         averageRevenue: 0,
-        totalFarmers: 0
+        totalFarmers: 0,
+        totalMaleFarmers: 0,
+        totalFemaleFarmers: 0,
+        avgPricePerCarcassKg: 0
       });
       return;
     }
@@ -403,6 +661,13 @@ const LivestockOfftakePage = () => {
     
     const uniqueRegions = new Set(filtered.map(f => f.region).filter(Boolean));
     const totalFarmers = filtered.length;
+    
+    let totalMaleFarmers = 0;
+    let totalFemaleFarmers = 0;
+    filtered.forEach(record => {
+      if (record.gender?.toLowerCase() === 'male') totalMaleFarmers++;
+      else if (record.gender?.toLowerCase() === 'female') totalFemaleFarmers++;
+    });
 
     const totalLiveWeight = filtered.reduce((sum, record) => sum + calculateTotal(record.liveWeight), 0);
     const totalCarcassWeight = filtered.reduce((sum, record) => sum + calculateTotal(record.carcassWeight || []), 0);
@@ -410,6 +675,7 @@ const LivestockOfftakePage = () => {
     const averageLiveWeight = totalAnimals > 0 ? totalLiveWeight / totalAnimals : 0;
     const averageCarcassWeight = totalAnimals > 0 ? totalCarcassWeight / totalAnimals : 0;
     const averageRevenue = totalAnimals > 0 ? totalRevenue / totalAnimals : 0;
+    const avgPricePerCarcassKg = totalCarcassWeight > 0 ? totalRevenue / totalCarcassWeight : 0;
 
     setStats({
       totalRegions: uniqueRegions.size,
@@ -418,7 +684,10 @@ const LivestockOfftakePage = () => {
       averageLiveWeight,
       averageCarcassWeight,
       averageRevenue,
-      totalFarmers
+      totalFarmers,
+      totalMaleFarmers,
+      totalFemaleFarmers,
+      avgPricePerCarcassKg
     });
 
     const totalPages = Math.ceil(filtered.length / pagination.limit);
@@ -576,123 +845,12 @@ const LivestockOfftakePage = () => {
     }
   };
 
-  // --- UPDATED UPLOAD FUNCTIONALITY ---
-  
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
       setUploadFile(file);
       parseCSVFile(file);
     }
-  };
-
-    const parseCSVFile = (file: File) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const text = e.target?.result as string;
-      const rows = text.split('\n').filter(row => row.trim() !== '');
-      
-      if (rows.length < 2) {
-        toast({ title: "Error", description: "CSV file is empty or invalid.", variant: "destructive" });
-        return;
-      }
-
-      // --- ROBUST CSV PARSER HELPER ---
-      // This function splits a CSV line correctly, ignoring commas inside quotes (e.g. "Doe, John")
-      const parseCSVLine = (line: string): string[] => {
-        // Regex explanation: Split on comma ONLY if followed by an even number of quotes (meaning we are outside a quoted field)
-        const splitLine = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/);
-        return splitLine.map((field) => field.trim().replace(/^"|"$/g, '')); // Remove surrounding quotes
-      };
-      // ---------------------------------
-
-      // Parse headers robustly
-      const headers = parseCSVLine(rows[0]).map(h => h.toLowerCase());
-      
-      // Robust column finder (checks for multiple possible header names)
-      const getColIndex = (keywords: string[]) => headers.findIndex(h => keywords.some(k => h.includes(k)));
-
-      // Map columns (updated to match your specific screenshot headers)
-      const idxDate = getColIndex(['date']);
-      const idxName = getColIndex(['farmer name', 'name']);
-      const idxGender = getColIndex(['gender']);
-      const idxId = getColIndex(['id number', 'idnumber', 'id']);
-      const idxPhone = getColIndex(['phone number', 'phone']);
-      // Matches "Programme County" or just "County"
-      const idxCounty = getColIndex(['programme county', 'county']);
-      const idxSub = getColIndex(['subcounty', 'sub county']);
-      const idxLoc = getColIndex(['location']);
-      // Matches "Live" or "Live Weight"
-      const idxLive = getColIndex(['live', 'live weight']);
-      // Matches "Carcass" or "Carcass Weight"
-      const idxCarcass = getColIndex(['carcass', 'carcass weight']);
-      // Matches "Price per Animal" or "Price"
-      const idxPrice = getColIndex(['price per animal', 'price']);
-      const idxUser = getColIndex(['username', 'user']);
-      const idxProg = getColIndex(['programme']);
-      const idxUserId = getColIndex(['user id', 'offtake user id']);
-
-      const transactionsMap = new Map<string, any>();
-
-      // Process Data Rows
-      for (let i = 1; i < rows.length; i++) {
-        // Use the robust parser instead of simple split(',')
-        const cols = parseCSVLine(rows[i]);
-        
-        // Skip rows that are too short (empty rows at end of file)
-        if (cols.length < headers.length / 2) continue; 
-
-        const id = cols[idxId] || '';
-        const date = cols[idxDate] || '';
-        
-        // --- GROUPING LOGIC ---
-        // Records with SAME ID and SAME DATE will be merged into one transaction.
-        // This is intended behavior for "Livestock Offtake" (1 farmer, 1 date, multiple animals).
-        const uniqueKey = `${id}_${date}`;
-
-        // Generate offtakeUserId if not in CSV (e.g., GAR0001)
-        const loc = cols[idxLoc] || cols[idxCounty] || '';
-        const userIdPrefix = loc.substring(0, 3).toUpperCase();
-        const generatedUserId = `${userIdPrefix}${Math.floor(1000 + Math.random() * 9000)}`;
-
-        if (!transactionsMap.has(uniqueKey)) {
-          transactionsMap.set(uniqueKey, {
-            date: date, 
-            name: cols[idxName] || '',
-            gender: cols[idxGender] || '',
-            idNumber: id,
-            phone: cols[idxPhone] || '',
-            // "Programme County" in CSV maps to "county" in Firebase
-            county: cols[idxCounty] || '', 
-            subcounty: cols[idxSub] || '',
-            location: cols[idxLoc] || '',
-            programme: cols[idxProg] || activeProgram,
-            username: cols[idxUser] || auth.currentUser?.displayName || auth.currentUser?.email || 'admin',
-            createdAt: Date.now(),
-            offtakeUserId: idxUserId !== -1 ? cols[idxUserId] : generatedUserId,
-            goats: []
-          });
-        }
-
-        const transaction = transactionsMap.get(uniqueKey);
-        const live = parseFloat(cols[idxLive]) || 0;
-        const carcass = parseFloat(cols[idxCarcass]) || 0;
-        const price = parseFloat(cols[idxPrice]) || 0;
-
-        // Add animal details to the array
-        if (live > 0 || price > 0) {
-          transaction.goats.push({
-            live: live.toFixed(1),        // "25"
-            carcass: carcass.toFixed(2),    // "10.50"
-            price: price.toFixed(2)         // "6000.00"
-          });
-        }
-      }
-
-      const transactions = Array.from(transactionsMap.values());
-      setUploadPreview(transactions);
-    };
-    reader.readAsText(file);
   };
 
   const handleUpload = async () => {
@@ -708,14 +866,30 @@ const LivestockOfftakePage = () => {
       uploadPreview.forEach(record => {
         const newKey = push(ref(db, 'offtakes')).key;
         const totalGoats = record.goats.length;
-        // Calculate total price from the formatted strings in the array
+        
+        // Calculate totals from parsed strings
         const totalPrice = record.goats.reduce((sum: number, g: any) => sum + parseFloat(g.price), 0);
         
         updates[`offtakes/${newKey}`] = {
-          ...record,
-          // Ensure totals are numbers (not strings) in the root object
+          county: record.county,
+          createdAt: record.createdAt,
+          date: record.date,
+          gender: record.gender,
+          idNumber: record.idNumber,
+          location: record.location,
+          name: record.name,
+          offtakeUserId: record.offtakeUserId,
+          phone: record.phone,
+          programme: record.programme,
+          subcounty: record.subcounty,
+          username: record.username,
+          
+          // Calculated fields
           totalGoats: totalGoats,
-          totalPrice: totalPrice
+          totalPrice: totalPrice,
+          
+          // Nested structure as requested
+          goats: record.goats
         };
       });
 
@@ -723,7 +897,7 @@ const LivestockOfftakePage = () => {
 
       toast({
         title: "Upload Successful",
-        description: `Uploaded ${uploadPreview.length} records.`,
+        description: `Uploaded ${uploadPreview.length} transactions to Firebase.`,
       });
 
       setIsUploadDialogOpen(false);
@@ -734,7 +908,7 @@ const LivestockOfftakePage = () => {
       console.error("Error uploading:", error);
       toast({
         title: "Upload Failed",
-        description: "Check permissions or data format.",
+        description: "Check permissions or network connection.",
         variant: "destructive"
       });
     } finally {
@@ -1000,7 +1174,7 @@ const LivestockOfftakePage = () => {
         <div>
           <div className="text-2xl font-bold text-green-500 mb-2">{value}</div>
           {subValue && <div className="text-sm font-medium text-slate-600 mb-2">{subValue}</div>}
-          {description && <p className="text-xs mt-2 bg-orange-50 px-2 py-1 rounded-md border border-slate-100">{description}</p>}
+          {description && <p className="text-[10px] mt-2 bg-orange-50 px-2 py-1 rounded-md border border-slate-100">{description}</p>}
         </div>
       </CardContent>
     </Card>
@@ -1178,9 +1352,19 @@ const LivestockOfftakePage = () => {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <StatsCard title="COUNTIES" value={stats.totalRegions} icon={MapPin} description={`${stats.totalFarmers} farmers`} />
+        <StatsCard 
+          title="TOTAL FARMERS" 
+          value={stats.totalFarmers.toLocaleString()} 
+          icon={Users} 
+          description={`${stats.totalMaleFarmers} Males | ${stats.totalFemaleFarmers} Females`} 
+        />
         <StatsCard title="TOTAL ANIMALS" value={stats.totalAnimals.toLocaleString()} icon={Scale} description={`Avg Live: ${stats.averageLiveWeight.toFixed(1)}kg | Avg Carcass: ${stats.averageCarcassWeight.toFixed(1)}kg`} />
-        <StatsCard title="TOTAL REVENUE" value={safeTruncate(formatCurrency(stats.totalRevenue))} icon={CreditCard} description={`Average per goat: ${formatCurrency(stats.averageRevenue)}`} />
+        <StatsCard 
+          title="TOTAL REVENUE" 
+          value={safeTruncate(formatCurrency(stats.totalRevenue))} 
+          icon={CreditCard} 
+          description={`Avg Price per Goat: ${formatCurrency(stats.averageRevenue)} | Avg per Kg: ${formatCurrency(stats.avgPricePerCarcassKg)}`} 
+        />
       </div>
 
       <Card className="shadow-lg border-0 bg-white">
@@ -1486,7 +1670,8 @@ const LivestockOfftakePage = () => {
               Upload CSV Data
             </DialogTitle>
             <DialogDescription>
-              Upload a CSV file matching export format. Data will be grouped by ID Number and Date.
+              Upload a CSV file. Ensure columns include Date, ID Number, Live Weight, Carcass Weight, and Price per Animal.
+              Rows will be grouped by ID Number and Date.
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">
@@ -1498,25 +1683,28 @@ const LivestockOfftakePage = () => {
             {uploadPreview.length > 0 && (
               <div className="max-h-60 overflow-y-auto border rounded-md">
                 <table className="w-full text-sm text-left">
-                  <thead className="bg-gray-100">
+                  <thead className="bg-gray-100 sticky top-0">
                     <tr>
                       <th className="p-2">Farmer Name</th>
                       <th className="p-2">Date</th>
                       <th className="p-2">ID</th>
-                      <th className="p-2">User ID</th>
                       <th className="p-2">Goats</th>
+                      <th className="p-2">Total (KES)</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {uploadPreview.map((record, idx) => (
-                      <tr key={idx} className="border-t">
-                        <td className="p-2">{record.name}</td>
-                        <td className="p-2">{record.date}</td>
-                        <td className="p-2">{record.idNumber}</td>
-                        <td className="p-2">{record.offtakeUserId}</td>
-                        <td className="p-2">{record.goats.length}</td>
-                      </tr>
-                    ))}
+                    {uploadPreview.map((record, idx) => {
+                       const total = record.goats.reduce((sum: number, g: any) => sum + parseFloat(g.price), 0);
+                       return (
+                        <tr key={idx} className="border-t">
+                          <td className="p-2">{record.name}</td>
+                          <td className="p-2">{record.date}</td>
+                          <td className="p-2">{record.idNumber}</td>
+                          <td className="p-2">{record.goats.length}</td>
+                          <td className="p-2">{total.toLocaleString()}</td>
+                        </tr>
+                       )
+                    })}
                   </tbody>
                 </table>
               </div>

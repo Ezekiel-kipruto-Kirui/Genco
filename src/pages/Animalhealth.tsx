@@ -28,7 +28,8 @@ import {
   Download,
   CheckSquare,
   Square,
-  Save
+  Save,
+  AlertCircle
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -47,6 +48,19 @@ interface Vaccine {
   doses: number;
 }
 
+// --- NEW INTERFACE FOR ISSUES ---
+interface Issue {
+  id: string; // Simple ID for React keys
+  name: string;
+  raisedBy: string;
+  county: string;
+  subcounty: string;
+  location: string;
+  programme: string;
+  description: string;
+  status: 'responded' | 'not responded';
+}
+
 interface AnimalHealthActivity {
   id: string;
   date: string;
@@ -58,12 +72,13 @@ interface AnimalHealthActivity {
   vaccinetype?: string;
   number_doses?: number;
   fieldofficers?: FieldOfficer[];
+  issues?: Issue[]; // Added issues array
   createdAt: any;
   createdBy: string;
   status: 'completed';
 }
 
-// Vaccine options from the image
+// Vaccine options from image
 const VACCINE_OPTIONS = [
   "PPR",
   "CCPP", 
@@ -74,6 +89,8 @@ const VACCINE_OPTIONS = [
   "Brucellosis",
   "Foot and Mouth Disease"
 ];
+
+const PROGRAMME_OPTIONS = ["KPMD", "RANGE"];
 
 const AnimalHealthPage = () => {
   const [activities, setActivities] = useState<AnimalHealthActivity[]>([]);
@@ -89,6 +106,20 @@ const AnimalHealthPage = () => {
   const [fieldOfficers, setFieldOfficers] = useState<FieldOfficer[]>([]);
   const [selectedVaccines, setSelectedVaccines] = useState<string[]>([]);
   const [totalDoses, setTotalDoses] = useState<string>("");
+  
+  // --- NEW STATE FOR ISSUES ---
+  const [issues, setIssues] = useState<Issue[]>([]);
+  const [issueForm, setIssueForm] = useState<Partial<Issue>>({
+    name: "",
+    raisedBy: "",
+    county: "",
+    subcounty: "",
+    location: "",
+    programme: "KPMD",
+    description: "",
+    status: "not responded"
+  });
+
   const [activityForm, setActivityForm] = useState({
     date: "",
     county: "",
@@ -147,6 +178,11 @@ const AnimalHealthPage = () => {
             ? item.fieldofficers 
             : [];
 
+          // Ensure issues is an array
+          const issues = (item.issues && Array.isArray(item.issues))
+            ? item.issues
+            : [];
+
           return {
             id: key,
             date: item.date || '',
@@ -156,6 +192,7 @@ const AnimalHealthPage = () => {
             comment: item.comment || '',
             vaccines,
             fieldofficers,
+            issues, // Added issues
             createdAt: item.createdAt,
             createdBy: item.createdBy || 'unknown',
             status: item.status || 'completed'
@@ -202,6 +239,40 @@ const AnimalHealthPage = () => {
       console.error("Error calculating doses for activity:", activity.id, error);
       return 0;
     }
+  };
+
+  // --- ISSUE HANDLERS ---
+  
+  const handleAddIssue = () => {
+    if (!issueForm.name || !issueForm.raisedBy || !issueForm.description || !issueForm.programme) {
+      toast({ title: "Error", description: "Please fill all required issue fields", variant: "destructive" });
+      return;
+    }
+
+    const newIssue: Issue = {
+      id: Date.now().toString(),
+      name: issueForm.name,
+      raisedBy: issueForm.raisedBy,
+      county: issueForm.county || activityForm.county,
+      subcounty: issueForm.subcounty || activityForm.subcounty,
+      location: issueForm.location || activityForm.location,
+      programme: issueForm.programme || "KPMD",
+      description: issueForm.description,
+      status: issueForm.status || "not responded"
+    };
+
+    setIssues([...issues, newIssue]);
+    // Reset form slightly for next entry
+    setIssueForm({
+      ...issueForm,
+      name: "",
+      description: "",
+      status: "not responded"
+    });
+  };
+
+  const handleRemoveIssue = (issueId: string) => {
+    setIssues(issues.filter(i => i.id !== issueId));
   };
 
   const handleAddFieldOfficer = () => {
@@ -294,6 +365,7 @@ const AnimalHealthPage = () => {
         comment: activityForm.comment.trim(),
         vaccines: vaccines,
         fieldofficers: fieldOfficers,
+        issues: issues, // Include issues
         status: 'completed' as const,
         createdBy: user?.email || 'unknown',
         createdAt: new Date().toISOString(),
@@ -324,6 +396,17 @@ const AnimalHealthPage = () => {
       setFieldOfficerForm({ name: "", role: "" });
       setSelectedVaccines([]);
       setTotalDoses("");
+      setIssues([]); // Reset issues
+      setIssueForm({ // Reset issue form
+        name: "",
+        raisedBy: "",
+        county: "",
+        subcounty: "",
+        location: "",
+        programme: "KPMD",
+        description: "",
+        status: "not responded"
+      });
       setIsAddDialogOpen(false);
       
       // Refresh data
@@ -352,6 +435,7 @@ const AnimalHealthPage = () => {
         comment: activityForm.comment.trim(),
         vaccines: vaccines,
         fieldofficers: fieldOfficers,
+        issues: issues, // Include issues in update
       };
 
       console.log("Updating activity:", editingActivity.id, activityData);
@@ -378,6 +462,7 @@ const AnimalHealthPage = () => {
       setFieldOfficerForm({ name: "", role: "" });
       setSelectedVaccines([]);
       setTotalDoses("");
+      setIssues([]); // Reset issues
       fetchActivities();
     } catch (error) {
       console.error("Error updating animal health activity:", error);
@@ -519,7 +604,7 @@ const AnimalHealthPage = () => {
 
   const vaccinationRate = calculateVaccinationRate();
 
-  // Update the filteredActivities to search in vaccines
+  // Update of filteredActivities to search in vaccines
   const filteredActivities = useMemo(() => {
     try {
       return activities.filter(activity => {
@@ -532,15 +617,21 @@ const AnimalHealthPage = () => {
             (vaccine.type?.toLowerCase() || '').includes(searchTerm.toLowerCase())
           );
         
+        // Also search in issues
+        const matchesIssueSearch = (activity.issues || []).some((issue: Issue) => 
+          issue.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          issue.raisedBy?.toLowerCase().includes(searchTerm.toLowerCase())
+        );
+
         try {
           const activityDate = activity.date ? new Date(activity.date) : new Date(0);
           const matchesStartDate = !startDate || activityDate >= new Date(startDate);
           const matchesEndDate = !endDate || activityDate <= new Date(endDate + 'T23:59:59');
           
-          return matchesSearch && matchesStartDate && matchesEndDate;
+          return (matchesSearch || matchesIssueSearch) && matchesStartDate && matchesEndDate;
         } catch (dateError) {
           console.error("Error processing date for activity:", activity.id, dateError);
-          return matchesSearch;
+          return matchesSearch || matchesIssueSearch;
         }
       });
     } catch (error) {
@@ -549,7 +640,7 @@ const AnimalHealthPage = () => {
     }
   }, [activities, searchTerm, startDate, endDate]);
 
-  // Update the openEditDialog function
+  // Update of openEditDialog function
   const openEditDialog = (activity: AnimalHealthActivity) => {
     setEditingActivity(activity);
     setActivityForm({
@@ -565,19 +656,27 @@ const AnimalHealthPage = () => {
     const activityVaccines = getActivityVaccines(activity);
     setSelectedVaccines(activityVaccines.map(v => v.type));
     setTotalDoses(getActivityTotalDoses(activity).toString());
+
+    // Load issues
+    setIssues(activity.issues || []);
     
     setIsEditDialogOpen(true);
   };
 
-  // Update CSV export to handle multiple vaccines
+  // Update CSV export to handle multiple vaccines and issues
   const exportToCSV = () => {
     try {
-      const headers = ['Date', 'County', 'Subcounty', 'Location', 'Vaccines', 'Total Doses', 'Field Officers', 'Comment'];
+      const headers = ['Date', 'County', 'Subcounty', 'Location', 'Vaccines', 'Total Doses', 'Field Officers', 'Issues Summary', 'Comment'];
       const csvData = filteredActivities.map(activity => {
         const activityVaccines = getActivityVaccines(activity);
         const vaccineText = activityVaccines.map(v => `${v.type} (${v.doses} doses)`).join('; ');
         const totalDoses = getActivityTotalDoses(activity);
         
+        // Create issues summary text
+        const issuesSummary = (activity.issues || [])
+          .map(i => `${i.name} (${i.status})`)
+          .join('; ');
+
         return [
           formatDate(activity.date),
           activity.county || '',
@@ -586,6 +685,7 @@ const AnimalHealthPage = () => {
           vaccineText,
           totalDoses.toString(),
           (activity.fieldofficers || []).map(officer => `${officer.name} (${officer.role})`).join('; ') || '',
+          issuesSummary || '',
           activity.comment || ''
         ];
       });
@@ -618,7 +718,7 @@ const AnimalHealthPage = () => {
     }
   };
 
-  // Update the table to show multiple vaccines
+  // Update of table to show multiple vaccines
   const renderVaccinesInTable = (activity: AnimalHealthActivity) => {
     const activityVaccines = getActivityVaccines(activity);
     if (activityVaccines.length === 0) return "No vaccines";
@@ -660,7 +760,7 @@ const AnimalHealthPage = () => {
                 </Button>
               )}
             </DialogTrigger>
-            <DialogContent className="sm:max-w-[700px] bg-white rounded-2xl border-0 shadow-2xl max-h-[90vh] overflow-y-auto">
+            <DialogContent className="sm:max-w-[900px] bg-white rounded-2xl border-0 shadow-2xl max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle className="text-md font-semibold text-slate-900">
                   Record New Vaccination Activity
@@ -688,7 +788,10 @@ const AnimalHealthPage = () => {
                     <Input
                       id="county"
                       value={activityForm.county}
-                      onChange={(e) => setActivityForm({...activityForm, county: e.target.value})}
+                      onChange={(e) => {
+                        setActivityForm({...activityForm, county: e.target.value});
+                        setIssueForm({...issueForm, county: e.target.value});
+                      }}
                       placeholder="Enter county"
                       className="rounded-xl border-slate-300 focus:border-green-500 focus:ring-green-500 transition-all bg-white"
                       required
@@ -702,7 +805,10 @@ const AnimalHealthPage = () => {
                     <Input
                       id="subcounty"
                       value={activityForm.subcounty}
-                      onChange={(e) => setActivityForm({...activityForm, subcounty: e.target.value})}
+                      onChange={(e) => {
+                        setActivityForm({...activityForm, subcounty: e.target.value});
+                        setIssueForm({...issueForm, subcounty: e.target.value});
+                      }}
                       placeholder="Enter subcounty"
                       className="rounded-xl border-slate-300 focus:border-green-500 focus:ring-green-500 transition-all bg-white"
                     />
@@ -714,7 +820,10 @@ const AnimalHealthPage = () => {
                     <Input
                       id="location"
                       value={activityForm.location}
-                      onChange={(e) => setActivityForm({...activityForm, location: e.target.value})}
+                      onChange={(e) => {
+                        setActivityForm({...activityForm, location: e.target.value});
+                        setIssueForm({...issueForm, location: e.target.value});
+                      }}
                       placeholder="Enter specific location"
                       className="rounded-xl border-slate-300 focus:border-green-500 focus:ring-green-500 transition-all bg-white"
                       required
@@ -722,7 +831,7 @@ const AnimalHealthPage = () => {
                   </div>
                 </div>
 
-                {/* Vaccines Section - Updated for multiple selection */}
+                {/* Vaccines Section */}
                 <div className="space-y-4 border-t pt-4">
                   <div className="flex items-center justify-between">
                     <Label className="text-sm font-medium text-slate-700">
@@ -771,6 +880,92 @@ const AnimalHealthPage = () => {
                     )}
                   </div>
                 </div>
+
+                {/* --- NEW SECTION: ISSUES RAISED --- */}
+                <div className="space-y-4 border-t pt-4 bg-orange-50/50 p-4 rounded-xl">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-sm font-bold text-orange-700 flex items-center gap-2">
+                      <AlertCircle className="h-4 w-4" />
+                      Issues Raised ({issues.length})
+                    </Label>
+                  </div>
+
+                  {/* List of Current Issues */}
+                  {issues.length > 0 && (
+                    <div className="space-y-2 mb-4 max-h-40 overflow-y-auto">
+                      {issues.map((issue) => (
+                        <div key={issue.id} className="bg-white border border-orange-200 p-3 rounded-lg relative">
+                          <div className="flex justify-between items-start mb-2">
+                            <div className="font-semibold text-slate-800">{issue.name}</div>
+                            <Button variant="ghost" size="sm" onClick={() => handleRemoveIssue(issue.id)} className="h-6 w-6 p-0 text-red-500 hover:bg-red-50">
+                              <X className="h-4 w-4" />
+                            </Button>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2 text-xs text-slate-600">
+                            <span>Raised By: <b>{issue.raisedBy}</b></span>
+                            <span>Programme: <Badge variant="outline" className="text-[10px] px-1 h-4">{issue.programme}</Badge></span>
+                          </div>
+                          <div className="mt-2 text-sm text-slate-700 bg-slate-50 p-2 rounded">
+                            {issue.description}
+                          </div>
+                          <div className="flex justify-between items-center mt-2">
+                            <span className="text-xs text-slate-500">
+                              {issue.county}, {issue.subcounty}
+                            </span>
+                            <Badge variant={issue.status === 'responded' ? 'default' : 'secondary'} className={issue.status === 'responded' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}>
+                              {issue.status}
+                            </Badge>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Add New Issue Form */}
+                  <div className="bg-white p-4 rounded-lg border border-slate-200">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+                      <div className="space-y-1">
+                        <Label className="text-xs">Issue Name *</Label>
+                        <Input placeholder="e.g. Equipment Failure" value={issueForm.name} onChange={e => setIssueForm({...issueForm, name: e.target.value})} className="h-8 text-sm" />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Raised By *</Label>
+                        <Input placeholder="Officer Name" value={issueForm.raisedBy} onChange={e => setIssueForm({...issueForm, raisedBy: e.target.value})} className="h-8 text-sm" />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3 mb-3">
+                      <div className="space-y-1">
+                         <Label className="text-xs">Programme</Label>
+                         <Select value={issueForm.programme} onValueChange={(v) => setIssueForm({...issueForm, programme: v})}>
+                           <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                           <SelectContent>
+                             {PROGRAMME_OPTIONS.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+                           </SelectContent>
+                         </Select>
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Status</Label>
+                        <Select value={issueForm.status} onValueChange={(v) => setIssueForm({...issueForm, status: v as 'responded' | 'not responded'})}>
+                           <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                           <SelectContent>
+                             <SelectItem value="responded">Responded</SelectItem>
+                             <SelectItem value="not responded">Not Responded</SelectItem>
+                           </SelectContent>
+                         </Select>
+                      </div>
+                    </div>
+                    <div className="space-y-1 mb-3">
+                      <Label className="text-xs">Description *</Label>
+                      <Textarea placeholder="Describe the issue..." value={issueForm.description} onChange={e => setIssueForm({...issueForm, description: e.target.value})} className="min-h-[60px] text-sm" />
+                    </div>
+                    <div className="flex justify-end">
+                      <Button type="button" onClick={handleAddIssue} size="sm" className="bg-orange-500 hover:bg-orange-600 text-white h-8 px-4 text-xs font-semibold">
+                        Add Issue
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+                {/* --- END ISSUES SECTION --- */}
 
                 <div className="space-y-2">
                   <Label htmlFor="comment" className="text-sm font-medium text-slate-700">Comment</Label>
@@ -863,6 +1058,17 @@ const AnimalHealthPage = () => {
                     setFieldOfficerForm({ name: "", role: "" });
                     setSelectedVaccines([]);
                     setTotalDoses("");
+                    setIssues([]);
+                    setIssueForm({
+                        name: "",
+                        raisedBy: "",
+                        county: "",
+                        subcounty: "",
+                        location: "",
+                        programme: "KPMD",
+                        description: "",
+                        status: "not responded"
+                    });
                   }}
                   className="rounded-xl border-slate-300 hover:border-slate-400 transition-all text-slate-700"
                 >
@@ -1046,7 +1252,7 @@ const AnimalHealthPage = () => {
                       <th className="p-4 text-left font-semibold text-slate-700 text-sm">Location</th>
                       <th className="p-4 text-left font-semibold text-slate-700 text-sm">Vaccines</th>
                       <th className="p-4 text-left font-semibold text-slate-700 text-sm">Total Doses</th>
-                      <th className="p-4 text-left font-semibold text-slate-700 text-sm">Vaccination team</th>
+                      <th className="p-4 text-left font-semibold text-slate-700 text-sm">Issues</th> {/* Added Issues Column */}
                       <th className="p-4 text-left font-semibold text-slate-700 text-sm">Actions</th>
                     </tr>
                   </thead>
@@ -1098,18 +1304,14 @@ const AnimalHealthPage = () => {
                           </span>
                         </td>
                         <td className="p-4">
-                          <div className="flex items-center gap-2">
-                            <Users className="h-4 w-4 text-slate-500" />
-                            <span className="font-semibold text-slate-900 mr-2">{activity.fieldofficers?.length || 0}</span>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => openFieldOfficersDialog(activity.fieldofficers || [])}
-                              className="text-green-600 hover:text-green-700 hover:bg-green-50 rounded-lg text-xs"
-                            >
-                              View
-                            </Button>
-                          </div>
+                          {/* Issues Badge */}
+                          {(activity.issues && activity.issues.length > 0) ? (
+                            <Badge variant="destructive" className="bg-red-100 text-red-800 hover:bg-red-200 cursor-pointer" onClick={() => openViewDialog(activity)}>
+                              {activity.issues.length} Issue(s)
+                            </Badge>
+                          ) : (
+                            <span className="text-xs text-slate-400">None</span>
+                          )}
                         </td>
                         <td className="p-4">
                           <div className="flex gap-2">
@@ -1195,9 +1397,9 @@ const AnimalHealthPage = () => {
         </Card>
       </div>
 
-      {/* View Activity Dialog - Updated for multiple vaccines */}
+      {/* View Activity Dialog - Updated for issues */}
       <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
-        <DialogContent className="sm:max-w-[600px] bg-white rounded-2xl border-0 shadow-2xl">
+        <DialogContent className="sm:max-w-[700px] bg-white rounded-2xl border-0 shadow-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="text-xl font-semibold text-slate-900 flex items-center justify-between">
               <span>Vaccination Details</span>
@@ -1212,7 +1414,7 @@ const AnimalHealthPage = () => {
             </DialogTitle>
           </DialogHeader>
           {viewingActivity && (
-            <div className="space-y-6 max-h-[60vh] overflow-y-auto">
+            <div className="space-y-6 py-4">
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <Label className="text-sm font-medium text-slate-600">Date</Label>
@@ -1224,8 +1426,7 @@ const AnimalHealthPage = () => {
                     {getActivityTotalDoses(viewingActivity).toLocaleString()}
                   </p>
                 </div>
-              </div>
-              
+              </div>              
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <Label className="text-sm font-medium text-slate-600">County</Label>
@@ -1256,6 +1457,39 @@ const AnimalHealthPage = () => {
                 </div>
               </div>
 
+              {/* --- VIEW ISSUES SECTION --- */}
+              {(viewingActivity.issues && viewingActivity.issues.length > 0) && (
+                <div className="border-t pt-4">
+                  <Label className="text-sm font-bold text-orange-700 mb-3 flex items-center gap-2">
+                    <AlertCircle className="h-4 w-4" />
+                    Issues Raised ({viewingActivity.issues.length})
+                  </Label>
+                  <div className="space-y-3">
+                    {viewingActivity.issues.map((issue, index) => (
+                      <div key={index} className="bg-orange-50 border border-orange-200 rounded-lg p-4">
+                        <div className="flex justify-between items-start mb-2">
+                          <div className="font-bold text-slate-900 text-lg">{issue.name}</div>
+                          <Badge variant={issue.status === 'responded' ? 'default' : 'secondary'} className={issue.status === 'responded' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}>
+                            {issue.status}
+                          </Badge>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 text-sm text-slate-600 mb-2">
+                          <span>Raised By: <b className="text-slate-800">{issue.raisedBy}</b></span>
+                          <span>Programme: <Badge variant="outline" className="ml-1">{issue.programme}</Badge></span>
+                        </div>
+                        <div className="text-sm text-slate-700">
+                          {issue.county}, {issue.subcounty}, {issue.location}
+                        </div>
+                        <div className="mt-2 text-slate-900 bg-white p-2 rounded">
+                          {issue.description}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {/* --- END VIEW ISSUES SECTION --- */}
+
               {viewingActivity.comment && (
                 <div>
                   <Label className="text-sm font-medium text-slate-600">Comment</Label>
@@ -1281,9 +1515,9 @@ const AnimalHealthPage = () => {
         </DialogContent>
       </Dialog>
 
-      {/* Edit Activity Dialog - Updated for multiple vaccine selection */}
+      {/* Edit Activity Dialog - Updated for issues */}
       <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
-        <DialogContent className="sm:max-w-[700px] bg-white rounded-2xl border-0 shadow-2xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-[900px] bg-white rounded-2xl border-0 shadow-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="text-xl font-semibold text-slate-900">
               Edit Vaccination Activity
@@ -1307,7 +1541,10 @@ const AnimalHealthPage = () => {
                 <Input
                   id="edit-county"
                   value={activityForm.county}
-                  onChange={(e) => setActivityForm({...activityForm, county: e.target.value})}
+                  onChange={(e) => {
+                    setActivityForm({...activityForm, county: e.target.value});
+                    setIssueForm({...issueForm, county: e.target.value});
+                  }}
                   placeholder="Enter county"
                   className="rounded-xl border-slate-300 focus:border-green-500 focus:ring-green-500 transition-all bg-white"
                   required
@@ -1321,7 +1558,10 @@ const AnimalHealthPage = () => {
                 <Input
                   id="edit-subcounty"
                   value={activityForm.subcounty}
-                  onChange={(e) => setActivityForm({...activityForm, subcounty: e.target.value})}
+                  onChange={(e) => {
+                    setActivityForm({...activityForm, subcounty: e.target.value});
+                    setIssueForm({...issueForm, subcounty: e.target.value});
+                  }}
                   placeholder="Enter subcounty"
                   className="rounded-xl border-slate-300 focus:border-green-500 focus:ring-green-500 transition-all bg-white"
                 />
@@ -1331,7 +1571,10 @@ const AnimalHealthPage = () => {
                 <Input
                   id="edit-location"
                   value={activityForm.location}
-                  onChange={(e) => setActivityForm({...activityForm, location: e.target.value})}
+                  onChange={(e) => {
+                    setActivityForm({...activityForm, location: e.target.value});
+                    setIssueForm({...issueForm, location: e.target.value});
+                  }}
                   placeholder="Enter specific location"
                   className="rounded-xl border-slate-300 focus:border-green-500 focus:ring-green-500 transition-all bg-white"
                   required
@@ -1339,15 +1582,14 @@ const AnimalHealthPage = () => {
               </div>
             </div>
 
-            {/* Vaccines Section - Updated for multiple selection */}
+            {/* Vaccines Section */}
             <div className="space-y-4 border-t pt-4">
               <div className="flex items-center justify-between">
                 <Label className="text-sm font-medium text-slate-700">
                   Vaccines ({selectedVaccines.length}) <span className="text-red-500">*</span>
                 </Label>
                 <span className="text-xs text-slate-500">Select vaccines administered</span>
-              </div>
-              
+              </div>              
               {/* Vaccine Selection Grid */}
               <div className="grid grid-cols-2 gap-2">
                 {VACCINE_OPTIONS.map((vaccine) => (
@@ -1389,6 +1631,92 @@ const AnimalHealthPage = () => {
               </div>
             </div>
 
+            {/* --- EDIT ISSUES SECTION --- */}
+            <div className="space-y-4 border-t pt-4 bg-orange-50/50 p-4 rounded-xl">
+              <div className="flex items-center justify-between">
+                <Label className="text-sm font-bold text-orange-700 flex items-center gap-2">
+                  <AlertCircle className="h-4 w-4" />
+                  Issues Raised ({issues.length})
+                </Label>
+              </div>
+
+              {/* List of Current Issues */}
+              {issues.length > 0 && (
+                <div className="space-y-2 mb-4 max-h-40 overflow-y-auto">
+                  {issues.map((issue) => (
+                    <div key={issue.id} className="bg-white border border-orange-200 p-3 rounded-lg relative">
+                      <div className="flex justify-between items-start mb-2">
+                        <div className="font-semibold text-slate-800">{issue.name}</div>
+                        <Button variant="ghost" size="sm" onClick={() => handleRemoveIssue(issue.id)} className="h-6 w-6 p-0 text-red-500 hover:bg-red-50">
+                          <X className="h-4 w-4" />
+                        </Button>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 text-xs text-slate-600">
+                        <span>Raised By: <b>{issue.raisedBy}</b></span>
+                        <span>Programme: <Badge variant="outline" className="text-[10px] px-1 h-4">{issue.programme}</Badge></span>
+                      </div>
+                      <div className="mt-2 text-sm text-slate-700 bg-slate-50 p-2 rounded">
+                        {issue.description}
+                      </div>
+                      <div className="flex justify-between items-center mt-2">
+                        <span className="text-xs text-slate-500">
+                          {issue.county}, {issue.subcounty}
+                        </span>
+                        <Badge variant={issue.status === 'responded' ? 'default' : 'secondary'} className={issue.status === 'responded' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}>
+                          {issue.status}
+                        </Badge>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Add New Issue Form (in Edit) */}
+              <div className="bg-white p-4 rounded-lg border border-slate-200">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+                  <div className="space-y-1">
+                    <Label className="text-xs">Issue Name *</Label>
+                    <Input placeholder="e.g. Equipment Failure" value={issueForm.name} onChange={e => setIssueForm({...issueForm, name: e.target.value})} className="h-8 text-sm" />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Raised By *</Label>
+                    <Input placeholder="Officer Name" value={issueForm.raisedBy} onChange={e => setIssueForm({...issueForm, raisedBy: e.target.value})} className="h-8 text-sm" />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3 mb-3">
+                  <div className="space-y-1">
+                     <Label className="text-xs">Programme</Label>
+                     <Select value={issueForm.programme} onValueChange={(v) => setIssueForm({...issueForm, programme: v})}>
+                       <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                       <SelectContent>
+                         {PROGRAMME_OPTIONS.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+                       </SelectContent>
+                     </Select>
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Status</Label>
+                    <Select value={issueForm.status} onValueChange={(v) => setIssueForm({...issueForm, status: v as 'responded' | 'not responded'})}>
+                       <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                       <SelectContent>
+                         <SelectItem value="responded">Responded</SelectItem>
+                         <SelectItem value="not responded">Not Responded</SelectItem>
+                       </SelectContent>
+                     </Select>
+                  </div>
+                </div>
+                <div className="space-y-1 mb-3">
+                  <Label className="text-xs">Description *</Label>
+                  <Textarea placeholder="Describe the issue..." value={issueForm.description} onChange={e => setIssueForm({...issueForm, description: e.target.value})} className="min-h-[60px] text-sm" />
+                </div>
+                <div className="flex justify-end">
+                  <Button type="button" onClick={handleAddIssue} size="sm" className="bg-orange-500 hover:bg-orange-600 text-white h-8 px-4 text-xs font-semibold">
+                    Add Issue
+                  </Button>
+                </div>
+              </div>
+            </div>
+            {/* --- END EDIT ISSUES SECTION --- */}
+
             <div className="space-y-2">
               <Label htmlFor="edit-comment" className="text-sm font-medium text-slate-700">Comment</Label>
               <Textarea
@@ -1405,8 +1733,7 @@ const AnimalHealthPage = () => {
               <div className="flex items-center justify-between">
                 <Label className="text-sm font-medium text-slate-700">Field Officers ({fieldOfficers.length}) *</Label>
                 <span className="text-xs text-slate-500">Add field officers with their roles</span>
-              </div>
-              
+              </div>              
               {/* Add Field Officer Form */}
               <div className="grid grid-cols-2 gap-3">
                 <Input
@@ -1466,6 +1793,17 @@ const AnimalHealthPage = () => {
                 setFieldOfficerForm({ name: "", role: "" });
                 setSelectedVaccines([]);
                 setTotalDoses("");
+                setIssues([]);
+                setIssueForm({
+                        name: "",
+                        raisedBy: "",
+                        county: "",
+                        subcounty: "",
+                        location: "",
+                        programme: "KPMD",
+                        description: "",
+                        status: "not responded"
+                    });
               }}
               className="rounded-xl border-slate-300 hover:border-slate-400 transition-all text-slate-700"
             >

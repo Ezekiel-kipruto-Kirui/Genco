@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef, ChangeEvent, memo } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import { getAuth } from "firebase/auth"; // Import getAuth to access UID
+import { getAuth } from "firebase/auth";
 import { ref, set, update, remove, push, onValue, query, orderByChild, equalTo } from "firebase/database";
 import { db } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
-import { Download, Users, MapPin, Eye, Calendar, Scale, Phone, CreditCard, Edit, Trash2, ShieldCheck, Activity, ChevronRight, Upload } from "lucide-react"; // Added Upload icon
+import { Download, Users, MapPin, Eye, Calendar, Scale, Phone, CreditCard, Edit, Trash2, ShieldCheck, Activity, ChevronRight, Upload, GraduationCap } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { isChiefAdmin } from "@/contexts/authhelper";
 
@@ -20,7 +20,7 @@ import { isChiefAdmin } from "@/contexts/authhelper";
 interface AgeDistribution {
   "1-4"?: number;
   "5-8"?: number;
-  "8+ "?: number;
+  "8+": number;
 }
 
 interface GoatsData {
@@ -37,7 +37,7 @@ interface FarmerData {
   gender: string;
   idNumber?: string;
   phone: string;
-  county: string; // Renamed from county to county to match JSON
+  county: string;
   subcounty: string;
   location: string;
   cattle: string | number;
@@ -50,11 +50,26 @@ interface FarmerData {
   registrationDate: string;
   programme: string; 
   username?: string;
-  // Additional fields from JSON
   aggregationGroup?: string;
   bucksServed?: string;
   femaleBreeds?: string;
   maleBreeds?: string;
+}
+
+interface TrainingData {
+  id: string;
+  county?: string; 
+  subcounty?: string; 
+  location?: string;
+  topicTrained?: string; 
+  totalFarmers?: number; 
+  startDate?: string;
+  endDate?: string;
+  createdAt?: string;
+  rawTimestamp?: number;
+  programme?: string; 
+  username?: string;
+  fieldOfficer?: string;
 }
 
 interface Filters {
@@ -64,6 +79,7 @@ interface Filters {
   county: string;
   subcounty: string;
   gender: string;
+  location: string; 
 }
 
 interface Stats {
@@ -72,6 +88,9 @@ interface Stats {
   totalSheep: number;
   totalCattle: number;
   vaccinatedCount: number;
+  maleFarmers: number;
+  femaleFarmers: number;
+  totalTrainedFarmers: number; 
 }
 
 interface Pagination {
@@ -127,13 +146,28 @@ const formatDate = (date: any): string => {
 
 const getCurrentMonthDates = () => {
   const now = new Date();
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-  const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+
+  const startOfMonth = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    1
+  );
+
+  const endOfMonth = new Date(
+    now.getFullYear(),
+    now.getMonth() +1,
+    0
+  );
+
+  const formatDate = (date: Date) =>
+    `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+
   return {
-    startDate: startOfMonth.toISOString().split('T')[0],
-    endDate: endOfMonth.toISOString().split('T')[0]
+    startDate: formatDate(startOfMonth), 
+    endDate: formatDate(endOfMonth),
   };
 };
+
 
 const getGoatTotal = (goats: any): number => {
   if (typeof goats === 'number') return goats;
@@ -144,17 +178,20 @@ const getGoatTotal = (goats: any): number => {
 // --- Main Component ---
 
 const LivestockFarmersPage = () => {
-  const { user, userRole } = useAuth(); // Destructure user object to get UID
+  const { user, userRole } = useAuth();
   const { toast } = useToast();
   
   // State
   const [allFarmers, setAllFarmers] = useState<FarmerData[]>([]);
   const [filteredFarmers, setFilteredFarmers] = useState<FarmerData[]>([]);
   const [activeProgram, setActiveProgram] = useState<string>(""); 
-  const [availablePrograms, setAvailablePrograms] = useState<string[]>([]); // Dynamic list
+  const [availablePrograms, setAvailablePrograms] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [exportLoading, setExportLoading] = useState(false);
   const [selectedRecords, setSelectedRecords] = useState<string[]>([]);
+  
+  // Training Data State
+  const [trainingRecords, setTrainingRecords] = useState<TrainingData[]>([]);
   
   // Upload State
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
@@ -177,14 +214,15 @@ const LivestockFarmersPage = () => {
   const currentMonth = useMemo(getCurrentMonthDates, []);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
-  // Filters
+  // Filters - Defaults: Dates to current month, others to "All"
   const [filters, setFilters] = useState<Filters>({
     search: "",
     startDate: currentMonth.startDate,
     endDate: currentMonth.endDate,
     county: "all",
     subcounty: "all",
-    gender: "all"
+    gender: "all",
+    location: "all" 
   });
 
   const [stats, setStats] = useState<Stats>({
@@ -192,11 +230,14 @@ const LivestockFarmersPage = () => {
     totalGoats: 0,
     totalSheep: 0,
     totalCattle: 0,
-    vaccinatedCount: 0
+    vaccinatedCount: 0,
+    maleFarmers: 0,
+    femaleFarmers: 0,
+    totalTrainedFarmers: 0
   });
 
   const [pagination, setPagination] = useState<Pagination>({
-    page: 1,
+    page:1,
     limit: PAGE_LIMIT,
     totalPages: 1,
     hasNext: false,
@@ -219,16 +260,25 @@ const LivestockFarmersPage = () => {
 
   const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
 
+  // --- Caching Helper ---
+  const getCachedData = (key: string) => {
+    try {
+      const cached = localStorage.getItem(key);
+      if (cached) return JSON.parse(cached);
+    } catch (e) {
+      console.error("Cache read error", e);
+    }
+    return null;
+  };
+
   // --- 1. Fetch User Permissions & Determine Available Programmes ---
   useEffect(() => {
     if (isChiefAdmin(userRole)) {
-      // Chief Admins see both programmes
       setAvailablePrograms(["RANGE", "KPMD"]);
-      if (!activeProgram) setActiveProgram("RANGE"); // Default to RANGE if nothing selected
+      if (!activeProgram) setActiveProgram("RANGE");
       return;
     }
 
-    // For other roles, fetch specific permissions from DB
     const auth = getAuth();
     const uid = auth.currentUser?.uid;
     
@@ -238,17 +288,14 @@ const LivestockFarmersPage = () => {
     const unsubscribe = onValue(userRef, (snapshot) => {
       const data = snapshot.val();
       if (data && data.allowedProgrammes) {
-        // Extract keys where value is true
         const programs = Object.keys(data.allowedProgrammes).filter(
           key => data.allowedProgrammes[key] === true
         );
         setAvailablePrograms(programs);
         
-        // Auto-select the first available programme if current activeProgram is invalid
         if (programs.length > 0 && !programs.includes(activeProgram)) {
           setActiveProgram(programs[0]);
         } else if (programs.length === 0) {
-            // User has no programmes assigned
             setActiveProgram("");
         }
       } else {
@@ -261,7 +308,7 @@ const LivestockFarmersPage = () => {
     return () => unsubscribe();
   }, [userRole, activeProgram]);
 
-  // --- 2. Data Fetching (Farmers) ---
+  // --- 2. Data Fetching (Farmers) with Caching ---
   useEffect(() => {
     if (!activeProgram) {
         setAllFarmers([]);
@@ -270,7 +317,15 @@ const LivestockFarmersPage = () => {
     }
 
     setLoading(true);
-    // Query specifically for the active programme using the index defined in rules
+    
+    // 1. Try to load from cache immediately
+    const cacheKey = `farmers_cache_${activeProgram}`;
+    const cachedFarmers = getCachedData(cacheKey);
+    if (cachedFarmers && cachedFarmers.length > 0) {
+      setAllFarmers(cachedFarmers);
+      setLoading(false);
+    }
+
     const farmersQuery = query(
       ref(db, 'farmers'), 
       orderByChild('programme'), 
@@ -283,6 +338,7 @@ const LivestockFarmersPage = () => {
       if (!data) {
         setAllFarmers([]);
         setLoading(false);
+        localStorage.removeItem(cacheKey); 
         return;
       }
 
@@ -302,7 +358,7 @@ const LivestockFarmersPage = () => {
           gender: item.gender || '',
           idNumber: item.idNumber || '',
           phone: item.phone || '',
-          county: item.county || item.county || '', // Handle camelCase/PascalCase
+          county: item.county || '',
           subcounty: item.subcounty || '',
           location: item.location || item.subcounty || '',
           cattle: item.cattle || '0',
@@ -315,7 +371,6 @@ const LivestockFarmersPage = () => {
           registrationDate: item.registrationDate || formatDate(dateValue),
           programme: item.programme || activeProgram,
           username: item.username || 'Unknown',
-          // Additional fields
           aggregationGroup: item.aggregationGroup || '',
           bucksServed: item.bucksServed || '0',
           femaleBreeds: item.femaleBreeds || '0',
@@ -324,8 +379,16 @@ const LivestockFarmersPage = () => {
       });
 
       farmersList.sort((a, b) => (b.createdAt as number) - (a.createdAt as number));
+      
       setAllFarmers(farmersList);
       setLoading(false);
+      
+      // Update Cache
+      try {
+        localStorage.setItem(cacheKey, JSON.stringify(farmersList));
+      } catch (e) {
+        console.warn("Cache write failed (likely full)", e);
+      }
     }, (error) => {
       console.error("Error fetching farmers data:", error);
       toast({ title: "Error", description: "Failed to load farmers data", variant: "destructive" });
@@ -335,23 +398,64 @@ const LivestockFarmersPage = () => {
     return () => { if(typeof unsubscribe === 'function') unsubscribe(); };
   }, [activeProgram, toast]);
 
+  // --- 3. Data Fetching (Capacity Building / Training) with Caching ---
+  useEffect(() => {
+    if (!activeProgram) {
+        setTrainingRecords([]);
+        return;
+    }
+
+    // 1. Try Cache
+    const cacheKey = `training_cache_${activeProgram}`;
+    const cachedTraining = getCachedData(cacheKey);
+    if (cachedTraining && cachedTraining.length > 0) {
+        setTrainingRecords(cachedTraining);
+    }
+
+    const trainingQuery = query(
+        ref(db, 'capacityBuilding'), 
+        orderByChild('programme'), 
+        equalTo(activeProgram)
+    );
+
+    const unsubscribe = onValue(trainingQuery, (snapshot) => {
+        const data = snapshot.val();
+        if (!data) {
+            setTrainingRecords([]);
+            localStorage.removeItem(cacheKey);
+            return;
+        }
+        const records = Object.keys(data).map((key) => ({
+            id: key,
+            ...data[key]
+        }));
+        setTrainingRecords(records);
+        
+        // Update Cache
+        try {
+            localStorage.setItem(cacheKey, JSON.stringify(records));
+        } catch (e) {
+            console.warn("Cache write failed", e);
+        }
+    }, (error) => {
+        console.error("Error fetching training data:", error);
+    });
+
+    return () => { if(typeof unsubscribe === 'function') unsubscribe(); };
+  }, [activeProgram]);
+
   // --- Filtering Logic ---
   useEffect(() => {
     if (allFarmers.length === 0) {
       setFilteredFarmers([]);
-      setStats({ totalFarmers: 0, totalGoats: 0, totalSheep: 0, totalCattle: 0, vaccinatedCount: 0 });
+      setStats({ totalFarmers: 0, totalGoats: 0, totalSheep: 0, totalCattle: 0, vaccinatedCount: 0, maleFarmers: 0, femaleFarmers: 0, totalTrainedFarmers: 0 });
       return;
     }
 
-    let filtered = allFarmers.filter(record => {
-      // County Filter
-      if (filters.county !== "all" && record.county?.toLowerCase() !== filters.county.toLowerCase()) return false;
-      // Subcounty Filter
-      if (filters.subcounty !== "all" && record.subcounty?.toLowerCase() !== filters.subcounty.toLowerCase()) return false;
-      // Gender Filter
-      if (filters.gender !== "all" && record.gender?.toLowerCase() !== filters.gender.toLowerCase()) return false;
-
-      // Date Filter
+    // Filter Farmers: Apply ALL filters (Date, County, Subcounty, Gender, Search, Location)
+    let filteredFarmersList = allFarmers.filter(record => {
+      
+      // 1. Date Filter
       if (filters.startDate || filters.endDate) {
         const recordDate = parseDate(record.createdAt);
         if (recordDate) {
@@ -368,11 +472,17 @@ const LivestockFarmersPage = () => {
         } else if (filters.startDate || filters.endDate) return false;
       }
 
-      // Search Filter
+      // 2. Location/Gender Filters (Only applied if not "all")
+      if (filters.county !== "all" && record.county?.toLowerCase() !== filters.county.toLowerCase()) return false;
+      if (filters.subcounty !== "all" && record.subcounty?.toLowerCase() !== filters.subcounty.toLowerCase()) return false;
+      if (filters.location !== "all" && record.location?.toLowerCase() !== filters.location.toLowerCase()) return false;
+      if (filters.gender !== "all" && record.gender?.toLowerCase() !== filters.gender.toLowerCase()) return false;
+
+      // 3. Search Filter
       if (filters.search) {
         const searchTerm = filters.search.toLowerCase();
         const searchMatch = [
-          record.name, record.farmerId, record.location, record.county, record.idNumber, record.phone
+          record.name, record.farmerId, record.location, record.county, record.idNumber, record.phone, record.username // Added username (Field Officer)
         ].some(field => field?.toLowerCase().includes(searchTerm));
         if (!searchMatch) return false;
       }
@@ -380,24 +490,51 @@ const LivestockFarmersPage = () => {
       return true;
     });
 
-    setFilteredFarmers(filtered);
+    setFilteredFarmers(filteredFarmersList);
     
-    // Calculate Stats
-    const totalFarmers = filtered.length;
-    const totalGoats = filtered.reduce((sum, f) => sum + getGoatTotal(f.goats), 0);
-    const totalSheep = filtered.reduce((sum, f) => sum + (Number(f.sheep) || 0), 0);
-    const totalCattle = filtered.reduce((sum, f) => sum + (Number(f.cattle) || 0), 0);
-    const vaccinatedCount = filtered.filter(f => f.vaccinated).length;
+    // Filter Training Records: Apply Date Filter (so stats match the time window)
+    let filteredTraining = trainingRecords.filter(record => {
+        if (filters.startDate || filters.endDate) {
+            const recordDate = parseDate(record.startDate || record.createdAt || record.rawTimestamp);
+            if (recordDate) {
+                const recordDateOnly = new Date(recordDate);
+                recordDateOnly.setHours(0, 0, 0, 0);
+                
+                const startDate = filters.startDate ? new Date(filters.startDate) : null;
+                const endDate = filters.endDate ? new Date(filters.endDate) : null;
+                if (startDate) startDate.setHours(0, 0, 0, 0);
+                if (endDate) endDate.setHours(23, 59, 59, 999);
 
-    setStats({ totalFarmers, totalGoats, totalSheep, totalCattle, vaccinatedCount });
+                if (startDate && recordDateOnly < startDate) return false;
+                if (endDate && recordDateOnly > endDate) return false;
+            } else if (filters.startDate || filters.endDate) return false;
+        }
+        return true;
+    });
+
+    // Calculate Stats
+    const totalFarmers = filteredFarmersList.length;
+    const totalGoats = filteredFarmersList.reduce((sum, f) => sum + getGoatTotal(f.goats), 0);
+    const totalSheep = filteredFarmersList.reduce((sum, f) => sum + (Number(f.sheep) || 0), 0);
+    const totalCattle = filteredFarmersList.reduce((sum, f) => sum + (Number(f.cattle) || 0), 0);
+    const vaccinatedCount = filteredFarmersList.filter(f => f.vaccinated).length;
+    
+    // Gender Stats
+    const maleFarmers = filteredFarmersList.filter(f => f.gender?.toLowerCase() === 'male').length;
+    const femaleFarmers = filteredFarmersList.filter(f => f.gender?.toLowerCase() === 'female').length;
+
+    // Trained Farmers Stats (Sum of participants in filtered training sessions)
+    const totalTrainedFarmers = filteredTraining.reduce((sum, t) => sum + (Number(t.totalFarmers) || 0), 0);
+
+    setStats({ totalFarmers, totalGoats, totalSheep, totalCattle, vaccinatedCount, maleFarmers, femaleFarmers, totalTrainedFarmers });
 
     // Update Pagination
-    const totalPages = Math.ceil(filtered.length / pagination.limit);
+    const totalPages = Math.ceil(filteredFarmersList.length / pagination.limit);
     const currentPage = Math.min(pagination.page, Math.max(1, totalPages));
     setPagination(prev => ({
       ...prev, page: currentPage, totalPages, hasNext: currentPage < totalPages, hasPrev: currentPage > 1
     }));
-  }, [allFarmers, filters, pagination.limit, pagination.page]);
+  }, [allFarmers, trainingRecords, filters, pagination.limit, pagination.page]);
 
   // --- Handlers ---
   
@@ -410,7 +547,8 @@ const LivestockFarmersPage = () => {
         endDate: currentMonth.endDate, 
         county: "all", 
         subcounty: "all", 
-        gender: "all" 
+        gender: "all",
+        location: "all" 
     }));
     setSelectedRecords([]);
     setPagination(prev => ({ ...prev, page: 1 }));
@@ -489,6 +627,8 @@ const LivestockFarmersPage = () => {
     try {
       setDeleteLoading(true);
       await remove(ref(db, `farmers/${recordToDelete.id}`));
+      // Clear cache on delete
+      localStorage.removeItem(`farmers_cache_${activeProgram}`);
       toast({ title: "Success", description: "Record deleted" });
       setIsSingleDeleteDialogOpen(false);
       setRecordToDelete(null);
@@ -504,6 +644,8 @@ const LivestockFarmersPage = () => {
       const updates: { [key: string]: null } = {};
       selectedRecords.forEach(id => updates[`farmers/${id}`] = null);
       await update(ref(db), updates);
+      // Clear cache
+      localStorage.removeItem(`farmers_cache_${activeProgram}`);
       toast({ title: "Success", description: `${selectedRecords.length} records deleted` });
       setSelectedRecords([]);
       setIsDeleteConfirmOpen(false);
@@ -513,6 +655,30 @@ const LivestockFarmersPage = () => {
   };
 
   // --- Upload Functionality ---
+  const parseCSVLine = (line: string): string[] => {
+    const result: string[] = [];
+    let current = "";
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i];
+      if (char === '"') {
+        if (inQuotes && line[i + 1] === '"') {
+          current += '"';
+          i++;
+        } else {
+          inQuotes = !inQuotes;
+        }
+      } else if (char === ',' && !inQuotes) {
+        result.push(current);
+        current = "";
+      } else {
+        current += char;
+      }
+    }
+    result.push(current);
+    return result;
+  };
+
   const handleFileSelect = (e: ChangeEvent<HTMLInputElement>) => {
     if (e.target.files?.[0]) setUploadFile(e.target.files[0]);
   };
@@ -528,77 +694,102 @@ const LivestockFarmersPage = () => {
       if (isJSON) {
         parsedData = JSON.parse(text);
       } else {
-        // CSV Parsing
-        const lines = text.split('\n').filter(l => l.trim());
+        const lines = text.split(/\r?\n/).filter(l => l.trim());
         if (lines.length < 2) throw new Error("CSV file is empty or has no data rows");
-        
-        const headers = lines[0].split(',').map(h => h.trim().replace(/"/g, '')); // Basic header cleaning
-        const lowerHeaders = headers.map(h => h.toLowerCase());
+
+        const rawHeaders = parseCSVLine(lines[0]);
+        const headers = rawHeaders.map(h =>
+          h
+            .replace(/^﻿/, '')
+            .trim()
+            .toLowerCase()
+            .replace(/\(.*?\)/g, '')
+            .replace(/[^a-z0-9 ]/g, '')
+            .replace(/\s+/g, ' ')
+        );
+
+        const findIndex = (keys: string[]) =>
+          headers.findIndex(h => keys.some(k => h.includes(k)));
+
+        const idxName = findIndex(['farmer name', 'name']);
+        const idxGender = findIndex(['gender']);
+        const idxCounty = findIndex(['county']);
+        const idxSub = findIndex(['subcounty', 'sub county']);
+        const idxLoc = findIndex(['location']);
+        const idxCattle = findIndex(['cattle']);
+        const idxSheep = findIndex(['sheep']);
+        const idxIdNumber = findIndex(['id number', 'idnumber']);
+        const idxPhone = findIndex(['phone']);
+        const idxFarmerId = findIndex(['farmer id']);
+        const idxRegDate = findIndex(['registration date', 'reg date']);
+        const idxVaccinated = findIndex(['vaccinated']);
+        const idxTrace = findIndex(['traceability']);
+        const idxVaccines = findIndex(['vaccine']);
+
+        const idxGoatsTotal = headers.findIndex(h => h === 'goats' || h === 'goats total');
+        const idxGoatsMale = headers.findIndex(h => h === 'goats male' || h === 'goatsmale');
+        const idxGoatsFemale = headers.findIndex(h => h === 'goats female' || h === 'goatsfemale');
+
+        const parseBool = (val: string) => {
+          const v = (val || '').toLowerCase().trim();
+          return v === 'yes' || v === 'true' || v === '1';
+        };
+
+        const valAt = (values: string[], idx: number) => (idx >= 0 && idx < values.length ? values[idx] : '').trim();
 
         for (let i = 1; i < lines.length; i++) {
-          const values = lines[i].split(',').map(v => v.trim().replace(/"/g, ''));
-          const obj: any = {};
-          
-          headers.forEach((h, idx) => {
-            // Map CSV headers to JSON keys
-            const val = values[idx];
-            const lKey = h.toLowerCase();
-            
-            if (lKey.includes('name')) obj.name = val;
-            if (lKey.includes('gender')) obj.gender = val;
-            if (lKey.includes('county')) obj.county = val;
-            if (lKey.includes('subcounty') || lKey.includes('sub county')) obj.subcounty = val;
-            if (lKey.includes('location')) obj.location = val;
-            if (lKey.includes('cattle')) obj.cattle = Number(val) || 0;
-            if (lKey.includes('sheep')) obj.sheep = Number(val) || 0;
-            if (lKey.includes('id') && lKey.includes('number')) obj.idNumber = val;
-            if (lKey.includes('phone')) obj.phone = val;
-            if (lKey.includes('farmer') && lKey.includes('id')) obj.farmerId = val;
-            if (lKey.includes('registration') && lKey.includes('date')) obj.registrationDate = val;
-            if (lKey.includes('vaccinated')) {
-               obj.vaccinated = val.toLowerCase() === 'yes' || val === 'true';
-            }
-            if (lKey.includes('traceability')) {
-               obj.traceability = val.toLowerCase() === 'yes' || val === 'true';
-            }
-            if (lKey.includes('vaccine')) {
-               obj.vaccines = val.split(';').map(s => s.trim()).filter(s => s);
-            }
-          });
+          const values = parseCSVLine(lines[i]);
+          if (!values.some(v => v.trim() !== '')) continue;
 
-          // Handle Goats Structure (Total, Male, Female)
-          const goatsTotal = headers.findIndex(h => h.toLowerCase() === 'goats' || h.toLowerCase() === 'goats (total)');
-          const goatsMale = headers.findIndex(h => h.toLowerCase() === 'goats male' || h.toLowerCase() === 'goats(male)');
-          const goatsFemale = headers.findIndex(h => h.toLowerCase() === 'goats female' || h.toLowerCase() === 'goats(female)');
-          
-          if (goatsTotal > -1) {
-             obj.goats = { total: Number(values[goatsTotal]) || 0, male: 0, female: 0 };
+          const obj: any = {};
+
+          if (idxName !== -1) obj.name = valAt(values, idxName);
+          if (idxGender !== -1) obj.gender = valAt(values, idxGender);
+          if (idxCounty !== -1) obj.county = valAt(values, idxCounty);
+          if (idxSub !== -1) obj.subcounty = valAt(values, idxSub);
+          if (idxLoc !== -1) obj.location = valAt(values, idxLoc);
+          if (idxCattle !== -1) obj.cattle = Number(valAt(values, idxCattle)) || 0;
+          if (idxSheep !== -1) obj.sheep = Number(valAt(values, idxSheep)) || 0;
+          if (idxIdNumber !== -1) obj.idNumber = valAt(values, idxIdNumber);
+          if (idxPhone !== -1) obj.phone = valAt(values, idxPhone);
+          if (idxFarmerId !== -1) obj.farmerId = valAt(values, idxFarmerId);
+          if (idxRegDate !== -1) obj.registrationDate = valAt(values, idxRegDate);
+          if (idxVaccinated !== -1) obj.vaccinated = parseBool(valAt(values, idxVaccinated));
+          if (idxTrace !== -1) obj.traceability = parseBool(valAt(values, idxTrace));
+          if (idxVaccines !== -1) {
+            const raw = valAt(values, idxVaccines);
+            obj.vaccines = raw ? raw.split(';').map(s => s.trim()).filter(s => s) : [];
           }
-          if (goatsMale > -1 && goatsFemale > -1) {
-             obj.goats = { 
-                male: Number(values[goatsMale]) || 0, 
-                female: Number(values[goatsFemale]) || 0, 
-                total: (Number(values[goatsMale]) || 0) + (Number(values[goatsFemale]) || 0)
-             };
+
+          if (idxGoatsTotal > -1) {
+            obj.goats = { total: Number(valAt(values, idxGoatsTotal)) || 0, male: 0, female: 0 };
+          }
+          if (idxGoatsMale > -1 || idxGoatsFemale > -1) {
+            const male = Number(valAt(values, idxGoatsMale)) || 0;
+            const female = Number(valAt(values, idxGoatsFemale)) || 0;
+            obj.goats = { male, female, total: male + female };
           }
 
           parsedData.push(obj);
         }
       }
 
+      // --- Upload to DB ---
       let count = 0;
       const collectionRef = ref(db, "farmers");
       
       for (const item of parsedData) {
-        // Construct the payload exactly as Firebase expects it
         await push(collectionRef, {
           ...item,
-          programme: activeProgram, // Force active programme
-          createdAt: Date.now(), // Set timestamp
-          username: user?.displayName || user?.email || "Admin" // Set creator
+          programme: activeProgram,
+          createdAt: Date.now(),
+          username: user?.displayName || user?.email || "Admin"
         });
         count++;
       }
+
+      // Clear cache on upload
+      localStorage.removeItem(`farmers_cache_${activeProgram}`);
 
       toast({ title: "Success", description: `Uploaded ${count} records to ${activeProgram}.` });
       setIsUploadDialogOpen(false);
@@ -617,11 +808,41 @@ const LivestockFarmersPage = () => {
       setExportLoading(true);
       if (filteredFarmers.length === 0) return;
 
-      const headers = ['Farmer ID', 'Name', 'Gender', 'Phone', 'ID Number', 'County', 'Subcounty', 'Cattle', 'Goats (Total)', 'Sheep', 'Vaccinated', 'Traceability', 'Vaccines', 'Programme', 'Created By', 'Registration Date'];
+      // UPDATED HEADERS: Explicitly added Goats (Male) and Goats (Female)
+      const headers = [
+        'Farmer ID', 'Name', 'Gender', 'Phone', 'ID Number', 
+        'County', 'Subcounty', 'Location', 
+        'Cattle', 
+        'Goats (Total)', 
+        'Goats (Male)', // <--- SPECIFIED
+        'Goats (Female)', // <--- SPECIFIED
+        'Sheep', 
+        'Vaccinated', 'Traceability', 'Vaccines', 
+        'Programme', 'Field Officer', 'Created By', 'Registration Date',
+        'Aggregation Group', 'Bucks Served', 'Female Breeds', 'Male Breeds',
+        'Age 1-4', 'Age 5-8', 'Age 8+'
+      ];
+
       const csvData = filteredFarmers.map(f => [
-        f.farmerId, f.name, f.gender, f.phone, f.idNumber, f.county, f.subcounty, f.cattle,
-        getGoatTotal(f.goats), f.sheep, f.vaccinated ? 'Yes' : 'No', f.traceability ? 'Yes' : 'No',
-        f.vaccines.join('; '), f.programme, f.username, formatDate(f.createdAt)
+        f.farmerId, f.name, f.gender, f.phone, f.idNumber, 
+        f.county, f.subcounty, f.location, 
+        f.cattle, getGoatTotal(f.goats), 
+        // Mapping Goat Gender specifically
+        (typeof f.goats === 'object' && f.goats?.male) || 0,
+        (typeof f.goats === 'object' && f.goats?.female) || 0,
+        f.sheep, 
+        f.vaccinated ? 'Yes' : 'No', f.traceability ? 'Yes' : 'No',
+        f.vaccines.join('; '), 
+        f.programme, 
+        f.username, f.username, 
+        formatDate(f.createdAt),
+        f.aggregationGroup || '',
+        f.bucksServed || '',
+        f.femaleBreeds || '',
+        f.maleBreeds || '',
+        f.ageDistribution?.['1-4'] || '',
+        f.ageDistribution?.['5-8'] || '',
+        f.ageDistribution?.['8+'] || ''
       ]);
 
       const csvContent = [headers, ...csvData].map(row => row.map(cell => `"${cell}"`).join(',')).join('\n');
@@ -642,54 +863,69 @@ const LivestockFarmersPage = () => {
 
   const uniqueCounties = useMemo(() => [...new Set(allFarmers.map(f => f.county).filter(Boolean))], [allFarmers]);
   const uniqueSubcounties = useMemo(() => [...new Set(allFarmers.map(f => f.subcounty).filter(Boolean))], [allFarmers]);
+  const uniqueLocations = useMemo(() => [...new Set(allFarmers.map(f => f.location).filter(Boolean))], [allFarmers]);
   const uniqueGenders = useMemo(() => [...new Set(allFarmers.map(f => f.gender).filter(Boolean))], [allFarmers]);
   const currentPageRecords = useMemo(getCurrentPageRecords, [getCurrentPageRecords]);
 
-  const StatsCard = memo(({ title, value, icon: Icon, description, color = "blue" }: any) => (
+  const StatsCard = memo(({ title, value, icon: Icon, description, color = "blue", children, maleCount, femaleCount, totalCount }: any) => (
     <Card className="bg-white text-slate-900 shadow-lg border border-gray-200 relative overflow-hidden">
       <div className={`absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-${color}-600 to-purple-800`}></div>
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 pt-4 pl-6">
         <CardTitle className="text-sm font-medium text-gray-400">{title}</CardTitle>
       </CardHeader>
-      <CardContent className="pl-6 pb-4 flex flex-row">
-        <div className="mr-2 rounded-full">
-          <Icon className={`h-8 w-8 text-${color}-600`} />
+      <CardContent className="pl-6 pb-4 flex flex-col">
+        <div className="flex items-center gap-3 mb-1">
+            <div className="rounded-full bg-gray-50 p-2">
+                <Icon className={`h-5 w-5 text-${color}-600`} />
+            </div>
+            <div className="text-3xl font-bold text-gray-800">{value}</div>
         </div>
-        <div>
-          <div className="text-2xl font-bold text-gray-800 mb-2">{value}</div>
-          {description && <p className="text-xs mt-2 bg-gray-50 px-2 py-1 rounded-md border border-slate-100">{description}</p>}
-        </div>
+        
+        {(maleCount !== undefined && femaleCount !== undefined) ? (
+          <div className="mt-3 flex items-center justify-between w-full bg-gray-50 text-xs">
+             <div className="flex flex-row">
+                <span className="text-gray-500">Male</span>
+                <span className="font-bold text-blue-600 text-sm">{maleCount}  |  <span className="text-gray-400 font-normal">({totalCount > 0 ? Math.round((maleCount/totalCount)*100) : 0}%)</span></span>
+             </div>
+             <div className="h-8 w-[1px] bg-gray-100"></div>
+             <div className="flex flex-row text-right">
+                <span className="text-gray-500">Female</span> 
+                <span className="font-bold text-pink-600 text-sm">{femaleCount} |<span className="text-gray-400 font-normal">({totalCount > 0 ? Math.round((femaleCount/totalCount)*100) : 0}%)</span></span>
+             </div>
+          </div>
+        ) : children ? (
+            children
+        ) : (
+            description && <p className="text-xs mt-2 bg-gray-50 px-2 py-1 rounded-md border border-slate-100">{description}</p>
+        )}
       </CardContent>
     </Card>
   ));
 
   return (
-    <div className="space-y-6">
-      <div className="flex md:flex-row flex-col justify-between items-start sm:items-center gap-4">
-        <div>
-          <h2 className="text-xl font-bold mb-2 bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-            Livestock Farmers Registry
+    <div className="space-y-6 px-2 sm:px-4 md:px-0">
+      <div className="flex flex-col md:flex-row justify-between items-start gap-4 md:items-center">
+        <div className="w-full md:w-auto">
+          <h2 className="text-md font-bold mb-2 bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+            Livestock Farmers
           </h2>
-          <div className="flex items-center gap-2 text-sm text-gray-600">
-             {activeProgram && <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 font-bold px-3 py-1">{activeProgram} PROGRAMME</Badge>}
-          </div>
         </div>
          
-         <div className="flex flex-wrap md:flex-nowrap gap-4 items-end justify-between w-full md:w-auto">
-            <div className="grid grid-cols-2 md:grid-cols-2 gap-4 flex-1">
+         <div className="flex lg:flex-row  md:flex-row flex-col gap-4 w-full md:w-auto">
+            {/* Date Inputs */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full md:w-auto">
                 <div className="space-y-2">
-                    <Input id="startDate" type="date" value={filters.startDate} onChange={(e) => handleFilterChange("startDate", e.target.value)} className="border-gray-300 focus:border-blue-500 bg-white h-9" />
+                    <Input id="startDate" type="date" value={filters.startDate} onChange={(e) => handleFilterChange("startDate", e.target.value)} className="border-gray-300 focus:border-blue-500 bg-white h-9 w-full" />
                 </div>
                 <div className="space-y-2">
-                    <Input id="endDate" type="date" value={filters.endDate} onChange={(e) => handleFilterChange("endDate", e.target.value)} className="border-gray-300 focus:border-blue-500 bg-white h-9" />
+                    <Input id="endDate" type="date" value={filters.endDate} onChange={(e) => handleFilterChange("endDate", e.target.value)} className="border-gray-300 focus:border-blue-500 bg-white h-9 w-full" />
                 </div>
             </div>
             
-            {/* Programme Selector - Hidden for non-chiefs */}
             {userIsChiefAdmin ? (
-                <div className="space-y-2 w-[180px]">
+                <div className="space-y-2 w-full md:w-[180px]">
                     <Select value={activeProgram} onValueChange={handleProgramChange} disabled={availablePrograms.length === 0}>
-                        <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white h-9 font-bold">
+                        <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white h-9 font-bold w-full">
                             <SelectValue placeholder="Select Programme" />
                         </SelectTrigger>
                         <SelectContent>
@@ -700,15 +936,17 @@ const LivestockFarmersPage = () => {
                     </Select>
                 </div>
             ) : (
-                <div className="w-[180px]"></div> // Spacer
+                <div className="hidden md:block w-[180px]"></div>
             )}
 
-            <Button variant="outline" size="sm" onClick={() => setFilters({ ...filters, search: "", startDate: "", endDate: "", county: "all", subcounty: "all", gender: "all" })} className="h-9 px-6">
-                Clear Filters
-            </Button>
+            <div className="w-full md:w-auto flex justify-end">
+                <Button variant="outline" size="sm" onClick={() => setFilters({ ...filters, search: "", startDate: "", endDate: "", county: "all", subcounty: "all", gender: "all", location: "all" })} className="h-9 px-6 w-full md:w-auto">
+                    Clear Filters
+                </Button>
+            </div>
           </div>
           
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2 w-full md:w-auto mt-2 md:mt-0 justify-end">
           {selectedRecords.length > 0 && (
             <Button variant="destructive" size="sm" onClick={openBulkDeleteConfirm} disabled={deleteLoading} className="text-xs">
               <Trash2 className="h-4 w-4 mr-2" /> Delete ({selectedRecords.length})
@@ -727,19 +965,60 @@ const LivestockFarmersPage = () => {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <StatsCard title="FARMERS REGISTERED" value={stats.totalFarmers.toLocaleString()} icon={Users} description="Registered farmers" color="blue" />
-        <StatsCard title="ANIMAL CENSUS" value={(stats.totalSheep+stats.totalGoats).toLocaleString()} icon={Activity} description={"Sheep: "+stats.totalSheep.toLocaleString()+" "+"Goats: "+stats.totalGoats.toLocaleString()} color="purple" />
-        <StatsCard title="TRAINED FARMERS" value={stats.vaccinatedCount.toLocaleString()} icon={ShieldCheck} description="Farmers with vaccination records" color="green" />
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <StatsCard 
+            title="FARMERS REGISTERED" 
+            value={stats.totalFarmers.toLocaleString()} 
+            icon={Users} 
+            color="blue"
+            maleCount={stats.maleFarmers}
+            femaleCount={stats.femaleFarmers}
+            totalCount={stats.totalFarmers}
+        />
+        
+        <StatsCard 
+            title="ANIMAL CENSUS" 
+            value={(stats.totalSheep+stats.totalGoats).toLocaleString()} 
+            icon={Activity} 
+            color="blue"
+        >
+            <div className="flex items-center justify-between w-full mt-3 text-xs border-t border-gray-100 pt-2">
+                 <div className="flex flex-row text-left">
+                    <span className="text-gray-500 font-medium">Goats</span>
+                    <span className="font-bold text-purple-600">
+                        {stats.totalGoats} |
+                        <span className="text-gray-400 font-normal ml-1">
+                            {(stats.totalSheep+stats.totalGoats) > 0 ? Math.round((stats.totalGoats/(stats.totalSheep+stats.totalGoats))*100) : 0}%
+                        </span>
+                    </span>
+                 </div>
+                 <div className="flex flex-row text-right">
+                    <span className="text-gray-500 font-medium">Sheep</span>
+                    <span className="font-bold text-indigo-600">
+                        {stats.totalSheep} |
+                        <span className="text-gray-400 font-normal ml-1">
+                            {(stats.totalSheep+stats.totalGoats) > 0 ? Math.round((stats.totalSheep/(stats.totalSheep+stats.totalGoats))*100) : 0}%
+                        </span>
+                    </span>
+                 </div>
+            </div>
+        </StatsCard>
+             <StatsCard 
+            title="TRAINED FARMERS" 
+            value={stats.totalTrainedFarmers.toLocaleString()} 
+            icon={GraduationCap} 
+            color="blue"
+            description="Participants in training sessions"
+        />
       </div>
 
       <Card className="shadow-lg border-0 bg-white">
         <CardContent className="space-y-6 pt-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
             <div className="space-y-2">
                 <Label className="font-semibold text-gray-700 text-xs uppercase">County</Label>
                 <Select value={filters.county} onValueChange={(value) => handleFilterChange("county", value)}>
-                    <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white h-9"><SelectValue placeholder="Select County" /></SelectTrigger>
+                    <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white h-9"><SelectValue placeholder="All Counties" /></SelectTrigger>
                     <SelectContent>
                         <SelectItem value="all">All Counties</SelectItem>
                         {uniqueCounties.map(county => <SelectItem key={county} value={county}>{county}</SelectItem>)}
@@ -750,7 +1029,7 @@ const LivestockFarmersPage = () => {
             <div className="space-y-2">
                 <Label className="font-semibold text-gray-700 text-xs uppercase">Subcounty</Label>
                 <Select value={filters.subcounty} onValueChange={(value) => handleFilterChange("subcounty", value)}>
-                    <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white h-9"><SelectValue placeholder="Select Subcounty" /></SelectTrigger>
+                    <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white h-9"><SelectValue placeholder="All Subcounties" /></SelectTrigger>
                     <SelectContent>
                         <SelectItem value="all">All Subcounties</SelectItem>
                         {uniqueSubcounties.map(sub => <SelectItem key={sub} value={sub}>{sub}</SelectItem>)}
@@ -759,9 +1038,20 @@ const LivestockFarmersPage = () => {
             </div>
 
             <div className="space-y-2">
+                <Label className="font-semibold text-gray-700 text-xs uppercase">Location</Label>
+                <Select value={filters.location} onValueChange={(value) => handleFilterChange("location", value)}>
+                    <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white h-9"><SelectValue placeholder="All Locations" /></SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="all">All Locations</SelectItem>
+                        {uniqueLocations.map(loc => <SelectItem key={loc} value={loc}>{loc}</SelectItem>)}
+                    </SelectContent>
+                </Select>
+            </div>
+
+            <div className="space-y-2">
                 <Label className="font-semibold text-gray-700 text-xs uppercase">Gender</Label>
                 <Select value={filters.gender} onValueChange={(value) => handleFilterChange("gender", value)}>
-                    <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white h-9"><SelectValue placeholder="Select Gender" /></SelectTrigger>
+                    <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white h-9"><SelectValue placeholder="All Genders" /></SelectTrigger>
                     <SelectContent>
                         <SelectItem value="all">All Genders</SelectItem>
                         {uniqueGenders.map(g => <SelectItem key={g} value={g}>{g}</SelectItem>)}
@@ -771,7 +1061,7 @@ const LivestockFarmersPage = () => {
 
             <div className="space-y-2">
                 <Label className="font-semibold text-gray-700 text-xs uppercase">Search</Label>
-                <Input placeholder="Name, ID, Phone..." defaultValue={filters.search} onChange={(e) => handleSearchChange(e.target.value)} className="border-gray-300 focus:border-blue-500 bg-white h-9" />
+                <Input placeholder="Name, ID, Phone, Officer..." defaultValue={filters.search} onChange={(e) => handleSearchChange(e.target.value)} className="border-gray-300 focus:border-blue-500 bg-white h-9" />
             </div>
           </div>
         </CardContent>
@@ -794,7 +1084,7 @@ const LivestockFarmersPage = () => {
                       <th className="py-3 px-3 font-semibold text-gray-700">Farmer Name</th>
                       <th className="py-3 px-3 font-semibold text-gray-700">Gender</th>
                       <th className="py-3 px-3 font-semibold text-gray-700">Phone</th>
-                      <th className="py-3 px-3 font-semibold text-gray-700">ID</th>
+                      <th className="py-3 px-3 font-semibold text-gray-700 hidden sm:table-cell">ID</th>
                       <th className="py-3 px-3 font-semibold text-gray-700">County</th>
                       <th className="py-3 px-3 font-semibold text-gray-700">Subcounty</th>
                       <th className="py-3 px-3 font-semibold text-gray-700">Location</th>
@@ -803,7 +1093,8 @@ const LivestockFarmersPage = () => {
                       <th className="py-3 px-3 font-semibold text-gray-700">Sheep</th>
                       <th className="py-3 px-3 font-semibold text-gray-700">Vaccinated</th>
                       <th className="py-3 px-3 font-semibold text-gray-700">Programme</th>
-                      <th className="py-3 px-3 font-semibold text-gray-700">Created By</th>
+                      
+                      <th className="py-3 px-3 font-semibold text-gray-700 hidden sm:table-cell">Field Officer</th>
                       <th className="py-3 px-3 font-semibold text-gray-700">Actions</th>
                     </tr>
                   </thead>
@@ -815,7 +1106,7 @@ const LivestockFarmersPage = () => {
                         <td className="py-2 px-3 font-medium text-sm">{record.name}</td>
                         <td className="py-2 px-3"><Badge variant={record.gender === 'Female' ? 'secondary' : 'outline'} className="text-xs">{record.gender}</Badge></td>
                         <td className="py-2 px-3 text-xs">{record.phone}</td>
-                        <td className="py-2 px-3 text-xs font-mono">{record.idNumber}</td>
+                        <td className="py-2 px-3 text-xs font-mono hidden sm:table-cell">{record.idNumber}</td>
                         <td className="py-2 px-3 text-xs">{record.county}</td>
                         <td className="py-2 px-3 text-xs">{record.subcounty}</td>
                         <td className="py-2 px-3 text-xs">{record.location}</td>
@@ -828,7 +1119,7 @@ const LivestockFarmersPage = () => {
                         <td className="py-2 px-3">
                             <Badge variant="outline" className="border-blue-200 text-blue-700 text-[10px]">{record.programme || activeProgram}</Badge>
                         </td>
-                         <td className="py-2 px-3 text-xs italic text-gray-500">{record.username}</td>
+                         <td className="py-2 px-3 text-xs italic text-gray-500 hidden sm:table-cell">{record.username}</td>
                         <td className="py-2 px-3">
                           <div className="flex gap-1">
                             <Button variant="ghost" size="icon" className="h-7 w-7 text-green-600 hover:bg-green-50" onClick={() => openViewDialog(record)}><Eye className="h-3.5 w-3.5" /></Button>
@@ -846,7 +1137,7 @@ const LivestockFarmersPage = () => {
                 </table>
               </div>
 
-              <div className="flex items-center justify-between p-4 border-t bg-gray-50">
+              <div className="flex flex-col sm:flex-row items-center justify-between p-4 border-t bg-gray-50 gap-4">
                 <div className="text-sm text-muted-foreground">{filteredFarmers.length} total records • Page {pagination.page} of {pagination.totalPages}</div>
                 <div className="flex gap-2">
                   <Button variant="outline" size="sm" disabled={!pagination.hasPrev} onClick={() => handlePageChange(pagination.page - 1)}>Previous</Button>
@@ -859,14 +1150,14 @@ const LivestockFarmersPage = () => {
       </Card>
 
       <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
-        <DialogContent className="sm:max-w-3xl bg-white rounded-2xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-3xl bg-white rounded-2xl max-h-[90vh] overflow-y-auto w-[95vw] sm:w-full">
           <DialogHeader>
             <DialogTitle>Farmer Profile Details</DialogTitle>
             <DialogDescription>Complete information for {viewingRecord?.name}</DialogDescription>
           </DialogHeader>
           {viewingRecord && (
-            <div className="grid grid-cols-2 gap-6 py-4">
-              <div className="col-span-2 bg-blue-50 p-4 rounded-lg flex items-center justify-between">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 py-4">
+              <div className="col-span-1 sm:col-span-2 bg-blue-50 p-4 rounded-lg flex flex-col sm:flex-row items-center justify-between gap-4">
                  <div className="flex items-center gap-4">
                     <div className="bg-blue-100 p-3 rounded-full"><Users className="h-6 w-6 text-blue-600" /></div>
                     <div>
@@ -882,14 +1173,15 @@ const LivestockFarmersPage = () => {
               
               <DetailRow label="County" value={viewingRecord.county} />
               <DetailRow label="Subcounty" value={viewingRecord.subcounty} />
+              <DetailRow label="Location" value={viewingRecord.location} />
               <DetailRow label="Phone" value={viewingRecord.phone} />
               <DetailRow label="Gender" value={viewingRecord.gender} />
               <DetailRow label="ID Number" value={viewingRecord.idNumber || 'N/A'} />
               <DetailRow label="Registration Date" value={viewingRecord.registrationDate} />
               
-              <div className="col-span-2 border-t pt-4 mt-2">
+              <div className="col-span-1 sm:col-span-2 border-t pt-4 mt-2">
                 <h4 className="font-semibold text-gray-700 mb-3 flex items-center gap-2"><Scale className="h-4 w-4"/>Livestock Ownership</h4>
-                <div className="grid grid-cols-3 gap-4 text-sm">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm">
                    <div className="bg-gray-50 p-4 rounded text-center border">
                         <span className="block font-bold text-2xl text-orange-600">{viewingRecord.cattle}</span>
                         <span className="text-xs text-gray-500 uppercase">Cattle</span>
@@ -912,7 +1204,7 @@ const LivestockFarmersPage = () => {
                 {viewingRecord.ageDistribution && Object.keys(viewingRecord.ageDistribution).length > 0 && (
                     <div className="mt-4 bg-gray-50 p-4 rounded border">
                         <p className="text-xs font-bold text-gray-500 uppercase mb-2">Age Distribution</p>
-                        <div className="flex gap-4">
+                        <div className="flex flex-wrap gap-4">
                             {Object.entries(viewingRecord.ageDistribution).map(([key, val]) => (
                                 <div key={key} className="text-sm">
                                     <span className="font-bold text-gray-700">{val}</span> <span className="text-gray-400">({key})</span>
@@ -923,7 +1215,7 @@ const LivestockFarmersPage = () => {
                 )}
               </div>
 
-              <div className="col-span-2 grid grid-cols-2 gap-4 border-t pt-4">
+              <div className="col-span-1 sm:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-4 border-t pt-4">
                 <div className="p-4 border rounded flex flex-col gap-2">
                    <div className="flex items-center gap-3">
                        <ShieldCheck className={`h-5 w-5 ${viewingRecord.vaccinated ? 'text-green-600' : 'text-gray-300'}`} />
@@ -953,24 +1245,27 @@ const LivestockFarmersPage = () => {
       </Dialog>
 
       <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
-        <DialogContent className="sm:max-w-lg bg-white rounded-2xl">
+        <DialogContent className="sm:max-w-lg bg-white rounded-2xl w-[95vw] sm:w-full">
           <DialogHeader><DialogTitle>Edit Farmer Details</DialogTitle></DialogHeader>
-          <div className="grid gap-4 py-4 max-h-[70vh] overflow-y-auto">
-            <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 py-4 max-h-[70vh] overflow-y-auto">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-2"><Label>Name</Label><Input value={editForm.name} onChange={e => setEditForm({...editForm, name: e.target.value})} /></div>
               <div className="space-y-2"><Label>Phone</Label><Input value={editForm.phone} onChange={e => setEditForm({...editForm, phone: e.target.value})} /></div>
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-2"><Label>County</Label><Input value={editForm.county} onChange={e => setEditForm({...editForm, county: e.target.value})} /></div>
               <div className="space-y-2"><Label>Subcounty</Label><Input value={editForm.subcounty} onChange={e => setEditForm({...editForm, subcounty: e.target.value})} /></div>
             </div>
-            <div className="space-y-2"><Label>Programme</Label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-2"><Label>Location</Label><Input value={editForm.location} onChange={e => setEditForm({...editForm, location: e.target.value})} /></div>
+                <div className="space-y-2"><Label>Programme</Label>
                 <Select value={editForm.programme} onValueChange={(val) => setEditForm({...editForm, programme: val})}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
                         {availablePrograms.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
                     </SelectContent>
                 </Select>
+            </div>
             </div>
             <div className="space-y-2"><Label>Vaccines (Comma separated)</Label><Input placeholder="e.g. PPR, Anthrax" value={editForm.vaccines} onChange={e => setEditForm({...editForm, vaccines: e.target.value})} /></div>
             <div className="flex gap-4 items-center border p-3 rounded">
@@ -989,13 +1284,12 @@ const LivestockFarmersPage = () => {
         </DialogContent>
       </Dialog>
 
-      {/* Upload Dialog */}
       <Dialog open={isUploadDialogOpen} onOpenChange={setIsUploadDialogOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-md w-[95vw] sm:w-full">
           <DialogHeader>
             <DialogTitle>Upload Farmers Data</DialogTitle>
             <DialogDescription>
-              Upload CSV or JSON file. Data will be assigned to the <strong>{activeProgram}</strong> programme.
+              Upload CSV or JSON file. Data will be assigned to <strong>{activeProgram}</strong> programme.
             </DialogDescription>
           </DialogHeader>
           <div className="py-4">
@@ -1012,7 +1306,7 @@ const LivestockFarmersPage = () => {
       </Dialog>
 
       <Dialog open={isSingleDeleteDialogOpen} onOpenChange={setIsSingleDeleteDialogOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-md w-[95vw] sm:w-full">
           <DialogHeader><DialogTitle>Confirm Deletion</DialogTitle></DialogHeader>
           <p>Are you sure you want to delete <strong>{recordToDelete?.name}</strong>? This cannot be undone.</p>
           <DialogFooter>
@@ -1023,7 +1317,7 @@ const LivestockFarmersPage = () => {
       </Dialog>
 
       <Dialog open={isDeleteConfirmOpen} onOpenChange={setIsDeleteConfirmOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-md w-[95vw] sm:w-full">
           <DialogHeader><DialogTitle>Bulk Delete</DialogTitle></DialogHeader>
           <p>Are you sure you want to delete {selectedRecords.length} selected records?</p>
           <DialogFooter>

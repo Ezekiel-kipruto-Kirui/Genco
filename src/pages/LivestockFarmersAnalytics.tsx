@@ -1,40 +1,54 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
-// CHANGE: Import Realtime Database functions instead of Firestore
-import { ref, get, set, query as rtdbQuery, orderByChild, Database } from "firebase/database";
-import { db } from "@/lib/firebase"; // Ensure this is getDatabase(), not getFirestore()
+import { ref, onValue, query, orderByChild, equalTo } from "firebase/database";
+import { db } from "@/lib/firebase"; // Ensure this is getDatabase()
+import { useAuth } from "@/contexts/AuthContext";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid, AreaChart, Area, LineChart, Line } from "recharts";
-import { Users, GraduationCap, Beef, Calendar, TrendingUp, Target, BarChart3, Map, Award, UserCheck, Plus, Edit } from "lucide-react";
+import { 
+  PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip, 
+  AreaChart, Area, XAxis, YAxis, CartesianGrid, BarChart, Bar 
+} from "recharts";
+import { Users, GraduationCap, Beef, Map, UserCheck, AlertCircle, Activity } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
-import { useToast } from "@/hooks/use-toast";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { isChiefAdmin } from "@/contexts/authhelper";
-import { useAuth } from "@/contexts/AuthContext";
+import { getAuth } from "firebase/auth";
 
+// --- Constants ---
 const COLORS = {
   navy: "#1e3a8a",
   orange: "#f97316", 
   yellow: "#f59e0b"
 };
-
 const BAR_COLORS = [COLORS.navy, COLORS.orange, COLORS.yellow];
 
-interface User {
+// --- Interfaces ---
+interface FarmerData {
   id: string;
+  createdAt: number | string;
   name: string;
-  email: string;
-  region: string;
-  monthlyTarget: number;
+  gender: string;
+  phone: string;
+  county: string;
+  subcounty: string;
+  location: string;
+  goats: number | { male: number; female: number; total: number }; 
+  sheep: number | string;
+  username?: string;
+}
+
+interface TrainingData {
+  id: string;
+  startDate?: string;
+  totalFarmers?: number;
+  programme?: string;
 }
 
 interface UserProgress {
   id: string;
   name: string;
-  email: string;
   region: string;
   farmersRegistered: number;
   monthlyTarget: number;
@@ -42,20 +56,67 @@ interface UserProgress {
   status: 'achieved' | 'on-track' | 'behind' | 'needs-attention';
 }
 
+// Explicit interfaces for chart data to fix TS errors
+interface PieDataItem {
+  name: string;
+  value: number;
+  color: string;
+}
+
+interface TimeSeriesItem {
+  name: string;
+  farmers: any;
+  animals: any;
+}
+
+// --- Helper Functions ---
+
+const getCachedData = (key: string) => {
+  try {
+    const cached = localStorage.getItem(key);
+    if (cached) return JSON.parse(cached);
+  } catch (e) {
+    console.error("Cache read error", e);
+  }
+  return null;
+};
+
+const parseDate = (date: any): Date | null => {
+  if (!date) return null;
+  try {
+    if (date instanceof Date) return date;
+    if (typeof date === 'number') return new Date(date);
+    if (typeof date === 'string') {
+      const parsed = new Date(date);
+      return isNaN(parsed.getTime()) ? null : parsed;
+    }
+  } catch (error) {
+    console.error('Error parsing date:', error);
+  }
+  return null;
+};
+
+const getGoatTotal = (goats: any): number => {
+  if (typeof goats === 'number') return goats;
+  if (typeof goats === 'object' && goats !== null && typeof goats.total === 'number') return goats.total;
+  return 0;
+};
+
 const LivestockFarmersAnalytics = () => {
-  const { userRole } = useAuth();
-  const { toast } = useToast();
+  const { user, userRole } = useAuth();
   const [loading, setLoading] = useState(true);
-  const [allFarmers, setAllFarmers] = useState<any[]>([]);
-  const [trainingRecords, setTrainingRecords] = useState<any[]>([]);
-  const [filteredData, setFilteredData] = useState<any[]>([]);
-  const [genderData, setGenderData] = useState<any[]>([]);
-  const [regionData, setRegionData] = useState<any[]>([]);
-  const [goatsData, setGoatsData] = useState<any[]>([]);
-  const [trainingComparisonData, setTrainingComparisonData] = useState<any[]>([]);
-  const [trainingTrendData, setTrainingTrendData] = useState<any[]>([]);
-  const [regionalPerformanceData, setRegionalPerformanceData] = useState<any[]>([]);
-  const [topRegions, setTopRegions] = useState<string[]>([]);
+  const [allFarmers, setAllFarmers] = useState<FarmerData[]>([]);
+  const [trainingRecords, setTrainingRecords] = useState<TrainingData[]>([]);
+  const [filteredData, setFilteredData] = useState<FarmerData[]>([]);
+  const [activeProgram, setActiveProgram] = useState<string>(""); 
+  const [availablePrograms, setAvailablePrograms] = useState<string[]>([]);
+
+  // Chart Data States
+  const [genderData, setGenderData] = useState<PieDataItem[]>([]);
+  const [animalCensusData, setAnimalCensusData] = useState<PieDataItem[]>([]); // Goats vs Sheep
+  const [weeklyPerformanceData, setWeeklyPerformanceData] = useState<TimeSeriesItem[]>([]); // Week 1-4
+  const [subcountyPerformanceData, setSubcountyPerformanceData] = useState<any[]>([]);
+  
   const [stats, setStats] = useState({ 
     total: 0, 
     trained: 0, 
@@ -65,558 +126,338 @@ const LivestockFarmersAnalytics = () => {
     femaleFarmers: 0,
     totalTrainedFromCapacity: 0
   });
+
   const [dateRange, setDateRange] = useState({
     startDate: "",
     endDate: ""
   });
-  const [timeFrame, setTimeFrame] = useState<'weekly' | 'monthly' | 'yearly'>('monthly');
-  
-  // User assignment state
-  const [users, setUsers] = useState<User[]>([]);
-  const [allAvailableUsers, setAllAvailableUsers] = useState<User[]>([]);
-  const [isUserDialogOpen, setIsUserDialogOpen] = useState(false);
-  const [selectedUser, setSelectedUser] = useState<User | null>(null);
-  const [userForm, setUserForm] = useState({
-    userId: "",
-    name: "",
-    email: "",
-    region: "",
-    monthlyTarget: 117
-  });
 
-  // Helper to convert RTDB snapshot to array
-  const snapshotToArray = (snapshot: any) => {
-    if (!snapshot.exists()) return [];
-    const data = snapshot.val();
-    return Object.keys(data).map((key) => ({
-      id: key,
-      ...data[key]
-    }));
-  };
-
-  // Function to fetch all available users
-  const fetchAllAvailableUsers = async (): Promise<User[]> => {
-    try {
-      // CHANGE: Use RTDB get() and ref()
-      const usersSnapshot = await get(ref(db, "users"));
-      
-      if (usersSnapshot.exists()) {
-        const usersData = snapshotToArray(usersSnapshot).map((user: any) => ({
-          id: user.id,
-          name: user.name || user.displayName || user.email?.split('@')[0] || 'Unknown User',
-          email: user.email || '',
-          region: user.region || user.assignedRegion || '',
-          monthlyTarget: user.monthlyTarget || 117
-        })).filter((user: User) => user.email); 
-        
-        return usersData;
-      }
-      
-      // If no users found, return mock users (kept from original logic)
-      console.log("No users found in Database, using mock data");
-      return [];
-      
-    } catch (error) {
-      console.error("Error fetching users:", error);
-      return [];
-    }
-  };
-
-  // Function to fetch assigned users (users with regions)
-  const fetchAssignedUsers = async (): Promise<User[]> => {
-    try {
-      // CHANGE: Use RTDB get() and ref()
-      const assignedUsersSnapshot = await get(ref(db, "users"));
-      
-      if (assignedUsersSnapshot.exists()) {
-        const allUsers = snapshotToArray(assignedUsersSnapshot);
-        // Filter manually since RTDB queries for "!=" are tricky/limited compared to Firestore
-        return allUsers
-          .map((u: any) => ({
-            id: u.id,
-            name: u.name || u.displayName || u.email?.split('@')[0] || 'Unknown User',
-            email: u.email || '',
-            region: u.region || u.assignedRegion || '',
-            monthlyTarget: u.monthlyTarget || 117
-          }))
-          .filter((u: User) => u.region && u.region.trim() !== "");
-      }
-      return [];
-    } catch (error) {
-      console.error("Error fetching assigned users:", error);
-      return [];
-    }
-  };
-
-  // Fetch all data on component mount
+  // --- 1. Fetch User Permissions ---
   useEffect(() => {
-    fetchAllData();
-  }, []);
-
-  // Apply filters whenever dateRange changes
-  useEffect(() => {
-    if (allFarmers.length > 0 && trainingRecords.length > 0) {
-      applyFilters();
+    if (isChiefAdmin(userRole)) {
+      setAvailablePrograms(["RANGE", "KPMD"]);
+      if (!activeProgram) setActiveProgram("RANGE");
+      return;
     }
-  }, [dateRange, allFarmers, trainingRecords, timeFrame]);
 
-  const fetchAllData = async () => {
-    try {
-      setLoading(true);
-      
-      // CHANGE: Use RTDB get() and ref() for all collections
-      const [farmersSnapshot, trainingSnapshot, availableUsers, assignedUsers] = await Promise.all([
-        get(ref(db, "Livestock Farmers")),
-        get(ref(db, "Capacity Building")),
-        fetchAllAvailableUsers(),
-        fetchAssignedUsers()
-      ]);
+    const auth = getAuth();
+    const uid = auth.currentUser?.uid;
+    if (!uid) return;
 
-      const farmersData = farmersSnapshot.exists() ? snapshotToArray(farmersSnapshot) : [];
-      const trainingData = trainingSnapshot.exists() ? snapshotToArray(trainingSnapshot) : [];
+    const userRef = ref(db, `users/${uid}`);
+    const unsubscribe = onValue(userRef, (snapshot) => {
+      const data = snapshot.val();
+      if (data && data.allowedProgrammes) {
+        const programs = Object.keys(data.allowedProgrammes).filter(
+          key => data.allowedProgrammes[key] === true
+        );
+        setAvailablePrograms(programs);
+        if (programs.length > 0 && !programs.includes(activeProgram)) {
+          setActiveProgram(programs[0]);
+        } else if (programs.length === 0) {
+            setActiveProgram("");
+        }
+      } else {
+        setAvailablePrograms([]);
+      }
+    }, (error) => {
+        console.error("Error fetching user permissions:", error);
+    });
+    return () => unsubscribe();
+  }, [userRole, activeProgram]);
 
-      setAllFarmers(farmersData);
-      setTrainingRecords(trainingData);
-      setAllAvailableUsers(availableUsers);
-      setUsers(assignedUsers);
-      
-    } catch (error) {
-      console.error("Error fetching data:", error);
-      setUsers([]);
-    } finally {
+  // --- 2. Data Fetching (Farmers) ---
+  useEffect(() => {
+    if (!activeProgram) {
+        setAllFarmers([]);
+        setLoading(false);
+        return;
+    }
+    setLoading(true);
+    
+    const cacheKey = `farmers_cache_${activeProgram}`;
+    const cachedFarmers = getCachedData(cacheKey);
+    if (cachedFarmers && cachedFarmers.length > 0) {
+      setAllFarmers(cachedFarmers);
       setLoading(false);
     }
-  };
 
-  // Function to check if a farmer is trained (exists in Capacity Building)
-  const isFarmerTrained = (farmer: any): boolean => {
-    if (!farmer.phone && !farmer.phoneNo && !farmer.Phone && !farmer.name && !farmer.Name) return false;
-    
-    // Check if farmer exists in training records by phone number or name
-    return trainingRecords.some(record => {
-      const recordPhone = record.Phone?.toString().trim();
-      const recordName = record.Name?.toString().toLowerCase().trim();
-      
-      const farmerPhone = (farmer.phone || farmer.phoneNo || farmer.Phone)?.toString().trim();
-      const farmerName = (farmer.name || farmer.Name)?.toString().toLowerCase().trim();
-      
-      return (
-        (recordPhone && farmerPhone && recordPhone === farmerPhone) ||
-        (recordName && farmerName && recordName === farmerName)
-      );
-    });
-  };
-
-  const getTotalTrainedFromCapacityBuilding = (): number => {
-    return trainingRecords.length;
-  };
-
-  const getCurrentWeekDates = () => {
-    const now = new Date();
-    const startOfWeek = new Date(now);
-    startOfWeek.setDate(now.getDate() - now.getDay());
-    const endOfWeek = new Date(now);
-    endOfWeek.setDate(now.getDate() + (6 - now.getDay()));
-    
-    return {
-      startDate: startOfWeek.toISOString().split('T')[0],
-      endDate: endOfWeek.toISOString().split('T')[0]
-    };
-  };
-
-  const getCurrentMonthDates = () => {
-    const now = new Date();
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-    
-    return {
-      startDate: startOfMonth.toISOString().split('T')[0],
-      endDate: endOfMonth.toISOString().split('T')[0]
-    };
-  };
-
-  const parseDate = (date: any): Date | null => {
-    if (!date) return null;
-    try {
-      if (date.toDate && typeof date.toDate === 'function') {
-        return date.toDate();
-      } else if (date instanceof Date) {
-        return date;
-      } else if (typeof date === 'string') {
-        const parsed = new Date(date);
-        return isNaN(parsed.getTime()) ? null : parsed;
-      } else if (typeof date === 'number') {
-        // RTDB often stores dates as numbers (milliseconds)
-        return new Date(date);
-      } else if (date.seconds) {
-        return new Date(date.seconds * 1000);
+    const farmersQuery = query(ref(db, 'farmers'), orderByChild('programme'), equalTo(activeProgram));
+    const unsubscribe = onValue(farmersQuery, (snapshot) => {
+      const data = snapshot.val();
+      if (!data) {
+        setAllFarmers([]);
+        setLoading(false);
+        localStorage.removeItem(cacheKey); 
+        return;
       }
-    } catch (error) {
-      console.error('Error parsing date:', error);
+
+      const farmersList = Object.keys(data).map((key) => {
+        const item = data[key];
+        let dateValue = item.createdAt;
+        if (typeof dateValue !== 'number') {
+           dateValue = parseDate(item.registrationDate)?.getTime() || Date.now();
+        }
+        return {
+          id: key,
+          createdAt: dateValue,
+          name: item.name || '',
+          gender: item.gender || '',
+          phone: item.phone || '',
+          county: item.county || '',
+          subcounty: item.subcounty || '',
+          location: item.location || item.subcounty || '',
+          goats: item.goats || 0,
+          sheep: item.sheep || 0,
+          username: item.username || 'Unknown'
+        };
+      });
+      farmersList.sort((a, b) => (b.createdAt as number) - (a.createdAt as number));
+      setAllFarmers(farmersList);
+      setLoading(false);
+      try {
+        localStorage.setItem(cacheKey, JSON.stringify(farmersList));
+      } catch (e) {
+        console.warn("Cache write failed", e);
+      }
+    }, (error) => {
+      console.error("Error fetching farmers data:", error);
+      setLoading(false);
+    });
+    return () => { if(typeof unsubscribe === 'function') unsubscribe(); };
+  }, [activeProgram]);
+
+  // --- 3. Data Fetching (Capacity Building) ---
+  useEffect(() => {
+    if (!activeProgram) {
+        setTrainingRecords([]);
+        return;
     }
-    return null;
-  };
+    const cacheKey = `training_cache_${activeProgram}`;
+    const cachedTraining = getCachedData(cacheKey);
+    if (cachedTraining && cachedTraining.length > 0) {
+        setTrainingRecords(cachedTraining);
+    }
+    const trainingQuery = query(ref(db, 'capacityBuilding'), orderByChild('programme'), equalTo(activeProgram));
+    const unsubscribe = onValue(trainingQuery, (snapshot) => {
+        const data = snapshot.val();
+        if (!data) {
+            setTrainingRecords([]);
+            localStorage.removeItem(cacheKey);
+            return;
+        }
+        const records = Object.keys(data).map((key) => ({ id: key, ...data[key] }));
+        setTrainingRecords(records);
+        try {
+            localStorage.setItem(cacheKey, JSON.stringify(records));
+        } catch (e) {
+            console.warn("Cache write failed", e);
+        }
+    }, (error) => {
+        console.error("Error fetching training data:", error);
+    });
+    return () => { if(typeof unsubscribe === 'function') unsubscribe(); };
+  }, [activeProgram]);
+
+  // --- 4. Filtering & Analytics Logic ---
+  useEffect(() => {
+    if (allFarmers.length > 0) {
+      applyFilters();
+    }
+  }, [dateRange, allFarmers, trainingRecords]);
 
   const isDateInRange = (date: any, startDate: string, endDate: string): boolean => {
     if (!startDate && !endDate) return true;
-    
     const farmerDate = parseDate(date);
     if (!farmerDate) return false;
-
     const farmerDateOnly = new Date(farmerDate);
     farmerDateOnly.setHours(0, 0, 0, 0);
-
     const start = startDate ? new Date(startDate) : null;
     const end = endDate ? new Date(endDate) : null;
-    
     if (start) start.setHours(0, 0, 0, 0);
     if (end) end.setHours(23, 59, 59, 999);
-
     if (start && farmerDateOnly < start) return false;
     if (end && farmerDateOnly > end) return false;
-    
     return true;
   };
 
   const applyFilters = () => {
     const filtered = allFarmers.filter(farmer => 
-      isDateInRange(
-        farmer.dateSubmitted || farmer.createdAt || farmer.date, 
-        dateRange.startDate, 
-        dateRange.endDate
-      )
+      isDateInRange(farmer.createdAt, dateRange.startDate, dateRange.endDate)
     );
-
     setFilteredData(filtered);
     updateAnalytics(filtered);
   };
 
-  const updateAnalytics = (data: any[]) => {
+  const updateAnalytics = (data: FarmerData[]) => {
     // Gender distribution
-    const male = data.filter(f => 
-      String(f.gender || f.Gender).toLowerCase() === 'male'
-    ).length;
-    const female = data.filter(f => 
-      String(f.gender || f.Gender).toLowerCase() === 'female'
-    ).length;
+    const maleCount = data.filter(f => String(f.gender).toLowerCase() === 'male').length;
+    const femaleCount = data.filter(f => String(f.gender).toLowerCase() === 'female').length;
 
-    const trained = data.filter(farmer => isFarmerTrained(farmer)).length;
-    const totalTrainedFromCapacity = getTotalTrainedFromCapacityBuilding();
-    
-    const notTrained = data.length - trained;
-    const trainingRate = data.length > 0 ? (trained / data.length) * 100 : 0;
+    // Training count
+    const totalTrainedFromCapacity = trainingRecords.reduce((sum, t) => sum + (Number(t.totalFarmers) || 0), 0);
+    const trainingRate = data.length > 0 ? (totalTrainedFromCapacity / data.length) * 100 : 0;
 
-    // Animal census
+    // Animal Census Stats (Goats vs Sheep)
+    let totalGoats = 0;
+    let totalSheep = 0;
     let totalMaleGoats = 0;
     let totalFemaleGoats = 0;
+    
     data.forEach(farmer => {
-      totalMaleGoats += parseInt(farmer.goatsMale || farmer.GoatsMale || farmer.maleGoats || 0);
-      totalFemaleGoats += parseInt(farmer.goatsFemale || farmer.GoatsFemale || farmer.femaleGoats || 0);
-    });
-    const totalAnimals = totalMaleGoats + totalFemaleGoats;
+      const g = getGoatTotal(farmer.goats);
+      totalGoats += g;
+      totalSheep += Number(farmer.sheep || 0);
 
+      // For Gender Chart
+      // if (farmer.goats && typeof farmer.goats === 'object') {
+      //   totalMaleGoats += parseInt(farmer.goats.male || 0);
+      //   totalFemaleGoats += parseInt(farmer.goats.female || 0);
+      // } else {
+      //   totalFemaleGoats += g; // Default to female if unknown
+      // }
+    });
+
+    const totalAnimals = totalGoats + totalSheep;
+
+    // Set Stats
     setStats({ 
       total: data.length, 
-      trained, 
+      trained: totalTrainedFromCapacity,
       totalAnimals,
       trainingRate,
-      maleFarmers: male,
-      femaleFarmers: female,
+      maleFarmers: maleCount,
+      femaleFarmers: femaleCount,
       totalTrainedFromCapacity
     });
 
-    setGenderData([
-      { name: "Male", value: male, color: COLORS.navy },
-      { name: "Female", value: female, color: COLORS.orange },
-    ]);
-
-    setGoatsData([
-      { name: "Male Goats", value: totalMaleGoats, color: COLORS.navy },
-      { name: "Female Goats", value: totalFemaleGoats, color: COLORS.yellow },
-    ]);
-
-    const comparisonData = [
-      { name: "Trained", value: trained > 0 ? trained : 1, color: COLORS.yellow },
-      { name: "Not Trained", value: notTrained > 0 ? notTrained : 1, color: COLORS.orange },
+    // 1. Gender Data (Fixing TS errors by explicit typing)
+    const genderChartData: PieDataItem[] = [
+      { name: "Male", value: Number(maleCount), color: COLORS.navy },
+      { name: "Female", value: Number(femaleCount), color: COLORS.orange },
     ];
-    setTrainingComparisonData(comparisonData);
+    setGenderData(genderChartData);
 
-    const monthlyTraining = generateMonthlyTrainingData();
-    setTrainingTrendData(monthlyTraining);
+    // 2. Animal Census Data (Goats vs Sheep) - Replaces Training Status
+    const animalChartData: PieDataItem[] = [
+      { name: "Goats", value: Number(totalGoats), color: COLORS.navy },
+      { name: "Sheep", value: Number(totalSheep), color: COLORS.yellow },
+    ];
+    setAnimalCensusData(animalChartData);
 
-    const { weeklyData, regions } = generateRegionalPerformanceData(data);
-    setRegionalPerformanceData(weeklyData);
-    setTopRegions(regions);
+    // 3. Weekly Performance (Farmers vs Livestock) - Week 1, 2, 3, 4
+    const weeks: Record<number, { farmers: number; animals: number }> = {
+      1: { farmers: 0, animals: 0 },
+      2: { farmers: 0, animals: 0 },
+      3: { farmers: 0, animals: 0 },
+      4: { farmers: 0, animals: 0 }
+    };
 
-    const regionCount: Record<string, number> = {};
     data.forEach(farmer => {
-      const region = String(farmer.region || farmer.Region || farmer.location || "Unknown");
-      regionCount[region] = (regionCount[region] || 0) + 1;
+      const date = new Date(farmer.createdAt);
+      const day = date.getDate();
+      const weekNum = Math.ceil(day / 7); // Determine week of the month
+      if (weekNum >= 1 && weekNum <= 4) {
+        weeks[weekNum].farmers++;
+        weeks[weekNum].animals += getGoatTotal(farmer.goats) + Number(farmer.sheep || 0);
+      }
     });
-    
-    const regionChartData = Object.entries(regionCount)
+
+    const weeklyChartData: TimeSeriesItem[] = [
+      { name: "Week 1", farmers: weeks[1].farmers, animals: weeks[1].animals },
+      { name: "Week 2", farmers: weeks[2].farmers, animals: weeks[2].animals },
+      { name: "Week 3", farmers: weeks[3].farmers, animals: weeks[3].animals },
+      { name: "Week 4", farmers: weeks[4].farmers, animals: weeks[4].animals },
+    ];
+    setWeeklyPerformanceData(weeklyChartData);
+
+    // 4. Subcounty Performance (Bar Chart)
+    const subcountyStats: Record<string, number> = {};
+    data.forEach(farmer => {
+      const sc = farmer.subcounty || "Unknown";
+      subcountyStats[sc] = (subcountyStats[sc] || 0) + 1;
+    });
+    const scData = Object.entries(subcountyStats)
       .map(([name, value]) => ({ name, value }))
       .sort((a, b) => b.value - a.value)
-      .slice(0, 8);
-
-    setRegionData(regionChartData);
+      .slice(0, 15);
+    setSubcountyPerformanceData(scData);
   };
 
-  const generateMonthlyTrainingData = () => {
-    const monthlyCount: Record<string, number> = {};
-    
-    trainingRecords.forEach(record => {
-      const date = parseDate(record.date || record.timestamp);
-      if (date) {
-        const monthYear = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-        monthlyCount[monthYear] = (monthlyCount[monthYear] || 0) + 1;
-      }
-    });
-
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    const monthlyData = months.map((month, index) => {
-      const monthKey = `2024-${String(index + 1).padStart(2, '0')}`;
-      return {
-        name: month,
-        trained: monthlyCount[monthKey] || 0,
-      };
-    });
-
-    return monthlyData;
-  };
-
-  const generateRegionalPerformanceData = (data: any[]) => {
-    const regionCount: Record<string, number> = {};
-    data.forEach(farmer => {
-      const region = String(farmer.region || farmer.Region || farmer.location || "Unknown").trim();
-      if (region && region !== "Unknown") {
-        regionCount[region] = (regionCount[region] || 0) + 1;
-      }
-    });
-
-    const topRegions = Object.entries(regionCount)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 4)
-      .map(([region]) => region);
-
-    const weeklyData = [];
-    
-    for (let week = 1; week <= 4; week++) {
-      const weekData: any = { name: `W${week}` };
-      
-      topRegions.forEach(region => {
-        const regionData = data.filter(farmer => {
-          const farmerRegion = String(farmer.region || farmer.Region || farmer.location || "Unknown").trim();
-          if (farmerRegion !== region) return false;
-          
-          const farmerDate = parseDate(farmer.dateSubmitted || farmer.createdAt || farmer.date);
-          if (!farmerDate) return false;
-          
-          const weekStart = new Date();
-          weekStart.setDate(weekStart.getDate() - ((4 - week) * 7));
-          const weekEnd = new Date(weekStart);
-          weekEnd.setDate(weekStart.getDate() + 6);
-          
-          return farmerDate >= weekStart && farmerDate <= weekEnd;
-        });
-
-        const totalFarmers = regionData.length;
-        const trainedFarmers = regionData.filter(farmer => isFarmerTrained(farmer)).length;
-        const performance = totalFarmers > 0 ? Math.round((trainedFarmers / totalFarmers) * 100) : 0;
-        
-        weekData[region] = performance;
-        weekData[`${region}_farmers`] = totalFarmers;
-        weekData[`${region}_trained`] = trainedFarmers;
-      });
-      
-      weeklyData.push(weekData);
-    }
-
-    return { weeklyData, regions: topRegions };
-  };
-
+  // User Progress
   const userProgressData = useMemo(() => {
-    const usersWithRegions = users.filter(user => user.region && user.region.trim() !== '');
-    
-    const userProgressData: UserProgress[] = usersWithRegions.map(user => {
-      const farmersRegistered = filteredData.filter(farmer => 
-        farmer.region === user.region || farmer.Region === user.region
-      ).length;
+    const userStats: Record<string, { count: number; counties: Set<string> }> = {};
+    filteredData.forEach(farmer => {
+      const username = farmer.username || "Unknown User";
+      if (!userStats[username]) {
+        userStats[username] = { count: 0, counties: new Set() };
+      }
+      userStats[username].count++;
+      const county = farmer.county;
+      if (county) {
+        userStats[username].counties.add(county);
+      }
+    });
 
-      const monthlyTarget = user.monthlyTarget || 117;
-      const progressPercentage = (farmersRegistered / monthlyTarget) * 100;
+    return Object.entries(userStats).map(([username, data]) => {
+      const monthlyTarget = 117;
+      const progressPercentage = (data.count / monthlyTarget) * 100;
       
       let status: UserProgress['status'] = 'needs-attention';
-      if (progressPercentage >= 100) {
-        status = 'achieved';
-      } else if (progressPercentage >= 75) {
-        status = 'on-track';
-      } else if (progressPercentage >= 50) {
-        status = 'behind';
-      }
+      if (progressPercentage >= 100) status = 'achieved';
+      else if (progressPercentage >= 75) status = 'on-track';
+      else if (progressPercentage >= 50) status = 'behind';
 
       return {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        region: user.region,
-        farmersRegistered,
+        id: username,
+        name: username,
+        region: Array.from(data.counties).slice(0, 3).join(', ') + (data.counties.size > 3 ? '...' : ''),
+        farmersRegistered: data.count,
         monthlyTarget,
         progressPercentage,
         status
       };
-    }).sort((a, b) => b.progressPercentage - a.progressPercentage);
-
-    return userProgressData;
-  }, [users, filteredData]);
+    }).sort((a, b) => b.farmersRegistered - a.farmersRegistered);
+  }, [filteredData]);
 
   const handleDateRangeChange = (key: string, value: string) => {
     setDateRange(prev => ({ ...prev, [key]: value }));
   };
 
   const setWeekFilter = () => {
-    const weekDates = getCurrentWeekDates();
-    setDateRange(weekDates);
+    const now = new Date();
+    const startOfWeek = new Date(now);
+    startOfWeek.setDate(now.getDate() - now.getDay());
+    const endOfWeek = new Date(now);
+    endOfWeek.setDate(now.getDate() + (6 - now.getDay()));
+    setDateRange({
+      startDate: startOfWeek.toISOString().split('T')[0],
+      endDate: endOfWeek.toISOString().split('T')[0]
+    });
   };
 
   const setMonthFilter = () => {
-    const monthDates = getCurrentMonthDates();
-    setDateRange(monthDates);
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    setDateRange({
+      startDate: startOfMonth.toISOString().split('T')[0],
+      endDate: endOfMonth.toISOString().split('T')[0]
+    });
   };
 
   const clearFilters = () => {
     setDateRange({ startDate: "", endDate: "" });
   };
 
-  const setTimeFrameFilter = (frame: 'weekly' | 'monthly' | 'yearly') => {
-    setTimeFrame(frame);
-  };
-
-  const handleUserFormChange = (field: string, value: string) => {
-    setUserForm(prev => ({
-      ...prev,
-      [field]: value
-    }));
-
-    if (field === "userId" && value) {
-      const selectedUser = allAvailableUsers.find(user => user.id === value);
-      if (selectedUser) {
-        setUserForm(prev => ({
-          ...prev,
-          userId: value,
-          name: selectedUser.name,
-          email: selectedUser.email
-        }));
-      }
-    }
-  };
-
-  const handleAddUser = async () => {
-    try {
-      if (!userForm.userId || !userForm.region) {
-        toast({
-          title: "Validation Error",
-          description: "Please select a user and assign a region",
-          variant: "destructive",
-        });
-        return;
-      }
-
-      const selectedUserData = allAvailableUsers.find(user => user.id === userForm.userId);
-      if (!selectedUserData) {
-        toast({
-          title: "Error",
-          description: "Selected user not found",
-          variant: "destructive",
-        });
-        return;
-      }
-
-      const userData = {
-        name: selectedUserData.name,
-        email: selectedUserData.email,
-        region: userForm.region,
-        monthlyTarget: userForm.monthlyTarget,
-        updatedAt: new Date().toISOString() // RTDB prefers ISO strings or numbers
-      };
-
-      // CHANGE: Use RTDB set() and ref()
-      if (selectedUser) {
-        await set(ref(db, `users/${selectedUser.id}`), userData);
-        toast({
-          title: "Success",
-          description: "User assignment updated successfully",
-        });
-      } else {
-        await set(ref(db, `users/${userForm.userId}`), userData);
-        toast({
-          title: "Success",
-          description: "User assigned to region successfully",
-        });
-      }
-
-      setUserForm({
-        userId: "",
-        name: "",
-        email: "",
-        region: "",
-        monthlyTarget: 117
-      });
-      setSelectedUser(null);
-      setIsUserDialogOpen(false);
-      fetchAllData();
-    } catch (error) {
-      console.error("Error saving user assignment:", error);
-      toast({
-        title: "Error",
-        description: "Failed to assign user to region",
-        variant: "destructive",
-      });
-    }
-  };
-
-  const handleEditUser = (user: User) => {
-    setSelectedUser(user);
-    setUserForm({
-      userId: user.id,
-      name: user.name,
-      email: user.email,
-      region: user.region,
-      monthlyTarget: user.monthlyTarget
-    });
-    setIsUserDialogOpen(true);
-  };
-
-  const openAddUserDialog = () => {
-    setSelectedUser(null);
-    setUserForm({
-      userId: "",
-      name: "",
-      email: "",
-      region: "",
-      monthlyTarget: 117
-    });
-    setIsUserDialogOpen(true);
-  };
-
-  const uniqueRegions = Array.from(new Set(allFarmers.map(farmer => 
-    farmer.region || farmer.Region || farmer.county || farmer.County
-  ).filter(Boolean)));
-
-  const unassignedUsers = allAvailableUsers.filter(availableUser => 
-    !users.some(assignedUser => assignedUser.id === availableUser.id)
-  );
-
   const renderCustomizedLabel = useCallback(({
     cx, cy, midAngle, innerRadius, outerRadius, percent
   }: any) => {
     if (percent === 0) return null;
-    
     const RADIAN = Math.PI / 180;
     const radius = innerRadius + (outerRadius - innerRadius) * 0.5;
     const x = cx + radius * Math.cos(-midAngle * RADIAN);
     const y = cy + radius * Math.sin(-midAngle * RADIAN);
-
     return (
       <text 
         x={x} 
@@ -639,7 +480,6 @@ const LivestockFarmersAnalytics = () => {
         color === 'orange' ? 'bg-orange-500' :
         color === 'yellow' ? 'bg-yellow-500' : 'bg-blue-900'
       }`}></div>
-      
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 pt-4 pl-6">
         <CardTitle className="text-sm font-medium text-gray-600">{title}</CardTitle>
         <div className={`p-2 rounded-xl ${
@@ -674,33 +514,56 @@ const LivestockFarmersAnalytics = () => {
     );
   }
 
+  if (!loading && allFarmers.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full p-8 space-y-4">
+        <Card className="w-full max-w-2xl border-red-200 bg-red-50">
+          <CardHeader>
+            <CardTitle className="flex items-center text-red-800">
+              <AlertCircle className="h-6 w-6 mr-2" />
+              No Data Found
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-red-700">
+              We could not find any farmers in database.
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6 p-1">
-      <div className="flex flex-col justify-between items-start gap-4">
-        <h1 className="text-xl font-bold text-gray-900">Livestock Farmers Analytics</h1>
-
-        <Card className="w-full lg:w-auto border-0 shadow-lg bg-white">
-          <CardContent className="p-4">
+      <div className="flex flex-col md:flex-row justify-between items-start lg:tems-center md:items-center">
+         <h1 className="text-sm text-gray-900">Livestock Farmers</h1>
+        <div 
+            className="
+            flex flex-col md:flex-row justify-between items-start md:items-center w-full gap-4">
+           
+            <Card className="w-full lg:w-auto border-0 shadow-lg bg-white">
+          <CardContent className="p-1">
             <div className="flex flex-col lg:flex-row gap-4 items-end">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label htmlFor="startDate" className="text-sm font-medium text-gray-700">From Date</Label>
+                 
                   <Input
                     id="startDate"
                     type="date"
                     value={dateRange.startDate}
                     onChange={(e) => handleDateRangeChange("startDate", e.target.value)}
-                    className="border-gray-200 focus:border-blue-500"
+                    className="border-gray-200 focus:border-blue-500 text-sm"
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="endDate" className="text-sm font-medium text-gray-700">To Date</Label>
+                  
                   <Input
                     id="endDate"
                     type="date"
                     value={dateRange.endDate}
                     onChange={(e) => handleDateRangeChange("endDate", e.target.value)}
-                    className="border-gray-200 focus:border-blue-500"
+                    className="border-gray-200 focus:border-blue-500 text-sm"
                   />
                 </div>
               </div>
@@ -718,6 +581,27 @@ const LivestockFarmersAnalytics = () => {
             </div>
           </CardContent>
         </Card>
+            
+           
+        </div>
+        <div>
+           {availablePrograms.length > 0 && (
+                <div className="w-full md:w-auto">
+                    <Select value={activeProgram} onValueChange={setActiveProgram}>
+                        <SelectTrigger className="w-full md:w-[180px]">
+                            <SelectValue placeholder="Select Programme" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            {availablePrograms.map(p => (
+                                <SelectItem key={p} value={p}>{p}</SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
+                </div>
+            )}
+        </div>
+
+        
       </div>
 
       <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-3">
@@ -728,20 +612,18 @@ const LivestockFarmersAnalytics = () => {
           description={`${stats.maleFarmers} male, ${stats.femaleFarmers} female`}
           color="navy"
         />
-
         <StatsCard 
           title="Trained Farmers" 
           value={stats.trained.toLocaleString()} 
           icon={GraduationCap}
-          description={`${stats.trainingRate.toFixed(1)}% of livestock farmers`}
+          description={`${stats.trainingRate.toFixed(1)}% training coverage`}
           color="yellow"
         />
-
         <StatsCard 
-          title="Animal Census" 
+          title="Total Animals" 
           value={stats.totalAnimals.toLocaleString()} 
           icon={Beef}
-          description="Total goats registered"
+          description="Total livestock count"
           color="orange"
         />
       </div>
@@ -751,15 +633,8 @@ const LivestockFarmersAnalytics = () => {
           <div className="flex justify-between items-center">
             <CardTitle className="text-md flex items-center gap-2 text-gray-800">
               <UserCheck className="h-5 w-5 text-blue-600" />
-              Field Officers Assignment & Progress (Monthly Target: 117 farmers)
+              Field Officers Performance (Target: 117 farmers)
             </CardTitle>
-
-            {isChiefAdmin(userRole) &&
-            (<Button onClick={openAddUserDialog} size="sm">
-              <Plus className="h-4 w-4 mr-2" />
-              Assign User
-            </Button>)}
-            
           </div>
         </CardHeader>
         <CardContent>
@@ -767,13 +642,12 @@ const LivestockFarmersAnalytics = () => {
             <table className="w-full border-collapse border border-gray-300 text-sm text-left whitespace-nowrap">
               <thead className="rounded">
                 <tr className="bg-blue-100 p-1 px-3">
-                  <th className="py-2 px-4 text-sm text-blue-500">Field Officer</th>
-                  <th className="py-2 px-4 text-sm text-blue-500">Assigned Region</th>
+                  <th className="py-2 px-4 text-sm text-blue-500">Created By (Username)</th>
+                  <th className="py-2 px-4 text-sm text-blue-500">Counties Active</th>
                   <th className="py-2 px-4 text-sm text-blue-500">Farmers Registered</th>
                   <th className="py-2 px-4 text-sm text-blue-500">Monthly Target</th>
                   <th className="py-2 px-4 text-sm text-blue-500">Progress</th>
                   <th className="py-2 px-4 text-sm text-blue-500">Status</th>
-                  <th className="py-2 px-4 text-sm text-blue-500">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -782,7 +656,7 @@ const LivestockFarmersAnalytics = () => {
                     <td className="py-1 px-4 text-sm text-gray-500 font-medium">{user.name}</td>
                     <td className="py-1 px-4">
                       <Badge variant="outline" className="bg-blue-50 text-blue-700">
-                        {user.region}
+                        {user.region || "N/A"}
                       </Badge>
                     </td>
                     <td className="py-1 px-4 text-sm text-gray-500 font-semibold">{user.farmersRegistered}</td>
@@ -818,24 +692,12 @@ const LivestockFarmersAnalytics = () => {
                          'Needs Attention'}
                       </Badge>
                     </td>
-                    <td className="py-1 px-4">
-                      {isChiefAdmin(userRole) && ( 
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleEditUser(user as any)}
-                        >
-                          <Edit className="h-3 w-3 mr-1" />
-                          Edit
-                        </Button>
-                      )}
-                    </td>
                   </tr>
                 ))}
                 {userProgressData.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="text-center py-8 text-gray-500">
-                      No users assigned to regions yet. Click "Assign User" to get started.
+                    <td colSpan={6} className="text-center py-8 text-gray-500">
+                      No farmer data available for the selected filters.
                     </td>
                   </tr>
                 )}
@@ -844,112 +706,6 @@ const LivestockFarmersAnalytics = () => {
           </div>
         </CardContent>
       </Card>
-
-      <Dialog open={isUserDialogOpen} onOpenChange={setIsUserDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              {selectedUser ? "Edit User Assignment" : "Assign User to Region"}
-            </DialogTitle>
-            <DialogDescription>
-              {selectedUser 
-                ? "Update the region assignment and target for this user."
-                : "Select a user and assign them to a region with a monthly target."
-              }
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="userSelect">Select User *</Label>
-              <Select 
-                value={userForm.userId} 
-                onValueChange={(value) => handleUserFormChange("userId", value)}
-                disabled={!!selectedUser}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Choose a user to assign" />
-                </SelectTrigger>
-                <SelectContent>
-                  {selectedUser ? (
-                    <SelectItem value={selectedUser.id}>
-                      {selectedUser.name} ({selectedUser.email})
-                    </SelectItem>
-                  ) : (
-                    unassignedUsers.map((user) => (
-                      <SelectItem key={user.id} value={user.id}>
-                        {user.name} ({user.email})
-                      </SelectItem>
-                    ))
-                  )}
-                </SelectContent>
-              </Select>
-              {!selectedUser && unassignedUsers.length === 0 && (
-                <p className="text-xs text-gray-500">No unassigned users available.</p>
-              )}
-            </div>
-
-            {userForm.userId && (
-              <>
-                <div className="space-y-2">
-                  <Label htmlFor="userName">User Name</Label>
-                  <Input
-                    id="userName"
-                    value={userForm.name}
-                    disabled
-                    className="bg-gray-50"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="userEmail">Email</Label>
-                  <Input
-                    id="userEmail"
-                    type="email"
-                    value={userForm.email}
-                    disabled
-                    className="bg-gray-50"
-                  />
-                </div>
-              </>
-            )}
-
-            <div className="space-y-2">
-              <Label htmlFor="userRegion">Assigned Region *</Label>
-              <Select value={userForm.region} onValueChange={(value) => handleUserFormChange("region", value)}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select a region" />
-                </SelectTrigger>
-                <SelectContent>
-                  {uniqueRegions.map((region) => (
-                    <SelectItem key={region} value={region}>
-                      {region}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="monthlyTarget">Monthly Target</Label>
-              <Input
-                id="monthlyTarget"
-                type="number"
-                value={userForm.monthlyTarget}
-                onChange={(e) => handleUserFormChange("monthlyTarget", e.target.value)}
-                placeholder="117"
-              />
-              <p className="text-xs text-gray-500">Default target is 117 farmers per month</p>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsUserDialogOpen(false)}>
-              Cancel
-            </Button>
-            <Button onClick={handleAddUser} disabled={!userForm.userId || !userForm.region}>
-              {selectedUser ? "Update" : "Assign"} User
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       <div className="grid gap-6 md:grid-cols-2">
         <Card className="border-0 shadow-lg bg-white">
@@ -984,18 +740,19 @@ const LivestockFarmersAnalytics = () => {
           </CardContent>
         </Card>
 
+        {/* NEW: Animal Census (Goats vs Sheep) - Replaces Training Status */}
         <Card className="border-0 shadow-lg bg-white">
           <CardHeader className="pb-4">
             <CardTitle className="text-md flex items-center gap-2 text-gray-800">
-              <GraduationCap className="h-5 w-5 text-yellow-600" />
-              Training Status
+              <Beef className="h-5 w-5 text-orange-600" />
+              Animal Census (Goats vs Sheep)
             </CardTitle>
           </CardHeader>
           <CardContent>
             <ResponsiveContainer width="100%" height={250}>
               <PieChart>
                 <Pie
-                  data={trainingComparisonData}
+                  data={animalCensusData}
                   cx="50%"
                   cy="50%"
                   innerRadius={60}
@@ -1007,65 +764,42 @@ const LivestockFarmersAnalytics = () => {
                   startAngle={90}
                   endAngle={-270}
                 >
-                  {trainingComparisonData.map((entry, index) => (
+                  {animalCensusData.map((entry, index) => (
                     <Cell key={`cell-${index}`} fill={entry.color} />
                   ))}
                 </Pie>
-                <Tooltip formatter={(value: number, name) => [value, name]} />
+                <Tooltip formatter={(value: number) => [value.toLocaleString(), "Animals"]} />
                 <Legend />
               </PieChart>
             </ResponsiveContainer>
             <div className="text-center mt-2">
-              <Badge variant="outline" className="bg-blue-50 text-blue-900 text-xs">
-                Total trained: {stats.totalTrainedFromCapacity}
-              </Badge>
+               <p className="text-xs text-gray-500">Total Livestock: {stats.totalAnimals.toLocaleString()}</p>
             </div>
           </CardContent>
         </Card>
 
+        {/* NEW: Farmers vs Livestock (Curves) - Showing Per Week */}
         <Card className="border-0 shadow-lg bg-white">
           <CardHeader className="pb-4">
             <CardTitle className="text-md flex items-center gap-2 text-gray-800">
-              <Beef className="h-5 w-5 text-orange-600" />
-              Animal Census
+              <Activity className="h-5 w-5 text-orange-600" />
+              Farmers vs Livestock (Weekly Trend)
             </CardTitle>
           </CardHeader>
           <CardContent>
             <ResponsiveContainer width="100%" height={250}>
-              <PieChart>
-                <Pie
-                  data={goatsData}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={60}
-                  outerRadius={100}
-                  paddingAngle={2}
-                  dataKey="value"
-                  label={renderCustomizedLabel}
-                  labelLine={false}
-                >
-                  {goatsData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.color} />
-                  ))}
-                </Pie>
-                <Tooltip formatter={(value: number) => [value.toLocaleString(), "Goats"]} />
-                <Legend />
-              </PieChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
-
-        <Card className="border-0 shadow-lg bg-white">
-          <CardHeader className="pb-4">
-            <CardTitle className="text-md flex items-center gap-2 text-gray-800">
-              <Map className="h-5 w-5 text-blue-900" />
-              Regional Performance
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ResponsiveContainer width="100%" height={250}>
-              <LineChart data={regionalPerformanceData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
+              <AreaChart data={weeklyPerformanceData}>
+                <defs>
+                  <linearGradient id="colorFarmers" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={COLORS.navy} stopOpacity={0.8}/>
+                    <stop offset="95%" stopColor={COLORS.navy} stopOpacity={0}/>
+                  </linearGradient>
+                  <linearGradient id="colorAnimals" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={COLORS.orange} stopOpacity={0.8}/>
+                    <stop offset="95%" stopColor={COLORS.orange} stopOpacity={0}/>
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
                 <XAxis 
                   dataKey="name" 
                   fontSize={11}
@@ -1074,16 +808,10 @@ const LivestockFarmersAnalytics = () => {
                 <YAxis 
                   fontSize={11} 
                   tick={{ fill: '#6b7280' }}
-                  domain={[0, 100]}
                 />
                 <Tooltip 
-                  formatter={(value: number, name: string) => {
-                    const region = topRegions.find(reg => name === reg);
-                    if (region) {
-                      return [`${value}%`, `${region}`];
-                    }
-                    return [value, name];
-                  }}
+                  cursor={{fill: 'transparent'}}
+                  contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }}
                 />
                 <Legend 
                   verticalAlign="top" 
@@ -1092,30 +820,66 @@ const LivestockFarmersAnalytics = () => {
                   iconSize={8}
                   wrapperStyle={{ fontSize: '11px' }}
                 />
-                
-                {topRegions.map((region, index) => (
-                  <Line
-                    key={region}
-                    type="monotone"
-                    dataKey={region}
-                    stroke={BAR_COLORS[index]}
-                    strokeWidth={2}
-                    dot={{ 
-                      fill: BAR_COLORS[index], 
-                      strokeWidth: 1, 
-                      r: 3,
-                      stroke: 'white'
-                    }}
-                    activeDot={{ 
-                      r: 4, 
-                      fill: BAR_COLORS[index],
-                      stroke: 'white',
-                      strokeWidth: 1
-                    }}
-                    name={region}
-                  />
-                ))}
-              </LineChart>
+                <Area 
+                  type="monotone" 
+                  dataKey="farmers" 
+                  stroke={COLORS.navy} 
+                  fillOpacity={1} 
+                  fill="url(#colorFarmers)" 
+                  strokeWidth={2}
+                  name="Farmers" 
+                />
+                <Area 
+                  type="monotone" 
+                  dataKey="animals" 
+                  stroke={COLORS.orange} 
+                  fillOpacity={1} 
+                  fill="url(#colorAnimals)" 
+                  strokeWidth={2}
+                  name="Livestock" 
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+
+        {/* Subcounty Performance (Bar Chart) */}
+        <Card className="border-0 shadow-lg bg-white">
+          <CardHeader className="pb-4">
+            <CardTitle className="text-md flex items-center gap-2 text-gray-800">
+              <Map className="h-5 w-5 text-blue-900" />
+              Subcounty Performance
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ResponsiveContainer width="100%" height={250}>
+              <BarChart data={subcountyPerformanceData}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
+                <XAxis 
+                  dataKey="name" 
+                  fontSize={11}
+                  tick={{ fill: '#6b7280' }}
+                  angle={-45}
+                  textAnchor="end"
+                  height={80}
+                />
+                <YAxis 
+                  fontSize={11} 
+                  tick={{ fill: '#6b7280' }}
+                />
+                <Tooltip 
+                  cursor={{fill: 'transparent'}}
+                  contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }}
+                />
+                <Legend 
+                  verticalAlign="top" 
+                  height={40}
+                  iconType="circle"
+                  iconSize={8}
+                  wrapperStyle={{ fontSize: '11px' }}
+                />
+                <Bar dataKey="value" name="Farmers" fill={COLORS.navy} radius={[4, 4, 0, 0]} />
+              </BarChart>
             </ResponsiveContainer>
           </CardContent>
         </Card>

@@ -29,7 +29,8 @@ interface Borehole {
   id: string;
   date: any; // Can be ISO string or number
   location?: string;
-  region?: string;
+  county?: string;      // Added County
+  subcounty?: string;   // Added Sub-County
   people?: string | number;
   waterUsed?: number;
   drilled?: boolean;
@@ -212,6 +213,10 @@ interface ValidationError {
 
 const uploadDataWithValidation = async (file: File, collectionName: string): Promise<UploadResult> => {
   try {
+    // NOTE: In a real implementation, you would parse the CSV/Excel here.
+    // Ensure your parser looks for columns named "County" and "SubCounty" (or Sub-County)
+    // to populate the new fields.
+    
     await new Promise(resolve => setTimeout(resolve, 2000));
     
     return {
@@ -294,6 +299,8 @@ const BoreholePage = () => {
   const [newBorehole, setNewBorehole] = useState<Partial<Borehole>>({
     date: new Date().toISOString().split('T')[0],
     location: "",
+    county: "",        // Added County
+    subcounty: "",     // Added Sub-County
     people: 0,
     waterUsed: 0,
     drilled: false,
@@ -339,6 +346,8 @@ const BoreholePage = () => {
             ...item,
             // Ensure specific field mappings match your RTDB structure
             location: item.BoreholeLocation || item.location || 'No location',
+            county: item.County || item.county || '',       // Map County
+            subcounty: item.SubCounty || item.subcounty || '', // Map SubCounty
             people: item.PeopleUsingBorehole || item.people || 0,
             waterUsed: item.WaterUsed || item.waterUsed || 0,
             drilled: item.drilled || false,
@@ -410,7 +419,11 @@ const BoreholePage = () => {
       // Search filter
       if (filters.search) {
         const searchTerm = filters.search.toLowerCase();
-        const searchMatch = record.location?.toLowerCase().includes(searchTerm);
+        const searchMatch = 
+          record.location?.toLowerCase().includes(searchTerm) ||
+          record.county?.toLowerCase().includes(searchTerm) ||
+          record.subcounty?.toLowerCase().includes(searchTerm); // Search also checks new fields
+        
         if (!searchMatch) return false;
       }
 
@@ -499,6 +512,8 @@ const BoreholePage = () => {
 
       const boreholeData = {
         BoreholeLocation: newBorehole.location,
+        County: newBorehole.county || "",           // Added County
+        SubCounty: newBorehole.subcounty || "",      // Added Sub-County
         PeopleUsingBorehole: newBorehole.people || 0,
         WaterUsed: newBorehole.waterUsed || 0,
         drilled: newBorehole.drilled || false,
@@ -521,6 +536,8 @@ const BoreholePage = () => {
         setNewBorehole({
           date: new Date().toISOString().split('T')[0],
           location: "",
+          county: "",
+          subcounty: "",
           people: 0,
           waterUsed: 0,
           drilled: false,
@@ -565,6 +582,8 @@ const BoreholePage = () => {
 
       const boreholeData = {
         BoreholeLocation: editingRecord.location,
+        County: editingRecord.county || "",          // Added County
+        SubCounty: editingRecord.subcounty || "",     // Added Sub-County
         PeopleUsingBorehole: editingRecord.people || 0,
         WaterUsed: editingRecord.waterUsed || 0,
         drilled: editingRecord.drilled || false,
@@ -750,13 +769,15 @@ const BoreholePage = () => {
       const csvData = filteredBoreholes.map(record => [
         formatDate(record.date),
         record.location || 'N/A',
+        record.county || 'N/A',       // Added County
+        record.subcounty || 'N/A',    // Added Sub-County
         displayPeopleValue(record.people),
         (record.waterUsed || 0).toString(),
         record.drilled ? 'Yes' : 'No',
         record.maintained ? 'Yes' : 'No'
       ]);
 
-      const headers = ['Date', 'Borehole Location', 'People Using Water', 'Water Used', 'Drilled', 'Maintained'];
+      const headers = ['Date', 'Borehole Location', 'County', 'Sub-County', 'People Using Water', 'Water Used', 'Drilled', 'Maintained'];
       const csvContent = [headers, ...csvData]
         .map(row => row.map(field => `"${field}"`).join(','))
         .join('\n');
@@ -925,6 +946,8 @@ const BoreholePage = () => {
       </td>
       <td className="py-3 px-4">{formatDate(record.date)}</td>
       <td className="py-3 px-4 font-medium">{record.location || 'N/A'}</td>
+      <td className="py-3 px-4 text-gray-600">{record.county || '-'}</td> {/* Added County */}
+      <td className="py-3 px-4 text-gray-600">{record.subcounty || '-'}</td> {/* Added Sub-County */}
       <td className="py-3 px-4">
         <span className="font-bold text-blue-700">{displayPeopleValue(record.people)}</span>
       </td>
@@ -1111,7 +1134,9 @@ const BoreholePage = () => {
                       </th>
                       <th className="py-3 px-4 font-medium text-gray-600">Date</th>
                       <th className="py-3 px-4 font-medium text-gray-600">Borehole Location</th>
-                      <th className="py-3 px-4 font-medium text-gray-600">People Using Water</th>
+                      <th className="py-3 px-4 font-medium text-gray-600">County</th> {/* Added Header */}
+                      <th className="py-3 px-4 font-medium text-gray-600">Sub-County</th> {/* Added Header */}
+                      <th className="py-3 px-4 font-medium text-gray-600">People</th>
                       <th className="py-3 px-4 font-medium text-gray-600">Water Used</th>
                       <th className="py-3 px-4 font-medium text-gray-600">Status</th>
                       <th className="py-3 px-4 font-medium text-gray-600">Actions</th>
@@ -1184,6 +1209,14 @@ const BoreholePage = () => {
                   <div>
                     <Label className="text-sm font-medium text-slate-600">Borehole Location</Label>
                     <p className="text-slate-900 font-medium">{viewingRecord.location || 'N/A'}</p>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-medium text-slate-600">County</Label>
+                    <p className="text-slate-900 font-medium">{viewingRecord.county || 'N/A'}</p>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-medium text-slate-600">Sub-County</Label>
+                    <p className="text-slate-900 font-medium">{viewingRecord.subcounty || 'N/A'}</p>
                   </div>
                 </div>
               </div>
@@ -1294,11 +1327,35 @@ const BoreholePage = () => {
               <Label htmlFor="create-location" className="font-semibold text-gray-700">Borehole Location *</Label>
               <Input
                 id="create-location"
-                placeholder="Enter borehole location"
+                placeholder="e.g. Village Name"
                 value={newBorehole.location || ''}
                 onChange={(e) => setNewBorehole(prev => ({ ...prev, location: e.target.value }))}
                 className="border-gray-300 focus:border-blue-500 focus:ring-blue-500 bg-white"
               />
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="create-county" className="font-semibold text-gray-700">County</Label>
+                <Input
+                  id="create-county"
+                  placeholder="e.g. Nairobi"
+                  value={newBorehole.county || ''}
+                  onChange={(e) => setNewBorehole(prev => ({ ...prev, county: e.target.value }))}
+                  className="border-gray-300 focus:border-blue-500 focus:ring-blue-500 bg-white"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="create-subcounty" className="font-semibold text-gray-700">Sub-County</Label>
+                <Input
+                  id="create-subcounty"
+                  placeholder="e.g. Westlands"
+                  value={newBorehole.subcounty || ''}
+                  onChange={(e) => setNewBorehole(prev => ({ ...prev, subcounty: e.target.value }))}
+                  className="border-gray-300 focus:border-blue-500 focus:ring-blue-500 bg-white"
+                />
+              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-4">
@@ -1356,6 +1413,8 @@ const BoreholePage = () => {
                 setNewBorehole({
                   date: new Date().toISOString().split('T')[0],
                   location: "",
+                  county: "",
+                  subcounty: "",
                   people: 0,
                   waterUsed: 0,
                   drilled: false,
@@ -1412,6 +1471,30 @@ const BoreholePage = () => {
                   onChange={(e) => setEditingRecord(prev => prev ? { ...prev, location: e.target.value } : null)}
                   className="border-gray-300 focus:border-blue-500 focus:ring-blue-500 bg-white"
                 />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="edit-county" className="font-semibold text-gray-700">County</Label>
+                  <Input
+                    id="edit-county"
+                    placeholder="e.g. Nairobi"
+                    value={editingRecord.county || ''}
+                    onChange={(e) => setEditingRecord(prev => prev ? { ...prev, county: e.target.value } : null)}
+                    className="border-gray-300 focus:border-blue-500 focus:ring-blue-500 bg-white"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="edit-subcounty" className="font-semibold text-gray-700">Sub-County</Label>
+                  <Input
+                    id="edit-subcounty"
+                    placeholder="e.g. Westlands"
+                    value={editingRecord.subcounty || ''}
+                    onChange={(e) => setEditingRecord(prev => prev ? { ...prev, subcounty: e.target.value } : null)}
+                    className="border-gray-300 focus:border-blue-500 focus:ring-blue-500 bg-white"
+                  />
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
@@ -1524,7 +1607,8 @@ const BoreholePage = () => {
               Upload Borehole Data
             </DialogTitle>
             <DialogDescription>
-              Upload CSV, JSON, or Excel files containing borehole data. The data will be validated against the database schema.
+              Upload CSV, JSON, or Excel files containing borehole data. 
+              Ensure your file includes columns for <strong>BoreholeLocation, County, Sub-County</strong>, and other required fields.
             </DialogDescription>
           </DialogHeader>
           

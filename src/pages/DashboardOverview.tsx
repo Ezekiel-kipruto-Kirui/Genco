@@ -31,16 +31,21 @@ import { useAuth } from "@/contexts/AuthContext";
 
 interface FarmerData extends Record<string, any> {
   id: string;
-  programme?: string; // Added to match rules
+  programme?: string;
+  // Updated to match potential data structures
+  goats?: number | { male: number; female: number; total: number };
+  cattle?: string | number;
+  sheep?: string | number;
 }
 
 interface StatCardProps {
   title: string;
   icon: React.ReactNode;
-  maleCount: number;
-  femaleCount: number;
+  maleCount?: number;
+  femaleCount?: number;
   total: number;
   gradient: string;
+  description?: string; // Added to support cards without gender breakdown
 }
 
 interface Participant {
@@ -59,7 +64,8 @@ interface Activity {
   subcounty: string;
   createdAt: any;
   status: 'pending' | 'in-progress' | 'completed' | 'cancelled';
-  programme?: string; // Added assuming activities follow programme logic
+  programme?: string;
+  totalFarmers?: number; // Added to match reference logic
 }
 
 interface RegionStats {
@@ -69,9 +75,17 @@ interface RegionStats {
   femaleFarmers: number;
 }
 
+// --- Helper Functions (From Reference Code) ---
+
+const getGoatTotal = (goats: any): number => {
+  if (typeof goats === 'number') return goats;
+  if (typeof goats === 'object' && goats !== null && typeof goats.total === 'number') return goats.total;
+  return 0;
+};
+
 // --- Components ---
 
-const StatCard = ({ title, icon, maleCount, femaleCount, total, gradient }: StatCardProps) => (
+const StatCard = ({ title, icon, maleCount, femaleCount, total, gradient, description }: StatCardProps) => (
   <div className="group relative bg-white">
     <div className="relative bg-white backdrop-blur-sm rounded-2xl shadow-xl hover:shadow-2xl transition-all duration-300 p-6">
       <div className="flex items-center">
@@ -83,17 +97,23 @@ const StatCard = ({ title, icon, maleCount, femaleCount, total, gradient }: Stat
         <div className="ml-5 flex-1">
           <p className="text-sm font-medium text-slate-600 uppercase tracking-wide">{title}</p>
           <p className="text-2xl font-bold text-slate-900 mt-1">{total.toLocaleString()}</p>
-          <div className="flex gap-4 mt-3">
-            <div className="flex flex-col">
-              <span className="text-xs font-medium text-slate-600">Male</span>
-              <span className="text-sm font-semibold text-slate-900">{maleCount.toLocaleString()}</span>
+          
+          {/* Render Gender Breakdown if provided, otherwise render description */}
+          {(maleCount !== undefined && femaleCount !== undefined) ? (
+            <div className="flex gap-4 mt-3">
+              <div className="flex flex-col">
+                <span className="text-xs font-medium text-slate-600">Male</span>
+                <span className="text-sm font-semibold text-slate-900">{maleCount.toLocaleString()}</span>
+              </div>
+              <div className="h-8 w-px bg-slate-200" />
+              <div className="flex flex-col">
+                <span className="text-xs font-medium text-slate-600">Female</span>
+                <span className="text-sm font-semibold text-slate-900">{femaleCount.toLocaleString()}</span>
+              </div>
             </div>
-            <div className="h-8 w-px bg-slate-200" />
-            <div className="flex flex-col">
-              <span className="text-xs font-medium text-slate-600">Female</span>
-              <span className="text-sm font-semibold text-slate-900">{femaleCount.toLocaleString()}</span>
-            </div>
-          </div>
+          ) : description && (
+             <p className="text-xs text-slate-500 mt-3">{description}</p>
+          )}
         </div>
       </div>
     </div>
@@ -219,6 +239,8 @@ const DashboardOverview = () => {
     trainedMale: 0,
     trainedFemale: 0,
     totalGoats: 0,
+    totalSheep: 0, // Added
+    totalCattle: 0, // Added
     maleGoats: 0,
     femaleGoats: 0,
     regionsVisited: 0,
@@ -227,11 +249,6 @@ const DashboardOverview = () => {
 
   // --- Helper to fetch data respecting Firebase Rules ---
   
-  /**
-   * Fetches data from a specific node respecting the 'programme' based rules.
-   * Chief Admins fetch all.
-   * Other Users fetch only their assigned programmes.
-   */
   const fetchSecureCollection = async (nodePath: string): Promise<any[]> => {
     if (!auth.currentUser) return [];
 
@@ -247,7 +264,6 @@ const DashboardOverview = () => {
     }
 
     // Non-Admin: Fetch by allowed programmes
-    // We must perform a query for EACH allowed programme and merge results
     if (allowedProgrammes.length === 0) return [];
 
     const promises = allowedProgrammes.map(programme => {
@@ -287,12 +303,10 @@ const DashboardOverview = () => {
           const data = snapshot.val();
           setUserRole(data.role || null);
           
-          // Parse allowedProgrammes object { "KPMD": true, "RANGE": true }
           const programmesObj = data.allowedProgrammes || {};
           const programmesList = Object.keys(programmesObj).filter(k => programmesObj[k] === true);
           setAllowedProgrammes(programmesList);
           
-          // Set default for adding activities
           if (programmesList.length > 0) {
             setActiveProgrammeForAdd(programmesList[0]);
           }
@@ -328,13 +342,13 @@ const DashboardOverview = () => {
     try {
       setLoading(true);
       
-      // Fetch 'farmers' (mapped from 'Livestock Farmers' in old code)
+      // Fetch 'farmers'
       const livestockData = await fetchSecureCollection("farmers");
       
-      // Fetch 'capacityBuilding' (mapped from 'Capacity Building' in old code)
+      // Fetch 'capacityBuilding'
       const capacityData = await fetchSecureCollection("capacityBuilding");
 
-      // Calculate Livestock Stats
+      // --- 1. Farmer Stats (Gender) ---
       const maleFarmers = livestockData.filter(f =>
         String(f.gender || f.Gender).toLowerCase() === 'male'
       ).length;
@@ -342,28 +356,38 @@ const DashboardOverview = () => {
         String(f.gender || f.Gender).toLowerCase() === 'female'
       ).length;
 
-      // Calculate Training Stats
-      const trainedMale = capacityData.filter(f =>
-        String(f.gender || f.Gender).toLowerCase() === 'male'
-      ).length;
-      const trainedFemale = capacityData.filter(f =>
-        String(f.gender || f.Gender).toLowerCase() === 'female'
-      ).length;
+      // --- 2. Trained Farmers Stats (Updated Logic) ---
+      // Logic from reference: Sum the 'totalFarmers' property of each training record
+      const totalTrainedFarmers = capacityData.reduce((sum, t) => sum + (Number(t.totalFarmers) || 0), 0);
+      
+      // Note: capacityData typically stores total counts, not gender breakdowns. 
+      // We set gender breakdown to 0 as the data source (totalFarmers) doesn't support it.
+      const trainedMale = 0; 
+      const trainedFemale = 0;
 
-      // Calculate Goats
+      // --- 3. Animal Census Stats (Updated Logic) ---
       let totalGoats = 0;
       let maleGoats = 0;
       let femaleGoats = 0;
+      let totalSheep = 0;
+      let totalCattle = 0;
 
       livestockData.forEach((farmer: any) => {
-        const goatsMale = parseInt(farmer.goatsMale || farmer.GoatsMale || farmer.maleGoats || 0);
-        const goatsFemale = parseInt(farmer.femaleGoats || farmer.female_goats || 0);
-        maleGoats += goatsMale;
-        femaleGoats += goatsFemale;
-      });
-      totalGoats = maleGoats + femaleGoats;
+        // Goats
+        const g = getGoatTotal(farmer.goats);
+        totalGoats += g;
+        
+        if (farmer.goats && typeof farmer.goats === 'object') {
+          maleGoats += Number(farmer.goats.male || 0);
+          femaleGoats += Number(farmer.goats.female || 0);
+        }
 
-      // Calculate region statistics
+        // Sheep & Cattle
+        totalSheep += Number(farmer.sheep || 0);
+        totalCattle += Number(farmer.cattle || 0);
+      });
+
+      // --- 4. Region Statistics ---
       const regionMap: Record<string, RegionStats> = {};
 
       livestockData.forEach((farmer: any) => {
@@ -391,10 +415,12 @@ const DashboardOverview = () => {
         totalFarmers: livestockData.length,
         maleFarmers,
         femaleFarmers,
-        trainedFarmers: capacityData.length,
+        trainedFarmers: totalTrainedFarmers,
         trainedMale,
         trainedFemale,
         totalGoats,
+        totalSheep,
+        totalCattle,
         maleGoats,
         femaleGoats,
         regionsVisited: regionsArray.length,
@@ -416,13 +442,8 @@ const DashboardOverview = () => {
   const fetchRecentActivities = async () => {
     try {
       setActivitiesLoading(true);
-      
-      // NOTE: The rules provided do not explicitly include a rule for "Recent Activities".
-      // Assuming "Recent Activities" follows the same programme-based security model for consistency.
-      // If the database node is different, update the path below.
       const activities = await fetchSecureCollection("Recent Activities");
 
-      // Sort by date and get latest 3
       const sortedActivities = activities
         .sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime())
         .slice(0, 3);
@@ -433,8 +454,6 @@ const DashboardOverview = () => {
       setPendingActivitiesCount(pendingCount);
     } catch (error) {
       console.error("Error fetching activities:", error);
-      // Silent fail or toast depending on UX preference. 
-      // If the rules block "Recent Activities", this catch will trigger.
     } finally {
       setActivitiesLoading(false);
     }
@@ -463,14 +482,12 @@ const DashboardOverview = () => {
     }
 
     try {
-      // IMPORTANT: We must include 'programme' in the write for rules to potentially work if they are added for activities.
-      // We use the activeProgrammeForAdd state which defaults to the user's first allowed programme.
       await push(ref(db, "Recent Activities"), {
         ...activityForm,
         numberOfPersons: participants.length, 
         participants: participants,
         status: 'pending', 
-        programme: activeProgrammeForAdd, // Adding programme to data
+        programme: activeProgrammeForAdd,
         createdBy: user?.email,
         createdAt: new Date().toISOString(), 
       });
@@ -529,7 +546,6 @@ const DashboardOverview = () => {
 
   const topRegions = regionStats.slice(0, 4);
 
-  // If permissions are still loading or user isn't authed, show loading
   if (loadingPermissions) {
     return (
        <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100/80 p-6 flex items-center justify-center">
@@ -538,7 +554,6 @@ const DashboardOverview = () => {
     );
   }
 
-  // If not chief admin and no programmes assigned
   if (userRole !== 'chief-admin' && allowedProgrammes.length === 0) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100/80 p-6">
@@ -596,14 +611,19 @@ const DashboardOverview = () => {
                 total={stats.totalFarmers}
                 gradient="bg-gradient-to-br from-blue-100 to-blue-50"
               />
+              
+              {/* Updated Trained Farmers Card */}
               <StatCard
                 title="Trained Farmers"
                 icon={<GraduationCap className="h-7 w-7 text-green-600" />}
+                // Gender breakdowns are removed/zeroed as training records store totals only
                 maleCount={stats.trainedMale}
                 femaleCount={stats.trainedFemale}
                 total={stats.trainedFarmers}
                 gradient="bg-gradient-to-br from-green-100 to-green-50"
+                description="Total participants in training sessions"
               />
+
               <StatCard
                 title="Animal Census"
                 icon={<Beef className="h-7 w-7 text-orange-600" />}
@@ -710,7 +730,7 @@ const DashboardOverview = () => {
                               </DialogTitle>
                             </DialogHeader>
                             <div className="grid gap-6 py-4">
-                              {/* Programme Selector for Non-Admins */}
+                              {/* Programme Selector */}
                               {userRole !== 'chief-admin' && allowedProgrammes.length > 1 && (
                                 <div className="space-y-2">
                                   <Label htmlFor="programmeSelect">Programme</Label>
@@ -729,63 +749,58 @@ const DashboardOverview = () => {
 
                               <div className="grid grid-cols-2 gap-4">
                                 <div className="space-y-2">
-                                  <Label htmlFor="activityName" className="text-sm font-medium text-slate-700">Activity Name</Label>
+                                  <Label htmlFor="activityName">Activity Name</Label>
                                   <Input
                                     id="activityName"
                                     value={activityForm.activityName}
                                     onChange={(e) => setActivityForm({...activityForm, activityName: e.target.value})}
                                     placeholder="Enter activity name"
-                                    className="rounded-xl border-slate-300 focus:border-blue-500 focus:ring-blue-500 transition-all bg-white"
                                   />
                                 </div>
                                 <div className="space-y-2">
-                                  <Label htmlFor="date" className="text-sm font-medium text-slate-700">Date</Label>
+                                  <Label htmlFor="date">Date</Label>
                                   <Input
                                     id="date"
                                     type="date"
                                     value={activityForm.date}
                                     onChange={(e) => setActivityForm({...activityForm, date: e.target.value})}
-                                    className="rounded-xl border-slate-300 focus:border-blue-500 focus:ring-blue-500 transition-all bg-white"
                                   />
                                 </div>
                               </div>
                               <div className="grid grid-cols-2 gap-4">
                                 <div className="space-y-2">
-                                  <Label htmlFor="county" className="text-sm font-medium text-slate-700">County</Label>
+                                  <Label htmlFor="county">County</Label>
                                   <Input
                                     id="county"
                                     value={activityForm.county}
                                     onChange={(e) => setActivityForm({...activityForm, county: e.target.value})}
                                     placeholder="Enter county"
-                                    className="rounded-xl border-slate-300 focus:border-blue-500 focus:ring-blue-500 transition-all bg-white"
                                   />
                                 </div>
                                 <div className="space-y-2">
-                                  <Label htmlFor="subcounty" className="text-sm font-medium text-slate-700">Subcounty</Label>
+                                  <Label htmlFor="subcounty">Subcounty</Label>
                                   <Input
                                     id="subcounty"
                                     value={activityForm.subcounty}
                                     onChange={(e) => setActivityForm({...activityForm, subcounty: e.target.value})}
                                     placeholder="Enter subcounty"
-                                    className="rounded-xl border-slate-300 focus:border-blue-500 focus:ring-blue-500 transition-all bg-white"
                                   />
                                 </div>
                               </div>
                               <div className="space-y-2">
-                                <Label htmlFor="location" className="text-sm font-medium text-slate-700">Location</Label>
+                                <Label htmlFor="location">Location</Label>
                                 <Input
                                   id="location"
                                   value={activityForm.location}
                                   onChange={(e) => setActivityForm({...activityForm, location: e.target.value})}
                                   placeholder="Enter location"
-                                  className="rounded-xl border-slate-300 focus:border-blue-500 focus:ring-blue-500 transition-all bg-white"
                                 />
                               </div>
 
                               {/* Participants Section */}
                               <div className="space-y-4 border-t pt-4">
                                 <div className="flex items-center justify-between">
-                                  <Label className="text-sm font-medium text-slate-700">Participants ({participants.length})</Label>
+                                  <Label>Participants ({participants.length})</Label>
                                   <span className="text-xs text-slate-500">Add participants with their roles</span>
                                 </div>
                                 
@@ -794,19 +809,17 @@ const DashboardOverview = () => {
                                     placeholder="Participant Name"
                                     value={participantForm.name}
                                     onChange={(e) => setParticipantForm({...participantForm, name: e.target.value})}
-                                    className="rounded-xl border-slate-300 focus:border-blue-500 focus:ring-blue-500"
                                   />
                                   <div className="flex gap-2">
                                     <Input
                                       placeholder="Role"
                                       value={participantForm.role}
                                       onChange={(e) => setParticipantForm({...participantForm, role: e.target.value})}
-                                      className="rounded-xl border-slate-300 focus:border-blue-500 focus:ring-blue-500"
                                     />
                                     <Button 
                                       type="button" 
                                       onClick={handleAddParticipant}
-                                      className="bg-blue-500 hover:bg-blue-600 text-white rounded-xl"
+                                      className="bg-blue-500 hover:bg-blue-600 text-white"
                                       disabled={!participantForm.name.trim() || !participantForm.role.trim()}
                                     >
                                       <Plus className="h-4 w-4" />
@@ -827,7 +840,7 @@ const DashboardOverview = () => {
                                           variant="ghost"
                                           size="sm"
                                           onClick={() => removeParticipant(index)}
-                                          className="text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg"
+                                          className="text-red-500 hover:text-red-700 hover:bg-red-50"
                                         >
                                           <Trash2 className="h-4 w-4" />
                                         </Button>
@@ -851,7 +864,6 @@ const DashboardOverview = () => {
                                     location: "",
                                   });
                                 }}
-                                className="rounded-xl border-slate-300 hover:border-slate-400 transition-all text-slate-700"
                               >
                                 Cancel
                               </Button>
