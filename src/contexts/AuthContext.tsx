@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState, type FC, type ReactNode } from "react";
 import { User, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "firebase/auth";
-import { ref, get, query, orderByChild, equalTo } from "firebase/database";
+import { ref, get } from "firebase/database";
 import { auth, db } from "@/lib/firebase";
 import { useToast } from "@/hooks/use-toast";
 
@@ -54,21 +54,19 @@ export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
         };
       }
 
-      // ATTEMPT 2: Fallback query (Legacy structure: users stored with Push IDs)
-      // Note: This requires an index on 'uid' in Firebase Database rules for performance on large datasets.
-      console.warn("User not found at direct UID path, falling back to query...");
+      // ATTEMPT 2: Fallback scan (Legacy structure: users stored with Push IDs)
+      // Avoids requiring an index on 'uid' in Firebase rules.
+      console.warn("User not found at direct UID path, falling back to scan...");
       const usersRef = ref(db, "users");
-      const q = query(usersRef, orderByChild("uid"), equalTo(uid));
-      const querySnapshot = await get(q);
+      const allSnapshot = await get(usersRef);
 
-      if (querySnapshot.exists()) {
-        const data = querySnapshot.val();
-        // Get the first matching key
-        const firstUserKey = Object.keys(data)[0];
-        if (firstUserKey) {
+      if (allSnapshot.exists()) {
+        const data = allSnapshot.val();
+        const match = Object.values(data as Record<string, any>).find((u: any) => u?.uid === uid) as any;
+        if (match) {
           return {
-            role: data[firstUserKey].role || null,
-            allowedProgrammes: data[firstUserKey].allowedProgrammes || null
+            role: match.role || null,
+            allowedProgrammes: match.allowedProgrammes || null
           };
         }
       }
