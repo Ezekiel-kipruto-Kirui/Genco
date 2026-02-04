@@ -48,15 +48,15 @@ interface Vaccine {
   doses: number;
 }
 
-// --- NEW INTERFACE FOR ISSUES ---
+// --- INTERFACE FOR ISSUES ---
 interface Issue {
-  id: string; // Simple ID for React keys
+  id: string; 
   name: string;
   raisedBy: string;
   county: string;
   subcounty: string;
   location: string;
-  programme: string;
+  programme: string; // Inherited from parent activity
   description: string;
   status: 'responded' | 'not responded';
 }
@@ -72,13 +72,14 @@ interface AnimalHealthActivity {
   vaccinetype?: string;
   number_doses?: number;
   fieldofficers?: FieldOfficer[];
-  issues?: Issue[]; // Added issues array
+  issues?: Issue[]; // Optional issues array
+  programme: string; // Required: KPMD or RANGE
   createdAt: any;
   createdBy: string;
   status: 'completed';
 }
 
-// Vaccine options from image
+// Vaccine options
 const VACCINE_OPTIONS = [
   "PPR",
   "CCPP", 
@@ -107,18 +108,17 @@ const AnimalHealthPage = () => {
   const [selectedVaccines, setSelectedVaccines] = useState<string[]>([]);
   const [totalDoses, setTotalDoses] = useState<string>("");
   
-  // --- NEW STATE FOR ISSUES ---
+  // --- STATE FOR ISSUES ---
   const [issues, setIssues] = useState<Issue[]>([]);
   const [issueForm, setIssueForm] = useState<Partial<Issue>>({
     name: "",
     raisedBy: "",
-    county: "",
-    subcounty: "",
-    location: "",
-    programme: "KPMD",
     description: "",
     status: "not responded"
   });
+  
+  // State to toggle visibility of the Issue Input Form
+  const [showIssueForm, setShowIssueForm] = useState(false);
 
   const [activityForm, setActivityForm] = useState({
     date: "",
@@ -126,6 +126,7 @@ const AnimalHealthPage = () => {
     subcounty: "",
     location: "",
     comment: "",
+    programme: "KPMD", // Default Programme
   });
   const { userRole } = useAuth();
   const userIsChiefAdmin = useMemo(() => {
@@ -153,32 +154,26 @@ const AnimalHealthPage = () => {
       if (snapshot.exists()) {
         const data = snapshot.val();
         
-        // Transform object from RTDB to array
         const activitiesData = Object.keys(data).map((key) => {
           const item = data[key];
-          // Handle backward compatibility - convert old structure to new
           let vaccines: Vaccine[] = [];
           
           if (item.vaccines && Array.isArray(item.vaccines)) {
-            // New structure with vaccines array
             vaccines = item.vaccines.map((v: any) => ({
               type: v.type || 'Unknown',
               doses: Number(v.doses) || 0
             })).filter((v: Vaccine) => v.type && v.doses > 0);
           } else if (item.vaccinetype) {
-            // Old structure with vaccinetype and number_doses
             vaccines = [{
               type: item.vaccinetype,
               doses: Number(item.number_doses) || 0
             }];
           }
           
-          // Ensure fieldofficers is always an array
           const fieldofficers = (item.fieldofficers && Array.isArray(item.fieldofficers)) 
             ? item.fieldofficers 
             : [];
 
-          // Ensure issues is an array
           const issues = (item.issues && Array.isArray(item.issues))
             ? item.issues
             : [];
@@ -192,14 +187,14 @@ const AnimalHealthPage = () => {
             comment: item.comment || '',
             vaccines,
             fieldofficers,
-            issues, // Added issues
+            issues, 
+            programme: item.programme || 'KPMD', // Ensure programme is present
             createdAt: item.createdAt,
             createdBy: item.createdBy || 'unknown',
             status: item.status || 'completed'
           } as AnimalHealthActivity;
         });
         
-        // Sort by date descending (client-side sort for RTDB)
         activitiesData.sort((a, b) => {
           const dateA = a.date ? new Date(a.date).getTime() : 0;
           const dateB = b.date ? new Date(b.date).getTime() : 0;
@@ -222,12 +217,10 @@ const AnimalHealthPage = () => {
     }
   };
 
-  // Helper function to safely get vaccines from activity
   const getActivityVaccines = (activity: AnimalHealthActivity): Vaccine[] => {
     return activity.vaccines || [];
   };
 
-  // Helper function to safely calculate total doses for an activity
   const getActivityTotalDoses = (activity: AnimalHealthActivity): number => {
     try {
       const vaccines = getActivityVaccines(activity);
@@ -236,7 +229,6 @@ const AnimalHealthPage = () => {
         return sum + doses;
       }, 0);
     } catch (error) {
-      console.error("Error calculating doses for activity:", activity.id, error);
       return 0;
     }
   };
@@ -244,25 +236,29 @@ const AnimalHealthPage = () => {
   // --- ISSUE HANDLERS ---
   
   const handleAddIssue = () => {
-    if (!issueForm.name || !issueForm.raisedBy || !issueForm.description || !issueForm.programme) {
-      toast({ title: "Error", description: "Please fill all required issue fields", variant: "destructive" });
+    // Basic Validation for Issue fields
+    if (!issueForm.name || !issueForm.raisedBy || !issueForm.description) {
+      toast({ title: "Missing Info", description: "Please fill Name, Raised By, and Description for the issue.", variant: "destructive" });
       return;
     }
+
+    // Programme is inherited from the main Activity Form
+    const parentProgramme = activityForm.programme || "KPMD";
 
     const newIssue: Issue = {
       id: Date.now().toString(),
       name: issueForm.name,
       raisedBy: issueForm.raisedBy,
-      county: issueForm.county || activityForm.county,
-      subcounty: issueForm.subcounty || activityForm.subcounty,
-      location: issueForm.location || activityForm.location,
-      programme: issueForm.programme || "KPMD",
+      county: activityForm.county,
+      subcounty: activityForm.subcounty,
+      location: activityForm.location,
+      programme: parentProgramme, // Inherit programme
       description: issueForm.description,
       status: issueForm.status || "not responded"
     };
 
     setIssues([...issues, newIssue]);
-    // Reset form slightly for next entry
+    // Reset form inputs slightly for next entry, but keep the form open
     setIssueForm({
       ...issueForm,
       name: "",
@@ -290,7 +286,6 @@ const AnimalHealthPage = () => {
     setFieldOfficers(updatedFieldOfficers);
   };
 
-  // Handle vaccine selection
   const handleVaccineSelection = (vaccineType: string) => {
     setSelectedVaccines(prev => {
       if (prev.includes(vaccineType)) {
@@ -301,7 +296,6 @@ const AnimalHealthPage = () => {
     });
   };
 
-  // Convert selected vaccines to vaccine array with total doses
   const getVaccinesFromSelection = (): Vaccine[] => {
     if (selectedVaccines.length === 0 || !totalDoses || parseInt(totalDoses) <= 0) {
       return [];
@@ -318,40 +312,21 @@ const AnimalHealthPage = () => {
 
   // --- REALTIME DATABASE ADD FUNCTION ---
   const handleAddActivity = async () => {
-    // Validation checks
+    // Validation
     if (fieldOfficers.length === 0) {
-      toast({
-        title: "Error",
-        description: "Please add at least one field officer",
-        variant: "destructive",
-      });
+      toast({ title: "Error", description: "Please add at least one field officer", variant: "destructive" });
       return;
     }
-
     if (selectedVaccines.length === 0) {
-      toast({
-        title: "Error",
-        description: "Please select at least one vaccine",
-        variant: "destructive",
-      });
+      toast({ title: "Error", description: "Please select at least one vaccine", variant: "destructive" });
       return;
     }
-
     if (!totalDoses || parseInt(totalDoses) <= 0) {
-      toast({
-        title: "Error",
-        description: "Please enter a valid total number of doses",
-        variant: "destructive",
-      });
+      toast({ title: "Error", description: "Please enter a valid total number of doses", variant: "destructive" });
       return;
     }
-
-    if (!activityForm.date || !activityForm.county) {
-      toast({
-        title: "Error",
-        description: "Please fill all required fields (Date and County)",
-        variant: "destructive",
-      });
+    if (!activityForm.date || !activityForm.county || !activityForm.programme) {
+      toast({ title: "Error", description: "Please fill Date, County, and Programme", variant: "destructive" });
       return;
     }
 
@@ -363,21 +338,17 @@ const AnimalHealthPage = () => {
         subcounty: activityForm.subcounty.trim(),
         location: activityForm.location.trim(),
         comment: activityForm.comment.trim(),
+        programme: activityForm.programme, // Save Programme
         vaccines: vaccines,
         fieldofficers: fieldOfficers,
-        issues: issues, // Include issues
+        issues: issues, // Issues are optional array
         status: 'completed' as const,
         createdBy: user?.email || 'unknown',
         createdAt: new Date().toISOString(),
       };
 
-      console.log("Saving activity data:", activityData);
-
-      // Add to Realtime Database
       await push(ref(db, "AnimalHealthActivities"), activityData);
       
-      console.log("Activity saved successfully");
-
       toast({
         title: "Success",
         description: "Vaccination activity recorded successfully.",
@@ -391,25 +362,17 @@ const AnimalHealthPage = () => {
         subcounty: "",
         location: "",
         comment: "",
+        programme: "KPMD",
       });
       setFieldOfficers([]);
       setFieldOfficerForm({ name: "", role: "" });
       setSelectedVaccines([]);
       setTotalDoses("");
-      setIssues([]); // Reset issues
-      setIssueForm({ // Reset issue form
-        name: "",
-        raisedBy: "",
-        county: "",
-        subcounty: "",
-        location: "",
-        programme: "KPMD",
-        description: "",
-        status: "not responded"
-      });
+      setIssues([]); 
+      setIssueForm({ name: "", raisedBy: "", description: "", status: "not responded" });
+      setShowIssueForm(false); // Close issue form
       setIsAddDialogOpen(false);
       
-      // Refresh data
       fetchActivities();
     } catch (error) {
       console.error("Error adding animal health activity:", error);
@@ -433,14 +396,12 @@ const AnimalHealthPage = () => {
         subcounty: activityForm.subcounty.trim(),
         location: activityForm.location.trim(),
         comment: activityForm.comment.trim(),
+        programme: activityForm.programme, // Update Programme
         vaccines: vaccines,
         fieldofficers: fieldOfficers,
-        issues: issues, // Include issues in update
+        issues: issues,
       };
 
-      console.log("Updating activity:", editingActivity.id, activityData);
-
-      // Update in Realtime Database
       await update(ref(db, "AnimalHealthActivities/" + editingActivity.id), activityData);
       
       toast({
@@ -457,12 +418,14 @@ const AnimalHealthPage = () => {
         subcounty: "",
         location: "",
         comment: "",
+        programme: "KPMD",
       });
       setFieldOfficers([]);
       setFieldOfficerForm({ name: "", role: "" });
       setSelectedVaccines([]);
       setTotalDoses("");
-      setIssues([]); // Reset issues
+      setIssues([]); 
+      setShowIssueForm(false); // Close issue form
       fetchActivities();
     } catch (error) {
       console.error("Error updating animal health activity:", error);
@@ -474,23 +437,13 @@ const AnimalHealthPage = () => {
     }
   };
 
-  // --- REALTIME DATABASE DELETE FUNCTION ---
   const handleDeleteActivity = async (activityId: string) => {
     try {
       await remove(ref(db, "AnimalHealthActivities/" + activityId));
-      toast({
-        title: "Success",
-        description: "Vaccination activity deleted successfully.",
-        className: "bg-green-50 text-green-800 border border-green-200"
-      });
+      toast({ title: "Success", description: "Activity deleted." });
       fetchActivities();
     } catch (error) {
-      console.error("Error deleting animal health activity:", error);
-      toast({
-        title: "Error",
-        description: "Failed to delete activity. Please try again.",
-        variant: "destructive",
-      });
+      toast({ title: "Error", description: "Failed to delete.", variant: "destructive" });
     }
   };
 
@@ -501,25 +454,13 @@ const AnimalHealthPage = () => {
       const deletePromises = selectedActivities.map(activityId => 
         remove(ref(db, "AnimalHealthActivities/" + activityId))
       );
-      
       await Promise.all(deletePromises);
-      
-      toast({
-        title: "Success",
-        description: `${selectedActivities.length} vaccination activities deleted successfully.`,
-        className: "bg-green-50 text-green-800 border border-green-200"
-      });
-      
+      toast({ title: "Success", description: `${selectedActivities.length} activities deleted.` });
       setSelectedActivities([]);
       setIsSelecting(false);
       fetchActivities();
     } catch (error) {
-      console.error("Error deleting activities:", error);
-      toast({
-        title: "Error",
-        description: "Failed to delete activities. Please try again.",
-        variant: "destructive",
-      });
+      toast({ title: "Error", description: "Failed to delete.", variant: "destructive" });
     }
   };
 
@@ -549,12 +490,10 @@ const AnimalHealthPage = () => {
     setIsFieldOfficersDialogOpen(true);
   };
 
-  // Calculate vaccination rate - compare current record with previous record
   const calculateVaccinationRate = () => {
     if (activities.length < 2) return { rate: 0, trend: 'neutral', currentDoses: 0, previousDoses: 0 };
 
     try {
-      // Sort activities by date (newest first)
       const sortedActivities = [...activities].sort((a, b) => {
         const dateA = a.date ? new Date(a.date).getTime() : 0;
         const dateB = b.date ? new Date(b.date).getTime() : 0;
@@ -585,26 +524,22 @@ const AnimalHealthPage = () => {
         previousDoses
       };
     } catch (error) {
-      console.error("Error calculating vaccination rate:", error);
       return { rate: 0, trend: 'neutral', currentDoses: 0, previousDoses: 0 };
     }
   };
 
-  // Safely calculate total doses across all activities
   const totalDosesAdministered = useMemo(() => {
     try {
       return activities.reduce((sum, activity) => {
         return sum + getActivityTotalDoses(activity);
       }, 0);
     } catch (error) {
-      console.error("Error calculating total doses:", error);
       return 0;
     }
   }, [activities]);
 
   const vaccinationRate = calculateVaccinationRate();
 
-  // Update of filteredActivities to search in vaccines
   const filteredActivities = useMemo(() => {
     try {
       return activities.filter(activity => {
@@ -613,11 +548,11 @@ const AnimalHealthPage = () => {
           (activity.comment?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
           (activity.location?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
           (activity.county?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
+          (activity.programme?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
           activityVaccines.some(vaccine => 
             (vaccine.type?.toLowerCase() || '').includes(searchTerm.toLowerCase())
           );
         
-        // Also search in issues
         const matchesIssueSearch = (activity.issues || []).some((issue: Issue) => 
           issue.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
           issue.raisedBy?.toLowerCase().includes(searchTerm.toLowerCase())
@@ -630,17 +565,14 @@ const AnimalHealthPage = () => {
           
           return (matchesSearch || matchesIssueSearch) && matchesStartDate && matchesEndDate;
         } catch (dateError) {
-          console.error("Error processing date for activity:", activity.id, dateError);
           return matchesSearch || matchesIssueSearch;
         }
       });
     } catch (error) {
-      console.error("Error filtering activities:", error);
       return [];
     }
   }, [activities, searchTerm, startDate, endDate]);
 
-  // Update of openEditDialog function
   const openEditDialog = (activity: AnimalHealthActivity) => {
     setEditingActivity(activity);
     setActivityForm({
@@ -649,36 +581,35 @@ const AnimalHealthPage = () => {
       subcounty: activity.subcounty || '',
       location: activity.location || '',
       comment: activity.comment || '',
+      programme: activity.programme || 'KPMD', // Load Programme
     });
     setFieldOfficers(activity.fieldofficers || []);
     
-    // Set selected vaccines and total doses for editing
     const activityVaccines = getActivityVaccines(activity);
     setSelectedVaccines(activityVaccines.map(v => v.type));
     setTotalDoses(getActivityTotalDoses(activity).toString());
 
-    // Load issues
     setIssues(activity.issues || []);
+    setShowIssueForm(false); // Ensure form is closed on edit load
     
     setIsEditDialogOpen(true);
   };
 
-  // Update CSV export to handle multiple vaccines and issues
   const exportToCSV = () => {
     try {
-      const headers = ['Date', 'County', 'Subcounty', 'Location', 'Vaccines', 'Total Doses', 'Field Officers', 'Issues Summary', 'Comment'];
+      const headers = ['Date', 'Programme', 'County', 'Subcounty', 'Location', 'Vaccines', 'Total Doses', 'Field Officers', 'Issues Summary', 'Comment'];
       const csvData = filteredActivities.map(activity => {
         const activityVaccines = getActivityVaccines(activity);
         const vaccineText = activityVaccines.map(v => `${v.type} (${v.doses} doses)`).join('; ');
         const totalDoses = getActivityTotalDoses(activity);
         
-        // Create issues summary text
         const issuesSummary = (activity.issues || [])
           .map(i => `${i.name} (${i.status})`)
           .join('; ');
 
         return [
           formatDate(activity.date),
+          activity.programme,
           activity.county || '',
           activity.subcounty || '',
           activity.location || '',
@@ -702,23 +633,12 @@ const AnimalHealthPage = () => {
       link.download = `vaccination-activities-${new Date().toISOString().split('T')[0]}.csv`;
       link.click();
       window.URL.revokeObjectURL(url);
-
-      toast({
-        title: "Success",
-        description: "Data exported successfully",
-        className: "bg-green-50 text-green-800 border border-green-200"
-      });
+      toast({ title: "Success", description: "Data exported successfully" });
     } catch (error) {
-      console.error("Error exporting CSV:", error);
-      toast({
-        title: "Error",
-        description: "Failed to export data",
-        variant: "destructive",
-      });
+      toast({ title: "Error", description: "Failed to export data", variant: "destructive" });
     }
   };
 
-  // Update of table to show multiple vaccines
   const renderVaccinesInTable = (activity: AnimalHealthActivity) => {
     const activityVaccines = getActivityVaccines(activity);
     if (activityVaccines.length === 0) return "No vaccines";
@@ -735,13 +655,12 @@ const AnimalHealthPage = () => {
         day: 'numeric'
       });
     } catch (error) {
-      console.error("Error formatting date:", dateString, error);
       return 'Invalid date';
     }
   };
 
-  // Debug button state
-  const isSaveDisabled = fieldOfficers.length === 0 || selectedVaccines.length === 0 || !totalDoses || parseInt(totalDoses) <= 0 || !activityForm.date || !activityForm.county;
+  // Updated validation to include Programme
+  const isSaveDisabled = fieldOfficers.length === 0 || selectedVaccines.length === 0 || !totalDoses || parseInt(totalDoses) <= 0 || !activityForm.date || !activityForm.county || !activityForm.programme;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100/80 p-6">
@@ -782,6 +701,25 @@ const AnimalHealthPage = () => {
                     />
                   </div>
                   <div className="space-y-2">
+                    <Label htmlFor="programme" className="text-sm font-medium text-slate-700">
+                      Programme <span className="text-red-500">*</span>
+                    </Label>
+                    <Select 
+                      value={activityForm.programme} 
+                      onValueChange={(v) => setActivityForm({...activityForm, programme: v})}
+                    >
+                      <SelectTrigger className="rounded-xl border-slate-300 focus:border-green-500 focus:ring-green-500 transition-all bg-white">
+                        <SelectValue placeholder="Select Programme" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {PROGRAMME_OPTIONS.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
                     <Label htmlFor="county" className="text-sm font-medium text-slate-700">
                       County <span className="text-red-500">*</span>
                     </Label>
@@ -790,16 +728,12 @@ const AnimalHealthPage = () => {
                       value={activityForm.county}
                       onChange={(e) => {
                         setActivityForm({...activityForm, county: e.target.value});
-                        setIssueForm({...issueForm, county: e.target.value});
                       }}
                       placeholder="Enter county"
                       className="rounded-xl border-slate-300 focus:border-green-500 focus:ring-green-500 transition-all bg-white"
                       required
                     />
                   </div>
-                </div>
-                
-                <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label htmlFor="subcounty" className="text-sm font-medium text-slate-700">Subcounty</Label>
                     <Input
@@ -807,28 +741,27 @@ const AnimalHealthPage = () => {
                       value={activityForm.subcounty}
                       onChange={(e) => {
                         setActivityForm({...activityForm, subcounty: e.target.value});
-                        setIssueForm({...issueForm, subcounty: e.target.value});
                       }}
                       placeholder="Enter subcounty"
                       className="rounded-xl border-slate-300 focus:border-green-500 focus:ring-green-500 transition-all bg-white"
                     />
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="location" className="text-sm font-medium text-slate-700">
-                      Location <span className="text-red-500">*</span>
-                    </Label>
-                    <Input
-                      id="location"
-                      value={activityForm.location}
-                      onChange={(e) => {
-                        setActivityForm({...activityForm, location: e.target.value});
-                        setIssueForm({...issueForm, location: e.target.value});
-                      }}
-                      placeholder="Enter specific location"
-                      className="rounded-xl border-slate-300 focus:border-green-500 focus:ring-green-500 transition-all bg-white"
-                      required
-                    />
-                  </div>
+                </div>
+                
+                <div className="space-y-2">
+                  <Label htmlFor="location" className="text-sm font-medium text-slate-700">
+                    Location <span className="text-red-500">*</span>
+                  </Label>
+                  <Input
+                    id="location"
+                    value={activityForm.location}
+                    onChange={(e) => {
+                      setActivityForm({...activityForm, location: e.target.value});
+                    }}
+                    placeholder="Enter specific location"
+                    className="rounded-xl border-slate-300 focus:border-green-500 focus:ring-green-500 transition-all bg-white"
+                    required
+                  />
                 </div>
 
                 {/* Vaccines Section */}
@@ -840,7 +773,6 @@ const AnimalHealthPage = () => {
                     <span className="text-xs text-slate-500">Select vaccines administered</span>
                   </div>
                   
-                  {/* Vaccine Selection Grid */}
                   <div className="grid grid-cols-2 gap-2">
                     {VACCINE_OPTIONS.map((vaccine) => (
                       <div key={vaccine} className="flex items-center space-x-2">
@@ -859,7 +791,6 @@ const AnimalHealthPage = () => {
                     ))}
                   </div>
 
-                  {/* Total Doses Input */}
                   <div className="space-y-2">
                     <Label htmlFor="total-doses" className="text-sm font-medium text-slate-700">
                       Total Doses Administered <span className="text-red-500">*</span>
@@ -881,37 +812,30 @@ const AnimalHealthPage = () => {
                   </div>
                 </div>
 
-                {/* --- NEW SECTION: ISSUES RAISED --- */}
-                <div className="space-y-4 border-t pt-4 bg-orange-50/50 p-4 rounded-xl">
+                {/* --- OPTIONAL ISSUES SECTION --- */}
+                <div className="space-y-4 border-t pt-4 bg-slate-50/50 p-4 rounded-xl">
                   <div className="flex items-center justify-between">
-                    <Label className="text-sm font-bold text-orange-700 flex items-center gap-2">
-                      <AlertCircle className="h-4 w-4" />
-                      Issues Raised ({issues.length})
+                    <Label className="text-sm font-semibold text-slate-700 flex items-center gap-2">
+                      <AlertCircle className="h-4 w-4 text-orange-500" />
+                      Issues Raised (Optional) ({issues.length})
                     </Label>
                   </div>
 
-                  {/* List of Current Issues */}
                   {issues.length > 0 && (
                     <div className="space-y-2 mb-4 max-h-40 overflow-y-auto">
                       {issues.map((issue) => (
-                        <div key={issue.id} className="bg-white border border-orange-200 p-3 rounded-lg relative">
+                        <div key={issue.id} className="bg-white border border-slate-200 p-3 rounded-lg relative">
                           <div className="flex justify-between items-start mb-2">
                             <div className="font-semibold text-slate-800">{issue.name}</div>
                             <Button variant="ghost" size="sm" onClick={() => handleRemoveIssue(issue.id)} className="h-6 w-6 p-0 text-red-500 hover:bg-red-50">
                               <X className="h-4 w-4" />
                             </Button>
                           </div>
-                          <div className="grid grid-cols-2 gap-2 text-xs text-slate-600">
-                            <span>Raised By: <b>{issue.raisedBy}</b></span>
-                            <span>Programme: <Badge variant="outline" className="text-[10px] px-1 h-4">{issue.programme}</Badge></span>
-                          </div>
+                          <div className="text-xs text-slate-600 mb-1">Raised By: <b>{issue.raisedBy}</b> • <Badge variant="outline" className="text-[10px] px-1 h-4">{issue.programme}</Badge></div>
                           <div className="mt-2 text-sm text-slate-700 bg-slate-50 p-2 rounded">
                             {issue.description}
                           </div>
-                          <div className="flex justify-between items-center mt-2">
-                            <span className="text-xs text-slate-500">
-                              {issue.county}, {issue.subcounty}
-                            </span>
+                          <div className="mt-2">
                             <Badge variant={issue.status === 'responded' ? 'default' : 'secondary'} className={issue.status === 'responded' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}>
                               {issue.status}
                             </Badge>
@@ -921,51 +845,59 @@ const AnimalHealthPage = () => {
                     </div>
                   )}
 
-                  {/* Add New Issue Form */}
-                  <div className="bg-white p-4 rounded-lg border border-slate-200">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
-                      <div className="space-y-1">
-                        <Label className="text-xs">Issue Name *</Label>
-                        <Input placeholder="e.g. Equipment Failure" value={issueForm.name} onChange={e => setIssueForm({...issueForm, name: e.target.value})} className="h-8 text-sm" />
+                  {/* Toggle Button to Show Issue Form */}
+                  {!showIssueForm ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="w-full border-dashed border-slate-300 hover:border-orange-400 hover:text-orange-600 text-slate-500"
+                      onClick={() => setShowIssueForm(true)}
+                    >
+                      <Plus className="h-4 w-4 mr-2" /> Record an Issue
+                    </Button>
+                  ) : (
+                    /* Add New Issue Form */
+                    <div className="bg-white p-4 rounded-lg border border-slate-200">
+                      <p className="text-xs text-slate-500 mb-3 italic">
+                        This issue will be saved under the programme: <b>{activityForm.programme}</b>
+                      </p>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+                        <div className="space-y-1">
+                          <Label className="text-xs">Issue Name</Label>
+                          <Input placeholder="e.g. Equipment Failure" value={issueForm.name} onChange={e => setIssueForm({...issueForm, name: e.target.value})} className="h-8 text-sm" />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">Raised By</Label>
+                          <Input placeholder="Officer Name" value={issueForm.raisedBy} onChange={e => setIssueForm({...issueForm, raisedBy: e.target.value})} className="h-8 text-sm" />
+                        </div>
                       </div>
-                      <div className="space-y-1">
-                        <Label className="text-xs">Raised By *</Label>
-                        <Input placeholder="Officer Name" value={issueForm.raisedBy} onChange={e => setIssueForm({...issueForm, raisedBy: e.target.value})} className="h-8 text-sm" />
+                      <div className="grid grid-cols-2 gap-3 mb-3">
+                        <div className="space-y-1 col-span-2">
+                          <Label className="text-xs">Status</Label>
+                          <Select value={issueForm.status} onValueChange={(v) => setIssueForm({...issueForm, status: v as 'responded' | 'not responded'})}>
+                            <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="responded">Responded</SelectItem>
+                              <SelectItem value="not responded">Not Responded</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+                      <div className="space-y-1 mb-3">
+                        <Label className="text-xs">Description</Label>
+                        <Textarea placeholder="Describe issue..." value={issueForm.description} onChange={e => setIssueForm({...issueForm, description: e.target.value})} className="min-h-[60px] text-sm" />
+                      </div>
+                      <div className="flex justify-between">
+                        <Button type="button" variant="ghost" size="sm" onClick={() => setShowIssueForm(false)} className="text-slate-500 hover:text-slate-700">
+                          Cancel
+                        </Button>
+                        <Button type="button" onClick={handleAddIssue} size="sm" className="bg-orange-500 hover:bg-orange-600 text-white h-8 px-4 text-xs font-semibold">
+                          Add Issue
+                        </Button>
                       </div>
                     </div>
-                    <div className="grid grid-cols-2 gap-3 mb-3">
-                      <div className="space-y-1">
-                         <Label className="text-xs">Programme</Label>
-                         <Select value={issueForm.programme} onValueChange={(v) => setIssueForm({...issueForm, programme: v})}>
-                           <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
-                           <SelectContent>
-                             {PROGRAMME_OPTIONS.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
-                           </SelectContent>
-                         </Select>
-                      </div>
-                      <div className="space-y-1">
-                        <Label className="text-xs">Status</Label>
-                        <Select value={issueForm.status} onValueChange={(v) => setIssueForm({...issueForm, status: v as 'responded' | 'not responded'})}>
-                           <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
-                           <SelectContent>
-                             <SelectItem value="responded">Responded</SelectItem>
-                             <SelectItem value="not responded">Not Responded</SelectItem>
-                           </SelectContent>
-                         </Select>
-                      </div>
-                    </div>
-                    <div className="space-y-1 mb-3">
-                      <Label className="text-xs">Description *</Label>
-                      <Textarea placeholder="Describe the issue..." value={issueForm.description} onChange={e => setIssueForm({...issueForm, description: e.target.value})} className="min-h-[60px] text-sm" />
-                    </div>
-                    <div className="flex justify-end">
-                      <Button type="button" onClick={handleAddIssue} size="sm" className="bg-orange-500 hover:bg-orange-600 text-white h-8 px-4 text-xs font-semibold">
-                        Add Issue
-                      </Button>
-                    </div>
-                  </div>
+                  )}
                 </div>
-                {/* --- END ISSUES SECTION --- */}
 
                 <div className="space-y-2">
                   <Label htmlFor="comment" className="text-sm font-medium text-slate-700">Comment</Label>
@@ -984,10 +916,8 @@ const AnimalHealthPage = () => {
                     <Label className="text-sm font-medium text-slate-700">
                       Vaccination Team ({fieldOfficers.length}) <span className="text-red-500">*</span>
                     </Label>
-                   
                   </div>
                   
-                  {/* Add Field Officer Form */}
                   <div className="grid grid-cols-2 gap-3">
                     <Input
                       placeholder="Name"
@@ -1025,7 +955,6 @@ const AnimalHealthPage = () => {
                     </div>
                   </div>
 
-                  {/* Field Officers List */}
                   {fieldOfficers.length > 0 && (
                     <div className="space-y-2 max-h-40 overflow-y-auto">
                       {fieldOfficers.map((officer, index) => (
@@ -1054,21 +983,15 @@ const AnimalHealthPage = () => {
                   variant="outline" 
                   onClick={() => {
                     setIsAddDialogOpen(false);
+                    // Reset all states
+                    setActivityForm({ date: "", county: "", subcounty: "", location: "", comment: "", programme: "KPMD" });
                     setFieldOfficers([]);
                     setFieldOfficerForm({ name: "", role: "" });
                     setSelectedVaccines([]);
                     setTotalDoses("");
                     setIssues([]);
-                    setIssueForm({
-                        name: "",
-                        raisedBy: "",
-                        county: "",
-                        subcounty: "",
-                        location: "",
-                        programme: "KPMD",
-                        description: "",
-                        status: "not responded"
-                    });
+                    setIssueForm({ name: "", raisedBy: "", description: "", status: "not responded" });
+                    setShowIssueForm(false);
                   }}
                   className="rounded-xl border-slate-300 hover:border-slate-400 transition-all text-slate-700"
                 >
@@ -1087,9 +1010,8 @@ const AnimalHealthPage = () => {
           </Dialog>
         </div>
 
-        {/* Stats Overview - Updated Cards */}
+        {/* Stats Overview */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* Vaccination Rate Card */}
           <Card className="bg-white/95 backdrop-blur-sm border-0 shadow-lg">
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
@@ -1100,11 +1022,11 @@ const AnimalHealthPage = () => {
                   </p>
                   <p className="text-xs text-slate-500 mt-2">
                     {vaccinationRate.trend === 'up' ? 
-                     `Increase from previous record (${vaccinationRate.previousDoses} → ${vaccinationRate.currentDoses} doses)` : 
+                     `Increase from previous record` : 
                      vaccinationRate.trend === 'down' ? 
-                     `Decrease from previous record (${vaccinationRate.previousDoses} → ${vaccinationRate.currentDoses} doses)` : 
-                     activities.length >= 2 ? `No change from previous record (${vaccinationRate.currentDoses} doses)` :
-                     'Not enough data for comparison'}
+                     `Decrease from previous record` : 
+                     activities.length >= 2 ? `No change from previous record` :
+                     'Not enough data'}
                   </p>
                 </div>
                 <div className={`w-12 h-12 rounded-full flex items-center justify-center ${
@@ -1112,19 +1034,14 @@ const AnimalHealthPage = () => {
                   vaccinationRate.trend === 'down' ? 'bg-red-100' : 
                   'bg-blue-100'
                 }`}>
-                  {vaccinationRate.trend === 'up' ? (
-                    <TrendingUp className="h-6 w-6 text-green-600" />
-                  ) : vaccinationRate.trend === 'down' ? (
-                    <TrendingDown className="h-6 w-6 text-red-600" />
-                  ) : (
-                    <Activity className="h-6 w-6 text-blue-600" />
-                  )}
+                  {vaccinationRate.trend === 'up' ? <TrendingUp className="h-6 w-6 text-green-600" /> : 
+                   vaccinationRate.trend === 'down' ? <TrendingDown className="h-6 w-6 text-red-600" /> : 
+                   <Activity className="h-6 w-6 text-blue-600" />}
                 </div>
               </div>
             </CardContent>
           </Card>
 
-          {/* Total Doses Card */}
           <Card className="bg-white/95 backdrop-blur-sm border-0 shadow-lg">
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
@@ -1184,11 +1101,7 @@ const AnimalHealthPage = () => {
                   onClick={() => setIsSelecting(!isSelecting)}
                   className="rounded-xl"
                 >
-                  {isSelecting ? (
-                    <X className="h-4 w-4 mr-2" />
-                  ) : (
-                    <CheckSquare className="h-4 w-4 mr-2" />
-                  )}
+                  {isSelecting ? <X className="h-4 w-4 mr-2" /> : <CheckSquare className="h-4 w-4 mr-2" />}
                   {isSelecting ? "Cancel Selection" : "Select Multiple"}
                 </Button>
                 
@@ -1217,14 +1130,12 @@ const AnimalHealthPage = () => {
           </Button>
         </div>
 
-        {/* Activities Table - Updated for multiple vaccines */}
+        {/* Activities Table */}
         <Card className="bg-white/95 backdrop-blur-sm">
           <CardContent className="p-0">
             {loading ? (
               <div className="space-y-4 p-6">
-                {[...Array(5)].map((_, i) => (
-                  <Skeleton key={i} className="h-16 w-full rounded-xl" />
-                ))}
+                {[...Array(5)].map((_, i) => <Skeleton key={i} className="h-16 w-full rounded-xl" />)}
               </div>
             ) : filteredActivities.length > 0 ? (
               <div className="overflow-x-auto">
@@ -1233,54 +1144,39 @@ const AnimalHealthPage = () => {
                     <tr className="bg-gradient-to-r from-slate-50 to-slate-100/80 border-b border-slate-200">
                       {isSelecting && (
                         <th className="p-4 text-left">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={selectAllActivities}
-                            className="h-8 w-8 p-0"
-                          >
-                            {selectedActivities.length === filteredActivities.length ? (
-                              <CheckSquare className="h-4 w-4 text-green-600" />
-                            ) : (
-                              <Square className="h-4 w-4 text-slate-400" />
-                            )}
+                          <Button variant="ghost" size="sm" onClick={selectAllActivities} className="h-8 w-8 p-0">
+                            {selectedActivities.length === filteredActivities.length ? <CheckSquare className="h-4 w-4 text-green-600" /> : <Square className="h-4 w-4 text-slate-400" />}
                           </Button>
                         </th>
                       )}
                       <th className="p-4 text-left font-semibold text-slate-700 text-sm">Date</th>
+                      <th className="p-4 text-left font-semibold text-slate-700 text-sm">Programme</th>
                       <th className="p-4 text-left font-semibold text-slate-700 text-sm">County</th>
                       <th className="p-4 text-left font-semibold text-slate-700 text-sm">Location</th>
                       <th className="p-4 text-left font-semibold text-slate-700 text-sm">Vaccines</th>
                       <th className="p-4 text-left font-semibold text-slate-700 text-sm">Total Doses</th>
-                      <th className="p-4 text-left font-semibold text-slate-700 text-sm">Issues</th> {/* Added Issues Column */}
+                      <th className="p-4 text-left font-semibold text-slate-700 text-sm">Issues</th> 
                       <th className="p-4 text-left font-semibold text-slate-700 text-sm">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {filteredActivities.map((activity) => (
-                      <tr 
-                        key={activity.id} 
-                        className="hover:bg-slate-50/50 transition-colors duration-200 group"
-                      >
+                      <tr key={activity.id} className="hover:bg-slate-50/50 transition-colors duration-200 group">
                         {isSelecting && (
                           <td className="p-4">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => toggleActivitySelection(activity.id)}
-                              className="h-8 w-8 p-0"
-                            >
-                              {selectedActivities.includes(activity.id) ? (
-                                <CheckSquare className="h-4 w-4 text-green-600" />
-                              ) : (
-                                <Square className="h-4 w-4 text-slate-400" />
-                              )}
+                            <Button variant="ghost" size="sm" onClick={() => toggleActivitySelection(activity.id)} className="h-8 w-8 p-0">
+                              {selectedActivities.includes(activity.id) ? <CheckSquare className="h-4 w-4 text-green-600" /> : <Square className="h-4 w-4 text-slate-400" />}
                             </Button>
                           </td>
                         )}
                         <td className="p-4">
                           <Badge className="bg-blue-100 text-blue-700 border-0 shadow-sm">
                             {formatDate(activity.date)}
+                          </Badge>
+                        </td>
+                        <td className="p-4">
+                          <Badge variant="outline" className="bg-slate-50 text-slate-700 border-slate-200">
+                            {activity.programme}
                           </Badge>
                         </td>
                         <td className="p-4">
@@ -1304,7 +1200,6 @@ const AnimalHealthPage = () => {
                           </span>
                         </td>
                         <td className="p-4">
-                          {/* Issues Badge */}
                           {(activity.issues && activity.issues.length > 0) ? (
                             <Badge variant="destructive" className="bg-red-100 text-red-800 hover:bg-red-200 cursor-pointer" onClick={() => openViewDialog(activity)}>
                               {activity.issues.length} Issue(s)
@@ -1315,35 +1210,21 @@ const AnimalHealthPage = () => {
                         </td>
                         <td className="p-4">
                           <div className="flex gap-2">
-                            <Button
-                              size="sm"
-                              onClick={() => openViewDialog(activity)}
-                              className="bg-gradient-to-r from-blue-500 to-cyan-500 hover:from-blue-600 hover:to-cyan-600 text-white rounded-lg transition-all shadow-sm"
-                            >
+                            <Button size="sm" onClick={() => openViewDialog(activity)} className="bg-gradient-to-r from-blue-500 to-cyan-500 hover:from-blue-600 hover:to-cyan-600 text-white rounded-lg transition-all shadow-sm">
                               <Eye className="h-4 w-4" />
                             </Button>
                             {userIsChiefAdmin && !isSelecting && (
                               <>
-                                <Button
-                                  size="sm"
-                                  onClick={() => openEditDialog(activity)}
-                                  className="bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white rounded-lg transition-all shadow-sm"
-                                >
+                                <Button size="sm" onClick={() => openEditDialog(activity)} className="bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white rounded-lg transition-all shadow-sm">
                                   <Edit className="h-4 w-4" />
                                 </Button>
                                 <DropdownMenu>
                                   <DropdownMenuTrigger asChild>
-                                    <Button variant="outline" size="sm">
-                                      <MoreVertical className="h-4 w-4" />
-                                    </Button>
+                                    <Button variant="outline" size="sm"><MoreVertical className="h-4 w-4" /></Button>
                                   </DropdownMenuTrigger>
                                   <DropdownMenuContent align="end">
-                                    <DropdownMenuItem 
-                                      onClick={() => handleDeleteActivity(activity.id)}
-                                      className="text-red-600"
-                                    >
-                                      <Trash2 className="h-4 w-4 mr-2" />
-                                      Delete
+                                    <DropdownMenuItem onClick={() => handleDeleteActivity(activity.id)} className="text-red-600">
+                                      <Trash2 className="h-4 w-4 mr-2" /> Delete
                                     </DropdownMenuItem>
                                   </DropdownMenuContent>
                                 </DropdownMenu>
@@ -1361,32 +1242,15 @@ const AnimalHealthPage = () => {
                 <div className="w-16 h-16 bg-gradient-to-r from-slate-400 to-slate-600 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg">
                   <Search className="h-8 w-8 text-white" />
                 </div>
-                <h4 className="text-xl font-bold text-slate-800 mb-2">
-                  No vaccination activities found
-                </h4>
-                <p className="text-slate-600 mb-4">
-                  {searchTerm || startDate || endDate
-                    ? "Try adjusting your search criteria"
-                    : "Get started by recording your first vaccination activity"
-                  }
-                </p>
+                <h4 className="text-xl font-bold text-slate-800 mb-2">No vaccination activities found</h4>
+                <p className="text-slate-600 mb-4">{searchTerm || startDate || endDate ? "Try adjusting your search criteria" : "Get started by recording your first vaccination activity"}</p>
                 {searchTerm || startDate || endDate ? (
-                  <Button 
-                    variant="outline"
-                    onClick={() => {
-                      setSearchTerm("");
-                      setStartDate("");
-                      setEndDate("");
-                    }}
-                  >
-                    Clear Filters
-                  </Button>
+                  <Button variant="outline" onClick={() => { setSearchTerm(""); setStartDate(""); setEndDate(""); }}>Clear Filters</Button>
                 ) : userIsChiefAdmin && (
                   <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
                     <DialogTrigger asChild>
                       <Button className="bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white">
-                        <Plus className="h-4 w-4 mr-2" />
-                        Record First Vaccination
+                        <Plus className="h-4 w-4 mr-2" /> Record First Vaccination
                       </Button>
                     </DialogTrigger>
                   </Dialog>
@@ -1397,18 +1261,13 @@ const AnimalHealthPage = () => {
         </Card>
       </div>
 
-      {/* View Activity Dialog - Updated for issues */}
+      {/* View Activity Dialog */}
       <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
         <DialogContent className="sm:max-w-[700px] bg-white rounded-2xl border-0 shadow-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="text-xl font-semibold text-slate-900 flex items-center justify-between">
               <span>Vaccination Details</span>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => setIsViewDialogOpen(false)}
-                className="h-8 w-8 rounded-lg hover:bg-slate-100 transition-colors text-slate-600"
-              >
+              <Button variant="ghost" size="icon" onClick={() => setIsViewDialogOpen(false)} className="h-8 w-8 rounded-lg hover:bg-slate-100 transition-colors text-slate-600">
                 <X className="h-4 w-4" />
               </Button>
             </DialogTitle>
@@ -1421,10 +1280,8 @@ const AnimalHealthPage = () => {
                   <p className="text-slate-900 font-medium">{formatDate(viewingActivity.date)}</p>
                 </div>
                 <div>
-                  <Label className="text-sm font-medium text-slate-600">Total Doses</Label>
-                  <p className="text-slate-900 font-medium">
-                    {getActivityTotalDoses(viewingActivity).toLocaleString()}
-                  </p>
+                  <Label className="text-sm font-medium text-slate-600">Programme</Label>
+                  <p className="text-slate-900 font-medium">{viewingActivity.programme}</p>
                 </div>
               </div>              
               <div className="grid grid-cols-2 gap-4">
@@ -1457,7 +1314,6 @@ const AnimalHealthPage = () => {
                 </div>
               </div>
 
-              {/* --- VIEW ISSUES SECTION --- */}
               {(viewingActivity.issues && viewingActivity.issues.length > 0) && (
                 <div className="border-t pt-4">
                   <Label className="text-sm font-bold text-orange-700 mb-3 flex items-center gap-2">
@@ -1473,22 +1329,14 @@ const AnimalHealthPage = () => {
                             {issue.status}
                           </Badge>
                         </div>
-                        <div className="grid grid-cols-2 gap-2 text-sm text-slate-600 mb-2">
-                          <span>Raised By: <b className="text-slate-800">{issue.raisedBy}</b></span>
-                          <span>Programme: <Badge variant="outline" className="ml-1">{issue.programme}</Badge></span>
-                        </div>
-                        <div className="text-sm text-slate-700">
-                          {issue.county}, {issue.subcounty}, {issue.location}
-                        </div>
-                        <div className="mt-2 text-slate-900 bg-white p-2 rounded">
-                          {issue.description}
-                        </div>
+                        <div className="text-sm text-slate-600 mb-2">Raised By: <b className="text-slate-800">{issue.raisedBy}</b> • Programme: <Badge variant="outline" className="ml-1">{issue.programme}</Badge></div>
+                        <div className="text-sm text-slate-700 mb-2">{issue.county}, {issue.subcounty}, {issue.location}</div>
+                        <div className="text-slate-900 bg-white p-2 rounded">{issue.description}</div>
                       </div>
                     ))}
                   </div>
                 </div>
               )}
-              {/* --- END VIEW ISSUES SECTION --- */}
 
               {viewingActivity.comment && (
                 <div>
@@ -1515,13 +1363,11 @@ const AnimalHealthPage = () => {
         </DialogContent>
       </Dialog>
 
-      {/* Edit Activity Dialog - Updated for issues */}
+      {/* Edit Activity Dialog */}
       <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
         <DialogContent className="sm:max-w-[900px] bg-white rounded-2xl border-0 shadow-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="text-xl font-semibold text-slate-900">
-              Edit Vaccination Activity
-            </DialogTitle>
+            <DialogTitle className="text-xl font-semibold text-slate-900">Edit Vaccination Activity</DialogTitle>
           </DialogHeader>
           <div className="grid gap-6 py-4">
             <div className="grid grid-cols-2 gap-4">
@@ -1537,22 +1383,35 @@ const AnimalHealthPage = () => {
                 />
               </div>
               <div className="space-y-2">
+                <Label htmlFor="edit-programme" className="text-sm font-medium text-slate-700">Programme *</Label>
+                <Select 
+                  value={activityForm.programme} 
+                  onValueChange={(v) => setActivityForm({...activityForm, programme: v})}
+                >
+                  <SelectTrigger className="rounded-xl border-slate-300 focus:border-green-500 focus:ring-green-500 transition-all bg-white">
+                    <SelectValue placeholder="Select Programme" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {PROGRAMME_OPTIONS.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
                 <Label htmlFor="edit-county" className="text-sm font-medium text-slate-700">County *</Label>
                 <Input
                   id="edit-county"
                   value={activityForm.county}
                   onChange={(e) => {
                     setActivityForm({...activityForm, county: e.target.value});
-                    setIssueForm({...issueForm, county: e.target.value});
                   }}
                   placeholder="Enter county"
                   className="rounded-xl border-slate-300 focus:border-green-500 focus:ring-green-500 transition-all bg-white"
                   required
                 />
               </div>
-            </div>
-            
-            <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="edit-subcounty" className="text-sm font-medium text-slate-700">Subcounty</Label>
                 <Input
@@ -1560,37 +1419,32 @@ const AnimalHealthPage = () => {
                   value={activityForm.subcounty}
                   onChange={(e) => {
                     setActivityForm({...activityForm, subcounty: e.target.value});
-                    setIssueForm({...issueForm, subcounty: e.target.value});
                   }}
                   placeholder="Enter subcounty"
                   className="rounded-xl border-slate-300 focus:border-green-500 focus:ring-green-500 transition-all bg-white"
                 />
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="edit-location" className="text-sm font-medium text-slate-700">Location *</Label>
-                <Input
-                  id="edit-location"
-                  value={activityForm.location}
-                  onChange={(e) => {
-                    setActivityForm({...activityForm, location: e.target.value});
-                    setIssueForm({...issueForm, location: e.target.value});
-                  }}
-                  placeholder="Enter specific location"
-                  className="rounded-xl border-slate-300 focus:border-green-500 focus:ring-green-500 transition-all bg-white"
-                  required
-                />
-              </div>
             </div>
 
-            {/* Vaccines Section */}
+            <div className="space-y-2">
+              <Label htmlFor="edit-location" className="text-sm font-medium text-slate-700">Location *</Label>
+              <Input
+                id="edit-location"
+                value={activityForm.location}
+                onChange={(e) => {
+                  setActivityForm({...activityForm, location: e.target.value});
+                }}
+                placeholder="Enter specific location"
+                className="rounded-xl border-slate-300 focus:border-green-500 focus:ring-green-500 transition-all bg-white"
+                required
+              />
+            </div>
+
             <div className="space-y-4 border-t pt-4">
               <div className="flex items-center justify-between">
-                <Label className="text-sm font-medium text-slate-700">
-                  Vaccines ({selectedVaccines.length}) <span className="text-red-500">*</span>
-                </Label>
+                <Label className="text-sm font-medium text-slate-700">Vaccines ({selectedVaccines.length}) <span className="text-red-500">*</span></Label>
                 <span className="text-xs text-slate-500">Select vaccines administered</span>
               </div>              
-              {/* Vaccine Selection Grid */}
               <div className="grid grid-cols-2 gap-2">
                 {VACCINE_OPTIONS.map((vaccine) => (
                   <div key={vaccine} className="flex items-center space-x-2">
@@ -1599,21 +1453,15 @@ const AnimalHealthPage = () => {
                       checked={selectedVaccines.includes(vaccine)}
                       onCheckedChange={() => handleVaccineSelection(vaccine)}
                     />
-                    <Label
-                      htmlFor={`edit-vaccine-${vaccine}`}
-                      className="text-sm font-normal cursor-pointer"
-                    >
+                    <Label htmlFor={`edit-vaccine-${vaccine}`} className="text-sm font-normal cursor-pointer">
                       {vaccine}
                     </Label>
                   </div>
                 ))}
               </div>
 
-              {/* Total Doses Input */}
               <div className="space-y-2">
-                <Label htmlFor="edit-total-doses" className="text-sm font-medium text-slate-700">
-                  Total Doses Administered <span className="text-red-500">*</span>
-                </Label>
+                <Label htmlFor="edit-total-doses" className="text-sm font-medium text-slate-700">Total Doses Administered <span className="text-red-500">*</span></Label>
                 <Input
                   id="edit-total-doses"
                   type="number"
@@ -1623,45 +1471,31 @@ const AnimalHealthPage = () => {
                   onChange={(e) => setTotalDoses(e.target.value)}
                   className="rounded-xl border-slate-300 focus:border-green-500 focus:ring-green-500"
                 />
-                {selectedVaccines.length > 0 && totalDoses && parseInt(totalDoses) > 0 && (
-                  <p className="text-xs text-slate-500">
-                    Doses will be distributed equally among {selectedVaccines.length} selected vaccine(s)
-                  </p>
-                )}
               </div>
             </div>
 
-            {/* --- EDIT ISSUES SECTION --- */}
-            <div className="space-y-4 border-t pt-4 bg-orange-50/50 p-4 rounded-xl">
+            {/* EDIT ISSUES SECTION */}
+            <div className="space-y-4 border-t pt-4 bg-slate-50/50 p-4 rounded-xl">
               <div className="flex items-center justify-between">
-                <Label className="text-sm font-bold text-orange-700 flex items-center gap-2">
-                  <AlertCircle className="h-4 w-4" />
-                  Issues Raised ({issues.length})
+                <Label className="text-sm font-semibold text-slate-700 flex items-center gap-2">
+                  <AlertCircle className="h-4 w-4 text-orange-500" />
+                  Issues Raised (Optional) ({issues.length})
                 </Label>
               </div>
 
-              {/* List of Current Issues */}
               {issues.length > 0 && (
                 <div className="space-y-2 mb-4 max-h-40 overflow-y-auto">
                   {issues.map((issue) => (
-                    <div key={issue.id} className="bg-white border border-orange-200 p-3 rounded-lg relative">
+                    <div key={issue.id} className="bg-white border border-slate-200 p-3 rounded-lg relative">
                       <div className="flex justify-between items-start mb-2">
                         <div className="font-semibold text-slate-800">{issue.name}</div>
                         <Button variant="ghost" size="sm" onClick={() => handleRemoveIssue(issue.id)} className="h-6 w-6 p-0 text-red-500 hover:bg-red-50">
                           <X className="h-4 w-4" />
                         </Button>
                       </div>
-                      <div className="grid grid-cols-2 gap-2 text-xs text-slate-600">
-                        <span>Raised By: <b>{issue.raisedBy}</b></span>
-                        <span>Programme: <Badge variant="outline" className="text-[10px] px-1 h-4">{issue.programme}</Badge></span>
-                      </div>
-                      <div className="mt-2 text-sm text-slate-700 bg-slate-50 p-2 rounded">
-                        {issue.description}
-                      </div>
-                      <div className="flex justify-between items-center mt-2">
-                        <span className="text-xs text-slate-500">
-                          {issue.county}, {issue.subcounty}
-                        </span>
+                      <div className="text-xs text-slate-600 mb-1">Raised By: <b>{issue.raisedBy}</b> • <Badge variant="outline" className="text-[10px] px-1 h-4">{issue.programme}</Badge></div>
+                      <div className="mt-2 text-sm text-slate-700 bg-slate-50 p-2 rounded">{issue.description}</div>
+                      <div className="mt-2">
                         <Badge variant={issue.status === 'responded' ? 'default' : 'secondary'} className={issue.status === 'responded' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}>
                           {issue.status}
                         </Badge>
@@ -1671,51 +1505,57 @@ const AnimalHealthPage = () => {
                 </div>
               )}
 
-              {/* Add New Issue Form (in Edit) */}
-              <div className="bg-white p-4 rounded-lg border border-slate-200">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
-                  <div className="space-y-1">
-                    <Label className="text-xs">Issue Name *</Label>
-                    <Input placeholder="e.g. Equipment Failure" value={issueForm.name} onChange={e => setIssueForm({...issueForm, name: e.target.value})} className="h-8 text-sm" />
+              {!showIssueForm ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full border-dashed border-slate-300 hover:border-orange-400 hover:text-orange-600 text-slate-500"
+                  onClick={() => setShowIssueForm(true)}
+                >
+                  <Plus className="h-4 w-4 mr-2" /> Record an Issue
+                </Button>
+              ) : (
+                <div className="bg-white p-4 rounded-lg border border-slate-200">
+                  <p className="text-xs text-slate-500 mb-3 italic">
+                    This issue will be saved under the programme: <b>{activityForm.programme}</b>
+                  </p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+                    <div className="space-y-1">
+                      <Label className="text-xs">Issue Name</Label>
+                      <Input placeholder="e.g. Equipment Failure" value={issueForm.name} onChange={e => setIssueForm({...issueForm, name: e.target.value})} className="h-8 text-sm" />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Raised By</Label>
+                      <Input placeholder="Officer Name" value={issueForm.raisedBy} onChange={e => setIssueForm({...issueForm, raisedBy: e.target.value})} className="h-8 text-sm" />
+                    </div>
                   </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">Raised By *</Label>
-                    <Input placeholder="Officer Name" value={issueForm.raisedBy} onChange={e => setIssueForm({...issueForm, raisedBy: e.target.value})} className="h-8 text-sm" />
+                  <div className="grid grid-cols-2 gap-3 mb-3">
+                    <div className="space-y-1 col-span-2">
+                      <Label className="text-xs">Status</Label>
+                      <Select value={issueForm.status} onValueChange={(v) => setIssueForm({...issueForm, status: v as 'responded' | 'not responded'})}>
+                        <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="responded">Responded</SelectItem>
+                          <SelectItem value="not responded">Not Responded</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  <div className="space-y-1 mb-3">
+                    <Label className="text-xs">Description</Label>
+                    <Textarea placeholder="Describe issue..." value={issueForm.description} onChange={e => setIssueForm({...issueForm, description: e.target.value})} className="min-h-[60px] text-sm" />
+                  </div>
+                  <div className="flex justify-between">
+                    <Button type="button" variant="ghost" size="sm" onClick={() => setShowIssueForm(false)} className="text-slate-500 hover:text-slate-700">
+                      Cancel
+                    </Button>
+                    <Button type="button" onClick={handleAddIssue} size="sm" className="bg-orange-500 hover:bg-orange-600 text-white h-8 px-4 text-xs font-semibold">
+                      Add Issue
+                    </Button>
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-3 mb-3">
-                  <div className="space-y-1">
-                     <Label className="text-xs">Programme</Label>
-                     <Select value={issueForm.programme} onValueChange={(v) => setIssueForm({...issueForm, programme: v})}>
-                       <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
-                       <SelectContent>
-                         {PROGRAMME_OPTIONS.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
-                       </SelectContent>
-                     </Select>
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">Status</Label>
-                    <Select value={issueForm.status} onValueChange={(v) => setIssueForm({...issueForm, status: v as 'responded' | 'not responded'})}>
-                       <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
-                       <SelectContent>
-                         <SelectItem value="responded">Responded</SelectItem>
-                         <SelectItem value="not responded">Not Responded</SelectItem>
-                       </SelectContent>
-                     </Select>
-                  </div>
-                </div>
-                <div className="space-y-1 mb-3">
-                  <Label className="text-xs">Description *</Label>
-                  <Textarea placeholder="Describe the issue..." value={issueForm.description} onChange={e => setIssueForm({...issueForm, description: e.target.value})} className="min-h-[60px] text-sm" />
-                </div>
-                <div className="flex justify-end">
-                  <Button type="button" onClick={handleAddIssue} size="sm" className="bg-orange-500 hover:bg-orange-600 text-white h-8 px-4 text-xs font-semibold">
-                    Add Issue
-                  </Button>
-                </div>
-              </div>
+              )}
             </div>
-            {/* --- END EDIT ISSUES SECTION --- */}
 
             <div className="space-y-2">
               <Label htmlFor="edit-comment" className="text-sm font-medium text-slate-700">Comment</Label>
@@ -1723,44 +1563,26 @@ const AnimalHealthPage = () => {
                 id="edit-comment"
                 value={activityForm.comment}
                 onChange={(e) => setActivityForm({...activityForm, comment: e.target.value})}
-                placeholder="Add any comments or observations about this activity..."
+                placeholder="Add any comments or observations..."
                 className="rounded-xl border-slate-300 focus:border-green-500 focus:ring-green-500 transition-all bg-white min-h-[100px]"
               />
             </div>
 
-            {/* Field Officers Section */}
             <div className="space-y-4 border-t pt-4">
               <div className="flex items-center justify-between">
                 <Label className="text-sm font-medium text-slate-700">Field Officers ({fieldOfficers.length}) *</Label>
                 <span className="text-xs text-slate-500">Add field officers with their roles</span>
               </div>              
-              {/* Add Field Officer Form */}
               <div className="grid grid-cols-2 gap-3">
-                <Input
-                  placeholder="Officer Name"
-                  value={fieldOfficerForm.name}
-                  onChange={(e) => setFieldOfficerForm({...fieldOfficerForm, name: e.target.value})}
-                  className="rounded-xl border-slate-300 focus:border-green-500 focus:ring-green-500"
-                />
+                <Input placeholder="Officer Name" value={fieldOfficerForm.name} onChange={(e) => setFieldOfficerForm({...fieldOfficerForm, name: e.target.value})} className="rounded-xl border-slate-300 focus:border-green-500 focus:ring-green-500" />
                 <div className="flex gap-2">
-                  <Input
-                    placeholder="Role/Designation"
-                    value={fieldOfficerForm.role}
-                    onChange={(e) => setFieldOfficerForm({...fieldOfficerForm, role: e.target.value})}
-                    className="rounded-xl border-slate-300 focus:border-green-500 focus:ring-green-500"
-                  />
-                  <Button 
-                    type="button" 
-                    onClick={handleAddFieldOfficer}
-                    className="bg-green-500 hover:bg-green-600 text-white rounded-xl"
-                    disabled={!fieldOfficerForm.name.trim() || !fieldOfficerForm.role.trim()}
-                  >
+                  <Input placeholder="Role/Designation" value={fieldOfficerForm.role} onChange={(e) => setFieldOfficerForm({...fieldOfficerForm, role: e.target.value})} className="rounded-xl border-slate-300 focus:border-green-500 focus:ring-green-500" />
+                  <Button type="button" onClick={handleAddFieldOfficer} className="bg-green-500 hover:bg-green-600 text-white rounded-xl" disabled={!fieldOfficerForm.name.trim() || !fieldOfficerForm.role.trim()}>
                     <Plus className="h-4 w-4" />
                   </Button>
                 </div>
               </div>
 
-              {/* Field Officers List */}
               {fieldOfficers.length > 0 && (
                 <div className="space-y-2 max-h-40 overflow-y-auto">
                   {fieldOfficers.map((officer, index) => (
@@ -1769,13 +1591,7 @@ const AnimalHealthPage = () => {
                         <p className="font-medium text-slate-900">{officer.name}</p>
                         <p className="text-sm text-slate-600">{officer.role}</p>
                       </div>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => removeFieldOfficer(index)}
-                        className="text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg"
-                      >
+                      <Button type="button" variant="ghost" size="sm" onClick={() => removeFieldOfficer(index)} className="text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg">
                         <Trash2 className="h-4 w-4" />
                       </Button>
                     </div>
@@ -1794,16 +1610,9 @@ const AnimalHealthPage = () => {
                 setSelectedVaccines([]);
                 setTotalDoses("");
                 setIssues([]);
-                setIssueForm({
-                        name: "",
-                        raisedBy: "",
-                        county: "",
-                        subcounty: "",
-                        location: "",
-                        programme: "KPMD",
-                        description: "",
-                        status: "not responded"
-                    });
+                setIssueForm({ name: "", raisedBy: "", description: "", status: "not responded" });
+                setShowIssueForm(false);
+                setActivityForm({ date: "", county: "", subcounty: "", location: "", comment: "", programme: "KPMD" });
               }}
               className="rounded-xl border-slate-300 hover:border-slate-400 transition-all text-slate-700"
             >
@@ -1811,7 +1620,7 @@ const AnimalHealthPage = () => {
             </Button>
             <Button 
               onClick={handleEditActivity}
-              disabled={fieldOfficers.length === 0 || selectedVaccines.length === 0 || !totalDoses || parseInt(totalDoses) <= 0 || !activityForm.date || !activityForm.county}
+              disabled={fieldOfficers.length === 0 || selectedVaccines.length === 0 || !totalDoses || parseInt(totalDoses) <= 0 || !activityForm.date || !activityForm.county || !activityForm.programme}
               className="bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 rounded-xl text-white font-semibold shadow-lg hover:shadow-xl transition-all disabled:opacity-50"
             >
               <Edit className="h-4 w-4 mr-2" />
@@ -1827,12 +1636,7 @@ const AnimalHealthPage = () => {
           <DialogHeader>
             <DialogTitle className="text-xl font-semibold text-slate-900 flex items-center justify-between">
               <span>Field Officers</span>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => setIsFieldOfficersDialogOpen(false)}
-                className="h-8 w-8 rounded-lg hover:bg-slate-100 transition-colors text-slate-600"
-              >
+              <Button variant="ghost" size="icon" onClick={() => setIsFieldOfficersDialogOpen(false)} className="h-8 w-8 rounded-lg hover:bg-slate-100 transition-colors text-slate-600">
                 <X className="h-4 w-4" />
               </Button>
             </DialogTitle>
@@ -1848,9 +1652,7 @@ const AnimalHealthPage = () => {
               </div>
             ))}
             {selectedActivityFieldOfficers.length === 0 && (
-              <div className="text-center p-6 text-slate-500">
-                No field officers found
-              </div>
+              <div className="text-center p-6 text-slate-500">No field officers found</div>
             )}
           </div>
         </DialogContent>

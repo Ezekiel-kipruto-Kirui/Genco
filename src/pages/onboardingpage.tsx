@@ -5,9 +5,7 @@ import {
   push, 
   update, 
   remove, 
-  set,
-  DatabaseReference,
-  Database 
+  set
 } from "firebase/database";
 import { db } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
@@ -20,7 +18,7 @@ import {
 } from "@/components/ui/dialog";
 import { 
   Tabs, TabsContent, TabsList, TabsTrigger 
-} from "@/components/ui/tabs"; // Added Tabs
+} from "@/components/ui/tabs";
 import { 
   Download, Users, Edit, Trash2, GraduationCap, Eye, MapPin, Upload, Plus, 
   Calendar, X, UserPlus, User, Phone, Map, FileText, MessageSquare, BookOpen, 
@@ -40,7 +38,7 @@ interface FarmerData {
   name: string;
   idNo: string;
   phoneNo: string;
-  location: string;
+  subcounty: string;
   region: string;
   gender: string;
   county: string;
@@ -70,7 +68,7 @@ interface Filters {
 interface Stats {
   totalFarmers: number;
   totalOnboarding: number;
-  uniqueLocations: number;
+  uniqueSubcounties: number;
   completedSessions: number;
   pendingSessions: number;
   maleFarmers: number;
@@ -79,8 +77,6 @@ interface Stats {
 }
 
 // --- Utility Functions ---
-
-
 
 const getTopicIcon = (topic: string) => {
   const topicLower = topic.toLowerCase();
@@ -124,7 +120,7 @@ interface StatsCardProps {
   title: string;
   value: number;
   icon: any;
-  description?: string;
+  description?: any; // Changed to any to allow ReactNode
 }
 
 const StatsCard = ({ title, value, icon: Icon, description }: StatsCardProps) => (
@@ -138,12 +134,12 @@ const StatsCard = ({ title, value, icon: Icon, description }: StatsCardProps) =>
       <div className="mr-2 rounded-full">
         <Icon className="h-8 w-8 text-blue-600" />
       </div>
-      <div>
-        <div className="text-2xl font-bold text-green-500 mb-2">{value}</div>
+      <div className="flex-1">
+        <div className="text-2xl font-bold text-green-500 mb-1">{value}</div>
         {description && (
-          <p className="text-xs mt-2 bg-orange-50 px-2 py-1 rounded-md border border-slate-100">
+          <div className="text-xs bg-orange-50 px-2 py-1 rounded-md border border-slate-100">
             {description}
-          </p>
+          </div>
         )}
       </div>
     </CardContent>
@@ -316,7 +312,7 @@ const OnboardingPage = () => {
   });
   const [staff, setStaff] = useState<StaffData[]>([{ name: "", role: "" }]);
   const [farmers, setFarmers] = useState<FarmerData[]>([
-    { name: "", idNo: "", phoneNo: "", location: "", region: "", gender: "", county: "" } 
+    { name: "", idNo: "", phoneNo: "", subcounty: "", region: "", gender: "", county: "" } 
   ]);
   
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -346,7 +342,7 @@ const OnboardingPage = () => {
   const [stats, setStats] = useState<Stats>({
     totalFarmers: 0,
     totalOnboarding: 0,
-    uniqueLocations: 0,
+    uniqueSubcounties: 0,
     completedSessions: 0,
     pendingSessions: 0,
     maleFarmers: 0,
@@ -389,7 +385,6 @@ const OnboardingPage = () => {
   const fetchOnboardingData = async () => {
     try {
       setLoading(true);
-      // Realtime Database fetch
       const dbRef = ref(db, COLLECTION_NAME);
       const snapshot = await get(dbRef);
       
@@ -450,7 +445,7 @@ const OnboardingPage = () => {
 
     const allFarmers = filtered.flatMap(record => record.farmers);
     const uniqueFarmers = new Set(allFarmers.map(f => f.idNo || f.name));
-    const uniqueLocations = new Set(allFarmers.map(f => f.location).filter(Boolean));
+    const uniqueSubcounties = new Set(allFarmers.map(f => f.subcounty).filter(Boolean));
     const uniqueCounties = new Set(allFarmers.map(f => f.county).filter(Boolean));
     const completedSessions = filtered.filter(r => r.status === 'completed').length;
     const pendingSessions = filtered.filter(r => r.status === 'pending').length;
@@ -463,7 +458,7 @@ const OnboardingPage = () => {
       stats: {
         totalFarmers: uniqueFarmers.size,
         totalOnboarding: filtered.length,
-        uniqueLocations: uniqueLocations.size,
+        uniqueSubcounties: uniqueSubcounties.size,
         uniqueCounties: uniqueCounties.size,
         completedSessions,
         pendingSessions,
@@ -509,6 +504,11 @@ const OnboardingPage = () => {
     }
   };
 
+  const handleViewDetails = (record: OnboardingData) => {
+    setSelectedRecord(record);
+    setIsViewDialogOpen(true);
+  };
+
   const handleBulkDelete = async () => {
     if (selectedRecords.length === 0) return;
     try {
@@ -546,7 +546,6 @@ const OnboardingPage = () => {
 
       setLoading(true);
       
-      // Convert Date objects to ISO strings for RTDB
       const data = {
         ...onboardingForm,
         date: new Date(onboardingForm.date).toISOString(),
@@ -580,7 +579,7 @@ const OnboardingPage = () => {
   const resetForm = () => {
     setOnboardingForm({ id: "", topic: "", comment: "", date: "", status: 'pending' });
     setStaff([{ name: "", role: "" }]);
-    setFarmers([{ name: "", idNo: "", phoneNo: "", location: "", region: "", gender: "", county: "" }]);
+    setFarmers([{ name: "", idNo: "", phoneNo: "", subcounty: "", region: "", gender: "", county: "" }]);
   };
 
   const handleDeleteConfirm = async () => {
@@ -629,7 +628,7 @@ const OnboardingPage = () => {
       gender: item.gender || item.Gender || "",
       idNo: item.idNo || item.idNumber || item.farmeridNo || "",
       phoneNo: item.phoneNo || item.phoneNumber || item.farmerphoneNo || "",
-      location: item.location || item.farmerlocation || "",
+      subcounty: item.subcounty || item.location || item.farmerlocation || "",
       region: item.region || item.farmerregion || "",
       county: item.county || item.County || ""
     }));
@@ -641,7 +640,7 @@ const OnboardingPage = () => {
       gender: "Gender (Male/Female)",
       idNo: "ID Number",
       phoneNo: "Phone Number",
-      location: "Location",
+      subcounty: "Subcounty",
       region: "Region",
       county: "County"
     }];
@@ -670,7 +669,7 @@ const OnboardingPage = () => {
           'Farmer Gender': farmer.gender || 'N/A',
           'Farmer ID': farmer.idNo,
           'Phone Number': farmer.phoneNo,
-          Location: farmer.location,
+          Subcounty: farmer.subcounty,
           Region: farmer.region,
           County: farmer.county || 'N/A',
           'Created Date': record.createdAt?.toLocaleDateString() || 'N/A'
@@ -692,6 +691,11 @@ const OnboardingPage = () => {
 
   const clearAllFilters = () => setFilters({ startDate: "", endDate: "" });
   const resetToCurrentMonth = () => setFilters(prev => ({ ...prev, ...currentMonth }));
+
+  // Calculate percentages for display
+  const totalGendered = stats.maleFarmers + stats.femaleFarmers;
+  const malePercent = totalGendered > 0 ? Math.round((stats.maleFarmers / totalGendered) * 100) : 0;
+  const femalePercent = totalGendered > 0 ? Math.round((stats.femaleFarmers / totalGendered) * 100) : 0;
 
   return (
     <div className="container mx-auto p-6 space-y-6">
@@ -718,9 +722,29 @@ const OnboardingPage = () => {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <StatsCard title="TOTAL FARMERS" value={stats.totalFarmers} icon={Users} description="Unique farmers trained" />
+        <StatsCard 
+          title="TOTAL FARMERS" 
+          value={totalGendered} 
+          icon={Users} 
+          description={
+           <div className="flex items-center gap-1 whitespace-nowrap text-[4px] md:text-xs">
+  <User className="h-3 w-3" />
+
+  <span>
+    Male {stats.maleFarmers} ({malePercent}%)
+  </span>
+
+  <span>|</span>
+
+  <span>
+    Female {stats.femaleFarmers} ({femalePercent}%)
+  </span>
+</div>
+
+          } 
+        />
         <StatsCard title="TRAINING SESSIONS" value={stats.totalOnboarding} icon={GraduationCap} description={`${stats.completedSessions} completed, ${stats.pendingSessions} pending`} />
-        <StatsCard title="LOCATIONS COVERED" value={stats.uniqueLocations} icon={MapPin} description="Unique locations reached" />
+        <StatsCard title="SUBCOUNTIES COVERED" value={stats.uniqueSubcounties} icon={MapPin} description="Unique subcounties reached" />
         <StatsCard title="COUNTIES COVERED" value={stats.uniqueCounties} icon={Map} description="Unique counties reached" />
       </div>
 
@@ -778,7 +802,7 @@ const OnboardingPage = () => {
                   isSelected={!!record.id && selectedRecords.includes(record.id)}
                   userIsChiefAdmin={userIsChiefAdmin}
                   onSelectRecord={handleSelectRecord}
-                  onView={setSelectedRecord} 
+                  onView={handleViewDetails} 
                   onEdit={() => { 
                       setOnboardingForm({
                         id: record.id || "",
@@ -788,7 +812,7 @@ const OnboardingPage = () => {
                         status: record.status
                       });
                       setStaff(record.staff.length > 0 ? record.staff : [{ name: "", role: "" }]);
-                      setFarmers(record.farmers.length > 0 ? record.farmers : [{ name: "", idNo: "", phoneNo: "", location: "", region: "", gender: "", county: "" }]);
+                      setFarmers(record.farmers.length > 0 ? record.farmers : [{ name: "", idNo: "", phoneNo: "", subcounty: "", region: "", gender: "", county: "" }]);
                       setIsDialogOpen(true);
                   }}
                   onDeleteClick={() => { setSelectedRecord(record); setIsDeleteDialogOpen(true); }}
@@ -802,7 +826,7 @@ const OnboardingPage = () => {
       {/* Dialogs */}
       {userIsChiefAdmin && (
         <>
-          {/* Add/Edit Dialog - Optimized with Tabs */}
+          {/* Add/Edit Dialog */}
           <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
             <DialogContent className="max-w-4xl max-h-[90vh] flex flex-col">
               <DialogHeader><DialogTitle>{onboardingForm.id ? "Edit" : "Add New"} Training</DialogTitle></DialogHeader>
@@ -854,7 +878,7 @@ const OnboardingPage = () => {
                       <h4 className="text-sm font-medium text-muted-foreground">Manage Farmers</h4>
                       <div className="flex gap-2">
                         <Button type="button" variant="outline" size="sm" onClick={() => setIsUploadDialogOpen(true)}><Upload className="w-4 h-4 mr-1" /> Upload Excel</Button>
-                        <Button type="button" variant="outline" size="sm" onClick={() => setFarmers(p => [...p, { name: "", idNo: "", phoneNo: "", location: "", region: "", gender: "", county: "" }])}><UserPlus className="w-4 h-4 mr-1" /> Add Farmer</Button>
+                        <Button type="button" variant="outline" size="sm" onClick={() => setFarmers(p => [...p, { name: "", idNo: "", phoneNo: "", subcounty: "", region: "", gender: "", county: "" }])}><UserPlus className="w-4 h-4 mr-1" /> Add Farmer</Button>
                       </div>
                     </div>
                     <div className="space-y-3">
@@ -864,7 +888,7 @@ const OnboardingPage = () => {
                           <select value={f.gender} onChange={e => { const newF = [...farmers]; newF[i].gender = e.target.value; setFarmers(newF); }} className="w-full px-3 py-2 border rounded-md bg-white"><option value="">Select</option><option value="Male">Male</option><option value="Female">Female</option></select>
                           <Input placeholder="ID Number" value={f.idNo} onChange={e => { const newF = [...farmers]; newF[i].idNo = e.target.value; setFarmers(newF); }} />
                           <Input placeholder="Phone" value={f.phoneNo} onChange={e => { const newF = [...farmers]; newF[i].phoneNo = e.target.value; setFarmers(newF); }} />
-                          <Input placeholder="Location" value={f.location} onChange={e => { const newF = [...farmers]; newF[i].location = e.target.value; setFarmers(newF); }} />
+                          <Input placeholder="Subcounty" value={f.subcounty} onChange={e => { const newF = [...farmers]; newF[i].subcounty = e.target.value; setFarmers(newF); }} />
                           <Input placeholder="Region" value={f.region} onChange={e => { const newF = [...farmers]; newF[i].region = e.target.value; setFarmers(newF); }} />
                           <div className="flex gap-2">
                              <Input placeholder="County" value={f.county} onChange={e => { const newF = [...farmers]; newF[i].county = e.target.value; setFarmers(newF); }} />
@@ -916,7 +940,7 @@ const OnboardingPage = () => {
         </>
       )}
 
-      {/* View Dialog - Available for all users - Fixed Rendering */}
+      {/* View Dialog - Available for all users */}
       <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
         <DialogContent className="max-w-4xl max-h-[85vh] flex flex-col">
           <DialogHeader>
@@ -979,7 +1003,7 @@ const OnboardingPage = () => {
                           <th className="text-left py-2 px-3 font-medium border">Gender</th>
                           <th className="text-left py-2 px-3 font-medium border">ID No</th>
                           <th className="text-left py-2 px-3 font-medium border">Phone</th>
-                          <th className="text-left py-2 px-3 font-medium border">Location</th>
+                          <th className="text-left py-2 px-3 font-medium border">Subcounty</th>
                           <th className="text-left py-2 px-3 font-medium border">Region</th>
                           <th className="text-left py-2 px-3 font-medium border">County</th>
                         </tr>
@@ -991,7 +1015,7 @@ const OnboardingPage = () => {
                             <td className="py-2 px-3 border text-gray-700"><Badge variant={f.gender === 'Male' ? 'default' : 'secondary'} className={f.gender === 'Male' ? 'bg-blue-100 text-blue-800' : 'bg-pink-100 text-pink-800'}>{f.gender || 'N/A'}</Badge></td>
                             <td className="py-2 px-3 border text-gray-700"><code className="bg-gray-100 px-2 py-1 rounded text-xs">{f.idNo || 'N/A'}</code></td>
                             <td className="py-2 px-3 border text-gray-700">{f.phoneNo || 'N/A'}</td>
-                            <td className="py-2 px-3 border text-gray-700">{f.location || 'N/A'}</td>
+                            <td className="py-2 px-3 border text-gray-700"><Badge variant="secondary">{f.subcounty || 'N/A'}</Badge></td>
                             <td className="py-2 px-3 border text-gray-700"><Badge variant="secondary">{f.region || 'N/A'}</Badge></td>
                             <td className="py-2 px-3 border text-gray-700"><Badge variant="outline" className="bg-purple-50 text-purple-700">{f.county || 'N/A'}</Badge></td>
                           </tr>

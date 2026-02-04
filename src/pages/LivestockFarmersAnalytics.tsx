@@ -309,13 +309,7 @@ const LivestockFarmersAnalytics = () => {
       totalGoats += g;
       totalSheep += Number(farmer.sheep || 0);
 
-      // For Gender Chart
-      // if (farmer.goats && typeof farmer.goats === 'object') {
-      //   totalMaleGoats += parseInt(farmer.goats.male || 0);
-      //   totalFemaleGoats += parseInt(farmer.goats.female || 0);
-      // } else {
-      //   totalFemaleGoats += g; // Default to female if unknown
-      // }
+     
     });
 
     const totalAnimals = totalGoats + totalSheep;
@@ -609,7 +603,7 @@ const LivestockFarmersAnalytics = () => {
           title="Total Farmers" 
           value={stats.total.toLocaleString()} 
           icon={Users}
-          description={`${stats.maleFarmers} male, ${stats.femaleFarmers} female`}
+          description={`${stats.maleFarmers} male  ${stats.maleFarmers > 0 ? ((stats.maleFarmers / stats.total) * 100).toFixed(1) + '%' : '0% male'},    |    ${stats.femaleFarmers} female ${stats.femaleFarmers > 0 ? ((stats.femaleFarmers / stats.total) * 100).toFixed(1) + '%' : '0% female'}`}
           color="navy"
         />
         <StatsCard 

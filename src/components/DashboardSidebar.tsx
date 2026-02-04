@@ -80,7 +80,7 @@ const baseMenuItems = [
     url: "/dashboard/activities"
   },
   { 
-    title: "Additional Training",
+    title: "Onboarding",
     icon: UserPlus,
     url: "/dashboard/onboarding"
   },

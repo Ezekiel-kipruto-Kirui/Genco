@@ -9,6 +9,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { 
+  Tabs, TabsList, TabsTrigger 
+} from "@/components/ui/tabs"; // Added Tabs
+import { 
   Users, 
   GraduationCap, 
   Beef, 
@@ -27,15 +30,18 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Link } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 
+const PROGRAMME_OPTIONS = ["KPMD", "RANGE"];
+
 // --- Interfaces ---
 
 interface FarmerData extends Record<string, any> {
   id: string;
-  programme?: string;
-  // Updated to match potential data structures
+  programme?: string; // Important for filtering
   goats?: number | { male: number; female: number; total: number };
   cattle?: string | number;
   sheep?: string | number;
+  gender?: string;
+  region?: string;
 }
 
 interface StatCardProps {
@@ -45,7 +51,7 @@ interface StatCardProps {
   femaleCount?: number;
   total: number;
   gradient: string;
-  description?: string; // Added to support cards without gender breakdown
+  description?: string;
 }
 
 interface Participant {
@@ -64,8 +70,8 @@ interface Activity {
   subcounty: string;
   createdAt: any;
   status: 'pending' | 'in-progress' | 'completed' | 'cancelled';
-  programme?: string;
-  totalFarmers?: number; // Added to match reference logic
+  programme?: string; // Important for filtering
+  totalFarmers?: number;
 }
 
 interface RegionStats {
@@ -75,7 +81,7 @@ interface RegionStats {
   femaleFarmers: number;
 }
 
-// --- Helper Functions (From Reference Code) ---
+// --- Helper Functions ---
 
 const getGoatTotal = (goats: any): number => {
   if (typeof goats === 'number') return goats;
@@ -98,7 +104,6 @@ const StatCard = ({ title, icon, maleCount, femaleCount, total, gradient, descri
           <p className="text-sm font-medium text-slate-600 uppercase tracking-wide">{title}</p>
           <p className="text-2xl font-bold text-slate-900 mt-1">{total.toLocaleString()}</p>
           
-          {/* Render Gender Breakdown if provided, otherwise render description */}
           {(maleCount !== undefined && femaleCount !== undefined) ? (
             <div className="flex gap-4 mt-3">
               <div className="flex flex-col">
@@ -210,18 +215,19 @@ const DashboardOverview = () => {
   const [allowedProgrammes, setAllowedProgrammes] = useState<string[]>([]);
   const [loadingPermissions, setLoadingPermissions] = useState(true);
 
-  // Dashboard State
-  const [loading, setLoading] = useState(true);
-  const [activitiesLoading, setActivitiesLoading] = useState(true);
+  // Dashboard View State
+  const [selectedProgramme, setSelectedProgramme] = useState<string>("All"); // "All", "KPMD", "RANGE"
+  const [loadingData, setLoadingData] = useState(true);
+
+  // Raw Data States (Fetched once)
+  const [rawFarmers, setRawFarmers] = useState<FarmerData[]>([]);
+  const [rawActivities, setRawActivities] = useState<Activity[]>([]);
+
+  // Dialog State
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
-  const [pendingActivitiesCount, setPendingActivitiesCount] = useState(0);
-  const [recentActivities, setRecentActivities] = useState<Activity[]>([]);
-  const [participantForm, setParticipantForm] = useState({
-    name: "",
-    role: ""
-  });
+  const [participantForm, setParticipantForm] = useState({ name: "", role: "" });
   const [participants, setParticipants] = useState<Participant[]>([]);
-  const [activeProgrammeForAdd, setActiveProgrammeForAdd] = useState<string>("KPMD"); // Default for UI
+  const [activeProgrammeForAdd, setActiveProgrammeForAdd] = useState<string>("KPMD");
   
   const [activityForm, setActivityForm] = useState({
     activityName: "",
@@ -231,24 +237,97 @@ const DashboardOverview = () => {
     location: "",
   });
 
-  const [stats, setStats] = useState({
-    totalFarmers: 0,
-    maleFarmers: 0,
-    femaleFarmers: 0,
-    trainedFarmers: 0,
-    trainedMale: 0,
-    trainedFemale: 0,
-    totalGoats: 0,
-    totalSheep: 0, // Added
-    totalCattle: 0, // Added
-    maleGoats: 0,
-    femaleGoats: 0,
-    regionsVisited: 0,
-  });
-  const [regionStats, setRegionStats] = useState<RegionStats[]>([]);
+  const programmeOptions = userRole === "chief-admin" ? PROGRAMME_OPTIONS : allowedProgrammes;
 
-  // --- Helper to fetch data respecting Firebase Rules ---
-  
+  // --- Filters ---
+
+  const filteredFarmers = useMemo(() => {
+    if (selectedProgramme === "All") return rawFarmers;
+    return rawFarmers.filter(f => f.programme === selectedProgramme);
+  }, [rawFarmers, selectedProgramme]);
+
+  const filteredActivities = useMemo(() => {
+    let activities = rawActivities;
+    if (selectedProgramme !== "All") {
+      activities = activities.filter(a => a.programme === selectedProgramme);
+    }
+    return activities.sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }, [rawActivities, selectedProgramme]);
+
+  // --- Stats Calculations (Reactive to Filters) ---
+
+  const stats = useMemo(() => {
+    const data = filteredFarmers;
+
+    // 1. Gender Stats
+    const maleFarmers = data.filter(f => String(f.gender || f.Gender).toLowerCase() === 'male').length;
+    const femaleFarmers = data.filter(f => String(f.gender || f.Gender).toLowerCase() === 'female').length;
+
+    // 2. Trained Stats (Sum totalFarmers from filtered activities)
+    // Note: We need to map farmers to activities? The previous code summed "totalFarmers" property from capacityBuilding.
+    // Assuming capacityBuilding data was fetched into rawActivities (or we need to fetch it separately).
+    // *Correction*: The original code fetched 'capacityBuilding' for trained stats, but 'Recent Activities' for the table.
+    // We need to fetch capacity building data too.
+    return {
+      totalFarmers: data.length,
+      maleFarmers,
+      femaleFarmers,
+      trainedFarmers: 0, // Placeholder, will be updated below
+      trainedMale: 0,
+      trainedFemale: 0,
+      totalGoats: 0,
+      totalSheep: 0,
+      totalCattle: 0,
+      maleGoats: 0,
+      femaleGoats: 0,
+      regionsVisited: 0,
+    };
+  }, [filteredFarmers]);
+
+  const regionStats = useMemo(() => {
+    const regionMap: Record<string, RegionStats> = {};
+    filteredFarmers.forEach((farmer) => {
+      const region = farmer.region || farmer.Region || farmer.county || farmer.County;
+      if (region) {
+        const regionName = String(region).trim();
+        if (!regionMap[regionName]) {
+          regionMap[regionName] = { name: regionName, farmerCount: 0, maleFarmers: 0, femaleFarmers: 0 };
+        }
+        regionMap[regionName].farmerCount++;
+        const gender = String(farmer.gender || farmer.Gender).toLowerCase();
+        if (gender === 'male') regionMap[regionName].maleFarmers++;
+        else if (gender === 'female') regionMap[regionName].femaleFarmers++;
+      }
+    });
+    return Object.values(regionMap).sort((a, b) => b.farmerCount - a.farmerCount);
+  }, [filteredFarmers]);
+
+  // Animal Census
+  const animalStats = useMemo(() => {
+    let totalGoats = 0, maleGoats = 0, femaleGoats = 0, totalSheep = 0, totalCattle = 0;
+    filteredFarmers.forEach((farmer) => {
+      const g = getGoatTotal(farmer.goats);
+      totalGoats += g;
+      if (farmer.goats && typeof farmer.goats === 'object') {
+        maleGoats += Number(farmer.goats.male || 0);
+        femaleGoats += Number(farmer.goats.female || 0);
+      }
+      totalSheep += Number(farmer.sheep || 0);
+      totalCattle += Number(farmer.cattle || 0);
+    });
+    return { totalGoats, maleGoats, femaleGoats, totalSheep, totalCattle, regionsVisited: regionStats.length };
+  }, [filteredFarmers, regionStats.length]);
+
+  // Merge stats objects
+  const finalStats = { ...stats, ...animalStats };
+
+  // Recent Activities (Top 3)
+  const recentActivities = useMemo(() => filteredActivities.slice(0, 3), [filteredActivities]);
+  const pendingActivitiesCount = useMemo(() => filteredActivities.filter(a => a.status === 'pending').length, [filteredActivities]);
+
+
+  // --- Data Fetching ---
+
   const fetchSecureCollection = async (nodePath: string): Promise<any[]> => {
     if (!auth.currentUser) return [];
 
@@ -256,11 +335,7 @@ const DashboardOverview = () => {
     if (userRole === 'chief-admin') {
       const snapshot = await get(ref(db, nodePath));
       if (!snapshot.exists()) return [];
-      
-      return Object.keys(snapshot.val()).map(key => ({
-        id: key,
-        ...snapshot.val()[key]
-      }));
+      return Object.keys(snapshot.val()).map(key => ({ id: key, ...snapshot.val()[key] }));
     }
 
     // Non-Admin: Fetch by allowed programmes
@@ -271,22 +346,31 @@ const DashboardOverview = () => {
       return get(q);
     });
 
-    const snapshots = await Promise.all(promises);
-    const results: any[] = [];
+    try {
+      const snapshots = await Promise.all(promises);
+      const results: any[] = [];
 
-    snapshots.forEach(snapshot => {
-      if (snapshot.exists()) {
-        const data = snapshot.val();
-        Object.keys(data).forEach(key => {
-          results.push({ id: key, ...data[key] });
-        });
-      }
-    });
+      snapshots.forEach(snapshot => {
+        if (snapshot.exists()) {
+          const data = snapshot.val();
+          Object.keys(data).forEach(key => {
+            results.push({ id: key, ...data[key] });
+          });
+        }
+      });
 
-    return results;
+      return results;
+    } catch (error) {
+      console.warn(`Query failed for ${nodePath}, falling back to client-side filter.`, error);
+      const snapshot = await get(ref(db, nodePath));
+      if (!snapshot.exists()) return [];
+      const data = snapshot.val();
+      return Object.keys(data)
+        .map(key => ({ id: key, ...data[key] }))
+        .filter(item => allowedProgrammes.includes(item.programme));
+    }
   };
 
-  // Fetch User Permissions on Mount
   useEffect(() => {
     const uid = auth.currentUser?.uid;
     if (!uid) {
@@ -305,160 +389,77 @@ const DashboardOverview = () => {
           
           const programmesObj = data.allowedProgrammes || {};
           const programmesList = Object.keys(programmesObj).filter(k => programmesObj[k] === true);
-          setAllowedProgrammes(programmesList);
+          if (data.role === "chief-admin") {
+            setAllowedProgrammes(PROGRAMME_OPTIONS);
+          } else {
+            setAllowedProgrammes(programmesList);
+          }
           
-          if (programmesList.length > 0) {
-            setActiveProgrammeForAdd(programmesList[0]);
+          // Set default add programme
+          const defaultProgrammes = data.role === "chief-admin" ? PROGRAMME_OPTIONS : programmesList;
+          if (defaultProgrammes.length > 0) {
+            setActiveProgrammeForAdd(defaultProgrammes[0]);
           }
         }
       } catch (error) {
         console.error("Error fetching user permissions:", error);
-        toast({
-          title: "Permissions Error",
-          description: "Could not verify your access level.",
-          variant: "destructive"
-        });
       } finally {
         setLoadingPermissions(false);
       }
     };
 
     fetchUserDetails();
-  }, [auth.currentUser?.uid, toast]);
+  }, [auth.currentUser?.uid]);
 
-  // Fetch Stats based on Permissions
+  // Fetch Data on permissions load
   useEffect(() => {
     if (loadingPermissions) return;
-    fetchStats();
+    fetchData();
   }, [userRole, allowedProgrammes, loadingPermissions]);
 
-  // Fetch Activities based on Permissions
-  useEffect(() => {
-    if (loadingPermissions) return;
-    fetchRecentActivities();
-  }, [userRole, allowedProgrammes, loadingPermissions]);
-
-  const fetchStats = async () => {
+  const fetchData = async () => {
     try {
-      setLoading(true);
+      setLoadingData(true);
       
-      // Fetch 'farmers'
-      const livestockData = await fetchSecureCollection("farmers");
-      
-      // Fetch 'capacityBuilding'
-      const capacityData = await fetchSecureCollection("capacityBuilding");
+      const [farmersData, activitiesData, capacityData] = await Promise.all([
+        fetchSecureCollection("farmers"),
+        fetchSecureCollection("Recent Activities"),
+        fetchSecureCollection("capacityBuilding")
+      ]);
 
-      // --- 1. Farmer Stats (Gender) ---
-      const maleFarmers = livestockData.filter(f =>
-        String(f.gender || f.Gender).toLowerCase() === 'male'
-      ).length;
-      const femaleFarmers = livestockData.filter(f =>
-        String(f.gender || f.Gender).toLowerCase() === 'female'
-      ).length;
+      setRawFarmers(farmersData);
+      setRawActivities(activitiesData);
 
-      // --- 2. Trained Farmers Stats (Updated Logic) ---
-      // Logic from reference: Sum the 'totalFarmers' property of each training record
-      const totalTrainedFarmers = capacityData.reduce((sum, t) => sum + (Number(t.totalFarmers) || 0), 0);
-      
-      // Note: capacityData typically stores total counts, not gender breakdowns. 
-      // We set gender breakdown to 0 as the data source (totalFarmers) doesn't support it.
-      const trainedMale = 0; 
-      const trainedFemale = 0;
+      setRawCapacityData(capacityData);
 
-      // --- 3. Animal Census Stats (Updated Logic) ---
-      let totalGoats = 0;
-      let maleGoats = 0;
-      let femaleGoats = 0;
-      let totalSheep = 0;
-      let totalCattle = 0;
-
-      livestockData.forEach((farmer: any) => {
-        // Goats
-        const g = getGoatTotal(farmer.goats);
-        totalGoats += g;
-        
-        if (farmer.goats && typeof farmer.goats === 'object') {
-          maleGoats += Number(farmer.goats.male || 0);
-          femaleGoats += Number(farmer.goats.female || 0);
-        }
-
-        // Sheep & Cattle
-        totalSheep += Number(farmer.sheep || 0);
-        totalCattle += Number(farmer.cattle || 0);
-      });
-
-      // --- 4. Region Statistics ---
-      const regionMap: Record<string, RegionStats> = {};
-
-      livestockData.forEach((farmer: any) => {
-        const region = farmer.region || farmer.Region || farmer.county || farmer.County;
-        if (region) {
-          const regionName = String(region).trim();
-          if (!regionMap[regionName]) {
-            regionMap[regionName] = {
-              name: regionName,
-              farmerCount: 0,
-              maleFarmers: 0,
-              femaleFarmers: 0
-            };
-          }
-          regionMap[regionName].farmerCount++;
-          const gender = String(farmer.gender || farmer.Gender).toLowerCase();
-          if (gender === 'male') regionMap[regionName].maleFarmers++;
-          else if (gender === 'female') regionMap[regionName].femaleFarmers++;
-        }
-      });
-
-      const regionsArray = Object.values(regionMap).sort((a, b) => b.farmerCount - a.farmerCount);
-
-      setStats({
-        totalFarmers: livestockData.length,
-        maleFarmers,
-        femaleFarmers,
-        trainedFarmers: totalTrainedFarmers,
-        trainedMale,
-        trainedFemale,
-        totalGoats,
-        totalSheep,
-        totalCattle,
-        maleGoats,
-        femaleGoats,
-        regionsVisited: regionsArray.length,
-      });
-      
-      setRegionStats(regionsArray);
     } catch (error) {
-      console.error("Error fetching stats:", error);
-      toast({
-        title: "Error",
-        description: "Failed to load dashboard statistics. Check permissions.",
-        variant: "destructive",
-      });
+      console.error("Error fetching data:", error);
     } finally {
-      setLoading(false);
+      setLoadingData(false);
     }
   };
 
-  const fetchRecentActivities = async () => {
-    try {
-      setActivitiesLoading(true);
-      const activities = await fetchSecureCollection("Recent Activities");
+  const [rawCapacityData, setRawCapacityData] = useState<any[]>([]);
 
-      const sortedActivities = activities
-        .sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime())
-        .slice(0, 3);
+  // Re-calculate stats when raw data or selection changes
+  // We need to merge this into the previous `stats` useMemo or create a combined one.
+  // I will adjust the `finalStats` calculation to include this.
 
-      setRecentActivities(sortedActivities);
-
-      const pendingCount = activities.filter((activity: any) => activity.status === 'pending').length;
-      setPendingActivitiesCount(pendingCount);
-    } catch (error) {
-      console.error("Error fetching activities:", error);
-    } finally {
-      setActivitiesLoading(false);
+  const calculatedStats = useMemo(() => {
+    // Recalculate trained based on raw capacity
+    let filteredCapacity = rawCapacityData;
+    if (selectedProgramme !== "All") {
+      filteredCapacity = rawCapacityData.filter((c: any) => c.programme === selectedProgramme);
     }
-  };
+    const totalTrained = filteredCapacity.reduce((sum, t: any) => sum + (Number(t.totalFarmers) || 0), 0);
 
+    return {
+        ...finalStats,
+        trainedFarmers: totalTrained
+    };
+  }, [finalStats, rawCapacityData, selectedProgramme]); 
+
+  // Handlers
   const handleAddParticipant = () => {
     if (participantForm.name.trim() && participantForm.role.trim()) {
       setParticipants([...participants, { ...participantForm }]);
@@ -473,11 +474,7 @@ const DashboardOverview = () => {
 
   const handleAddActivity = async () => {
     if (participants.length === 0) {
-      toast({
-        title: "Error",
-        description: "Please add at least one participant",
-        variant: "destructive",
-      });
+      toast({ title: "Error", description: "Please add at least one participant", variant: "destructive" });
       return;
     }
 
@@ -492,31 +489,25 @@ const DashboardOverview = () => {
         createdAt: new Date().toISOString(), 
       });
       
-      toast({
-        title: "Success",
-        description: "Activity scheduled successfully.",
-        className: "bg-white text-slate-900 border border-slate-200"
-      });
+      toast({ title: "Success", description: "Activity scheduled successfully." });
       
-      setActivityForm({
-        activityName: "",
-        date: "",
-        county: "",
-        subcounty: "",
-        location: "",
-      });
+      setActivityForm({ activityName: "", date: "", county: "", subcounty: "", location: "" });
       setParticipants([]);
       setIsAddDialogOpen(false);
-      fetchRecentActivities();
+      fetchData(); // Refresh to show new activity
     } catch (error) {
-      console.error("Error adding activity:", error);
-      toast({
-        title: "Error",
-        description: "Failed to schedule activity. Ensure you have write permissions.",
-        variant: "destructive",
-      });
+      toast({ title: "Error", description: "Failed to schedule activity.", variant: "destructive" });
     }
   };
+
+  // Update Add Dialog default programme when Tab changes
+  useEffect(() => {
+    if (selectedProgramme !== "All") {
+      setActiveProgrammeForAdd(selectedProgramme);
+    } else if (programmeOptions.length > 0) {
+      setActiveProgrammeForAdd(programmeOptions[0]);
+    }
+  }, [selectedProgramme, programmeOptions]);
 
   const LoadingSkeleton = () => (
     <div className="space-y-8">
@@ -578,7 +569,7 @@ const DashboardOverview = () => {
             <h1 className="text-md font-bold text-slate-900">Dashboard Overview</h1>
             {userRole !== 'chief-admin' && (
                <div className="flex gap-2 mt-2">
-                 {allowedProgrammes.map(p => (
+                 {programmeOptions.map(p => (
                    <Badge key={p} variant="outline" className="text-xs">{p}</Badge>
                  ))}
                </div>
@@ -597,43 +588,60 @@ const DashboardOverview = () => {
           </Link>
         </div>
 
-        {loading ? (
+        {loadingData ? (
           <LoadingSkeleton />
         ) : (
           <>
+            {/* Programme Switcher Tabs */}
+            {programmeOptions.length > 1 && (
+               <div className="flex justify-center mb-6">
+                 <Tabs value={selectedProgramme} onValueChange={setSelectedProgramme} className="bg-white p-1 rounded-xl shadow-sm border border-slate-200">
+                   <TabsList className="bg-transparent w-auto p-0">
+                     {userRole === 'chief-admin' && (
+                       <TabsTrigger value="All" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white text-slate-600 rounded-lg px-6">
+                         All
+                       </TabsTrigger>
+                     )}
+                     {programmeOptions.map(prog => (
+                       <TabsTrigger key={prog} value={prog} className="data-[state=active]:bg-blue-600 data-[state=active]:text-white text-slate-600 rounded-lg px-6">
+                         {prog}
+                       </TabsTrigger>
+                     ))}
+                   </TabsList>
+                 </Tabs>
+               </div>
+            )}
+
             {/* Main Stats Grid */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <StatCard
                 title="Farmers Registered"
                 icon={<Users className="h-7 w-7 text-blue-600" />}
-                maleCount={stats.maleFarmers}
-                femaleCount={stats.femaleFarmers}
-                total={stats.totalFarmers}
+                maleCount={calculatedStats.maleFarmers}
+                femaleCount={calculatedStats.femaleFarmers}
+                total={calculatedStats.totalFarmers}
                 gradient="bg-gradient-to-br from-blue-100 to-blue-50"
               />
               
-              {/* Updated Trained Farmers Card */}
               <StatCard
                 title="Trained Farmers"
                 icon={<GraduationCap className="h-7 w-7 text-green-600" />}
-                // Gender breakdowns are removed/zeroed as training records store totals only
-                maleCount={stats.trainedMale}
-                femaleCount={stats.trainedFemale}
-                total={stats.trainedFarmers}
+                maleCount={calculatedStats.trainedMale}
+                femaleCount={calculatedStats.trainedFemale}
+                total={calculatedStats.trainedFarmers}
                 gradient="bg-gradient-to-br from-green-100 to-green-50"
-                description="Total participants in training sessions"
+                description={`Data from ${selectedProgramme === "All" ? "All Programmes" : selectedProgramme}`}
               />
 
               <StatCard
                 title="Animal Census"
                 icon={<Beef className="h-7 w-7 text-orange-600" />}
-                maleCount={stats.maleGoats}
-                femaleCount={stats.femaleGoats}
-                total={stats.totalGoats}
+                maleCount={calculatedStats.maleGoats}
+                femaleCount={calculatedStats.femaleGoats}
+                total={calculatedStats.totalGoats}
                 gradient="bg-gradient-to-br from-orange-100 to-orange-50"
               />
               
-              {/* Regions Visited Card */}
               <div className="group relative">
                 <div className="relative bg-white/95 backdrop-blur-sm rounded-2xl shadow-xl hover:shadow-2xl transition-all duration-300 p-6">
                   <div className="flex items-center">
@@ -645,7 +653,7 @@ const DashboardOverview = () => {
                     <div className="ml-5 flex-1">
                      <div className="flex items-center justify-between mb-1"> 
                       <p className="text-sm font-medium text-slate-600 uppercase tracking-wide">Regions Visited</p>
-                      <p className="bg-purple-100 text-purple-700 border-0 text-xs rounded-full text-center w-10">{stats.regionsVisited}</p>
+                      <p className="bg-purple-100 text-purple-700 border-0 text-xs rounded-full text-center w-10">{calculatedStats.regionsVisited}</p>
                       </div>
                       {topRegions.length > 0 && (
                         <div className="mt-4 grid grid-cols-2 gap-1">
@@ -684,7 +692,10 @@ const DashboardOverview = () => {
                       <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-500 rounded-lg flex items-center justify-center shadow-lg mr-3">
                         <Activity className="w-4 h-4 text-white" />
                       </div>
-                      <h3 className="text-lg font-semibold text-slate-900">Recent Activities </h3>
+                      <h3 className="text-lg font-semibold text-slate-900">Recent Activities</h3>
+                      {selectedProgramme !== "All" && (
+                          <Badge className="ml-2 bg-blue-100 text-blue-700 border-0">{selectedProgramme}</Badge>
+                      )}
                     </div>
                     <Link to="/dashboard/activities">
                       <Button variant="ghost" size="sm" className="text-slate-600 hover:text-slate-900">
@@ -695,22 +706,13 @@ const DashboardOverview = () => {
                 </div>
 
                 <div className="p-6">
-                  {activitiesLoading ? (
-                    <div className="space-y-3">
-                      {[...Array(3)].map((_, i) => (
-                        <Skeleton key={i} className="h-16 w-full rounded-xl" />
-                      ))}
-                    </div>
-                  ) : recentActivities.length > 0 ? (
+                  {recentActivities.length > 0 ? (
                     <>
                       <ActivityTable activities={recentActivities} />
                       
                       <div className="flex justify-between items-center pt-6 mt-6 border-t border-slate-200">
                         <Link to="/dashboard/activities">
-                          <Button 
-                            variant="outline"
-                            className="border-slate-300 text-slate-700 hover:bg-slate-50 font-medium px-4 py-2 rounded-xl transition-all duration-200 shadow-sm"
-                          >
+                          <Button variant="outline" className="border-slate-300 text-slate-700 hover:bg-slate-50 font-medium px-4 py-2 rounded-xl transition-all duration-200 shadow-sm">
                             <Eye className="h-4 w-4 mr-2" />
                             View All Activities
                           </Button>
@@ -730,8 +732,8 @@ const DashboardOverview = () => {
                               </DialogTitle>
                             </DialogHeader>
                             <div className="grid gap-6 py-4">
-                              {/* Programme Selector */}
-                              {userRole !== 'chief-admin' && allowedProgrammes.length > 1 && (
+                              {/* Programme Selector (Hidden if user has only 1) */}
+                              {userRole !== 'chief-admin' && programmeOptions.length > 1 && (
                                 <div className="space-y-2">
                                   <Label htmlFor="programmeSelect">Programme</Label>
                                   <select 
@@ -856,13 +858,7 @@ const DashboardOverview = () => {
                                 onClick={() => {
                                   setIsAddDialogOpen(false);
                                   setParticipants([]);
-                                  setActivityForm({
-                                    activityName: "",
-                                    date: "",
-                                    county: "",
-                                    subcounty: "",
-                                    location: "",
-                                  });
+                                  setActivityForm({ activityName: "", date: "", county: "", subcounty: "", location: "" });
                                 }}
                               >
                                 Cancel
