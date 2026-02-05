@@ -769,9 +769,10 @@ const LivestockFarmersPage = () => {
         const idxVaccinationDate = findIndex(['vaccination date', 'vaccine date', 'vax date']);
         // -----------------------
 
-        const idxGoatsTotal = headers.findIndex(h => h === 'goats' || h === 'goats total');
-        const idxGoatsMale = headers.findIndex(h => h === 'goats male' || h === 'goatsmale');
-        const idxGoatsFemale = headers.findIndex(h => h === 'goats female' || h === 'goatsfemale');
+        // UPDATED: Improved Goats Column Indexing to match image description
+        const idxGoatsTotal = findIndex(['goats', 'goats total', 'total goats']);
+        const idxGoatsMale = findIndex(['goats male', 'male goats', 'goatsmale']);
+        const idxGoatsFemale = findIndex(['goats female', 'female goats', 'goatsfemale']);
 
         const parseBool = (val: string) => {
           const v = (val || '').toLowerCase().trim();
@@ -824,14 +825,34 @@ const LivestockFarmersPage = () => {
           if (idxAggregationGroup !== -1) obj.aggregationGroup = valAt(values, idxAggregationGroup);
           if (idxVaccinationDate !== -1) obj.vaccinationDate = valAt(values, idxVaccinationDate);
 
-          if (idxGoatsTotal > -1) {
-            obj.goats = { total: Number(valAt(values, idxGoatsTotal)) || 0, male: 0, female: 0 };
+          // --- UPDATED GOATS LOGIC ---
+          const foundGoatsMale = idxGoatsMale > -1;
+          const foundGoatsFemale = idxGoatsFemale > -1;
+          const foundGoatsTotal = idxGoatsTotal > -1;
+
+          if (foundGoatsMale || foundGoatsFemale) {
+             // We have specific gender data. Build the object.
+             const maleCount = foundGoatsMale ? (Number(valAt(values, idxGoatsMale)) || 0) : 0;
+             const femaleCount = foundGoatsFemale ? (Number(valAt(values, idxGoatsFemale)) || 0) : 0;
+             
+             // Use explicit total if provided, otherwise calculate it
+             let totalGoats = foundGoatsTotal ? (Number(valAt(values, idxGoatsTotal)) || 0) : (maleCount + femaleCount);
+             
+             obj.goats = {
+                 male: maleCount,
+                 female: femaleCount,
+                 total: totalGoats
+             };
+          } else if (foundGoatsTotal) {
+             // Only total column exists. Create object with male/female as 0.
+             const totalGoats = Number(valAt(values, idxGoatsTotal)) || 0;
+             obj.goats = {
+                 total: totalGoats,
+                 male: 0,
+                 female: 0
+             };
           }
-          if (idxGoatsMale > -1 || idxGoatsFemale > -1) {
-            const male = Number(valAt(values, idxGoatsMale)) || 0;
-            const female = Number(valAt(values, idxGoatsFemale)) || 0;
-            obj.goats = { male, female, total: male + female };
-          }
+          // ---------------------------
 
           parsedData.push(obj);
         }

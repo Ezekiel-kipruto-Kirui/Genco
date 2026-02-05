@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, memo } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { getAuth } from "firebase/auth";
 import { ref, set, update, remove, onValue, push, query, orderByChild, equalTo } from "firebase/database";
@@ -93,6 +93,90 @@ const cleanNumber = (val: string): number => {
   return parseFloat(cleaned) || 0;
 };
 
+interface FilterSectionProps {
+  localSearchInput: string;
+  filters: Filters;
+  uniqueRegions: string[];
+  uniqueGenders: string[];
+  onSearchChange: (value: string) => void;
+  onFilterChange: (key: keyof Filters, value: string) => void;
+}
+
+const FilterSection = memo(({
+  localSearchInput,
+  filters,
+  uniqueRegions,
+  uniqueGenders,
+  onSearchChange,
+  onFilterChange
+}: FilterSectionProps) => (
+  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+    <div className="space-y-2">
+      <Label htmlFor="search" className="font-semibold text-gray-700">Search</Label>
+      <Input
+        id="search"
+        placeholder="Search farmers..."
+        value={localSearchInput}
+        onChange={(e) => onSearchChange(e.target.value)}
+        className="border-gray-300 focus:border-blue-500 bg-white"
+      />
+    </div>
+
+    <div className="space-y-2">
+      <Label htmlFor="region" className="font-semibold text-gray-700">Counties</Label>
+      <Select value={filters.region} onValueChange={(value) => onFilterChange("region", value)}>
+        <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white">
+          <SelectValue placeholder="Select region" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">County</SelectItem>
+          {uniqueRegions.slice(0, 20).map(region => (
+            <SelectItem key={region} value={region}>{region}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+
+    <div className="space-y-2">
+      <Label htmlFor="gender" className="font-semibold text-gray-700">Gender</Label>
+      <Select value={filters.gender} onValueChange={(value) => onFilterChange("gender", value)}>
+        <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white">
+          <SelectValue placeholder="Select gender" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">All Genders</SelectItem>
+          {uniqueGenders.slice(0, 20).map(gender => (
+            <SelectItem key={gender} value={gender}>{gender}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+
+    <div className="space-y-2">
+      <Label htmlFor="startDate" className="font-semibold text-gray-700">From Date</Label>
+      <Input
+        id="startDate"
+        type="date"
+        value={filters.startDate}
+        onChange={(e) => onFilterChange("startDate", e.target.value)}
+        className="border-gray-300 focus:border-blue-500 bg-white"
+      />
+    </div>
+
+    <div className="space-y-2">
+      <Label htmlFor="endDate" className="font-semibold text-gray-700">To Date</Label>
+      <Input
+        id="endDate"
+        type="date"
+        value={filters.endDate}
+        onChange={(e) => onFilterChange("endDate", e.target.value)}
+        className="border-gray-300 focus:border-blue-500 bg-white"
+      />
+    </div>
+  </div>
+));
+
+
 // Helper functions
 const parseDate = (date: any): Date | null => {
   if (!date) return null;
@@ -165,6 +249,9 @@ const LivestockOfftakePage = () => {
   const [allOfftake, setAllOfftake] = useState<OfftakeData[]>([]);
   const [filteredOfftake, setFilteredOfftake] = useState<OfftakeData[]>([]);
   
+  // Local Search State (Optimization: Prevents full re-renders on every keystroke)
+  const [localSearchInput, setLocalSearchInput] = useState("");
+  
   // User Permissions State
   const [allowedProgrammes, setAllowedProgrammes] = useState<string[]>([]);
   const [userPermissionsLoading, setUserPermissionsLoading] = useState(true);
@@ -176,6 +263,10 @@ const LivestockOfftakePage = () => {
   const [exportLoading, setExportLoading] = useState(false);
   const [uploadLoading, setUploadLoading] = useState(false);
   const [uploadPreview, setUploadPreview] = useState<any[]>([]);
+  
+  // Upload Progress State
+  const [uploadProgress, setUploadProgress] = useState({ current: 0, total: 0 });
+
   const [selectedRecords, setSelectedRecords] = useState<string[]>([]);
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
@@ -187,7 +278,7 @@ const LivestockOfftakePage = () => {
   const [editingRecord, setEditingRecord] = useState<OfftakeData | null>(null);
   const [recordToDelete, setRecordToDelete] = useState<OfftakeData | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
-  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploadFile, setUploadFile] = useState<File[] | null>(null);
   
   const currentMonth = useMemo(getCurrentMonthDates, []);
 
@@ -241,6 +332,17 @@ const LivestockOfftakePage = () => {
 
   const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
 
+  // --- OPTIMIZATION: Debounce Search Input ---
+  useEffect(() => {
+    const delay = setTimeout(() => {
+      setFilters(prev => ({ ...prev, search: localSearchInput }));
+      setPagination(prev => ({ ...prev, page: 1 }));
+    }, 500); // 500ms debounce
+
+    return () => clearTimeout(delay);
+  }, [localSearchInput]);
+
+
   // --- HELPER: Parse CSV Line (Handles quotes) ---
   const parseCSVLine = (text: string): string[] => {
     const result: string[] = [];
@@ -260,7 +362,7 @@ const LivestockOfftakePage = () => {
     result.push(current);
     return result;
   };
-const parseCSVFile = (file: File) => {
+const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
   const reader = new FileReader();
 
   reader.onload = (e) => {
@@ -273,6 +375,7 @@ const parseCSVFile = (file: File) => {
         description: "CSV file is empty or invalid.",
         variant: "destructive"
       });
+      resolve([]);
       return;
     }
 
@@ -348,6 +451,7 @@ const parseCSVFile = (file: File) => {
         description: "ID Number column is missing.",
         variant: "destructive"
       });
+      resolve([]);
       return;
     }
 
@@ -362,7 +466,7 @@ const parseCSVFile = (file: File) => {
           const col = animalColumnMap.get(idx);
           const liveVal = col?.live !== undefined ? cols[col.live] : '';
           const carcassVal = col?.carcass !== undefined ? cols[col.carcass] : '';
-          const priceVal = col?.price !== undefined ? cols[col.price] : '';
+          const priceVal = col?.price !== undefined ? cols[col.price] : (idxPrice !== -1 ? cols[idxPrice] : '');
 
           if (![liveVal, carcassVal, priceVal].some(v => v && v.trim() !== '')) continue;
 
@@ -470,17 +574,18 @@ const parseCSVFile = (file: File) => {
         description: "No valid transactions found.",
         variant: "destructive"
       });
+      resolve([]);
     } else {
-      setUploadPreview(transactions);
       toast({
         title: "Parsed Successfully",
         description: `Found ${transactions.length} transactions`
       });
+      resolve(transactions);
     }
   };
 
   reader.readAsText(file);
-};
+});
 
 
   // --- Fetch User Permissions ---
@@ -725,19 +830,13 @@ const parseCSVFile = (file: File) => {
       region: "all",
       gender: "all"
     });
+    setLocalSearchInput(""); // Reset local search input
     setPagination(prev => ({ ...prev, page: 1 }));
     setSelectedRecords([]);
   };
 
-  const handleSearchChange = useCallback((value: string) => {
-    if (searchTimeoutRef.current) {
-      clearTimeout(searchTimeoutRef.current);
-    }
-    searchTimeoutRef.current = setTimeout(() => {
-      setFilters(prev => ({ ...prev, search: value }));
-      setPagination(prev => ({ ...prev, page: 1 }));
-    }, 300);
-  }, []);
+  // No longer needed, handled by useEffect debounce
+  // const handleSearchChange = ... 
 
   const handleFilterChange = useCallback((key: keyof Filters, value: string) => {
     setFilters(prev => ({ ...prev, [key]: value }));
@@ -845,14 +944,20 @@ const parseCSVFile = (file: File) => {
     }
   };
 
-  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      setUploadFile(file);
-      parseCSVFile(file);
-    }
+  const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files || []);
+    if (files.length === 0) return;
+
+    setUploadFile(files);
+    setUploadProgress({ current: 0, total: 0 });
+    setUploadPreview([]);
+
+    const parsedSets = await Promise.all(files.map(parseCSVFile));
+    const combined = parsedSets.flat();
+    setUploadPreview(combined);
   };
 
+  // --- OPTIMIZED BULK UPLOAD HANDLER (Non-blocking) ---
   const handleUpload = async () => {
     if (uploadPreview.length === 0) {
       toast({ title: "Error", description: "No data to upload", variant: "destructive" });
@@ -861,58 +966,81 @@ const parseCSVFile = (file: File) => {
 
     try {
       setUploadLoading(true);
-      const updates: Record<string, any> = {};
+      const totalRecords = uploadPreview.length;
+      setUploadProgress({ current: 0, total: totalRecords });
 
-      uploadPreview.forEach(record => {
-        const newKey = push(ref(db, 'offtakes')).key;
-        const totalGoats = record.goats.length;
-        
-        // Calculate totals from parsed strings
-        const totalPrice = record.goats.reduce((sum: number, g: any) => sum + parseFloat(g.price), 0);
-        
-        updates[`offtakes/${newKey}`] = {
-          county: record.county,
-          createdAt: record.createdAt,
-          date: record.date,
-          gender: record.gender,
-          idNumber: record.idNumber,
-          location: record.location,
-          name: record.name,
-          offtakeUserId: record.offtakeUserId,
-          phone: record.phone,
-          programme: record.programme,
-          subcounty: record.subcounty,
-          username: record.username,
+      // Larger batch size to reduce HTTP overhead for "millions" of records
+      // 500 records per batch is usually safe for Firebase JSON payload limits
+      const BATCH_SIZE = 2000; 
+      let processedCount = 0;
+
+      // Recursive function to process batches asynchronously with UI breaks
+      const processBatch = async (startIndex: number) => {
+        if (startIndex >= totalRecords) {
+          // Finished
+          setUploadLoading(false);
+          setIsUploadDialogOpen(false);
+          setUploadFile(null);
+          setUploadPreview([]);
+          setUploadProgress({ current: 0, total: 0 });
+          toast({
+            title: "Upload Successful",
+            description: `Uploaded ${totalRecords} transactions to Firebase.`,
+          });
+          return;
+        }
+
+        const endIndex = Math.min(startIndex + BATCH_SIZE, totalRecords);
+        const batch = uploadPreview.slice(startIndex, endIndex);
+        const updates: Record<string, any> = {};
+
+        batch.forEach(record => {
+          const newKey = push(ref(db, 'offtakes')).key;
+          if (!newKey) return;
+
+          const totalGoats = record.goats.length;
+          const totalPrice = record.goats.reduce((sum: number, g: any) => sum + parseFloat(g.price), 0);
           
-          // Calculated fields
-          totalGoats: totalGoats,
-          totalPrice: totalPrice,
-          
-          // Nested structure as requested
-          goats: record.goats
-        };
-      });
+          updates[`offtakes/${newKey}`] = {
+            county: record.county,
+            createdAt: record.createdAt,
+            date: record.date,
+            gender: record.gender,
+            idNumber: record.idNumber,
+            location: record.location,
+            name: record.name,
+            offtakeUserId: record.offtakeUserId,
+            phone: record.phone,
+            programme: record.programme,
+            subcounty: record.subcounty,
+            username: record.username,
+            totalGoats: totalGoats,
+            totalPrice: totalPrice,
+            goats: record.goats
+          };
+        });
 
-      await update(ref(db), updates);
+        if (Object.keys(updates).length > 0) {
+          await update(ref(db), updates);
+          processedCount += batch.length;
+          setUploadProgress({ current: processedCount, total: totalRecords });
+        }
 
-      toast({
-        title: "Upload Successful",
-        description: `Uploaded ${uploadPreview.length} transactions to Firebase.`,
-      });
+        // Use setTimeout to allow UI to render progress bar before processing next batch
+        setTimeout(() => processBatch(endIndex), 0);
+      };
 
-      setIsUploadDialogOpen(false);
-      setUploadFile(null);
-      setUploadPreview([]);
-      
+      // Start processing
+      processBatch(0);
+
     } catch (error) {
       console.error("Error uploading:", error);
+      setUploadLoading(false);
       toast({
         title: "Upload Failed",
         description: "Check permissions or network connection.",
         variant: "destructive"
       });
-    } finally {
-      setUploadLoading(false);
     }
   };
 
@@ -1134,6 +1262,7 @@ const parseCSVFile = (file: File) => {
       region: "all",
       gender: "all"
     });
+    setLocalSearchInput(""); // Reset local input
     setPagination(prev => ({ ...prev, page: 1 }));
   }, []);
 
@@ -1180,72 +1309,10 @@ const parseCSVFile = (file: File) => {
     </Card>
   ), []);
 
-  const FilterSection = useMemo(() => () => (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-      <div className="space-y-2">
-        <Label htmlFor="search" className="font-semibold text-gray-700">Search</Label>
-        <Input
-          id="search"
-          placeholder="Search farmers..."
-          value={filters.search}
-          onChange={(e) => handleSearchChange(e.target.value)}
-          className="border-gray-300 focus:border-blue-500 bg-white"
-        />
-      </div>
+  const handleLocalSearchChange = useCallback((value: string) => {
+    setLocalSearchInput(value);
+  }, []);
 
-      <div className="space-y-2">
-        <Label htmlFor="region" className="font-semibold text-gray-700">Counties</Label>
-        <Select value={filters.region} onValueChange={(value) => handleFilterChange("region", value)}>
-          <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white">
-            <SelectValue placeholder="Select region" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">County</SelectItem>
-            {uniqueRegions.slice(0, 20).map(region => (
-              <SelectItem key={region} value={region}>{region}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-
-      <div className="space-y-2">
-        <Label htmlFor="gender" className="font-semibold text-gray-700">Gender</Label>
-        <Select value={filters.gender} onValueChange={(value) => handleFilterChange("gender", value)}>
-          <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white">
-            <SelectValue placeholder="Select gender" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Genders</SelectItem>
-            {uniqueGenders.slice(0, 20).map(gender => (
-              <SelectItem key={gender} value={gender}>{gender}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-
-      <div className="space-y-2">
-        <Label htmlFor="startDate" className="font-semibold text-gray-700">From Date</Label>
-        <Input
-          id="startDate"
-          type="date"
-          value={filters.startDate}
-          onChange={(e) => handleFilterChange("startDate", e.target.value)}
-          className="border-gray-300 focus:border-blue-500 bg-white"
-        />
-      </div>
-
-      <div className="space-y-2">
-        <Label htmlFor="endDate" className="font-semibold text-gray-700">To Date</Label>
-        <Input
-          id="endDate"
-          type="date"
-          value={filters.endDate}
-          onChange={(e) => handleFilterChange("endDate", e.target.value)}
-          className="border-gray-300 focus:border-blue-500 bg-white"
-        />
-      </div>
-    </div>
-  ), [filters, uniqueRegions, uniqueGenders, handleSearchChange, handleFilterChange]);
 
   const TableRow = useMemo(() => ({ record }: { record: OfftakeData }) => {
     const avgLiveWeight = calculateAverage(record.liveWeight);
@@ -1369,7 +1436,7 @@ const parseCSVFile = (file: File) => {
 
       <Card className="shadow-lg border-0 bg-white">
         <CardContent className="space-y-4 pt-6">
-          <FilterSection />
+          <FilterSection localSearchInput={localSearchInput} filters={filters} uniqueRegions={uniqueRegions} uniqueGenders={uniqueGenders} onSearchChange={handleLocalSearchChange} onFilterChange={handleFilterChange} />
         </CardContent>
       </Card>
 
@@ -1677,10 +1744,26 @@ const parseCSVFile = (file: File) => {
           <div className="grid gap-4 py-4">
             <div className="grid w-full max-w-sm items-center gap-1.5">
               <Label htmlFor="csvUpload">CSV File</Label>
-              <Input id="csvUpload" type="file" accept=".csv" ref={fileInputRef} onChange={handleFileSelect} />
+              <Input id="csvUpload" type="file" accept=".csv" multiple ref={fileInputRef} onChange={handleFileSelect} disabled={uploadLoading} />
             </div>
             
-            {uploadPreview.length > 0 && (
+            {/* Progress Bar */}
+            {uploadLoading && uploadProgress.total > 0 && (
+              <div className="space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span>Uploading...</span>
+                  <span>{uploadProgress.current} / {uploadProgress.total}</span>
+                </div>
+                <div className="w-full bg-gray-200 rounded-full h-2.5">
+                  <div 
+                    className="bg-blue-600 h-2.5 rounded-full transition-all duration-300" 
+                    style={{ width: `${(uploadProgress.current / uploadProgress.total) * 100}%` }}
+                  ></div>
+                </div>
+              </div>
+            )}
+            
+            {uploadPreview.length > 0 && !uploadLoading && (
               <div className="max-h-60 overflow-y-auto border rounded-md">
                 <table className="w-full text-sm text-left">
                   <thead className="bg-gray-100 sticky top-0">
@@ -1711,10 +1794,12 @@ const parseCSVFile = (file: File) => {
             )}
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsUploadDialogOpen(false)}>Cancel</Button>
+            <Button variant="outline" onClick={() => {
+                if(!uploadLoading) setIsUploadDialogOpen(false);
+            }} disabled={uploadLoading}>Cancel</Button>
             <Button onClick={handleUpload} disabled={uploadLoading || uploadPreview.length === 0} className="bg-gradient-to-r from-blue-500 to-purple-600 text-white">
               {uploadLoading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Upload className="h-4 w-4 mr-2" />}
-              {uploadLoading ? "Uploading..." : "Upload Data"}
+              {uploadLoading ? `Uploading...` : "Upload Data"}
             </Button>
           </DialogFooter>
         </DialogContent>
