@@ -614,7 +614,7 @@ const LivestockFarmersAnalytics = () => {
           color="yellow"
         />
         <StatsCard 
-          title="Total Animals" 
+          title="Animals Census" 
           value={stats.totalAnimals.toLocaleString()} 
           icon={Beef}
           description="Total livestock count"

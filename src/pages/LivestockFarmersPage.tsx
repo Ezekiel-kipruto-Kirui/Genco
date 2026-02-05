@@ -23,10 +23,12 @@ interface AgeDistribution {
   "8+": number;
 }
 
+// Extended Goats Interface to support potential ID fields mentioned in image
 interface GoatsData {
   female?: number;
   male?: number;
   total: number;
+  idNumber?: string; // Added based on image description
 }
 
 interface FarmerData {
@@ -54,6 +56,10 @@ interface FarmerData {
   bucksServed?: string;
   femaleBreeds?: string;
   maleBreeds?: string;
+  // Added fields based on Image description (Deworming, Vaccination Date)
+  dewormed?: boolean;
+  dewormingDate?: string;
+  vaccinationDate?: string;
 }
 
 interface TrainingData {
@@ -101,7 +107,9 @@ interface Pagination {
   hasPrev: boolean;
 }
 
+// Updated EditForm Interface to include all requested fields
 interface EditForm {
+  farmerId: string;
   name: string;
   gender: string;
   idNumber: string;
@@ -109,9 +117,10 @@ interface EditForm {
   county: string;
   subcounty: string;
   location: string;
+  cattle: number;
+  goats: number;
+  sheep: number;
   vaccinated: boolean;
-  traceability: boolean;
-  vaccines: string;
   programme: string;
 }
 
@@ -171,7 +180,9 @@ const getCurrentMonthDates = () => {
 
 const getGoatTotal = (goats: any): number => {
   if (typeof goats === 'number') return goats;
-  if (typeof goats === 'object' && goats !== null && typeof goats.total === 'number') return goats.total;
+  if (typeof goats === 'object' && goats !== null) {
+     return typeof goats.total === 'number' ? goats.total : 0;
+  }
   return 0;
 };
 
@@ -244,7 +255,9 @@ const LivestockFarmersPage = () => {
     hasPrev: false
   });
 
+  // Updated EditForm State
   const [editForm, setEditForm] = useState<EditForm>({
+    farmerId: "",
     name: "",
     gender: "",
     idNumber: "",
@@ -252,9 +265,10 @@ const LivestockFarmersPage = () => {
     county: "",
     subcounty: "",
     location: "",
+    cattle: 0,
+    goats: 0,
+    sheep: 0,
     vaccinated: false,
-    traceability: false,
-    vaccines: "",
     programme: ""
   });
 
@@ -374,7 +388,11 @@ const LivestockFarmersPage = () => {
           aggregationGroup: item.aggregationGroup || '',
           bucksServed: item.bucksServed || '0',
           femaleBreeds: item.femaleBreeds || '0',
-          maleBreeds: item.maleBreeds || '0'
+          maleBreeds: item.maleBreeds || '0',
+          // Added fields based on image description
+          dewormed: !!item.dewormed,
+          dewormingDate: item.dewormingDate || null,
+          vaccinationDate: item.vaccinationDate || null
         };
       });
 
@@ -398,14 +416,13 @@ const LivestockFarmersPage = () => {
     return () => { if(typeof unsubscribe === 'function') unsubscribe(); };
   }, [activeProgram, toast]);
 
-  // --- 3. Data Fetching (Capacity Building / Training) with Caching ---
+  // --- 3. Data Fetching (Capacity Building / Training) ---
   useEffect(() => {
     if (!activeProgram) {
         setTrainingRecords([]);
         return;
     }
 
-    // 1. Try Cache
     const cacheKey = `training_cache_${activeProgram}`;
     const cachedTraining = getCachedData(cacheKey);
     if (cachedTraining && cachedTraining.length > 0) {
@@ -431,7 +448,6 @@ const LivestockFarmersPage = () => {
         }));
         setTrainingRecords(records);
         
-        // Update Cache
         try {
             localStorage.setItem(cacheKey, JSON.stringify(records));
         } catch (e) {
@@ -452,7 +468,6 @@ const LivestockFarmersPage = () => {
       return;
     }
 
-    // Filter Farmers: Apply ALL filters (Date, County, Subcounty, Gender, Search, Location)
     let filteredFarmersList = allFarmers.filter(record => {
       
       // 1. Date Filter
@@ -472,7 +487,7 @@ const LivestockFarmersPage = () => {
         } else if (filters.startDate || filters.endDate) return false;
       }
 
-      // 2. Location/Gender Filters (Only applied if not "all")
+      // 2. Location/Gender Filters
       if (filters.county !== "all" && record.county?.toLowerCase() !== filters.county.toLowerCase()) return false;
       if (filters.subcounty !== "all" && record.subcounty?.toLowerCase() !== filters.subcounty.toLowerCase()) return false;
       if (filters.location !== "all" && record.location?.toLowerCase() !== filters.location.toLowerCase()) return false;
@@ -482,7 +497,7 @@ const LivestockFarmersPage = () => {
       if (filters.search) {
         const searchTerm = filters.search.toLowerCase();
         const searchMatch = [
-          record.name, record.farmerId, record.location, record.county, record.idNumber, record.phone, record.username // Added username (Field Officer)
+          record.name, record.farmerId, record.location, record.county, record.idNumber, record.phone, record.username
         ].some(field => field?.toLowerCase().includes(searchTerm));
         if (!searchMatch) return false;
       }
@@ -492,7 +507,6 @@ const LivestockFarmersPage = () => {
 
     setFilteredFarmers(filteredFarmersList);
     
-    // Filter Training Records: Apply Date Filter (so stats match the time window)
     let filteredTraining = trainingRecords.filter(record => {
         if (filters.startDate || filters.endDate) {
             const recordDate = parseDate(record.startDate || record.createdAt || record.rawTimestamp);
@@ -519,16 +533,13 @@ const LivestockFarmersPage = () => {
     const totalCattle = filteredFarmersList.reduce((sum, f) => sum + (Number(f.cattle) || 0), 0);
     const vaccinatedCount = filteredFarmersList.filter(f => f.vaccinated).length;
     
-    // Gender Stats
     const maleFarmers = filteredFarmersList.filter(f => f.gender?.toLowerCase() === 'male').length;
     const femaleFarmers = filteredFarmersList.filter(f => f.gender?.toLowerCase() === 'female').length;
 
-    // Trained Farmers Stats (Sum of participants in filtered training sessions)
     const totalTrainedFarmers = filteredTraining.reduce((sum, t) => sum + (Number(t.totalFarmers) || 0), 0);
 
     setStats({ totalFarmers, totalGoats, totalSheep, totalCattle, vaccinatedCount, maleFarmers, femaleFarmers, totalTrainedFarmers });
 
-    // Update Pagination
     const totalPages = Math.ceil(filteredFarmersList.length / pagination.limit);
     const currentPage = Math.min(pagination.page, Math.max(1, totalPages));
     setPagination(prev => ({
@@ -591,27 +602,54 @@ const LivestockFarmersPage = () => {
   }, [filteredFarmers, pagination.page, pagination.limit]);
 
   const openViewDialog = useCallback((record: FarmerData) => { setViewingRecord(record); setIsViewDialogOpen(true); }, []);
+  
+  // UPDATED: Open Edit Dialog with new fields
   const openEditDialog = useCallback((record: FarmerData) => {
     setEditingRecord(record);
+    
+    // Extract numeric values for livestock, handling objects/strings
+    const cattleVal = typeof record.cattle === 'number' ? record.cattle : parseInt(record.cattle as string) || 0;
+    const sheepVal = typeof record.sheep === 'number' ? record.sheep : parseInt(record.sheep as string) || 0;
+    const goatsVal = getGoatTotal(record.goats);
+
     setEditForm({
-      name: record.name, gender: record.gender, idNumber: record.idNumber, phone: record.phone,
-      county: record.county, subcounty: record.subcounty, location: record.location,
-      vaccinated: record.vaccinated, traceability: record.traceability,
-      vaccines: record.vaccines.join(', '), programme: record.programme
+      farmerId: record.farmerId,
+      name: record.name,
+      gender: record.gender,
+      idNumber: record.idNumber || '',
+      phone: record.phone,
+      county: record.county,
+      subcounty: record.subcounty,
+      location: record.location,
+      cattle: cattleVal,
+      goats: goatsVal,
+      sheep: sheepVal,
+      vaccinated: record.vaccinated,
+      programme: record.programme
     });
     setIsEditDialogOpen(true);
   }, []);
+  
   const openSingleDeleteConfirm = useCallback((record: FarmerData) => { setRecordToDelete(record); setIsSingleDeleteDialogOpen(true); }, []);
   const openBulkDeleteConfirm = useCallback(() => { setIsDeleteConfirmOpen(true); }, []);
 
+  // UPDATED: Handle Edit Submit
   const handleEditSubmit = async () => {
     if (!editingRecord) return;
     try {
       await update(ref(db, `farmers/${editingRecord.id}`), {
-        name: editForm.name, gender: editForm.gender, idNumber: editForm.idNumber, phone: editForm.phone,
-        county: editForm.county, subcounty: editForm.subcounty, location: editForm.location,
-        vaccinated: editForm.vaccinated, traceability: editForm.traceability,
-        vaccines: editForm.vaccines.split(',').map(s => s.trim()).filter(s => s),
+        farmerId: editForm.farmerId,
+        name: editForm.name,
+        gender: editForm.gender,
+        idNumber: editForm.idNumber,
+        phone: editForm.phone,
+        county: editForm.county,
+        subcounty: editForm.subcounty,
+        location: editForm.location,
+        cattle: Number(editForm.cattle),
+        goats: Number(editForm.goats), // Overwriting goats object with simple number for simplicity as requested
+        sheep: Number(editForm.sheep),
+        vaccinated: editForm.vaccinated,
         programme: editForm.programme
       });
       toast({ title: "Success", description: "Farmer record updated" });
@@ -627,7 +665,6 @@ const LivestockFarmersPage = () => {
     try {
       setDeleteLoading(true);
       await remove(ref(db, `farmers/${recordToDelete.id}`));
-      // Clear cache on delete
       localStorage.removeItem(`farmers_cache_${activeProgram}`);
       toast({ title: "Success", description: "Record deleted" });
       setIsSingleDeleteDialogOpen(false);
@@ -644,7 +681,6 @@ const LivestockFarmersPage = () => {
       const updates: { [key: string]: null } = {};
       selectedRecords.forEach(id => updates[`farmers/${id}`] = null);
       await update(ref(db), updates);
-      // Clear cache
       localStorage.removeItem(`farmers_cache_${activeProgram}`);
       toast({ title: "Success", description: `${selectedRecords.length} records deleted` });
       setSelectedRecords([]);
@@ -683,7 +719,7 @@ const LivestockFarmersPage = () => {
     if (e.target.files?.[0]) setUploadFile(e.target.files[0]);
   };
 
-  const handleUpload = async () => {
+   const handleUpload = async () => {
     if (!uploadFile) return;
     setUploadLoading(true);
     try {
@@ -726,6 +762,12 @@ const LivestockFarmersPage = () => {
         const idxTrace = findIndex(['traceability']);
         const idxVaccines = findIndex(['vaccine']);
 
+        // --- NEW INDICES ADDED HERE ---
+        const idxDewormed = findIndex(['dewormed']);
+        const idxDewormingDate = findIndex(['deworming date', 'deworm date']);
+        const idxAggregationGroup = findIndex(['aggregation group', 'group']);
+        // -------------------------------
+
         const idxGoatsTotal = headers.findIndex(h => h === 'goats' || h === 'goats total');
         const idxGoatsMale = headers.findIndex(h => h === 'goats male' || h === 'goatsmale');
         const idxGoatsFemale = headers.findIndex(h => h === 'goats female' || h === 'goatsfemale');
@@ -761,6 +803,12 @@ const LivestockFarmersPage = () => {
             obj.vaccines = raw ? raw.split(';').map(s => s.trim()).filter(s => s) : [];
           }
 
+          // --- NEW FIELD MAPPING ADDED HERE ---
+          if (idxDewormed !== -1) obj.dewormed = parseBool(valAt(values, idxDewormed));
+          if (idxDewormingDate !== -1) obj.dewormingDate = valAt(values, idxDewormingDate);
+          if (idxAggregationGroup !== -1) obj.aggregationGroup = valAt(values, idxAggregationGroup);
+          // -----------------------------------
+
           if (idxGoatsTotal > -1) {
             obj.goats = { total: Number(valAt(values, idxGoatsTotal)) || 0, male: 0, female: 0 };
           }
@@ -774,7 +822,6 @@ const LivestockFarmersPage = () => {
         }
       }
 
-      // --- Upload to DB ---
       let count = 0;
       const collectionRef = ref(db, "farmers");
       
@@ -788,7 +835,6 @@ const LivestockFarmersPage = () => {
         count++;
       }
 
-      // Clear cache on upload
       localStorage.removeItem(`farmers_cache_${activeProgram}`);
 
       toast({ title: "Success", description: `Uploaded ${count} records to ${activeProgram}.` });
@@ -808,17 +854,17 @@ const LivestockFarmersPage = () => {
       setExportLoading(true);
       if (filteredFarmers.length === 0) return;
 
-      // UPDATED HEADERS: Explicitly added Goats (Male) and Goats (Female)
       const headers = [
         'Farmer ID', 'Name', 'Gender', 'Phone', 'ID Number', 
         'County', 'Subcounty', 'Location', 
         'Cattle', 
         'Goats (Total)', 
-        'Goats (Male)', // <--- SPECIFIED
-        'Goats (Female)', // <--- SPECIFIED
+        'Goats (Male)', 
+        'Goats (Female)', 
         'Sheep', 
         'Vaccinated', 'Traceability', 'Vaccines', 
         'Programme', 'Field Officer', 'Created By', 'Registration Date',
+        'Dewormed', 'Deworming Date', 'Vaccination Date',
         'Aggregation Group', 'Bucks Served', 'Female Breeds', 'Male Breeds',
         'Age 1-4', 'Age 5-8', 'Age 8+'
       ];
@@ -827,7 +873,6 @@ const LivestockFarmersPage = () => {
         f.farmerId, f.name, f.gender, f.phone, f.idNumber, 
         f.county, f.subcounty, f.location, 
         f.cattle, getGoatTotal(f.goats), 
-        // Mapping Goat Gender specifically
         (typeof f.goats === 'object' && f.goats?.male) || 0,
         (typeof f.goats === 'object' && f.goats?.female) || 0,
         f.sheep, 
@@ -836,6 +881,9 @@ const LivestockFarmersPage = () => {
         f.programme, 
         f.username, f.username, 
         formatDate(f.createdAt),
+        f.dewormed ? 'Yes' : 'No',
+        f.dewormingDate || '',
+        f.vaccinationDate || '',
         f.aggregationGroup || '',
         f.bucksServed || '',
         f.femaleBreeds || '',
@@ -912,7 +960,6 @@ const LivestockFarmersPage = () => {
         </div>
          
          <div className="flex lg:flex-row  md:flex-row flex-col gap-4 w-full md:w-auto">
-            {/* Date Inputs */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full md:w-auto">
                 <div className="space-y-2">
                     <Input id="startDate" type="date" value={filters.startDate} onChange={(e) => handleFilterChange("startDate", e.target.value)} className="border-gray-300 focus:border-blue-500 bg-white h-9 w-full" />
@@ -1093,7 +1140,6 @@ const LivestockFarmersPage = () => {
                       <th className="py-3 px-3 font-semibold text-gray-700">Sheep</th>
                       <th className="py-3 px-3 font-semibold text-gray-700">Vaccinated</th>
                       <th className="py-3 px-3 font-semibold text-gray-700">Programme</th>
-                      
                       <th className="py-3 px-3 font-semibold text-gray-700 hidden sm:table-cell">Field Officer</th>
                       <th className="py-3 px-3 font-semibold text-gray-700">Actions</th>
                     </tr>
@@ -1189,48 +1235,48 @@ const LivestockFarmersPage = () => {
                    <div className="bg-gray-50 p-4 rounded text-center border">
                         <span className="block font-bold text-2xl text-green-600">{getGoatTotal(viewingRecord.goats)}</span>
                         <span className="text-xs text-gray-500 uppercase">Goats</span>
-                        {typeof viewingRecord.goats === 'object' && viewingRecord.goats.total && (
-                            <div className="text-[10px] text-gray-400 mt-1">
-                                {viewingRecord.goats.male}M / {viewingRecord.goats.female}F
-                            </div>
-                        )}
                    </div>
                    <div className="bg-gray-50 p-4 rounded text-center border">
                         <span className="block font-bold text-2xl text-purple-600">{viewingRecord.sheep}</span>
                         <span className="text-xs text-gray-500 uppercase">Sheep</span>
                    </div>
                 </div>
-
-                {viewingRecord.ageDistribution && Object.keys(viewingRecord.ageDistribution).length > 0 && (
-                    <div className="mt-4 bg-gray-50 p-4 rounded border">
-                        <p className="text-xs font-bold text-gray-500 uppercase mb-2">Age Distribution</p>
-                        <div className="flex flex-wrap gap-4">
-                            {Object.entries(viewingRecord.ageDistribution).map(([key, val]) => (
-                                <div key={key} className="text-sm">
-                                    <span className="font-bold text-gray-700">{val}</span> <span className="text-gray-400">({key})</span>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                )}
               </div>
 
-              <div className="col-span-1 sm:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-4 border-t pt-4">
-                <div className="p-4 border rounded flex flex-col gap-2">
-                   <div className="flex items-center gap-3">
-                       <ShieldCheck className={`h-5 w-5 ${viewingRecord.vaccinated ? 'text-green-600' : 'text-gray-300'}`} />
-                       <div>
-                         <p className="text-xs text-gray-500 font-bold uppercase">Vaccination Status</p>
-                         <p className="font-medium">{viewingRecord.vaccinated ? 'Vaccinated' : 'Not Vaccinated'}</p>
-                       </div>
-                   </div>
-                   {viewingRecord.vaccines && viewingRecord.vaccines.length > 0 && (
-                       <div className="ml-8 flex flex-wrap gap-2">
-                           {viewingRecord.vaccines.map(v => <Badge key={v} variant="secondary" className="text-xs">{v}</Badge>)}
-                       </div>
-                   )}
+              <div className="col-span-1 sm:col-span-2 border-t pt-4">
+                <h4 className="font-semibold text-gray-700 mb-3 flex items-center gap-2"><Activity className="h-4 w-4"/>Health Status</h4>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="p-4 border rounded flex items-center justify-between">
+                        <div>
+                            <p className="text-xs text-gray-500 font-bold uppercase">Vaccinated</p>
+                            <p className="font-medium">{viewingRecord.vaccinated ? 'Yes' : 'No'}</p>
+                        </div>
+                        <ShieldCheck className={`h-5 w-5 ${viewingRecord.vaccinated ? 'text-green-600' : 'text-gray-300'}`} />
+                    </div>
+                    {viewingRecord.vaccinationDate && (
+                         <div className="p-4 border rounded">
+                            <p className="text-xs text-gray-500 font-bold uppercase">Vaccination Date</p>
+                            <p className="font-medium">{viewingRecord.vaccinationDate}</p>
+                        </div>
+                    )}
+                    <div className="p-4 border rounded flex items-center justify-between">
+                        <div>
+                            <p className="text-xs text-gray-500 font-bold uppercase">Dewormed</p>
+                            <p className="font-medium">{viewingRecord.dewormed ? 'Yes' : 'No'}</p>
+                        </div>
+                        <ShieldCheck className={`h-5 w-5 ${viewingRecord.dewormed ? 'text-blue-600' : 'text-gray-300'}`} />
+                    </div>
+                    {viewingRecord.dewormingDate && (
+                        <div className="p-4 border rounded">
+                            <p className="text-xs text-gray-500 font-bold uppercase">Deworming Date</p>
+                            <p className="font-medium">{viewingRecord.dewormingDate}</p>
+                        </div>
+                    )}
                 </div>
-                <div className="p-4 border rounded flex items-center gap-3">
+              </div>
+
+              <div className="col-span-1 sm:col-span-2 border-t pt-4">
+                 <div className="p-4 border rounded flex items-center gap-3">
                    <Activity className={`h-5 w-5 ${viewingRecord.traceability ? 'text-blue-600' : 'text-gray-300'}`} />
                    <div>
                      <p className="text-xs text-gray-500 font-bold uppercase">Traceability</p>
@@ -1244,21 +1290,82 @@ const LivestockFarmersPage = () => {
         </DialogContent>
       </Dialog>
 
+      {/* UPDATED EDIT DIALOG */}
       <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
-        <DialogContent className="sm:max-w-lg bg-white rounded-2xl w-[95vw] sm:w-full">
+        <DialogContent className="sm:max-w-2xl bg-white rounded-2xl w-[95vw] sm:w-full max-h-[90vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Edit Farmer Details</DialogTitle></DialogHeader>
-          <div className="grid grid-cols-1 gap-4 py-4 max-h-[70vh] overflow-y-auto">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="space-y-2"><Label>Name</Label><Input value={editForm.name} onChange={e => setEditForm({...editForm, name: e.target.value})} /></div>
-              <div className="space-y-2"><Label>Phone</Label><Input value={editForm.phone} onChange={e => setEditForm({...editForm, phone: e.target.value})} /></div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 py-4">
+            {/* Identification */}
+            <div className="space-y-2">
+                <Label>Farmer ID</Label>
+                <Input value={editForm.farmerId} onChange={e => setEditForm({...editForm, farmerId: e.target.value})} />
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="space-y-2"><Label>County</Label><Input value={editForm.county} onChange={e => setEditForm({...editForm, county: e.target.value})} /></div>
-              <div className="space-y-2"><Label>Subcounty</Label><Input value={editForm.subcounty} onChange={e => setEditForm({...editForm, subcounty: e.target.value})} /></div>
+            <div className="space-y-2">
+                <Label>Name</Label>
+                <Input value={editForm.name} onChange={e => setEditForm({...editForm, name: e.target.value})} />
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="space-y-2"><Label>Location</Label><Input value={editForm.location} onChange={e => setEditForm({...editForm, location: e.target.value})} /></div>
-                <div className="space-y-2"><Label>Programme</Label>
+            
+            {/* Personal Info */}
+            <div className="space-y-2">
+                <Label>Gender</Label>
+                <Select value={editForm.gender} onValueChange={(val) => setEditForm({...editForm, gender: val})}>
+                    <SelectTrigger><SelectValue placeholder="Select Gender" /></SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="Male">Male</SelectItem>
+                        <SelectItem value="Female">Female</SelectItem>
+                    </SelectContent>
+                </Select>
+            </div>
+            <div className="space-y-2">
+                <Label>Phone</Label>
+                <Input value={editForm.phone} onChange={e => setEditForm({...editForm, phone: e.target.value})} />
+            </div>
+            
+            {/* IDs */}
+            <div className="space-y-2 sm:col-span-2">
+                <Label>ID Number</Label>
+                <Input value={editForm.idNumber} onChange={e => setEditForm({...editForm, idNumber: e.target.value})} />
+            </div>
+
+            {/* Location */}
+            <div className="space-y-2">
+                <Label>County</Label>
+                <Input value={editForm.county} onChange={e => setEditForm({...editForm, county: e.target.value})} />
+            </div>
+            <div className="space-y-2">
+                <Label>Subcounty</Label>
+                <Input value={editForm.subcounty} onChange={e => setEditForm({...editForm, subcounty: e.target.value})} />
+            </div>
+            <div className="space-y-2 sm:col-span-2">
+                <Label>Location</Label>
+                <Input value={editForm.location} onChange={e => setEditForm({...editForm, location: e.target.value})} />
+            </div>
+
+            {/* Livestock Counts */}
+            <div className="col-span-1 sm:col-span-2 my-2 border-t pt-2">
+                <h4 className="text-sm font-semibold text-gray-500 uppercase">Livestock Counts</h4>
+            </div>
+            
+            <div className="space-y-2">
+                <Label>Cattle</Label>
+                <Input type="number" value={editForm.cattle} onChange={e => setEditForm({...editForm, cattle: parseInt(e.target.value) || 0})} />
+            </div>
+            <div className="space-y-2">
+                <Label>Goats</Label>
+                <Input type="number" value={editForm.goats} onChange={e => setEditForm({...editForm, goats: parseInt(e.target.value) || 0})} />
+            </div>
+            <div className="space-y-2">
+                <Label>Sheep</Label>
+                <Input type="number" value={editForm.sheep} onChange={e => setEditForm({...editForm, sheep: parseInt(e.target.value) || 0})} />
+            </div>
+
+            {/* Programme & Status */}
+            <div className="col-span-1 sm:col-span-2 my-2 border-t pt-2">
+                <h4 className="text-sm font-semibold text-gray-500 uppercase">Status & Programme</h4>
+            </div>
+
+            <div className="space-y-2">
+                <Label>Programme</Label>
                 <Select value={editForm.programme} onValueChange={(val) => setEditForm({...editForm, programme: val})}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
@@ -1266,15 +1373,10 @@ const LivestockFarmersPage = () => {
                     </SelectContent>
                 </Select>
             </div>
-            </div>
-            <div className="space-y-2"><Label>Vaccines (Comma separated)</Label><Input placeholder="e.g. PPR, Anthrax" value={editForm.vaccines} onChange={e => setEditForm({...editForm, vaccines: e.target.value})} /></div>
-            <div className="flex gap-4 items-center border p-3 rounded">
+
+            <div className="flex items-center gap-2 border p-3 rounded h-fit mt-6">
                 <Checkbox checked={editForm.vaccinated} onCheckedChange={(c) => setEditForm({...editForm, vaccinated: !!c})} id="edit-vaccinated" />
                 <Label htmlFor="edit-vaccinated" className="cursor-pointer">Vaccinated</Label>
-            </div>
-            <div className="flex gap-4 items-center border p-3 rounded">
-                <Checkbox checked={editForm.traceability} onCheckedChange={(c) => setEditForm({...editForm, traceability: !!c})} id="edit-trace" />
-                <Label htmlFor="edit-trace" className="cursor-pointer">Enable Traceability</Label>
             </div>
           </div>
           <DialogFooter>

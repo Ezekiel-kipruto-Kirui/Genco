@@ -652,7 +652,7 @@ const DashboardOverview = () => {
                     </div>
                     <div className="ml-5 flex-1">
                      <div className="flex items-center justify-between mb-1"> 
-                      <p className="text-sm font-medium text-slate-600 uppercase tracking-wide">Regions Visited</p>
+                      <p className="text-sm font-medium text-slate-600 uppercase tracking-wide">COUNTIES COVERED</p>
                       <p className="bg-purple-100 text-purple-700 border-0 text-xs rounded-full text-center w-10">{calculatedStats.regionsVisited}</p>
                       </div>
                       {topRegions.length > 0 && (
