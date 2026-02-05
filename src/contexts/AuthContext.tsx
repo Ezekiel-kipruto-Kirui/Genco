@@ -9,11 +9,13 @@ import { useToast } from "@/hooks/use-toast";
 interface UserProfile {
   role: string | null;
   allowedProgrammes: Record<string, boolean> | null;
+  name: string | null; // We fetch this from the DB
 }
 
 interface AuthContextType {
   user: User | null;
   userRole: string | null;
+  userName: string | null; // Exposed to the app
   allowedProgrammes: Record<string, boolean> | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<void>;
@@ -35,14 +37,15 @@ const ROLE_STORAGE_KEY = "user_role";
 export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [userRole, setUserRole] = useState<string | null>(null);
+  const [userName, setUserName] = useState<string | null>(null); // Added state for user name
   const [allowedProgrammes, setAllowedProgrammes] = useState<Record<string, boolean> | null>(null);
   const [loading, setLoading] = useState(true);
   const { toast } = useToast();
 
-  // Fetches Role and Allowed Programmes from DB
+  // Fetches Role, Name, and Allowed Programmes from DB 'users' node
   const fetchUserProfile = async (uid: string): Promise<UserProfile> => {
     try {
-      // ATTEMPT 1: Direct UID lookup (Optimal structure)
+      // 1. Attempt direct lookup at users/{uid}
       const userRef = ref(db, `users/${uid}`);
       const snapshot = await get(userRef);
 
@@ -50,12 +53,12 @@ export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
         const userData = snapshot.val();
         return {
           role: userData.role || null,
-          allowedProgrammes: userData.allowedProgrammes || null
+          allowedProgrammes: userData.allowedProgrammes || null,
+          name: userData.name || null // Fetch name from DB
         };
       }
 
-      // ATTEMPT 2: Fallback scan (Legacy structure: users stored with Push IDs)
-      // Avoids requiring an index on 'uid' in Firebase rules.
+      // 2. Fallback scan (Legacy structure)
       console.warn("User not found at direct UID path, falling back to scan...");
       const usersRef = ref(db, "users");
       const allSnapshot = await get(usersRef);
@@ -66,20 +69,21 @@ export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
         if (match) {
           return {
             role: match.role || null,
-            allowedProgrammes: match.allowedProgrammes || null
+            allowedProgrammes: match.allowedProgrammes || null,
+            name: match.name || null // Fetch name from DB
           };
         }
       }
       
-      return { role: null, allowedProgrammes: null };
+      return { role: null, allowedProgrammes: null, name: null };
     } catch (error) {
       console.error("Error fetching user profile:", error);
-      return { role: null, allowedProgrammes: null };
+      return { role: null, allowedProgrammes: null, name: null };
     }
   };
 
   useEffect(() => {
-    let isMounted = true; // 1. Prevents state updates on unmounted components
+    let isMounted = true; 
 
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (!isMounted) return;
@@ -88,13 +92,14 @@ export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
 
       if (user) {
         try {
-          // We need to fetch profile data before setting loading to false
-          // to ensure the app doesn't render without permissions (role/programmes).
           const profile = await fetchUserProfile(user.uid);
           
           if (isMounted) {
             setUserRole(profile.role);
             setAllowedProgrammes(profile.allowedProgrammes);
+            
+            // Set name from DB, fallback to Firebase Auth displayName, then email, then "Admin"
+            setUserName(profile.name || user.displayName || user.email || "Admin");
             
             if (profile.role) {
               localStorage.setItem(ROLE_STORAGE_KEY, profile.role);
@@ -102,15 +107,14 @@ export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
           }
         } catch (error) {
           console.error("Auth initialization error:", error);
-          // Optionally keep cached role if DB fails, depending on strictness requirements
         } finally {
           if (isMounted) setLoading(false);
         }
       } else {
-        // User is logged out
         if (isMounted) {
           setUserRole(null);
           setAllowedProgrammes(null);
+          setUserName(null);
           localStorage.removeItem(ROLE_STORAGE_KEY);
           setLoading(false);
         }
@@ -126,9 +130,6 @@ export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
   const signIn = async (email: string, password: string) => {
     try {
       await signInWithEmailAndPassword(auth, email, password);
-      
-      // The onAuthStateChanged listener will handle state updates automatically.
-      
       toast({
         title: "Welcome back!",
         description: "You have successfully signed in.",
@@ -138,9 +139,6 @@ export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
       
       let message = "Invalid credentials. Please try again.";
       
-      // 2. Updated error handling for newer Firebase Auth behaviors
-      // Firebase often masks specific errors (wrong-password/user-not-found) 
-      // into 'auth/invalid-credential' for security.
       if (error.code === 'auth/invalid-credential' || 
           error.code === 'auth/user-not-found' || 
           error.code === 'auth/wrong-password') {
@@ -162,11 +160,7 @@ export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
 
   const signOutUser = async () => {
     try {
-      // 3. Removed manual state clearing. 
-      // Relying solely on onAuthStateChanged prevents race conditions 
-      // where the UI updates twice (once here, once in the listener).
       await signOut(auth);
-      
       toast({
         title: "Signed Out",
         description: "You have been successfully signed out.",
@@ -182,7 +176,8 @@ export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ user, userRole, allowedProgrammes, loading, signIn, signOutUser }}>
+    // CRITICAL FIX: Added userName to the context value below
+    <AuthContext.Provider value={{ user, userRole, userName, allowedProgrammes, loading, signIn, signOutUser }}>
       {children}
     </AuthContext.Provider>
   );

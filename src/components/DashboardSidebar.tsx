@@ -112,20 +112,21 @@ export function DashboardSidebar() {
   ];
 
   return (
-    <Sidebar className={collapsed ? "w-14" : "w-64"} collapsible="icon">
-      <SidebarContent className="bg-sidebar">
+    // Updated: bg-green-700 for the sidebar background, text-white for readability
+    <Sidebar className={`${collapsed ? "w-14" : "w-64"} bg-green-700 text-white`} collapsible="icon">
+      <SidebarContent className="bg-green-700">
         
         {/* Branding Section */}
         <SidebarGroup>
           <SidebarGroupLabel>
             <div className="flex items-center gap-2 p-2">
-              <div className="w-8 h-8 rounded-full bg-primary/10 shadow flex items-center justify-center">
+              <div className="w-8 h-8 rounded-full bg-white/20 backdrop-blur shadow flex items-center justify-center">
                 <img src="/img/logo.png" className="w-8 h-8 rounded-full object-cover" alt="GenCo Logo" />
               </div>
 
               {!collapsed && (
                 <div className="truncate">
-                  <h1 className="text-base font-bold">GenCo Company</h1>
+                  <h1 className="text-base font-bold text-white">GenCo Company</h1>
                 </div>
               )}
             </div>
@@ -138,8 +139,9 @@ export function DashboardSidebar() {
                   <NavLink
                     to="/dashboard"
                     end
-                    className="hover:bg-sidebar-accent text-sidebar-foreground mt-4"
-                    activeClassName="bg-sidebar-primary text-sidebar-primary-foreground font-medium"
+                    // Updated: Green theme hover and active states
+                    className="hover:bg-green-600 text-green-50 mt-4 transition-colors"
+                    activeClassName="bg-white text-green-700 font-bold shadow-sm"
                   >
                     <TrendingUp className="h-4 w-4" />
                     {!collapsed && <span>Dashboard</span>}
@@ -155,8 +157,9 @@ export function DashboardSidebar() {
                   <NavLink
                     to="/dashboard/reports"
                     end
-                    className="hover:bg-sidebar-accent text-sidebar-foreground"
-                    activeClassName="bg-sidebar-primary text-sidebar-primary-foreground font-medium"
+                    // Updated: Green theme hover and active states
+                    className="hover:bg-green-600 text-green-50 transition-colors"
+                    activeClassName="bg-white text-green-700 font-bold shadow-sm"
                   >
                     <LineChart className="h-4 w-4" />
                     {!collapsed && <span>Perfomance report</span>}
@@ -169,7 +172,7 @@ export function DashboardSidebar() {
 
         {/* Main Menu */}
         <SidebarGroup>
-          <SidebarGroupLabel className="text-sidebar-foreground/70">
+          <SidebarGroupLabel className="text-green-100/80 font-semibold">
             {!collapsed && "Data Management"}
           </SidebarGroupLabel>
 
@@ -184,8 +187,9 @@ export function DashboardSidebar() {
                       <SidebarMenuButton asChild>
                         <NavLink
                           to={item.url}
-                          className="hover:bg-sidebar-accent text-sidebar-foreground"
-                          activeClassName="bg-sidebar-primary/20 text-sidebar-primary font-medium"
+                          // Updated: Green theme hover and active states
+                          className="hover:bg-green-600 text-green-50 transition-colors"
+                          activeClassName="bg-white text-green-700 font-bold shadow-sm"
                         >
                           <item.icon className="h-4 w-4" />
                           {!collapsed && <span>{item.title}</span>}
@@ -200,7 +204,7 @@ export function DashboardSidebar() {
                   <Collapsible key={item.title} defaultOpen className="group/collapsible">
                     <SidebarMenuItem>
                       <CollapsibleTrigger asChild>
-                        <SidebarMenuButton className="hover:bg-sidebar-accent text-sidebar-foreground">
+                        <SidebarMenuButton className="hover:bg-green-600 text-green-50 transition-colors">
                           <item.icon className="h-4 w-4" />
                           {!collapsed && (
                             <>
@@ -219,8 +223,9 @@ export function DashboardSidebar() {
                                 <SidebarMenuSubButton asChild>
                                   <NavLink
                                     to={sub.url}
-                                    className="hover:bg-sidebar-accent text-sidebar-foreground/80"
-                                    activeClassName="bg-sidebar-primary/20 text-sidebar-primary font-medium"
+                                    // Updated: Green theme hover and active states
+                                    className="hover:bg-green-600 text-green-100/70 transition-colors"
+                                    activeClassName="bg-white text-green-700 font-bold"
                                   >
                                     <sub.icon className="h-3.5 w-3.5" />
                                     <span>{sub.title}</span>

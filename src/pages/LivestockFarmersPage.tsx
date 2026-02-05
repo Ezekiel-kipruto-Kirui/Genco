@@ -51,7 +51,7 @@ interface FarmerData {
   ageDistribution?: AgeDistribution;
   registrationDate: string;
   programme: string; 
-  username?: string;
+  username?: string; // This stores the name of the Field Officer/Creator
   aggregationGroup?: string;
   bucksServed?: string;
   femaleBreeds?: string;
@@ -74,7 +74,7 @@ interface TrainingData {
   createdAt?: string;
   rawTimestamp?: number;
   programme?: string; 
-  username?: string;
+  username?: string; // This stores the name of the Field Officer/Creator
   fieldOfficer?: string;
 }
 
@@ -189,7 +189,7 @@ const getGoatTotal = (goats: any): number => {
 // --- Main Component ---
 
 const LivestockFarmersPage = () => {
-  const { user, userRole } = useAuth();
+  const { user, userRole, userName } = useAuth(); // Destructure userName from context
   const { toast } = useToast();
   
   // State
@@ -719,7 +719,7 @@ const LivestockFarmersPage = () => {
     if (e.target.files?.[0]) setUploadFile(e.target.files[0]);
   };
 
-   const handleUpload = async () => {
+    const handleUpload = async () => {
     if (!uploadFile) return;
     setUploadLoading(true);
     try {
@@ -757,16 +757,17 @@ const LivestockFarmersPage = () => {
         const idxIdNumber = findIndex(['id number', 'idnumber']);
         const idxPhone = findIndex(['phone']);
         const idxFarmerId = findIndex(['farmer id']);
-        const idxRegDate = findIndex(['registration date', 'reg date']);
+        const idxRegDate = findIndex(['registration date', 'reg date', 'date']);
         const idxVaccinated = findIndex(['vaccinated']);
         const idxTrace = findIndex(['traceability']);
         const idxVaccines = findIndex(['vaccine']);
-
-        // --- NEW INDICES ADDED HERE ---
+        
+        // --- UPDATED INDICES ---
         const idxDewormed = findIndex(['dewormed']);
         const idxDewormingDate = findIndex(['deworming date', 'deworm date']);
         const idxAggregationGroup = findIndex(['aggregation group', 'group']);
-        // -------------------------------
+        const idxVaccinationDate = findIndex(['vaccination date', 'vaccine date', 'vax date']);
+        // -----------------------
 
         const idxGoatsTotal = headers.findIndex(h => h === 'goats' || h === 'goats total');
         const idxGoatsMale = headers.findIndex(h => h === 'goats male' || h === 'goatsmale');
@@ -795,7 +796,22 @@ const LivestockFarmersPage = () => {
           if (idxIdNumber !== -1) obj.idNumber = valAt(values, idxIdNumber);
           if (idxPhone !== -1) obj.phone = valAt(values, idxPhone);
           if (idxFarmerId !== -1) obj.farmerId = valAt(values, idxFarmerId);
-          if (idxRegDate !== -1) obj.registrationDate = valAt(values, idxRegDate);
+          
+          // --- DATE HANDLING LOGIC ---
+          let createdAtTimestamp = Date.now();
+
+          if (idxRegDate !== -1) {
+            const regDateStr = valAt(values, idxRegDate);
+            obj.registrationDate = regDateStr; 
+            
+            const dateObj = new Date(regDateStr);
+            if (!isNaN(dateObj.getTime())) {
+              createdAtTimestamp = dateObj.getTime();
+            }
+          }
+          obj.createdAt = createdAtTimestamp; 
+          // -----------------------------
+
           if (idxVaccinated !== -1) obj.vaccinated = parseBool(valAt(values, idxVaccinated));
           if (idxTrace !== -1) obj.traceability = parseBool(valAt(values, idxTrace));
           if (idxVaccines !== -1) {
@@ -803,11 +819,10 @@ const LivestockFarmersPage = () => {
             obj.vaccines = raw ? raw.split(';').map(s => s.trim()).filter(s => s) : [];
           }
 
-          // --- NEW FIELD MAPPING ADDED HERE ---
           if (idxDewormed !== -1) obj.dewormed = parseBool(valAt(values, idxDewormed));
           if (idxDewormingDate !== -1) obj.dewormingDate = valAt(values, idxDewormingDate);
           if (idxAggregationGroup !== -1) obj.aggregationGroup = valAt(values, idxAggregationGroup);
-          // -----------------------------------
+          if (idxVaccinationDate !== -1) obj.vaccinationDate = valAt(values, idxVaccinationDate);
 
           if (idxGoatsTotal > -1) {
             obj.goats = { total: Number(valAt(values, idxGoatsTotal)) || 0, male: 0, female: 0 };
@@ -829,8 +844,9 @@ const LivestockFarmersPage = () => {
         await push(collectionRef, {
           ...item,
           programme: activeProgram,
-          createdAt: Date.now(),
-          username: user?.displayName || user?.email || "Admin"
+          // FIX: Use userName from context instead of user.name
+          // Fallback to user?.displayName (Firebase) or email if name is missing
+          username: userName || user?.displayName || user?.email || "Admin"
         });
         count++;
       }
