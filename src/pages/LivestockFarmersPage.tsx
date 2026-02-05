@@ -770,9 +770,9 @@ const LivestockFarmersPage = () => {
         // -----------------------
 
         // UPDATED: Improved Goats Column Indexing to match image description
-        const idxGoatsTotal = findIndex(['goats', 'goats total', 'total goats']);
-        const idxGoatsMale = findIndex(['goats male', 'male goats', 'goatsmale']);
-        const idxGoatsFemale = findIndex(['goats female', 'female goats', 'goatsfemale']);
+        const idxGoatsTotal = findIndex(['goats', 'goats total', 'total goats', 'no of goats', 'number of goats', 'goats number', 'goat count', 'total goat']);
+        const idxGoatsMale = findIndex(['male', 'male goats', 'male goat', 'goat male', 'goats m', 'm goats', 'goatsmale']);
+        const idxGoatsFemale = findIndex(['female', 'female goats', 'female goat', 'goat female', 'goats f', 'f goats', 'goatsfemale']);
 
         const parseBool = (val: string) => {
           const v = (val || '').toLowerCase().trim();
