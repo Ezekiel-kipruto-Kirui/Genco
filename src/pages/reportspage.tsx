@@ -1,24 +1,21 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { 
   ref, 
-  get, 
-  DatabaseReference, 
-  Database
+  get
 } from "firebase/database";
 import { db } from "@/lib/firebase"; 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { 
   PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip, 
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, AreaChart, Area, Line
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, AreaChart, Area
 } from "recharts";
 import { 
-  Users, GraduationCap, Beef, Calendar, TrendingUp, Target, Award, Star, 
-  MapPin, Syringe, TargetIcon, UserCheck 
+  Users, GraduationCap, Beef, TrendingUp, Award, 
+  MapPin, Syringe, TargetIcon
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
 
 // --- Constants ---
 const COLORS = {
@@ -39,42 +36,24 @@ const BAR_COLORS = [
 
 // --- Types ---
 
-// Interface strictly matching the JSON structure provided in the prompt
-interface OfftakeData {
-  id: string;
-  date: Date | string | number;
-  farmerName: string;
-  gender: string;
-  idNumber: string;
-  liveWeight: number;
-  carcassWeight: number;
-  location: string;
-  county?: string; // Added to support flexible mapping from raw data
-  noSheepGoats: number;
-  phoneNumber: string;
-  pricePerGoatAndSheep: number;
-  region: string;
-  totalprice: number;
-  programme?: string;
-}
-
+// Updated Farmer Interface based on provided JSON
 interface Farmer {
   id: string;
   name: string;
-  gender: string; // "Male" or "Female" as per JSON
+  gender: string;
   phone: string;
-  county?: string; // "Samburu" as per JSON
-  subcounty?: string;
-  location?: string; // "Masikita"
-  goats?: { total?: number; female?: number; male?: number };
-  sheep?: number | string;
-  cattle?: number | string;
-  vaccinated?: boolean;
-  vaccines?: string[];
-  createdAt?: number;
-  registrationDate?: string;
-  femaleBreeds?: string | number;
-  maleBreeds?: string | number;
+  county: string;
+  subcounty: string;
+  location: string;
+  goats: { total?: number; female?: number; male?: number };
+  sheep: string | number;
+  cattle: string | number;
+  vaccinated: boolean;
+  vaccines: string[];
+  createdAt: number | string;
+  registrationDate: string;
+  femaleBreeds: string | number;
+  maleBreeds: string | number;
   ageDistribution?: any;
   aggregationGroup?: string;
   bucksServed?: string;
@@ -83,14 +62,20 @@ interface Farmer {
   username?: string;
 }
 
+// Updated TrainingRecord Interface based on provided JSON
 interface TrainingRecord {
   id: string;
   totalFarmers: number;
   county: string;
+  subcounty: string;
+  location: string;
   startDate: string;
   endDate: string;
   topicTrained: string;
-  createdAt?: number;
+  createdAt?: string | number; // Can be "29 Jan 2026" or timestamp
+  programme?: string;
+  fieldOfficer?: string;
+  username?: string;
 }
 
 // --- Helper Functions ---
@@ -102,9 +87,7 @@ const parseDate = (date: any): Date | null => {
     if (date instanceof Date) return date;
     if (typeof date === 'number') return new Date(date);
     if (typeof date === 'string') {
-      const parsedISO = new Date(date);
-      if (!isNaN(parsedISO.getTime())) return parsedISO;
-      // Handle "28 Jan 2026"
+      // Handle "28 Jan 2026" format
       const parsedCustom = new Date(date);
       if (!isNaN(parsedCustom.getTime())) return parsedCustom;
     } 
@@ -115,7 +98,6 @@ const parseDate = (date: any): Date | null => {
   return null;
 };
 
-// Helper to format Date object to YYYY-MM-DD string in LOCAL time (avoids UTC timezone offset issues)
 const formatDateToLocal = (date: Date): string => {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -155,8 +137,6 @@ const isDateInRange = (date: any, startDate: string, endDate: string): boolean =
 
 const getCurrentWeekDates = () => {
   const now = new Date();
-  // Assuming Sunday is start of week (0). If Monday is preferred, change logic slightly.
-  // Keeping original logic: startOfWeek is current date - day of week
   const startOfWeek = new Date(now);
   startOfWeek.setDate(now.getDate() - now.getDay());
   const endOfWeek = new Date(startOfWeek);
@@ -169,7 +149,6 @@ const getCurrentWeekDates = () => {
 
 const getCurrentMonthDates = () => {
   const now = new Date();
-  // Month is 0-indexed, so 1st day is 1.
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
   const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
   return {
@@ -182,261 +161,287 @@ const getCurrentMonthDates = () => {
 const useProcessedData = (
   allFarmers: Farmer[], 
   trainingRecords: TrainingRecord[], 
-  offtakeData: OfftakeData[], 
   dateRange: { startDate: string; endDate: string }, 
   timeFrame: 'weekly' | 'monthly' | 'yearly'
 ) => {
   return useMemo(() => {
     if (allFarmers.length === 0 && trainingRecords.length === 0) {
       return {
-        filteredData: [],
-        filteredOfftakeData: [],
-        genderData: [],
-        trainedGenderData: [],
+        // Stats
+        totalFarmers: 0,
+        maleFarmers: 0,
+        femaleFarmers: 0,
+        malePercentage: 0,
+        femalePercentage: 0,
+        
+        totalAnimals: 0,
+        totalGoats: 0,
+        totalSheep: 0,
+        goatsPercentage: 0,
+        sheepPercentage: 0,
+        
+        totalTrainedFarmers: 0,
+        
+        // Charts Data
+        countyPerformanceData: [],
         registrationTrendData: [],
-        topOfftakeFarmers: [],
         topLocations: [],
-        stats: {
-          totalFarmers: 0,
-          maleFarmers: 0,
-          femaleFarmers: 0,
-          totalAnimals: 0,
-          trainedFarmers: 0,
-          trainedMale: 0,
-          trainedFemale: 0,
-          offtakeParticipants: 0
-        },
-        regionStats: {
-          totalRegions: 0,
-          farmersPerRegion: [],
-          topPerformingRegion: { name: 'N/A', farmers: 0, percentage: 0 },
-          averageFarmersPerRegion: 0
-        },
-        breedStats: {
-          totalBreedsDistributed: 0,
-          farmersReceivingBreeds: 0,
-          breedDistribution: { newBreedFemales: 0, newBreedMales: 0, newBreedYoung: 0 }
-        },
-        vaccinationStats: {
-          vaccinatedAnimals: 0,
-          totalAnimals: 0,
-          vaccinationRate: 0,
-          comment: "No data available"
-        }
+        topCustomers: [],
+        
+        // Animal Health
+        uniqueCounties: 0,
+        totalBreedsDistributed: 0,
+        breedsMale: 0,
+        breedsFemale: 0,
+        breedsMalePercentage: 0,
+        breedsFemalePercentage: 0,
+        
+        vaccinationRate: 0,
+        vaccinatedFarmers: 0,
+        
+        breedsByCountyData: [],
+        breedsBySubcountyData: [],
+        vaccinationByCountyData: [],
+        vaccinationBySubcountyData: []
       };
     }
 
-    // Filter Data
-    const filteredData = allFarmers.filter(farmer => {
+    // Filter Farmers
+    const filteredFarmers = allFarmers.filter(farmer => {
       const dateToCheck = farmer.createdAt || farmer.registrationDate;
       return isDateInRange(dateToCheck, dateRange.startDate, dateRange.endDate);
     });
 
-    const filteredOfftakeData = offtakeData.filter(record => 
-      isDateInRange(record.date, dateRange.startDate, dateRange.endDate)
-    );
-
-    const filteredTrainingRecords = trainingRecords.filter(record => {
-       return isDateInRange(record.startDate || record.createdAt, dateRange.startDate, dateRange.endDate);
+    // Filter Training
+    const filteredTraining = trainingRecords.filter(record => {
+      // Training record has createdAt (string or number) or startDate
+      return isDateInRange(record.createdAt || record.startDate, dateRange.startDate, dateRange.endDate);
     });
 
-    // Calculate Basic Stats
-    // Fixed: Used strict interface properties (lowercase)
-    const maleFarmers = filteredData.filter(f => String(f.gender).toLowerCase() === 'male').length;
-    const femaleFarmers = filteredData.filter(f => String(f.gender).toLowerCase() === 'female').length;
-    
-    const totalTrainedCount = filteredTrainingRecords.reduce((sum, record) => sum + (Number(record.totalFarmers) || 0), 0);
+    // --- Calculations ---
 
-    const totalAnimals = filteredData.reduce((sum, farmer) => {
-      let goatCount = 0;
-      if (typeof farmer.goats === 'object' && farmer.goats !== null) {
-         goatCount = Number(farmer.goats.total) || (Number(farmer.goats.male) || 0) + (Number(farmer.goats.female) || 0);
-      } else if (typeof farmer.goats === 'number') {
-         goatCount = farmer.goats;
+    // 1. Farmer Stats
+    const maleFarmers = filteredFarmers.filter(f => String(f.gender).toLowerCase() === 'male').length;
+    const femaleFarmers = filteredFarmers.filter(f => String(f.gender).toLowerCase() === 'female').length;
+    const totalF = maleFarmers + femaleFarmers;
+    
+    // 2. Animal Census
+    let totalGoats = 0;
+    let totalSheep = 0;
+    let totalCattle = 0;
+
+    filteredFarmers.forEach(f => {
+      // Goats
+      if (typeof f.goats === 'object' && f.goats !== null) {
+        totalGoats += Number(f.goats.total) || 0;
+      } else if (typeof f.goats === 'number') {
+        totalGoats += f.goats;
       }
-      
-      const sheepCount = getNumberField(farmer, "sheep");
-      const cattleCount = getNumberField(farmer, "cattle");
-
-      return sum + goatCount + sheepCount + cattleCount;
-    }, 0);
-
-    // Region Statistics
-    // Fixed: Used strict interface properties (lowercase 'county')
-    const regionMap: Record<string, number> = {};
-    filteredData.forEach(farmer => {
-      // Prioritize 'county' (from JSON), then 'region', then 'location'
-      const region = farmer.county || 'Unknown';
-      regionMap[region] = (regionMap[region] || 0) + 1;
+      // Sheep
+      totalSheep += getNumberField(f, "sheep");
+      // Cattle
+      totalCattle += getNumberField(f, "cattle");
     });
 
-    const farmersPerRegion = Object.entries(regionMap)
-      .map(([name, farmers]) => ({ name, farmers }))
-      .sort((a, b) => b.farmers - a.farmers);
+    const totalAnimals = totalGoats + totalSheep + totalCattle;
+    const goatsPerc = totalAnimals > 0 ? (totalGoats / totalAnimals) * 100 : 0;
+    const sheepPerc = totalAnimals > 0 ? (totalSheep / totalAnimals) * 100 : 0;
 
-    const topPerformingRegion = farmersPerRegion[0] || { name: 'N/A', farmers: 0 };
-    const averageFarmersPerRegion = farmersPerRegion.length > 0 
-      ? farmersPerRegion.reduce((sum, region) => sum + region.farmers, 0) / farmersPerRegion.length 
-      : 0;
+    // 3. Trained Farmers (Sum from capacityBuilding)
+    const totalTrained = filteredTraining.reduce((sum, record) => sum + (Number(record.totalFarmers) || 0), 0);
 
-    const regionalPerformancePercentage = topPerformingRegion.farmers > 0 
-      ? (topPerformingRegion.farmers / filteredData.length) * 100 
-      : 0;
-
-    // Breed Distribution
-    const breedDistribution = {
-      newBreedFemales: filteredData.reduce((sum, farmer) => sum + getNumberField(farmer, "femaleBreeds"), 0),
-      newBreedMales: filteredData.reduce((sum, farmer) => sum + getNumberField(farmer, "maleBreeds"), 0),
-      newBreedYoung: 0
-    };
-
-    const totalBreedsDistributed = breedDistribution.newBreedFemales + breedDistribution.newBreedMales + breedDistribution.newBreedYoung;
+    // 4. Charts Preparation
     
-    const farmersReceivingBreeds = filteredData.filter(farmer => 
-      getNumberField(farmer, "femaleBreeds") > 0 || getNumberField(farmer, "maleBreeds") > 0
-    ).length;
+    // County Performance (Farmers per County)
+    const countyMap: Record<string, number> = {};
+    filteredFarmers.forEach(f => {
+      const c = f.county || 'Unknown';
+      countyMap[c] = (countyMap[c] || 0) + 1;
+    });
+    const countyPerformanceData = Object.entries(countyMap)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value);
 
-    // Vaccination Statistics
-    const vaccinatedFarmersCount = filteredData.filter(f => f.vaccinated === true).length;
-    const vaccinationRate = filteredData.length > 0 ? (vaccinatedFarmersCount / filteredData.length) * 100 : 0;
-    
-    let vaccinationComment = "No data available";
-    if (filteredData.length > 0) {
-      if (vaccinationRate < 50) vaccinationComment = "Action needed";
-      else if (vaccinationRate < 75) vaccinationComment = "Average coverage";
-      else vaccinationComment = "Good coverage";
-    }
+    // Top Locations (Farmers per Location)
+    const locationMap: Record<string, number> = {};
+    filteredFarmers.forEach(f => {
+      const l = f.location || 'Unknown';
+      locationMap[l] = (locationMap[l] || 0) + 1;
+    });
+    const topLocations = Object.entries(locationMap)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 5);
 
-    // Generate Trend Data
+    // Top Customers (Farmers with most animals)
+    const topCustomers = filteredFarmers.map(f => {
+      let g = 0, s = 0, c = 0;
+      if (typeof f.goats === 'object') g = Number(f.goats.total) || 0;
+      else if (typeof f.goats === 'number') g = f.goats;
+      s = getNumberField(f, "sheep");
+      c = getNumberField(f, "cattle");
+      return { name: f.name || f.farmerId || f.id || 'Unknown', value: g + s + c };
+    }).sort((a, b) => b.value - a.value).slice(0, 5);
+
+    // Registration Trend
     const generateTrendData = () => {
       const trendData: any[] = [];
       const currentYear = new Date().getFullYear();
       
       if (timeFrame === 'weekly') {
-        for (let week = 1; week <= 4; week++) {
+        // Simple logic: Last 4 weeks from today
+        for (let i = 3; i >= 0; i--) {
           const weekStart = new Date();
-          weekStart.setDate(weekStart.getDate() - ((4 - week) * 7));
+          weekStart.setDate(weekStart.getDate() - (i * 7) - weekStart.getDay());
           const weekEnd = new Date(weekStart);
           weekEnd.setDate(weekStart.getDate() + 6);
           
-          const weekRegistrations = filteredData.filter(farmer => {
-            const farmerDate = parseDate(farmer.createdAt || farmer.registrationDate);
-            return farmerDate && farmerDate >= weekStart && farmerDate <= weekEnd;
+          const count = filteredFarmers.filter(farmer => {
+            const d = parseDate(farmer.createdAt || farmer.registrationDate);
+            return d && d >= weekStart && d <= weekEnd;
           }).length;
 
-          trendData.push({
-            name: `Week ${week}`,
-            registrations: weekRegistrations,
-            target: Math.round(filteredData.length / 4)
-          });
+          trendData.push({ name: `Week ${4-i}`, registrations: count });
         }
       } else if (timeFrame === 'monthly') {
         const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-        months.forEach((month, index) => {
-          const monthStart = new Date(currentYear, index, 1);
-          const monthEnd = new Date(currentYear, index + 1, 0);
-          
-          const monthRegistrations = filteredData.filter(farmer => {
-            const farmerDate = parseDate(farmer.createdAt || farmer.registrationDate);
-            return farmerDate && farmerDate >= monthStart && farmerDate <= monthEnd;
-          }).length;
-
-          trendData.push({
-            name: month,
-            registrations: monthRegistrations,
-            target: Math.round(filteredData.length / 12)
-          });
+        // Show current year months up to now, or full year? Let's do full year for consistency
+        months.forEach((m, idx) => {
+           const monthStart = new Date(currentYear, idx, 1);
+           const monthEnd = new Date(currentYear, idx + 1, 0);
+           const count = filteredFarmers.filter(farmer => {
+             const d = parseDate(farmer.createdAt || farmer.registrationDate);
+             return d && d >= monthStart && d <= monthEnd;
+           }).length;
+           trendData.push({ name: m, registrations: count });
         });
       } else {
-        for (let year = currentYear - 4; year <= currentYear; year++) {
-          const yearStart = new Date(year, 0, 1);
-          const yearEnd = new Date(year, 11, 31);
-          
-          const yearRegistrations = filteredData.filter(farmer => {
-            const farmerDate = parseDate(farmer.createdAt || farmer.registrationDate);
-            return farmerDate && farmerDate >= yearStart && farmerDate <= yearEnd;
-          }).length;
-
-          trendData.push({
-            name: year.toString(),
-            registrations: yearRegistrations,
-            target: Math.round(filteredData.length / 5)
-          });
+        for (let y = currentYear - 4; y <= currentYear; y++) {
+           const yearStart = new Date(y, 0, 1);
+           const yearEnd = new Date(y, 11, 31);
+           const count = filteredFarmers.filter(farmer => {
+             const d = parseDate(farmer.createdAt || farmer.registrationDate);
+             return d && d >= yearStart && d <= yearEnd;
+           }).length;
+           trendData.push({ name: y.toString(), registrations: count });
         }
       }
-
       return trendData;
     };
 
-    const generateTopOfftakeFarmers = () => {
-      const farmerSales: Record<string, number> = {};
-      filteredOfftakeData.forEach(record => {
-        const farmerKey = record.farmerName || record.idNumber || "Unknown";
-        if (farmerKey) farmerSales[farmerKey] = (farmerSales[farmerKey] || 0) + record.noSheepGoats;
-      });
+    // --- Animal Health Stats ---
 
-      return Object.entries(farmerSales)
-        .map(([name, animals]) => ({ name, animals }))
-        .sort((a, b) => b.animals - a.animals)
-        .slice(0, 4);
-    };
+    // Regional Coverage (Unique Counties)
+    const uniqueCounties = new Set(filteredFarmers.map(f => f.county)).size;
 
-    const generateTopLocations = () => {
-      const locationSales: Record<string, number> = {};
-      filteredOfftakeData.forEach(record => {
-        // Use 'location' from OfftakeData (mapped from either location or county in raw data)
-        const loc = record.location || record.county || 'Unknown';
-        locationSales[loc] = (locationSales[loc] || 0) + record.noSheepGoats;
-      });
+    // Breeds Distributed
+    let bMale = 0;
+    let bFemale = 0;
+    filteredFarmers.forEach(f => {
+      bMale += getNumberField(f, "maleBreeds");
+      bFemale += getNumberField(f, "femaleBreeds");
+    });
+    const totalBreeds = bMale + bFemale;
+    const bMalePerc = totalBreeds > 0 ? (bMale / totalBreeds) * 100 : 0;
+    const bFemalePerc = totalBreeds > 0 ? (bFemale / totalBreeds) * 100 : 0;
 
-      return Object.entries(locationSales)
-        .map(([name, animals]) => ({ name, animals }))
-        .sort((a, b) => b.animals - a.animals)
-        .slice(0, 4);
-    };
+    // Vaccination
+    const vacCount = filteredFarmers.filter(f => f.vaccinated === true).length;
+    const vacRate = filteredFarmers.length > 0 ? (vacCount / filteredFarmers.length) * 100 : 0;
+
+    // Animal Health Charts
+
+    // Breeds per County (Doughnut)
+    const breedsByCountyMap: Record<string, number> = {};
+    filteredFarmers.forEach(f => {
+      const c = f.county || 'Unknown';
+      const sum = getNumberField(f, "maleBreeds") + getNumberField(f, "femaleBreeds");
+      if (sum > 0) {
+        breedsByCountyMap[c] = (breedsByCountyMap[c] || 0) + sum;
+      }
+    });
+    const breedsByCountyData = Object.entries(breedsByCountyMap)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value);
+
+    // Breeds per Subcounty (Vertical Bar)
+    const breedsBySubMap: Record<string, number> = {};
+    filteredFarmers.forEach(f => {
+      const sc = f.subcounty || 'Unknown';
+      const sum = getNumberField(f, "maleBreeds") + getNumberField(f, "femaleBreeds");
+      if (sum > 0) {
+        breedsBySubMap[sc] = (breedsBySubMap[sc] || 0) + sum;
+      }
+    });
+    const breedsBySubcountyData = Object.entries(breedsBySubMap)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 10); // Top 10
+
+    // Vaccination per County (Horizontal Bar)
+    const vacByCountyMap: Record<string, number> = {};
+    filteredFarmers.forEach(f => {
+      const c = f.county || 'Unknown';
+      if (f.vaccinated) {
+        vacByCountyMap[c] = (vacByCountyMap[c] || 0) + 1;
+      }
+    });
+    const vaccinationByCountyData = Object.entries(vacByCountyMap)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value);
+
+    // Vaccination per Subcounty (Vertical Bar)
+    const vacBySubMap: Record<string, number> = {};
+    filteredFarmers.forEach(f => {
+      const sc = f.subcounty || 'Unknown';
+      if (f.vaccinated) {
+        vacBySubMap[sc] = (vacBySubMap[sc] || 0) + 1;
+      }
+    });
+    const vaccinationBySubcountyData = Object.entries(vacBySubMap)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 10);
 
     return {
-      filteredData,
-      filteredOfftakeData,
-      genderData: [
-        { name: "Male", value: maleFarmers, color: COLORS.darkBlue },
-        { name: "Female", value: femaleFarmers, color: COLORS.orange },
-      ],
-      trainedGenderData: [
-         { name: "Trained", value: totalTrainedCount, color: COLORS.green }
-      ],
+      // Farmer Stats
+      totalFarmers: totalF,
+      maleFarmers,
+      femaleFarmers,
+      malePercentage: totalF > 0 ? ((maleFarmers / totalF) * 100).toFixed(1) : 0,
+      femalePercentage: totalF > 0 ? ((femaleFarmers / totalF) * 100).toFixed(1) : 0,
+      
+      totalAnimals,
+      totalGoats,
+      totalSheep,
+      goatsPercentage: goatsPerc.toFixed(1),
+      sheepPercentage: sheepPerc.toFixed(1),
+      
+      totalTrainedFarmers: totalTrained,
+      
+      // Charts
+      countyPerformanceData,
       registrationTrendData: generateTrendData(),
-      topOfftakeFarmers: generateTopOfftakeFarmers(),
-      topLocations: generateTopLocations(),
-      stats: {
-        totalFarmers: filteredData.length,
-        maleFarmers,
-        femaleFarmers,
-        totalAnimals,
-        trainedFarmers: totalTrainedCount,
-        trainedMale: 0,
-        trainedFemale: 0,
-        offtakeParticipants: filteredOfftakeData.length
-      },
-      regionStats: {
-        totalRegions: farmersPerRegion.length,
-        farmersPerRegion,
-        topPerformingRegion: { ...topPerformingRegion, percentage: regionalPerformancePercentage },
-        averageFarmersPerRegion
-      },
-      breedStats: {
-        totalBreedsDistributed,
-        farmersReceivingBreeds,
-        breedDistribution
-      },
-      vaccinationStats: {
-        vaccinatedAnimals: vaccinatedFarmersCount,
-        totalAnimals: filteredData.length,
-        vaccinationRate,
-        comment: vaccinationComment
-      }
+      topLocations,
+      topCustomers,
+      
+      // Animal Health
+      uniqueCounties,
+      totalBreedsDistributed: totalBreeds,
+      breedsMale: bMale,
+      breedsFemale: bFemale,
+      breedsMalePercentage: bMalePerc.toFixed(1),
+      breedsFemalePercentage: bFemalePerc.toFixed(1),
+      
+      vaccinationRate: vacRate.toFixed(1),
+      vaccinatedFarmers: vacCount,
+      
+      breedsByCountyData,
+      breedsBySubcountyData,
+      vaccinationByCountyData,
+      vaccinationBySubcountyData
     };
-  }, [allFarmers, trainingRecords, offtakeData, dateRange, timeFrame]);
+  }, [allFarmers, trainingRecords, dateRange, timeFrame]);
 };
 
 // --- Sub Components ---
@@ -444,21 +449,20 @@ const useProcessedData = (
 interface StatsCardProps {
   title: string;
   value: string | number;
+  subtext?: string; // For percentages/gender breakdown
   icon: React.ElementType;
-  description?: string;
   color?: 'blue' | 'orange' | 'yellow' | 'green' | 'red' | 'purple' | 'teal';
-  children?: React.ReactNode;
 }
 
-const StatsCard = ({ title, value, icon: Icon, description, color = "blue", children }: StatsCardProps) => {
+const StatsCard = ({ title, value, subtext, icon: Icon, color = "blue" }: StatsCardProps) => {
   const colorMap: Record<string, { border: string, bg: string, text: string }> = {
-    blue: { border: 'bg-blue-500', bg: 'bg-blue-100', text: 'text-blue-600' },
-    orange: { border: 'bg-orange-500', bg: 'bg-orange-100', text: 'text-orange-600' },
-    yellow: { border: 'bg-yellow-500', bg: 'bg-yellow-100', text: 'text-yellow-600' },
-    green: { border: 'bg-green-500', bg: 'bg-green-100', text: 'text-green-600' },
-    red: { border: 'bg-red-500', bg: 'bg-red-100', text: 'text-red-600' },
-    purple: { border: 'bg-purple-500', bg: 'bg-purple-100', text: 'text-purple-600' },
-    teal: { border: 'bg-teal-500', bg: 'bg-teal-100', text: 'text-teal-600' },
+    blue: { border: 'bg-blue-500', bg: 'bg-blue-50', text: 'text-blue-600' },
+    orange: { border: 'bg-orange-500', bg: 'bg-orange-50', text: 'text-orange-600' },
+    yellow: { border: 'bg-yellow-500', bg: 'bg-yellow-50', text: 'text-yellow-600' },
+    green: { border: 'bg-green-500', bg: 'bg-green-50', text: 'text-green-600' },
+    red: { border: 'bg-red-500', bg: 'bg-red-50', text: 'text-red-600' },
+    purple: { border: 'bg-purple-500', bg: 'bg-purple-50', text: 'text-purple-600' },
+    teal: { border: 'bg-teal-500', bg: 'bg-teal-50', text: 'text-teal-600' },
   };
 
   const theme = colorMap[color];
@@ -468,21 +472,26 @@ const StatsCard = ({ title, value, icon: Icon, description, color = "blue", chil
       <div className={`absolute left-0 top-0 bottom-0 w-1 ${theme.border}`}></div>
       
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 pt-4 pl-6">
-        <CardTitle className="text-sm font-medium text-gray-600">{title}</CardTitle>
+        <CardTitle className="text-xs font-medium text-gray-600">{title}</CardTitle>
         <div className={`p-2 rounded-xl ${theme.bg} shadow-sm`}>
           <Icon className={`h-4 w-4 ${theme.text}`} />
         </div>
       </CardHeader>
       <CardContent className="pl-6 pb-4">
-        <div className="text-2xl font-bold text-gray-900">{value}</div>
-        {description && (
-          <p className="text-xs text-gray-500 mt-2 font-medium">{description}</p>
+        <div className="text-xl font-bold text-gray-900">{value}</div>
+        {subtext && (
+          <p className="text-[11px] text-gray-500 mt-2 font-medium leading-relaxed">{subtext}</p>
         )}
-        {children}
       </CardContent>
     </Card>
   );
 };
+
+const SectionHeader = ({ title }: { title: string }) => (
+  <h2 className="text-lg font-medium text-gray-800 mb-2 flex items-center  border-gray-100">
+    {title}
+  </h2>
+);
 
 // --- Main Component ---
 
@@ -490,25 +499,12 @@ const PerformanceReport = () => {
   const [loading, setLoading] = useState(true);
   const [allFarmers, setAllFarmers] = useState<Farmer[]>([]);
   const [trainingRecords, setTrainingRecords] = useState<TrainingRecord[]>([]);
-  const [offtakeData, setOfftakeData] = useState<OfftakeData[]>([]);
   const [dateRange, setDateRange] = useState({ startDate: "", endDate: "" });
   const [timeFrame, setTimeFrame] = useState<'weekly' | 'monthly' | 'yearly'>('monthly');
   
-  const {
-    filteredData,
-    genderData,
-    trainedGenderData,
-    registrationTrendData,
-    topOfftakeFarmers,
-    topLocations,
-    stats,
-    regionStats,
-    breedStats,
-    vaccinationStats
-  } = useProcessedData(allFarmers, trainingRecords, offtakeData, dateRange, timeFrame);
+  const data = useProcessedData(allFarmers, trainingRecords, dateRange, timeFrame);
 
   useEffect(() => {
-    // Initialize with current month dates immediately to ensure correct state on load
     const initialDates = getCurrentMonthDates();
     setDateRange(initialDates);
     fetchAllData();
@@ -518,82 +514,49 @@ const PerformanceReport = () => {
     try {
       setLoading(true);
       
+      // Fetch Farmers
       const farmersRef = ref(db, 'farmers');
       const farmersSnap = await get(farmersRef);
       const farmersList: Farmer[] = [];
 
       if (farmersSnap.exists()) {
         farmersSnap.forEach((childSnapshot) => {
-          const data = childSnapshot.val();
-          const id = childSnapshot.key;
-
-          if (Array.isArray(data.farmers)) {
-            data.farmers.forEach((farmer: any, index: number) => {
-              farmersList.push({
-                ...farmer,
-                id: `${id}-${index}`,
-                registrationDate: farmer.registrationDate || data.registrationDate || data.date,
-                county: farmer.county || data.county
-              });
-            });
-          } 
-          else if (data.goats || data.cattle || data.name) {
-            farmersList.push({
-              ...data,
-              id: id || '',
-            });
-          }
+          const fData = childSnapshot.val();
+          const id = childSnapshot.key || '';
+          
+          // Direct mapping based on provided JSON structure
+          farmersList.push({
+            id,
+            ...fData,
+            // Ensure defaults if fields are missing
+            goats: fData.goats || { total: 0, male: 0, female: 0 },
+            sheep: fData.sheep || 0,
+            cattle: fData.cattle || 0,
+            vaccinated: fData.vaccinated || false,
+            vaccines: fData.vaccines || [],
+            femaleBreeds: fData.femaleBreeds || 0,
+            maleBreeds: fData.maleBreeds || 0
+          });
         });
       }
 
+      // Fetch Capacity Building (Training)
       const trainingRef = ref(db, 'capacityBuilding');
       const trainingSnap = await get(trainingRef);
       const trainingList: TrainingRecord[] = [];
 
       if (trainingSnap.exists()) {
         trainingSnap.forEach((childSnapshot) => {
+          const tData = childSnapshot.val();
           trainingList.push({
             id: childSnapshot.key || '',
-            ...childSnapshot.val()
-          });
-        });
-      }
-
-      const offtakeRef = ref(db, 'offtakes');
-      const offtakeSnap = await get(offtakeRef);
-      const offtakeList: OfftakeData[] = [];
-
-      if (offtakeSnap.exists()) {
-        offtakeSnap.forEach((childSnapshot) => {
-          // Cast to any to avoid immediate type errors during mapping, 
-          // then map to strict OfftakeData interface
-          const item: any = childSnapshot.val();
-          const id = childSnapshot.key || '';
-          
-          offtakeList.push({
-            id,
-            date: item.date || item.createdAt || new Date(),
-            farmerName: item.farmerName || item.name || item.farmer_name || '',
-            gender: item.gender || '',
-            idNumber: item.idNumber || item.id_no || '',
-            liveWeight: Number(item.liveWeight || item.live_weight || 0),
-            carcassWeight: Number(item.carcassWeight || 0),
-            // Map 'location' field correctly using data from source, ensuring it fits OfftakeData interface
-            location: item.location || item.county || item.area || '', 
-            county: item.county, // Explicitly adding county if present
-            noSheepGoats: Number(item.noSheepGoats || item.quantity || item.animals || item.total_goats || 0),
-            phoneNumber: item.phoneNumber || item.phone || '',
-            pricePerGoatAndSheep: Number(item.pricePerGoatAndSheep || 0),
-            region: item.region || item.county || '',
-            totalprice: Number(item.totalprice || item.total_price || 0),
-            programme: item.programme
+            ...tData
           });
         });
       }
 
       setAllFarmers(farmersList);
       setTrainingRecords(trainingList);
-      setOfftakeData(offtakeList);
       
     } catch (error) {
       console.error("Error fetching data:", error);
@@ -601,21 +564,6 @@ const PerformanceReport = () => {
       setLoading(false);
     }
   };
-
-  const getPerformanceRecommendation = useCallback(() => {
-    if (registrationTrendData.length === 0) return { text: "No data available", color: "gray" };
-    
-    const currentRegistrations = registrationTrendData[registrationTrendData.length - 1]?.registrations || 0;
-    const averageRegistrations = registrationTrendData.reduce((sum, item) => sum + item.registrations, 0) / registrationTrendData.length;
-    
-    if (currentRegistrations > averageRegistrations * 1.2) {
-      return { text: "Excellent Progress - Above Target", color: "green" };
-    } else if (currentRegistrations >= averageRegistrations * 0.8) {
-      return { text: "Average Performance - Action Needed", color: "yellow" };
-    } else {
-      return { text: "Poor Performance - Immediate Action Required", color: "red" };
-    }
-  }, [registrationTrendData]);
 
   const handleDateRangeChange = useCallback((key: string, value: string) => {
     setDateRange(prev => ({ ...prev, [key]: value }));
@@ -636,9 +584,7 @@ const PerformanceReport = () => {
     setTimeFrame('monthly');
   }, []);
 
-  const renderCustomizedLabel = useCallback(({
-    cx, cy, midAngle, innerRadius, outerRadius, percent
-  }: any) => {
+  const renderCustomizedLabel = useCallback(({ cx, cy, midAngle, innerRadius, outerRadius, percent }: any) => {
     if (percent === 0) return null;
     const RADIAN = Math.PI / 180;
     const radius = innerRadius + (outerRadius - innerRadius) * 0.5;
@@ -652,7 +598,7 @@ const PerformanceReport = () => {
         fill="white" 
         textAnchor={x > cx ? 'start' : 'end'} 
         dominantBaseline="central"
-        fontSize="12"
+        fontSize="10"
         fontWeight="bold"
       >
         {`${(percent * 100).toFixed(0)}%`}
@@ -669,346 +615,338 @@ const PerformanceReport = () => {
     );
   }
 
-  const performanceRecommendation = getPerformanceRecommendation();
-
   return (
-    <div className="space-y-6 p-1">
+    <div className="space-y-8 p-1">
       {/* Header and Filters */}
-      <div className="flex flex-col justify-between items-start gap-4">
-        <h1 className="text-xl font-bold text-gray-900">Performance Dashboard</h1>
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        <div>
+          <h1 className="text-lg font-medium text-gray-900">Performance Dashboard</h1>
+         
+        </div>
 
-        <Card className="w-full lg:w-auto border-0 shadow-lg bg-white">
+        <Card className="w-full md:w-auto border-0 shadow-lg bg-white">
           <CardContent className="p-4">
-            <div className="flex flex-col lg:flex-row gap-4 items-end">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="startDate" className="text-sm font-medium text-gray-700">From Date</Label>
+            <div className="flex flex-col md:flex-row gap-4 items-end">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                 
                   <Input
                     id="startDate"
                     type="date"
                     value={dateRange.startDate}
                     onChange={(e) => handleDateRangeChange("startDate", e.target.value)}
-                    className="border-gray-200 focus:border-blue-500"
+                    className="border-gray-200 focus:border-blue-500 h-9"
                   />
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="endDate" className="text-sm font-medium text-gray-700">To Date</Label>
+                <div className="space-y-1">
+                 
                   <Input
                     id="endDate"
                     type="date"
                     value={dateRange.endDate}
                     onChange={(e) => handleDateRangeChange("endDate", e.target.value)}
-                    className="border-gray-200 focus:border-blue-500"
+                    className="border-gray-200 focus:border-blue-500 h-9"
                   />
                 </div>
               </div>
-              <div className="flex flex-wrap gap-2">
-                <Button variant="outline" onClick={setWeekFilter} className="text-xs">This Week</Button>
-                <Button variant="outline" onClick={setMonthFilter} className="text-xs">This Month</Button>
-                <Button onClick={clearFilters} variant="outline" className="text-xs">Clear</Button>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Stats Cards */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <StatsCard 
-          title="Total Farmers" 
-          value={stats.totalFarmers.toLocaleString()} 
-          icon={Users}
-          description={`${stats.maleFarmers} male, ${stats.femaleFarmers} female`}
-          color="blue"
-        />
-
-        <StatsCard 
-          title="Animal Census" 
-          value={stats.totalAnimals.toLocaleString()} 
-          icon={Beef}
-          description="Total livestock registered"
-          color="orange"
-        />
-
-        <StatsCard 
-          title="Trained Farmers" 
-          value={stats.trainedFarmers.toLocaleString()} 
-          icon={GraduationCap}
-          description="Total training participants"
-          color="yellow"
-        />
-
-        <StatsCard 
-          title="Offtake Participants" 
-          value={stats.offtakeParticipants.toLocaleString()} 
-          icon={Award}
-          description={`${stats.totalFarmers > 0 ? ((stats.offtakeParticipants / stats.totalFarmers) * 100).toFixed(1) : 0}% participation rate`}
-          color="green"
-        />
-
-        <StatsCard 
-          title="Regional Coverage" 
-          value={regionStats.totalRegions} 
-          icon={MapPin}
-          color="purple"
-        >
-          <div className="mt-3">
-            <div className="grid grid-cols-2 gap-1.5 max-h-24 overflow-y-auto">
-              {regionStats.farmersPerRegion.slice(0, 8).map((region) => (
-                <div 
-                  key={region.name} 
-                  className="flex flex-col-2 gap-2 bg-gray-50 rounded border border-gray-100 hover:bg-gray-100 transition-colors"
-                >
-                  <span className="text-[10px] font-light text-gray-600 truncate leading-tight">{region.name}</span>
-                  <div className="flex justify-between items-center mt-0.5">
-                    <span className="text-[9px] text-gray-800">{region.farmers.toLocaleString()}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-            {regionStats.farmersPerRegion.length > 8 && (
-              <div className="text-[10px] text-gray-500 text-center mt-2 font-light">
-                +{regionStats.farmersPerRegion.length - 8} more regions
-              </div>
-            )}
-          </div>
-        </StatsCard>
-
-        <StatsCard 
-          title="Breeds Distributed" 
-          value={breedStats.totalBreedsDistributed.toLocaleString()} 
-          icon={TargetIcon}
-          description={`${breedStats.farmersReceivingBreeds} farmers received breeds`}
-          color="teal"
-        />
-
-        <StatsCard 
-          title="Farmers with Breeds" 
-          value={breedStats.farmersReceivingBreeds.toLocaleString()} 
-          icon={UserCheck}
-          description={`${stats.totalFarmers > 0 ? ((breedStats.farmersReceivingBreeds / stats.totalFarmers) * 100).toFixed(1) : 0}% of total farmers`}
-          color="blue"
-        />
-
-        <StatsCard 
-          title="Vaccination Coverage" 
-          value={`${vaccinationStats.vaccinationRate.toFixed(1)}%`} 
-          icon={Syringe}
-          description={`${vaccinationStats.comment} - ${vaccinationStats.vaccinatedAnimals.toLocaleString()} farmers`}
-          color={vaccinationStats.vaccinationRate >= 75 ? "green" : vaccinationStats.vaccinationRate >= 50 ? "yellow" : "red"}
-        />
-      </div>
-
-      {/* Charts Grid */}
-      <div className="grid gap-6 md:grid-cols-2">
-        {/* Gender Distribution */}
-        <Card className="border-0 shadow-lg bg-white">
-          <CardHeader className="pb-4">
-            <CardTitle className="text-md flex items-center gap-2 text-gray-800">
-              <Users className="h-5 w-5 text-blue-600" />
-              Farmers by Gender
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ResponsiveContainer width="100%" height={250}>
-              <PieChart>
-                <Pie
-                  data={genderData}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={60}
-                  outerRadius={100}
-                  paddingAngle={2}
-                  dataKey="value"
-                  label={renderCustomizedLabel}
-                  labelLine={false}
-                >
-                  {genderData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.color} />
-                  ))}
-                </Pie>
-                <Tooltip formatter={(value: number) => [value, "Farmers"]} />
-                <Legend />
-              </PieChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
-
-        {/* Trained Farmers Summary */}
-        <Card className="border-0 shadow-lg bg-white">
-          <CardHeader className="pb-4">
-            <CardTitle className="text-md flex items-center gap-2 text-gray-800">
-              <GraduationCap className="h-5 w-5 text-yellow-600" />
-              Training Overview
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex flex-col items-center justify-center h-[250px] text-center p-6">
-              <div className="mb-4 p-4 bg-yellow-50 rounded-full">
-                <GraduationCap className="h-12 w-12 text-yellow-600" />
-              </div>
-              <h3 className="text-lg font-semibold text-gray-900">
-                {stats.trainedFarmers.toLocaleString()}
-              </h3>
-              <p className="text-sm text-gray-500 mt-1">
-                Total Farmers Trained
-              </p>
-              <p className="text-xs text-gray-400 mt-4 max-w-xs">
-                Training sessions recorded in this period.
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Registration Trend and Top Performers */}
-      <div className="grid gap-6 lg:grid-cols-2">
-        {/* Registration Trend Chart */}
-        <Card className="border-0 shadow-lg bg-white">
-          <CardHeader className="pb-4">
-            <div className="flex justify-between items-center">
-              <CardTitle className="text-md flex items-center gap-2 text-gray-800">
-                <TrendingUp className="h-5 w-5 text-blue-600" />
-                Farmers Registration Trend
-              </CardTitle>
               <div className="flex gap-2">
-                {(['weekly', 'monthly', 'yearly'] as const).map((frame) => (
-                  <Button 
-                    key={frame}
-                    variant={timeFrame === frame ? 'default' : 'outline'} 
-                    size="sm" 
-                    onClick={() => setTimeFrame(frame)}
-                    className="text-xs h-8 capitalize"
-                  >
-                    {frame}
-                  </Button>
-                ))}
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <ResponsiveContainer width="100%" height={300}>
-              <AreaChart data={registrationTrendData}>
-                <defs>
-                  <linearGradient id="colorRegistrations" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor={COLORS.darkBlue} stopOpacity={0.8}/>
-                    <stop offset="95%" stopColor={COLORS.darkBlue} stopOpacity={0.1}/>
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
-                <XAxis dataKey="name" />
-                <YAxis />
-                <Tooltip />
-                <Area 
-                  type="monotone" 
-                  dataKey="registrations" 
-                  stroke={COLORS.darkBlue} 
-                  fillOpacity={1} 
-                  fill="url(#colorRegistrations)" 
-                  name="Actual Registrations"
-                />
-                <Line 
-                  type="monotone" 
-                  dataKey="target" 
-                  stroke={COLORS.orange} 
-                  strokeDasharray="5 5"
-                  name="Target"
-                  strokeWidth={2}
-                />
-              </AreaChart>
-            </ResponsiveContainer>
-            <div className={`mt-4 p-3 rounded-lg ${
-              performanceRecommendation.color === 'green' ? 'bg-green-50 border-green-200' :
-              performanceRecommendation.color === 'yellow' ? 'bg-yellow-50 border-yellow-200' :
-              'bg-red-50 border-red-200'
-            }`}>
-              <div className="flex items-center gap-2">
-                <Star className={`h-4 w-4 ${
-                  performanceRecommendation.color === 'green' ? 'text-green-600' :
-                  performanceRecommendation.color === 'yellow' ? 'text-yellow-600' :
-                  'text-red-600'
-                }`} />
-                <span className={`text-sm font-medium ${
-                  performanceRecommendation.color === 'green' ? 'text-green-800' :
-                  performanceRecommendation.color === 'yellow' ? 'text-yellow-800' :
-                  'text-red-800'
-                }`}>
-                  {performanceRecommendation.text}
-                </span>
+                <Button variant="outline" onClick={setWeekFilter} size="sm">This Week</Button>
+                <Button variant="outline" onClick={setMonthFilter} size="sm">This Month</Button>
+                <Button onClick={clearFilters} variant="outline" size="sm">Clear</Button>
               </div>
             </div>
           </CardContent>
         </Card>
+      </div>
 
-        {/* Top Performers */}
-        <div className="space-y-6">
-          {/* Top Offtake Farmers */}
-          <Card className="border-0 shadow-lg bg-white">
-            <CardHeader className="pb-4">
-              <CardTitle className="text-md flex items-center gap-2 text-gray-800">
-                <Award className="h-5 w-5 text-blue-600" />
-                Top Offtake Farmers
+      {/* SECTION 1: FARMER REGISTRATION & OVERVIEW */}
+      <section>
+        <SectionHeader title="Farmer Registration" />
+        
+        {/* 3 Stats Cards */}
+        <div className="grid gap-4 md:grid-cols-3 mb-6">
+          <StatsCard 
+            title="Total Farmers Registered" 
+            value={data.totalFarmers.toLocaleString()} 
+            icon={Users}
+            subtext={`${data.maleFarmers} Male (${data.malePercentage}%) | ${data.femaleFarmers} Female (${data.femalePercentage}%)`}
+            color="blue"
+          />
+
+          <StatsCard 
+            title="Animal Census" 
+            value={data.totalAnimals.toLocaleString()} 
+            icon={Beef}
+            subtext={`Goats: ${data.totalGoats} (${data.goatsPercentage}%) | Sheep: ${data.totalSheep} (${data.sheepPercentage}%)`}
+            color="orange"
+          />
+
+          <StatsCard 
+            title="Total Trained Farmers" 
+            value={data.totalTrainedFarmers.toLocaleString()} 
+            icon={GraduationCap}
+            subtext="Farmers trained in selected period"
+            color="yellow"
+          />
+        </div>
+
+        {/* Charts Row 1: County Performance (Doughnut) + Registration Trend (Area) */}
+        <div className="grid gap-6 md:grid-cols-2 mb-6">
+          <Card className="border-0 shadow-lg bg-white h-[350px]">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm flex items-center gap-2 text-gray-800">
+                <MapPin className="h-4 w-4 text-purple-600" />
+                County Performance (Farmers)
               </CardTitle>
             </CardHeader>
             <CardContent>
-              {topOfftakeFarmers.length > 0 ? (
-                <ResponsiveContainer width="100%" height={140}>
-                  <BarChart
-                    data={topOfftakeFarmers}
-                    layout="vertical"
-                    margin={{ top: 5, right: 30, left: 100, bottom: 5 }}
+              <ResponsiveContainer width="100%" height={280}>
+                <PieChart>
+                  <Pie
+                    data={data.countyPerformanceData}
+                    cx="50%"
+                    cy="50%"
+                    outerRadius={90}
+                    innerRadius={50}
+                    paddingAngle={2}
+                    dataKey="value"
+                    label={renderCustomizedLabel}
+                    labelLine={false}
                   >
-                    <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f3f4f6" />
-                    <XAxis type="number" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#6b7280' }} />
-                    <YAxis type="category" dataKey="name" width={90} axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#374151' }} />
-                    <Tooltip formatter={(value) => [`${value} animals`, 'Animals Sold']} contentStyle={{ backgroundColor: 'white', border: '1px solid #e5e7eb', borderRadius: '6px', fontSize: '12px' }} />
-                    <Bar dataKey="animals" radius={[0, 4, 4, 0]} barSize={10}>
-                      {topOfftakeFarmers.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={BAR_COLORS[index % BAR_COLORS.length]} />
-                      ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              ) : (
-                <div className="h-[140px] flex items-center justify-center text-sm text-gray-400">No data available</div>
-              )}
+                    {data.countyPerformanceData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={BAR_COLORS[index % BAR_COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip />
+                  <Legend verticalAlign="bottom" height={36} iconType="circle" />
+                </PieChart>
+              </ResponsiveContainer>
             </CardContent>
           </Card>
 
-          {/* Top Locations */}
+          <Card className="border-0 shadow-lg bg-white h-[350px]">
+            <CardHeader className="pb-2">
+              <div className="flex justify-between items-center">
+                <CardTitle className="text-sm flex items-center gap-2 text-gray-800">
+                  <TrendingUp className="h-4 w-4 text-blue-600" />
+                  Farmers Registration Trend
+                </CardTitle>
+                <div className="flex gap-1">
+                  {(['weekly', 'monthly', 'yearly'] as const).map((frame) => (
+                    <Button 
+                      key={frame}
+                      variant={timeFrame === frame ? 'default' : 'ghost'} 
+                      size="sm" 
+                      onClick={() => setTimeFrame(frame)}
+                      className="text-xs h-7 px-2"
+                    >
+                      {frame}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={280}>
+                <AreaChart data={data.registrationTrendData}>
+                  <defs>
+                    <linearGradient id="colorReg" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor={COLORS.darkBlue} stopOpacity={0.8}/>
+                      <stop offset="95%" stopColor={COLORS.darkBlue} stopOpacity={0.1}/>
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
+                  <XAxis dataKey="name" />
+                  <YAxis />
+                  <Tooltip />
+                  <Area type="monotone" dataKey="registrations" stroke={COLORS.darkBlue} fillOpacity={1} fill="url(#colorReg)" />
+                </AreaChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Charts Row 2: Top Locations (Horiz Bar) + Top Customers (Horiz Bar) */}
+        <div className="grid gap-6 md:grid-cols-2">
           <Card className="border-0 shadow-lg bg-white">
-            <CardHeader className="pb-4">
-              <CardTitle className="text-md flex items-center gap-2 text-gray-800">
-                <Award className="h-5 w-5 text-orange-600" />
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm flex items-center gap-2 text-gray-800">
+                <MapPin className="h-4 w-4 text-green-600" />
                 Top Locations
               </CardTitle>
             </CardHeader>
             <CardContent>
-               {topLocations.length > 0 ? (
-                <ResponsiveContainer width="100%" height={120}>
-                  <BarChart
-                    data={topLocations}
-                    layout="vertical"
-                    margin={{ top: 5, right: 30, left: 100, bottom: 5 }}
-                  >
-                    <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f3f4f6" />
-                    <XAxis type="number" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#6b7280' }} />
-                    <YAxis type="category" dataKey="name" width={90} axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#374151' }} />
-                    <Tooltip formatter={(value) => [`${value} animals`, 'Total Sales']} contentStyle={{ backgroundColor: 'white', border: '1px solid #e5e7eb', borderRadius: '6px', fontSize: '12px' }} />
-                    <Bar dataKey="animals" radius={[0, 4, 4, 0]} barSize={10}>
-                      {topLocations.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={BAR_COLORS[index % BAR_COLORS.length]} />
-                      ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              ) : (
-                 <div className="h-[120px] flex items-center justify-center text-sm text-gray-400">No data available</div>
-              )}
+              <ResponsiveContainer width="100%" height={250}>
+                <BarChart data={data.topLocations} layout="vertical" margin={{ top: 5, right: 30, left: 80, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f3f4f6" />
+                  <XAxis type="number" axisLine={false} tickLine={false} />
+                  <YAxis type="category" dataKey="name" width={75} axisLine={false} tickLine={false} tick={{fontSize: 11}} />
+                  <Tooltip />
+                  <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={12}>
+                    {data.topLocations.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={COLORS.green} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+
+          <Card className="border-0 shadow-lg bg-white">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm flex items-center gap-2 text-gray-800">
+                <Users className="h-4 w-4 text-blue-600" />
+                Top Customers (Farmers by Herd Size)
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={250}>
+                <BarChart data={data.topCustomers} layout="vertical" margin={{ top: 5, right: 30, left: 80, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f3f4f6" />
+                  <XAxis type="number" axisLine={false} tickLine={false} />
+                  <YAxis type="category" dataKey="name" width={75} axisLine={false} tickLine={false} tick={{fontSize: 11}} />
+                  <Tooltip />
+                  <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={12}>
+                    {data.topCustomers.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={COLORS.darkBlue} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
             </CardContent>
           </Card>
         </div>
-      </div>
+      </section>
+
+      {/* SECTION 2: ANIMAL HEALTH */}
+      <section>
+        <SectionHeader title="Animal Health" />
+
+        {/* 3 Stats Cards */}
+        <div className="grid gap-4 md:grid-cols-3 mb-6">
+          <StatsCard 
+            title="Regional Coverage" 
+            value={data.uniqueCounties} 
+            icon={MapPin}
+            subtext="Counties with active farmers"
+            color="purple"
+          />
+
+          <StatsCard 
+            title="Breeds Distributed" 
+            value={data.totalBreedsDistributed.toLocaleString()} 
+            icon={TargetIcon}
+            subtext={`Male: ${data.breedsMale} (${data.breedsMalePercentage}%) | Female: ${data.breedsFemale} (${data.breedsFemalePercentage}%)`}
+            color="teal"
+          />
+
+          <StatsCard 
+            title="Vaccination Coverage" 
+            value={`${data.vaccinationRate}%`} 
+            icon={Syringe}
+            subtext={`${data.vaccinatedFarmers} farmers vaccinated`}
+            color={Number(data.vaccinationRate) >= 75 ? "green" : Number(data.vaccinationRate) >= 50 ? "yellow" : "red"}
+          />
+        </div>
+
+        {/* Charts Row 1: Breeds per County (Doughnut) + Subcounty Breeds (Vert Bar) */}
+        <div className="grid gap-6 md:grid-cols-2 mb-6">
+          <Card className="border-0 shadow-lg bg-white h-[350px]">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm flex items-center gap-2 text-gray-800">
+                <Award className="h-4 w-4 text-teal-600" />
+                Breeds Distribution per County
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={280}>
+                <PieChart>
+                  <Pie
+                    data={data.breedsByCountyData}
+                    cx="50%"
+                    cy="50%"
+                    outerRadius={90}
+                    innerRadius={50}
+                    paddingAngle={2}
+                    dataKey="value"
+                    label={renderCustomizedLabel}
+                    labelLine={false}
+                  >
+                    {data.breedsByCountyData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={BAR_COLORS[index % BAR_COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip />
+                  <Legend verticalAlign="bottom" height={36} iconType="circle" />
+                </PieChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+
+          <Card className="border-0 shadow-lg bg-white h-[350px]">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm flex items-center gap-2 text-gray-800">
+                <TrendingUp className="h-4 w-4 text-teal-600" />
+                Subcounty Performance (Breeds)
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={280}>
+                <BarChart data={data.breedsBySubcountyData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
+                  <XAxis dataKey="name" angle={-45} textAnchor="end" height={70} interval={0} tick={{fontSize: 10}} />
+                  <YAxis />
+                  <Tooltip />
+                  <Bar dataKey="value" radius={[4, 4, 0, 0]} barSize={20} fill={COLORS.teal} />
+                </BarChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Charts Row 2: Vaccination per County (Horiz Bar) + Vaccination per Subcounty (Vert Bar) */}
+        <div className="grid gap-6 md:grid-cols-2">
+          <Card className="border-0 shadow-lg bg-white">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm flex items-center gap-2 text-gray-800">
+                <Syringe className="h-4 w-4 text-red-600" />
+                Vaccination Track per County
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={250}>
+                <BarChart data={data.vaccinationByCountyData} layout="vertical" margin={{ top: 5, right: 30, left: 80, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f3f4f6" />
+                  <XAxis type="number" axisLine={false} tickLine={false} />
+                  <YAxis type="category" dataKey="name" width={75} axisLine={false} tickLine={false} tick={{fontSize: 11}} />
+                  <Tooltip />
+                  <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={12} fill={COLORS.red} />
+                </BarChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+
+          <Card className="border-0 shadow-lg bg-white">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm flex items-center gap-2 text-gray-800">
+                <Syringe className="h-4 w-4 text-red-600" />
+                Vaccination Track per Subcounty
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={250}>
+                <BarChart data={data.vaccinationBySubcountyData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
+                  <XAxis dataKey="name" angle={-45} textAnchor="end" height={70} interval={0} tick={{fontSize: 10}} />
+                  <YAxis />
+                  <Tooltip />
+                  <Bar dataKey="value" radius={[4, 4, 0, 0]} barSize={20} fill={COLORS.maroon} />
+                </BarChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+        </div>
+      </section>
     </div>
   );
 };

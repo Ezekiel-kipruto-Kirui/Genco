@@ -23,6 +23,7 @@ const ActivitiesPage = lazy(() => import("./pages/ActivitiesPage"));
 const OnboardingPage = lazy(() => import("./pages/onboardingpage"));
 const AnimalHealthPage = lazy(() => import("./pages/Animalhealth"));
 const FodderOfftakePage = lazy(() => import("./pages/FodderOfftakePage"));
+const SalesReport = lazy(() => import("./pages/salesmetrics"));
 const UserManagementPage = lazy(() => import("./pages/UserManagementPage"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 
@@ -62,6 +63,7 @@ const App = () => (
                 
                 {/* Report route - Removed inner ProtectedRoute as parent handles auth */}
                 <Route path="reports" element={<PerformanceReport />} />
+                <Route path="salesreport" element={<SalesReport />} />
                 
                 <Route path="livestock">
                   <Route index element={<LivestockFarmersPage />} />

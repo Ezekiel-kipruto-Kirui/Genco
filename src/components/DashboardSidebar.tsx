@@ -168,6 +168,25 @@ export function DashboardSidebar() {
               </SidebarMenuItem>
             </SidebarMenu>
           </SidebarGroupContent>
+         <SidebarGroupContent>
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild>
+                  <NavLink
+                    to="/dashboard/salesreport"
+                    end
+                    // Updated: Green theme hover and active states
+                    className="hover:bg-green-600 text-green-50 transition-colors"
+                    activeClassName="bg-white text-green-700 font-bold shadow-sm"
+                  >
+                    <LineChart className="h-4 w-4" />
+                    {!collapsed && <span>salesmetrics</span>}
+                  </NavLink>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </SidebarGroupContent>
+        
         </SidebarGroup>
 
         {/* Main Menu */}
