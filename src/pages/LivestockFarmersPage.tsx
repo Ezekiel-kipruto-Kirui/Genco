@@ -767,6 +767,8 @@ const LivestockFarmersPage = () => {
         const idxDewormingDate = findIndex(['deworming date', 'deworm date']);
         const idxAggregationGroup = findIndex(['aggregation group', 'group']);
         const idxVaccinationDate = findIndex(['vaccination date', 'vaccine date', 'vax date']);
+        // ADDED: Index for Field Officer Name from the file
+        const idxFieldOfficer = findIndex(['field officer', 'officer', 'officer name', 'created by', 'username']);
         // -----------------------
 
         // UPDATED: Improved Goats Column Indexing to match image description
@@ -825,6 +827,9 @@ const LivestockFarmersPage = () => {
           if (idxAggregationGroup !== -1) obj.aggregationGroup = valAt(values, idxAggregationGroup);
           if (idxVaccinationDate !== -1) obj.vaccinationDate = valAt(values, idxVaccinationDate);
 
+          // ADDED: Map Field Officer from CSV to username
+          if (idxFieldOfficer !== -1) obj.username = valAt(values, idxFieldOfficer);
+
           // --- UPDATED GOATS LOGIC ---
           const foundGoatsMale = idxGoatsMale > -1;
           const foundGoatsFemale = idxGoatsFemale > -1;
@@ -865,9 +870,9 @@ const LivestockFarmersPage = () => {
         await push(collectionRef, {
           ...item,
           programme: activeProgram,
-          // FIX: Use userName from context instead of user.name
-          // Fallback to user?.displayName (Firebase) or email if name is missing
-          username: userName || user?.displayName || user?.email || "Admin"
+          // CHANGED: Use the Field Officer name from the file (item.username).
+          // If it is missing, default to "Unknown" instead of using the uploader's name.
+          username: item.username || "Unknown"
         });
         count++;
       }
