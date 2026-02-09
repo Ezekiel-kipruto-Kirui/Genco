@@ -89,6 +89,11 @@ const baseMenuItems = [
     icon: HeartPulse,
     url: "/dashboard/animalhealth"
   },
+  { 
+    title: "Requisition",
+    icon: Upload,
+    url: "/dashboard/requisition"
+  },
 ];
 
 export function DashboardSidebar() {

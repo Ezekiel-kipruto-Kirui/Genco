@@ -26,6 +26,7 @@ const FodderOfftakePage = lazy(() => import("./pages/FodderOfftakePage"));
 const SalesReport = lazy(() => import("./pages/salesmetrics"));
 const UserManagementPage = lazy(() => import("./pages/UserManagementPage"));
 const NotFound = lazy(() => import("./pages/NotFound"));
+const RequsitionPage = lazy(() => import("./pages/requisitionpage"));
 
 const queryClient = new QueryClient();
 
@@ -88,6 +89,8 @@ const App = () => (
 
                 {/* Admin Only Routes - Removed inner ProtectedRoute as parent handles auth */}
                 <Route path="users" element={<UserManagementPage />} />
+                <Route path="requisition" element={<RequsitionPage />} />
+                
               </Route>
 
               {/* Catch-all route for 404 */}
