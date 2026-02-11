@@ -1033,10 +1033,8 @@ const LivestockFarmersPage = () => {
                     Clear Filters
                 </Button>
             </div>
-          </div>
           
-        <div className="flex flex-wrap gap-2 w-full md:w-auto mt-2 md:mt-0 justify-end">
-          {selectedRecords.length > 0 && (
+            {selectedRecords.length > 0 && (
             <Button variant="destructive" size="sm" onClick={openBulkDeleteConfirm} disabled={deleteLoading} className="text-xs">
               <Trash2 className="h-4 w-4 mr-2" /> Delete ({selectedRecords.length})
             </Button>
@@ -1051,6 +1049,9 @@ const LivestockFarmersPage = () => {
                 </Button>
              </>
           )}
+        {/* <div className="flex flex-wrap gap-2 w-full md:w-auto mt-2 md:mt-0 justify-end">
+        
+        </div> */}
         </div>
       </div>
 

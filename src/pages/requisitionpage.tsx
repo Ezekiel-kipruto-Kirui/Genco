@@ -11,20 +11,23 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
-import { Download, Eye, Calendar, FileText, Edit, Trash2, Car, Wallet, CheckCircle, XCircle, MapPin, Printer } from "lucide-react";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu"; // Added for Dropdown
+import { Download, Eye, Calendar, FileText, Edit, Trash2, Car, Wallet, CheckCircle, XCircle, MapPin, Printer, Plus, Minus, Save, FileImage, ExternalLink, MoreHorizontal } from "lucide-react"; // Added MoreHorizontal
 import { useToast } from "@/hooks/use-toast";
 import { isChiefAdmin } from "@/contexts/authhelper";
+import html2canvas from "html2canvas";
+import { jsPDF } from "jspdf";
 
 // --- Types ---
 
 interface PerdiemItem {
+  date?: string | number; 
   name: string;
   price: number;
 }
 
 interface RequisitionData {
   id: string;
-  // Common Fields
   type: 'fuel and Service' | 'perdiem';
   status: 'pending' | 'approved' | 'rejected';
   username: string;
@@ -38,26 +41,31 @@ interface RequisitionData {
   phoneNumber?: string;
   approvedBy?: string;
   approvedAt?: string | number;
-  
-  // FIX: Added createdAt and totalAmount to interface
   createdAt?: number | string;
   totalAmount?: number;
-
+  
   // Fuel & Service Fields
   lastReading?: number;
   currentReading?: number;
   distanceTraveled?: number;
   fuelAmount?: number;
   fuelPurpose?: string;
-
+  
   // Perdiem Fields
-  tripFrom?: string;
-  tripTo?: string;
+  fromLocation?: string; 
+  toLocation?: string; 
+  tripFrom?: string;   
+  tripTo?: string;     
+  tripPurpose?: string; 
   numberOfDays?: number;
-  items?: PerdiemItem[]; // Matches the JSON array structure
+  items?: PerdiemItem[]; 
   total?: number;
-  tripPurpose?: string;
-  location?: string; // Added based on provided JSON
+  location?: string; 
+  
+  // Mobile App Upload Fields
+  fileUploaded?: boolean;
+  fileUploadedAt?: string | number;
+  requisitionUrl?: string; // Pipe separated URLs string
 }
 
 interface Filters {
@@ -93,7 +101,6 @@ const parseDate = (date: any): Date | null => {
     if (date instanceof Date) return date;
     if (typeof date === 'number') return new Date(date);
     if (typeof date === 'string') {
-      // Handle formats like "26 Jan 2026" or standard ISO
       const parsed = new Date(date);
       return isNaN(parsed.getTime()) ? null : parsed;
     }
@@ -112,6 +119,13 @@ const formatDate = (date: any): string => {
   }) : 'N/A';
 };
 
+// Helper for Input type="date"
+const toInputDate = (date: any): string => {
+  const d = parseDate(date);
+  if (!d) return "";
+  return d.toISOString().split('T')[0];
+};
+
 const getOfficerName = (record: RequisitionData | null | undefined): string => {
   if (!record) return "Unknown";
   return record.name || record.userName || record.username || record.email || "Unknown";
@@ -119,7 +133,7 @@ const getOfficerName = (record: RequisitionData | null | undefined): string => {
 
 const getCurrentMonthDates = () => {
   const now = new Date();
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(),1);
   const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
   const formatDate = (date: Date) =>
     `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
@@ -129,13 +143,20 @@ const getCurrentMonthDates = () => {
   };
 };
 
+// Helper to parse the pipe-separated URLs from requisitionUrl
+const getRequisitionImages = (urlString: string | undefined): string[] => {
+  if (!urlString) return [];
+  // Split by pipe, trim whitespace, and filter empty strings
+  return urlString.split('|').map(url => url.trim()).filter(url => url.length > 0);
+};
+
 // --- Main Component ---
 
 const RequisitionsPage = () => {
   const { user, userRole, userName } = useAuth();
   const { toast } = useToast();
   
-  // State
+  // List State
   const [allRequisitions, setAllRequisitions] = useState<RequisitionData[]>([]);
   const [filteredRequisitions, setFilteredRequisitions] = useState<RequisitionData[]>([]);
   const [activeProgram, setActiveProgram] = useState<string>(""); 
@@ -147,8 +168,24 @@ const RequisitionsPage = () => {
   // Dialog States
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
   const [viewingRecord, setViewingRecord] = useState<RequisitionData | null>(null);
+  
+  // Image Viewer State (New)
+  const [isImageViewerOpen, setIsImageViewerOpen] = useState(false);
+  const [viewingImages, setViewingImages] = useState<string[]>([]);
+  
+  // Edit State
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const [editRecord, setEditRecord] = useState<RequisitionData | null>(null);
+  const [editFormData, setEditFormData] = useState<Partial<RequisitionData>>({});
+  const [isSaving, setIsSaving] = useState(false);
+
+  // Delete State
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
+  const [recordToDelete, setRecordToDelete] = useState<RequisitionData | null>(null);
+  
+  // Ref for PDF Generation
+  const docRef = useRef<HTMLDivElement>(null);
   
   const currentMonth = useMemo(getCurrentMonthDates, []);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -240,7 +277,7 @@ const RequisitionsPage = () => {
         }
         const records = Object.keys(data).map((key) => {
             const item = data[key];
-            // Attempt to parse submittedAt, but fallback to current time if invalid
+            
             let dateVal = item.submittedAt;
             if (typeof dateVal === 'string') {
                const d = parseDate(dateVal);
@@ -248,18 +285,21 @@ const RequisitionsPage = () => {
             } else if (typeof dateVal !== 'number') {
                dateVal = Date.now();
             }
+
+            const isFuel = item.type === 'fuel and Service';
             
             return {
                 id: key,
                 ...item,
-                // Ensure items is an array, default to empty if null/undefined
+                tripPurpose: isFuel ? item.fuelPurpose : item.tripPurpose,
                 items: Array.isArray(item.items) ? item.items : [], 
                 createdAt: dateVal, 
-                totalAmount: (item.type === 'fuel and Service' ? item.fuelAmount : item.total) || 0
+                totalAmount: (isFuel ? item.fuelAmount : item.total) || 0,
+                // Ensure fileUploaded is captured
+                fileUploaded: item.fileUploaded || false
             };
         });
         
-        // Sort by date descending
         records.sort((a, b) => (b.createdAt as number) - (a.createdAt as number));
         
         setAllRequisitions(records);
@@ -282,7 +322,6 @@ const RequisitionsPage = () => {
     }
 
     let filteredList = allRequisitions.filter(record => {
-      // Date Filter
       if (filters.startDate || filters.endDate) {
         const recordDate = parseDate(record.createdAt);
         if (recordDate) {
@@ -297,11 +336,9 @@ const RequisitionsPage = () => {
         } else if (filters.startDate || filters.endDate) return false;
       }
 
-      // Status/Type Filters
       if (filters.status !== "all" && record.status?.toLowerCase() !== filters.status.toLowerCase()) return false;
       if (filters.type !== "all" && record.type?.toLowerCase() !== filters.type.toLowerCase()) return false;
 
-      // Search
       if (filters.search) {
         const term = filters.search.toLowerCase();
         const match = [
@@ -314,7 +351,6 @@ const RequisitionsPage = () => {
 
     setFilteredRequisitions(filteredList);
 
-    // Calculate Stats
     const totalRequests = filteredList.length;
     const pendingRequests = filteredList.filter(r => r.status === 'pending').length;
     const totalAmount = filteredList.reduce((sum, r) => sum + (r.totalAmount || 0), 0);
@@ -363,22 +399,144 @@ const RequisitionsPage = () => {
     });
   }, [filteredRequisitions.length]);
 
-  const openViewDialog = useCallback((record: RequisitionData) => { setViewingRecord(record); setIsViewDialogOpen(true); }, []);
+  const openViewDialog = useCallback((record: RequisitionData) => { 
+    setViewingRecord(record); 
+    setIsViewDialogOpen(true); 
+  }, []);
+
+  // --- Image Handlers (New) ---
+  const handleOpenImageViewer = (record: RequisitionData, printImmediately = false) => {
+    const images = getRequisitionImages(record.requisitionUrl);
+    if (images.length === 0) {
+      toast({ title: "No Images", description: "No receipts uploaded for this record." });
+      return;
+    }
+    setViewingImages(images);
+    setIsImageViewerOpen(true);
+    
+    if (printImmediately) {
+        setTimeout(() => {
+            window.print();
+        }, 500);
+    }
+  };
+
+  // --- Edit Handlers ---
+  const openEditDialog = useCallback((record: RequisitionData) => {
+    setEditRecord(record);
+    setEditFormData({
+      ...record,
+      items: record.items ? [...record.items] : []
+    });
+    setIsEditDialogOpen(true);
+  }, []);
+
+  const handleEditFieldChange = (field: keyof RequisitionData, value: any) => {
+    setEditFormData(prev => ({ ...prev, [field]: value }));
+  };
+
+  const handlePerdiemItemChange = (index: number, field: 'name' | 'price' | 'date', value: any) => {
+    const currentItems = editFormData.items || [];
+    const updatedItems = currentItems.map((item, i) => 
+      i === index ? { ...item, [field]: value } : item
+    );
+    setEditFormData(prev => ({ ...prev, items: updatedItems }));
+    
+    if (field === 'price') {
+      const newTotal = updatedItems.reduce((sum, item) => sum + (Number(item.price) || 0), 0);
+      setEditFormData(prev => ({ ...prev, total: newTotal }));
+    }
+  };
+
+  const addPerdiemItem = () => {
+    const currentItems = editFormData.items || [];
+    setEditFormData(prev => ({
+      ...prev,
+      items: [...currentItems, { name: '', price: 0, date: toInputDate(new Date()) }]
+    }));
+  };
+
+  const removePerdiemItem = (index: number) => {
+    const currentItems = editFormData.items || [];
+    const updatedItems = currentItems.filter((_, i) => i !== index);
+    const newTotal = updatedItems.reduce((sum, item) => sum + (Number(item.price) || 0), 0);
+    setEditFormData(prev => ({ ...prev, items: updatedItems, total: newTotal }));
+  };
+
+  const saveEdit = async () => {
+    if (!editRecord) return;
+    setIsSaving(true);
+    try {
+      const updatePayload: any = {
+        county: editFormData.county,
+        subcounty: editFormData.subcounty,
+        tripPurpose: editFormData.tripPurpose,
+        status: editFormData.status,
+      };
+
+      if (editRecord.type === 'fuel and Service') {
+        updatePayload.lastReading = editFormData.lastReading;
+        updatePayload.currentReading = editFormData.currentReading;
+        updatePayload.distanceTraveled = editFormData.distanceTraveled;
+        updatePayload.fuelAmount = editFormData.fuelAmount;
+        updatePayload.fuelPurpose = editFormData.tripPurpose; 
+      } else {
+        updatePayload.fromLocation = editFormData.fromLocation;
+        updatePayload.toLocation = editFormData.toLocation;
+        updatePayload.tripFrom = editFormData.tripFrom;
+        updatePayload.tripTo = editFormData.tripTo;
+        updatePayload.numberOfDays = editFormData.numberOfDays;
+        updatePayload.items = editFormData.items;
+        updatePayload.total = editFormData.total;
+        updatePayload.location = editFormData.location;
+      }
+
+      await update(ref(db, `requisitions/${editRecord.id}`), updatePayload);
+      toast({ title: "Success", description: "Requisition updated successfully." });
+      setIsEditDialogOpen(false);
+    } catch (error) {
+      console.error(error);
+      toast({ title: "Error", description: "Failed to update requisition.", variant: "destructive" });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // --- Delete Handlers ---
+
+  const confirmDelete = (record: RequisitionData) => {
+    setRecordToDelete(record);
+    setIsDeleteConfirmOpen(true);
+  };
+
+  const executeDelete = async () => {
+    if (!recordToDelete) return;
+    setDeleteLoading(true);
+    try {
+      await remove(ref(db, `requisitions/${recordToDelete.id}`));
+      toast({ title: "Deleted", description: "Requisition deleted successfully" });
+      setIsDeleteConfirmOpen(false);
+      setRecordToDelete(null);
+    } catch (error) {
+      console.error(error);
+      toast({ title: "Error", description: "Failed to delete", variant: "destructive" });
+    } finally {
+      setDeleteLoading(false);
+    }
+  };
 
   // --- Approve Logic ---
   const handleApprove = async () => {
     if (!viewingRecord) return;
     try {
         const approverName = userName || user?.displayName || user?.email || "Admin";
-        
         await update(ref(db, `requisitions/${viewingRecord.id}`), {
             status: 'approved',
             approvedBy: approverName,
             approvedAt: Date.now()
         });
-
         toast({ title: "Approved", description: "Requisition approved successfully" });
-        setIsViewDialogOpen(false); // Close to refresh
+        setIsViewDialogOpen(false); 
     } catch (error) {
         console.error(error);
         toast({ title: "Error", description: "Failed to approve", variant: "destructive" });
@@ -392,6 +550,30 @@ const RequisitionsPage = () => {
   const handleExport = async () => {
     // Optional: Implement Export
   };
+
+  const handleDownload = useCallback(async () => {
+    if (!docRef.current || !viewingRecord) return;
+    const element = docRef.current;
+    toast({ title: "Generating PDF", description: "Please wait while we create your document..." });
+    try {
+      const canvas = await html2canvas(element, {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: '#ffffff' 
+      });
+      const imgData = canvas.toDataURL('image/png');
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const imgProps = pdf.getImageProperties(imgData);
+      const imgHeight = (imgProps.height * pdfWidth) / imgProps.width;
+      pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, imgHeight);
+      pdf.save(`Requisition_${viewingRecord.id}_${viewingRecord.type}.pdf`);
+      toast({ title: "Success", description: "Document downloaded successfully." });
+    } catch (error) {
+      console.error("PDF Generation Error:", error);
+      toast({ title: "Error", description: "Failed to generate PDF", variant: "destructive" });
+    }
+  }, [viewingRecord, toast]);
 
   const getCurrentPageRecords = useCallback(() => {
     const startIndex = (pagination.page - 1) * pagination.limit;
@@ -431,11 +613,11 @@ const RequisitionsPage = () => {
          
          <div className="flex lg:flex-row md:flex-row flex-col gap-4 w-full md:w-auto">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full md:w-auto">
-                <div className="space-y-2">
+                <div className="">
                     <Label className="sr-only">Start Date</Label>
                     <Input type="date" value={filters.startDate} onChange={(e) => handleFilterChange("startDate", e.target.value)} className="border-gray-300 focus:border-blue-500 bg-white h-9 w-full" />
                 </div>
-                <div className="space-y-2">
+                <div className="">
                     <Label className="sr-only">End Date</Label>
                     <Input type="date" value={filters.endDate} onChange={(e) => handleFilterChange("endDate", e.target.value)} className="border-gray-300 focus:border-blue-500 bg-white h-9 w-full" />
                 </div>
@@ -459,7 +641,7 @@ const RequisitionsPage = () => {
                     Clear Filters
                 </Button>
             </div>
-          </div>
+          
           
         <div className="flex flex-wrap gap-2 w-full md:w-auto mt-2 md:mt-0 justify-end">
           {selectedRecords.length > 0 && (
@@ -471,30 +653,14 @@ const RequisitionsPage = () => {
             <Download className="h-4 w-4 mr-2" /> Export ({filteredRequisitions.length})
           </Button>
         </div>
+        </div>
       </div>
 
       {/* Stats Section */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        <StatsCard 
-            title="TOTAL REQUESTS" 
-            value={stats.totalRequests.toLocaleString()} 
-            icon={FileText} 
-            color="blue"
-        />
-        
-        <StatsCard 
-            title="PENDING APPROVAL" 
-            value={stats.pendingRequests.toLocaleString()} 
-            icon={Calendar} 
-            color="orange"
-        />
-             
-        <StatsCard 
-            title="TOTAL AMOUNT" 
-            value={`KES ${stats.totalAmount.toLocaleString()}`} 
-            icon={Wallet} 
-            color="green"
-        />
+        <StatsCard title="TOTAL REQUESTS" value={stats.totalRequests.toLocaleString()} icon={FileText} color="blue"/>
+        <StatsCard title="PENDING APPROVAL" value={stats.pendingRequests.toLocaleString()} icon={Calendar} color="orange"/>
+        <StatsCard title="TOTAL AMOUNT" value={`KES ${stats.totalAmount.toLocaleString()}`} icon={Wallet} color="green"/>
       </div>
 
       {/* Filter Section */}
@@ -583,8 +749,28 @@ const RequisitionsPage = () => {
                              </Badge>
                         </td>
                         <td className="py-2 px-3">
-                          <div className="flex gap-1">
+                          <div className="flex gap-1 items-center">
                             <Button variant="ghost" size="sm" className="h-7 w-7 text-blue-600 hover:bg-blue-50" onClick={() => openViewDialog(record)}><Eye className="h-3.5 w-3.5" /></Button>
+                            <Button variant="ghost" size="sm" className="h-7 w-7 text-gray-600 hover:bg-gray-50" onClick={() => openEditDialog(record)}><Edit className="h-3.5 w-3.5" /></Button>
+                            
+                            {/* Image Dropdown (New) */}
+                            <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                    <Button variant="ghost" size="sm" className="h-7 w-7 text-purple-600 hover:bg-purple-50">
+                                        <FileImage className="h-3.5 w-3.5" />
+                                    </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end">
+                                    <DropdownMenuItem onClick={() => handleOpenImageViewer(record)}>
+                                        View Images
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem onClick={() => handleOpenImageViewer(record, true)}>
+                                        Print Images
+                                    </DropdownMenuItem>
+                                </DropdownMenuContent>
+                            </DropdownMenu>
+
+                            <Button variant="ghost" size="sm" className="h-7 w-7 text-red-600 hover:bg-red-50" onClick={() => confirmDelete(record)}><Trash2 className="h-3.5 w-3.5" /></Button>
                           </div>
                         </td>
                       </tr>
@@ -605,177 +791,89 @@ const RequisitionsPage = () => {
         </CardContent>
       </Card>
 
-      {/* View Document Dialog */}
+      {/* --- VIEW DIALOG --- */}
       <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
-        <DialogContent className="sm:max-w-4xl bg-gray-200 rounded-none w-[95vw] sm:w-full max-h-[95vh] flex flex-col">
-          {/* Scrollable Content Area */}
+        <DialogContent className="font-times sm:max-w-5xl bg-gray-200 rounded-none w-[95vw] sm:w-full max-h-[95vh] flex flex-col">
           <div className="overflow-y-auto flex-1">
             {viewingRecord && (
-              <div className="grid bg-white shadow-lg w-full p-8 md:p-12 min-h-[800px] relative">
-                <div className="w-[90px] mb-6">
-                  <img src="/img/logo.png" alt="Logo" className="h-auto w-full object-contain" />
-                </div>
-                
-                {/* Added pb-56 to create space at the bottom for the absolute signatures */}
-                <div className="pb-56">
-                  {/* --- Header --- */}
-                  <div className="border-b-2 border-black pb-4 mb-8 flex justify-between items-end">
-                    <div>
-                      <h1 className="text-3xl font-bold uppercase tracking-tight mb-2">
-                        {viewingRecord.type === 'fuel and Service' ? "Fuel & Service" : "Perdiem"} Requisition
-                      </h1>
-                    </div>
-                  </div>
-
-                  {/* --- Top Info Grid --- */}
-                  <div className="flex flex-col gap-6 mb-8 text-sm">
-                    <div className="flex flex-row gap-16">
-                      <span className="text-gray-500 text-xs uppercase font-bold w-32">Date of Request</span>
-                      <span className="font-medium border-b border-gray-300 pb-1 flex-1">{formatDate(viewingRecord.submittedAt)}</span>
-                    </div>
-                    <div className="flex flex-row gap-16">
-                      <span className="text-gray-500 text-xs uppercase font-bold w-32">County</span>
-                      <span className="font-medium border-b border-gray-300 pb-1 flex-1">{viewingRecord.county}</span>
-                    </div>
-                    <div className="flex flex-row gap-16">
-                      <span className="text-gray-500 text-xs uppercase font-bold w-32">Subcounty</span>
-                      <span className="font-medium border-b border-gray-300 pb-1 flex-1">{viewingRecord.subcounty}</span>
-                    </div>
-                    <div className="flex flex-row gap-16">
-                      <span className="text-gray-500 text-xs uppercase font-bold w-32">Requested By</span>
-                      <span className="font-medium border-b border-gray-300 pb-1 flex-1">{getOfficerName(viewingRecord)}</span>
-                    </div>
-                  </div>
-
-                
-                  {viewingRecord.type === 'fuel and Service' ? (
-                    // Fuel Layout
-                    <div className="space-y-6">
-                      <h3 className="font-bold text-gray-800 border-l-4 border-blue-600 pl-3 uppercase text-lg">Fuel Details</h3>
-
-                      <div className="grid grid-cols-2 gap-6">
-                        <div className="flex flex-col">
-                          <span className="text-gray-500 text-xs uppercase font-bold">Last Speedometer Reading</span>
-                          <span className="font-mono font-bold text-xl text-gray-800">{viewingRecord.lastReading} km</span>
-                        </div>
-                        <div className="flex flex-col">
-                          <span className="text-gray-500 text-xs uppercase font-bold">Current Speedometer Reading</span>
-                          <span className="font-mono font-bold text-xl text-gray-800">{viewingRecord.currentReading} km</span>
-                        </div>
-                        <div className="flex flex-col">
-                          <span className="text-gray-500 text-xs uppercase font-bold">Distance Traveled</span>
-                          <span className="font-bold text-gray-800">{viewingRecord.distanceTraveled} km</span>
-                        </div>
-                        <div className="flex flex-col">
-                          <span className="text-gray-500 text-xs uppercase font-bold">Amount Requested</span>
-                          <span className="font-bold text-green-700 text-xl">KES {viewingRecord.fuelAmount?.toLocaleString()}</span>
-                        </div>
+              <div ref={docRef} className="grid grid-cols-1 bg-white shadow-lg w-full p-15 md:p-12 min-h-[800px] relative">
+                <div className="pb-10">
+                  <div className="flex flex-col items-center justify-center">
+                      <div className="w-[260px] m-0 p-0">
+                        <img src="/img/logo.png" alt="Logo" className="w-full" />
                       </div>
+                      <h1 className="font-times  text-2xl font-bold uppercase tracking-tight leading-tight mb-2">
+                        {viewingRecord.type === "fuel and Service" ? "Fuel & Service" : "Perdiem"}{" "}
+                        Requisition Form
+                      </h1>
+                  </div>
+                  <div className="mt-5 flex flex-col gap-2 mb-2 text-sm">
+                    <div className="flex flex-row gap-2"><span className="text-gray-700 text-[17px]">Date of Request:</span><span className="font-medium flex-1 text-[17px]">{formatDate(viewingRecord.submittedAt)}</span></div>
+                    <div className="flex flex-row gap-2"><span className="text-gray-700 text-[17px]">County:</span><span className="font-medium flex-1 text-[17px]">{viewingRecord.county}</span></div>
+                    <div className="flex flex-row gap-2"><span className="text-gray-700 text-[17px]">Sub County:</span><span className="font-medium flex-1 text-[17px]">{viewingRecord.subcounty}</span></div>
+                    <div className="flex flex-row gap-2"><span className="text-gray-700 text-[17px]">Requested By:</span><span className="font-medium flex-1 text-[17px]">{getOfficerName(viewingRecord)}</span></div>
+                    <div className="flex flex-row gap-2"><span className="text-gray-700 text-[17px]">Phone: </span><span className="font-medium  flex-1 text-[17px]">{viewingRecord.phoneNumber}</span></div>
+                    <div className="flex flex-row gap-2"><span className="text-gray-700 text-[17px]">Purpose : </span><span className="font-medium  flex-1 text-[17px]">{viewingRecord.tripPurpose}</span></div>
+                  </div>
 
-                      <div className="flex flex-col">
-                        <span className="text-gray-500 text-xs uppercase font-bold">Purpose : </span>
-                        <p className="font-medium bg-gray-50 border border-gray-300">{viewingRecord.fuelPurpose}</p>
+                  {viewingRecord.type === 'fuel and Service' ? (
+                    <div className="space-y-2 font-times">
+                      <div className="grid grid-cols-1 gap-4">
+                        <div className="flex flex-row items-center gap-2"><span className="text-gray-800 text-[17px] ">Last Speedometer Reading : </span><span className="text-gray-800">{viewingRecord.lastReading} km</span></div>
+                        <div className="flex flex-row items-center gap-2"><span className="text-gray-800 text-[17px] ">Current Speedometer Reading :</span><span className="text-gray-800">{viewingRecord.currentReading} km</span></div>
+                        <div className="flex flex-row items-center gap-2"><span className="text-gray-800 text-[17px] ">Distance Traveled : </span><span className="text-gray-800">{viewingRecord.distanceTraveled} km</span></div>
+                        <div className="flex flex-row items-center gap-2"><span className="text-gray-800 text-[17px] ">Amount Requested : </span><span className="text-gray-800">KES {viewingRecord.fuelAmount?.toLocaleString()}</span></div>
                       </div>
                     </div>
                   ) : (
-                    // Perdiem Layout
                     <div className="space-y-6">
-                      <h3 className="font-bold text-gray-800 border-l-4 border-blue-600 pl-3 uppercase text-lg">Perdiem Details</h3>
-
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div className="flex flex-col">
-                          <span className="text-gray-500 text-xs uppercase font-bold">Trip From</span>
-                          <span className="font-medium border-b border-gray-300 pb-1">{formatDate(viewingRecord.tripFrom)}</span>
-                        </div>
-                        <div className="flex flex-col">
-                          <span className="text-gray-500 text-xs uppercase font-bold">Trip To</span>
-                          <span className="font-medium border-b border-gray-300 pb-1">{formatDate(viewingRecord.tripTo)}</span>
-                        </div>
-                        <div className="flex flex-col">
-                          <span className="text-gray-500 text-xs uppercase font-bold">Number of Days</span>
-                          <span className="font-medium border-b border-gray-300 pb-1">{viewingRecord.numberOfDays} Days</span>
-                        </div>
-                        <div className="flex flex-col">
-                          <span className="text-gray-500 text-xs uppercase font-bold flex items-center gap-2">
-                            <MapPin className="h-3 w-3" /> Location
-                          </span>
-                          <span className="font-medium border-b border-gray-300 pb-1">{viewingRecord.location || 'N/A'}</span>
-                        </div>
+                      <div className="items-center"><u><h3 className="font-times text-center font-bold text-gray-800 uppercase text-lg">TRAVEL REQUEST REIMBURSEMENT SHEET</h3></u></div>
+                      <div className="grid grid-cols-1 md:grid-cols-2">
+                        <div className="flex flex-row items-center"><span className="text-gray-800 text-[17px] "> From : </span><span className="font-medium">{viewingRecord.fromLocation || 'N/A'}</span></div>
+                        <div className="flex flex-row items-center"><span className="text-gray-800 text-[17px] "> To : </span><span className="font-medium">{viewingRecord.toLocation || 'N/A'}</span></div>
+                        <div className="flex flex-row items-center"><span className="text-gray-800 text-[17px] "> Trip Starts On : </span><span className="font-medium">{formatDate(viewingRecord.tripFrom)}</span></div>
+                        <div className="flex flex-row items-center"><span className="text-gray-800 text-[17px] ">Trip End on : </span><span className="font-medium">{formatDate(viewingRecord.tripTo)}</span></div>
+                        <div className="flex flex-row items-center"><span className="text-gray-800 text-[17px] ">Number of Days : </span><span className="font-medium">{viewingRecord.numberOfDays} Days</span></div>
+                        <div className="flex flex-row items-center"><span className="text-gray-800 text-[17px]  flex items-center gap-2">Location :</span><span className="font-medium">{viewingRecord.location || 'N/A'}</span></div>
                       </div>
-
-                      <div className="mt-4">
-                        <span className="text-gray-500 text-xs uppercase font-bold mb-2 block">Breakdown</span>
+                      <div className="mt-4 flex flex-col items-center justify-center">
+                        <span className="text-gray-800 text-xl uppercase font-bold block ">Cost Breakdown</span>
                         <div className="w-full text-sm border-collapse border border-gray-400">
-                          <div>
-                            {viewingRecord.items && viewingRecord.items.length > 0 ? (
-                              viewingRecord.items.map((item, idx) => (
-                                <div key={idx} className="flex justify-between border-b border-gray-300">
-                                  <p className="p-2 border-r border-gray-300 flex-1">{item.name}</p>
-                                  <p className="p-2 text-right w-32">{item.price.toLocaleString()}</p>
-                                </div>
-                              ))
-                            ) : (
-                              <div className="p-4 text-center text-gray-500 italic">No items found.</div>
-                            )}
-                          </div>
-                          <div>
-                            <div className="bg-gray-100 border-t-2 border-gray-800 font-bold flex justify-between">
-                              <p className="p-2 border-r border-gray-800">Total Amount</p>
-                              <p className="p-2 text-right text-green-700">{viewingRecord.total?.toLocaleString()}</p>
-                            </div>
-                          </div>
+                          <table className="w-full border-collapse border border-gray-300">
+                            <thead><tr className="bg-gray-100"><td className="p-2 border border-gray-500 text-left text-[17px] font-semibold text-gray-700">Date</td><td className="p-2 border border-gray-500 text-left text-[17px] font-semibold text-gray-700">Item/Description</td><td className="p-2 border border-gray-500 text-right text-[17px] font-semibold text-gray-700">Amount (KES)</td></tr></thead>
+                            <tbody className="divide-y divide-gray-300">
+                              {viewingRecord.items && viewingRecord.items.length > 0 ? viewingRecord.items.map((item, idx) => (
+                                <tr key={idx} className=""><td className="p-2 text-[17px] border-r border-gray-500 w-32">{formatDate(item.date)}</td><td className="p-2 text-[17px] border-r border-gray-500 flex-1">{item.name}</td><td className="p-2 text-[17px] text-right w-32">{item.price.toLocaleString()}</td></tr>
+                              )) : <div className="p-4 text-center text-gray-500 italic">No items found.</div>}
+                              <tr className=""><td className="p-2 text-[17px] ">Total Amount</td><td></td><td className="p-2 text-[17px] text-right border-l border-gray-800 text-gray-700">{viewingRecord.total?.toLocaleString()}</td></tr>
+                            </tbody>
+                          </table>
                         </div>
-                      </div>
-                      <div className=" flex flex-row mt-4 items-center gap-2">
-                        <span className="text-gray-500 text-xs uppercase font-bold block">Purpose : </span>
-                        <span className="font-medium border-b border-gray-300 flex-1">{viewingRecord.tripPurpose}</span>
-                       
                       </div>
                     </div>
                   )}
-                </div>
 
-                <div className="absolute left-8 right-8 bottom-0">
-                  <div className="grid grid-cols-1 top-5 gap-8 mt-16 pt-8 mb-24">
-                  {/* Approved By */}
-                    <div className="flex flex-col">
-                      <div className="flex flex-row items-end gap-4">
-                        <span className="text-xs uppercase text-gray-600 font-bold mb-2">Approved By</span>
-                        <div className="flex-1 border-b-2 border-black mb-1 flex items-center justify-center relative h-6">
-                          {viewingRecord.approvedBy ? (
-                            <span className="text-sm font-bold text-blue-700">{viewingRecord.approvedBy}</span>
-                          ) : (
-                            <span className="text-xs italic text-gray-300">Pending Approval</span>
-                          )}
-                           
+                  <div className="mt-2">
+                    <div className="grid grid-cols-1 top-5 gap-8">
+                      <div className="flex flex-col">
+                        <div className="flex flex-row justify-between">
+                          <div className="flex flex-col gap-2 items-center justify-start"></div>
                         </div>
-                        <span>Date :</span>
-                        <div className="flex justify-between text-2xs text-gray-900 ">
-                          
-                        <span> 
-                          {viewingRecord.approvedAt ? formatDate(viewingRecord.approvedAt) : 'Date'}
-                           <div className="flex-1 border-b-2 border-black mb-1"></div>
-                          </span>
-                        
                       </div>
-                      </div>
-                     
-                    </div>
+                      <div className="grid grid-cols-2 mt-4 gap-6">
+                        <div className="flex flex-row">
+                          <span className="text-[17px] text-gray-700">Approved By : </span>
+                          <div className="flex-1 flex relative h-6">{viewingRecord.approvedBy ? <span className="text-[17px] ml-2">{viewingRecord.approvedBy} (Project Manager)</span> : <span className="text-xs italic text-gray-300">Pending Approval</span>}</div></div>
+                        <div className="flex flex-row"><span className="text-[17px]">Date : </span><div className="flex justify-between text-2xs text-gray-900 ml-2"><span>{viewingRecord.approvedAt ? formatDate(viewingRecord.approvedAt) : 'Date'}<div className="flex-1 border-b-2 border-black mb-1"></div></span></div></div>
+                        <div className="flex-1 flex flex-col justify-between gap-4">
+                          <span className="text-[17px] text-gray-800 ">Authorized By :</span><div className="flex-1"></div>
+                          <span className="text-[17px]">Signature : </span>
+                        </div>
+                        <div className="flex-1 flex flex-col justify-between">
+                          <span className="text-[17px]">Date : </span><div className="flex-1"></div>
+                          <span className="text-[17px]">Official Stamp : </span>
+                        </div>
 
-                    {/* Authorized By */}
-                    <div className="flex flex-col">
-                      <div className="flex flex-row items-end gap-4">
-                        <span className="text-xs uppercase text-gray-600 font-bold mb-2">Authorized By</span>
-                        <div className="flex-1 border-b-2 border-black mb-1"></div>
-                        
-                          <span>Signature</span>
-                          <div className="flex-1 border-b-2 border-black mb-1"></div>
-                        <span>Date</span>
-                        <div className="flex-1 border-b-2 border-black mb-1"></div>
-                        
-                      </div>
-                      <div className="flex justify-between text-xs text-gray-500 px-32">
-                        
                       </div>
                     </div>
                   </div>
@@ -783,35 +881,158 @@ const RequisitionsPage = () => {
               </div>
             )}
           </div>
-
-          {/* Footer / Action Bar */}
           <div className="bg-gray-200 p-4 flex flex-col-reverse sm:flex-row justify-between items-center gap-4 border-t border-gray-300 z-10 shrink-0">
-            
-            {/* Left Side: Print & Download */}
             <div className="flex gap-2 w-full sm:w-auto">
-              <Button variant="outline" onClick={() => window.print()} className="flex-1 sm:flex-none">
-                <Printer className="h-4 w-4 mr-2" /> Print
-              </Button>
-              <Button variant="outline" onClick={() => { /* Add handleDownload logic here */ }} className="flex-1 sm:flex-none">
-                <Download className="h-4 w-4 mr-2" /> Download
-              </Button>
+              <Button variant="outline" onClick={() => window.print()} className="flex-1 sm:flex-none"><Printer className="h-4 w-4 mr-2" /> Print</Button>
+              <Button variant="outline" onClick={handleDownload} className="flex-1 sm:flex-none"><Download className="h-4 w-4 mr-2" /> Download</Button>
             </div>
-
-            {/* Right Side: Approve (Conditional) & Close */}
             <div className="flex gap-2 w-full sm:w-auto justify-end">
               {!viewingRecord?.approvedBy && (
                 <Button onClick={handleApprove} className="bg-green-600 hover:bg-green-700 flex-1 sm:flex-none">
                   <CheckCircle className="h-4 w-4 mr-2" /> Approve Requisition
                 </Button>
               )}
-              <Button variant="outline" onClick={() => setIsViewDialogOpen(false)} className="flex-1 sm:flex-none">
-                Close
-              </Button>
+              <Button variant="outline" onClick={() => setIsViewDialogOpen(false)} className="flex-1 sm:flex-none">Close</Button>
             </div>
-
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* --- IMAGE VIEWER DIALOG (New) --- */}
+      <Dialog open={isImageViewerOpen} onOpenChange={setIsImageViewerOpen}>
+        <DialogContent className="sm:max-w-4xl max-h-[90vh] flex flex-col bg-gray-50">
+            <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                    <FileImage className="h-5 w-5" />
+                    Uploaded Receipts
+                </DialogTitle>
+            </DialogHeader>
+            <div className="flex-1 overflow-y-auto p-4">
+                {viewingImages.length > 0 ? (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                        {viewingImages.map((url, idx) => (
+                            <div key={idx} className="group relative border border-gray-200 rounded-lg shadow-sm bg-white overflow-hidden hover:shadow-md transition-shadow">
+                                <div className="aspect-[4/3] w-full bg-gray-100 flex items-center justify-center">
+                                    <img 
+                                    src={url} 
+                                    alt={`Receipt ${idx + 1}`} 
+                                    className="w-full h-full object-cover"
+                                    loading="lazy"
+                                    />
+                                </div>
+                                <div className="p-3 border-t border-gray-100 flex justify-between items-center">
+                                    <span className="text-sm font-medium text-gray-700">Receipt #{idx + 1}</span>
+                                    <a href={url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-800 text-xs flex items-center gap-1">
+                                        Open Original <ExternalLink className="h-3 w-3"/>
+                                    </a>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                ) : (
+                    <div className="text-center py-10 text-gray-500">No images to display.</div>
+                )}
+            </div>
+            <DialogFooter className="bg-white border-t p-4">
+                <Button variant="outline" onClick={() => setIsImageViewerOpen(false)}>Close</Button>
+                <Button onClick={() => window.print()} variant="default">
+                    <Printer className="h-4 w-4 mr-2" /> Print Images
+                </Button>
+            </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* --- EDIT DIALOG --- */}
+      <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
+        <DialogContent className="sm:max-w-3xl max-h-[90vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle>Edit Requisition</DialogTitle>
+          </DialogHeader>
+          <div className="overflow-y-auto flex-1 pr-2">
+            {editRecord && (
+              <div className="grid gap-6 py-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2"><Label>Type</Label><Input value={editRecord.type} disabled className="bg-gray-100" /></div>
+                  <div className="space-y-2"><Label>Status</Label>
+                    <Select value={editFormData.status} onValueChange={(val) => handleEditFieldChange('status', val)}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent><SelectItem value="pending">Pending</SelectItem><SelectItem value="approved">Approved</SelectItem><SelectItem value="rejected">Rejected</SelectItem></SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2"><Label>County</Label><Input value={editFormData.county || ''} onChange={(e) => handleEditFieldChange('county', e.target.value)} /></div>
+                  <div className="space-y-2"><Label>Sub County</Label><Input value={editFormData.subcounty || ''} onChange={(e) => handleEditFieldChange('subcounty', e.target.value)} /></div>
+                </div>
+                {editRecord.type === 'fuel and Service' ? (
+                  <div className="space-y-4 border p-4 rounded-lg bg-gray-50">
+                    <h3 className="font-semibold text-sm uppercase text-gray-700">Fuel & Service Details</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2"><Label>Purpose</Label><Input value={editFormData.tripPurpose || ''} onChange={(e) => handleEditFieldChange('tripPurpose', e.target.value)} /></div>
+                      <div className="space-y-2"><Label>Amount (KES)</Label><Input type="number" value={editFormData.fuelAmount || ''} onChange={(e) => handleEditFieldChange('fuelAmount', Number(e.target.value))} /></div>
+                      <div className="space-y-2"><Label>Last Reading (km)</Label><Input type="number" value={editFormData.lastReading || ''} onChange={(e) => handleEditFieldChange('lastReading', Number(e.target.value))} /></div>
+                      <div className="space-y-2"><Label>Current Reading (km)</Label><Input type="number" value={editFormData.currentReading || ''} onChange={(e) => handleEditFieldChange('currentReading', Number(e.target.value))} /></div>
+                      <div className="space-y-2"><Label>Distance (km)</Label><Input type="number" value={editFormData.distanceTraveled || ''} onChange={(e) => handleEditFieldChange('distanceTraveled', Number(e.target.value))} /></div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-4 border p-4 rounded-lg bg-gray-50">
+                    <h3 className="font-semibold text-sm uppercase text-gray-700">Perdiem Details</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2"><Label>Purpose</Label><Input value={editFormData.tripPurpose || ''} onChange={(e) => handleEditFieldChange('tripPurpose', e.target.value)} /></div>
+                      <div className="space-y-2"><Label>From Location</Label><Input value={editFormData.fromLocation || ''} onChange={(e) => handleEditFieldChange('fromLocation', e.target.value)} /></div>
+                      <div className="space-y-2"><Label>To Location</Label><Input value={editFormData.toLocation || ''} onChange={(e) => handleEditFieldChange('toLocation', e.target.value)} /></div>
+                      <div className="space-y-2"><Label>Trip Start Date</Label><Input type="date" value={toInputDate(editFormData.tripFrom)} onChange={(e) => handleEditFieldChange('tripFrom', e.target.value)} /></div>
+                      <div className="space-y-2"><Label>Trip End Date</Label><Input type="date" value={toInputDate(editFormData.tripTo)} onChange={(e) => handleEditFieldChange('tripTo', e.target.value)} /></div>
+                      <div className="space-y-2"><Label>Days</Label><Input type="number" value={editFormData.numberOfDays || ''} onChange={(e) => handleEditFieldChange('numberOfDays', Number(e.target.value))} /></div>
+                      <div className="space-y-2"><Label>Total (KES)</Label><Input type="number" value={editFormData.total || ''} onChange={(e) => handleEditFieldChange('total', Number(e.target.value))} /></div>
+                    </div>
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-center">
+                        <Label className="text-sm font-bold">Items</Label>
+                        <Button size="sm" variant="outline" onClick={addPerdiemItem}><Plus className="h-4 w-4 mr-1"/> Add Item</Button>
+                      </div>
+                      <div className="space-y-2">
+                        {editFormData.items && editFormData.items.map((item, idx) => (
+                          <div key={idx} className="flex gap-2 items-center">
+                            <Input type="date" className="flex-1" value={toInputDate(item.date)} onChange={(e) => handlePerdiemItemChange(idx, 'date', e.target.value)} />
+                            <Input placeholder="Item Name" className="flex-[2]" value={item.name} onChange={(e) => handlePerdiemItemChange(idx, 'name', e.target.value)} />
+                            <Input type="number" placeholder="Price" className="w-24" value={item.price} onChange={(e) => handlePerdiemItemChange(idx, 'price', Number(e.target.value))} />
+                            <Button size="icon" variant="ghost" className="text-red-500 hover:text-red-600" onClick={() => removePerdiemItem(idx)}><Minus className="h-4 w-4"/></Button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsEditDialogOpen(false)}>Cancel</Button>
+            <Button onClick={saveEdit} disabled={isSaving}><Save className="h-4 w-4 mr-2" /> {isSaving ? "Saving..." : "Save Changes"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* --- DELETE DIALOG --- */}
+      <Dialog open={isDeleteConfirmOpen} onOpenChange={setIsDeleteConfirmOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Are you sure?</DialogTitle>
+            <DialogDescription className="text-base">
+              You are about to delete the <strong>{recordToDelete?.type}</strong> requisition submitted by <strong>{getOfficerName(recordToDelete)}</strong>.
+              <br/><br/>
+              This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsDeleteConfirmOpen(false)}>Cancel</Button>
+            <Button variant="destructive" onClick={executeDelete} disabled={deleteLoading}>
+              {deleteLoading ? "Deleting..." : "Yes, Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
     </div>
   );
 };

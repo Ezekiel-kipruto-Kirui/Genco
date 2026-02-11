@@ -13,7 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { Download, Users, User, Edit, Trash2, Mail, Shield, Calendar, Eye, Phone, Plus, AlertTriangle } from "lucide-react";
+import { Download, Users, User, Edit, Trash2, Mail, Shield, Calendar, Eye, Phone, Plus, AlertTriangle, Briefcase } from "lucide-react"; // Added Briefcase
 import { useToast } from "@/hooks/use-toast";
 
 // --- Types ---
@@ -45,6 +45,7 @@ interface Stats {
   adminUsers: number;
   chiefAdminUsers: number;
   mobileUsers: number;
+  hrUsers: number; // Added HR to stats
 }
 
 interface Pagination {
@@ -306,6 +307,7 @@ const TableRow = ({ record, selectedRecords, onSelectRecord, onView, onEdit, onD
         className={
           record.role === 'chief-admin' ? 'bg-purple-100 text-purple-800' :
           record.role === 'admin' ? 'bg-blue-100 text-blue-800' :
+          record.role === 'hr' ? 'bg-orange-100 text-orange-800' : // Added HR Color
           record.role === 'mobile' ? 'bg-green-100 text-green-800' :
           'bg-gray-100 text-gray-800'
         }
@@ -400,6 +402,7 @@ const UserManagementPage = () => {
     adminUsers: 0,
     chiefAdminUsers: 0,
     mobileUsers: 0,
+    hrUsers: 0, // Initialize HR Users
   });
 
   const [pagination, setPagination] = useState<Pagination>({
@@ -505,6 +508,7 @@ const UserManagementPage = () => {
     const adminUsers = filtered.filter(r => r.role?.toLowerCase() === 'admin').length;
     const chiefAdminUsers = filtered.filter(r => r.role?.toLowerCase() === 'chief-admin').length;
     const mobileUsers = filtered.filter(r => r.role?.toLowerCase() === 'mobile').length;
+    const hrUsers = filtered.filter(r => r.role?.toLowerCase() === 'hr').length; // Logic to count HR
 
     const calculatedStats = {
       totalUsers: filtered.length,
@@ -512,6 +516,7 @@ const UserManagementPage = () => {
       adminUsers,
       chiefAdminUsers,
       mobileUsers,
+      hrUsers, // Added to stats object
     };
 
     const totalPages = Math.ceil(filtered.length / PAGE_LIMIT);
@@ -848,7 +853,7 @@ const UserManagementPage = () => {
   }, [selectedRecords, fetchAllData, toast]);
 
   const uniqueRoles = useMemo(() =>
-    ["chief-admin", "admin", "user", "mobile"],
+    ["chief-admin", "admin", "user", "mobile", "hr"], // Added "hr" to lowercase
     []
   );
 
@@ -926,7 +931,7 @@ const UserManagementPage = () => {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-4 lg:grid-cols-5 gap-4">
         <StatsCard title="Total Users" value={stats.totalUsers} icon={Users}>
           <div className="flex gap-4 justify-between text-xs text-slate-600 mt-2">
             <span>Active: {stats.activeUsers}</span>
@@ -935,6 +940,7 @@ const UserManagementPage = () => {
         </StatsCard>
 
         <StatsCard title="Admin Users" value={stats.adminUsers} icon={Shield} description="Administrative users" />
+        <StatsCard title="HR Users" value={stats.hrUsers} icon={Briefcase} description="Human Resources" /> {/* Added HR Stats Card */}
         <StatsCard title="Chief Admins" value={stats.chiefAdminUsers} icon={User} description="Chief administrators" />
         <StatsCard title="Mobile Users" value={stats.mobileUsers} icon={Phone} description="Mobile app users" />
       </div>
@@ -1047,7 +1053,13 @@ const UserManagementPage = () => {
                   </div>
                   <div>
                     <Label className="text-sm font-medium text-slate-600">Role</Label>
-                    <Badge variant="secondary" className={viewingRecord.role === 'chief-admin' ? 'bg-purple-100 text-purple-800' : viewingRecord.role === 'admin' ? 'bg-blue-100 text-blue-800' : viewingRecord.role === 'mobile' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}>
+                    <Badge variant="secondary" className={
+                      viewingRecord.role === 'chief-admin' ? 'bg-purple-100 text-purple-800' :
+                      viewingRecord.role === 'admin' ? 'bg-blue-100 text-blue-800' :
+                      viewingRecord.role === 'hr' ? 'bg-orange-100 text-orange-800' : // Added HR View Color
+                      viewingRecord.role === 'mobile' ? 'bg-green-100 text-green-800' :
+                      'bg-gray-100 text-gray-800'
+                    }>
                       {viewingRecord.role ? viewingRecord.role.split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ') : 'N/A'}
                     </Badge>
                   </div>
@@ -1134,6 +1146,7 @@ const UserManagementPage = () => {
                     <SelectContent>
                       <SelectItem value="user">User</SelectItem>
                       <SelectItem value="admin">Admin</SelectItem>
+                      <SelectItem value="hr">HR</SelectItem> {/* Added HR Role to Add Dialog */}
                       <SelectItem value="chief-admin">Chief Admin</SelectItem>
                       <SelectItem value="mobile">Mobile User</SelectItem>
                     </SelectContent>
@@ -1212,6 +1225,7 @@ const UserManagementPage = () => {
                     <SelectContent>
                       <SelectItem value="user">User</SelectItem>
                       <SelectItem value="admin">Admin</SelectItem>
+                      <SelectItem value="hr">HR</SelectItem> {/* Added HR Role to Edit Dialog */}
                       <SelectItem value="chief-admin">Chief Admin</SelectItem>
                       <SelectItem value="mobile">Mobile User</SelectItem>
                     </SelectContent>

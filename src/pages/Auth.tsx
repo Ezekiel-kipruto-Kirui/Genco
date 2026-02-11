@@ -4,7 +4,6 @@ import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Eye, EyeOff, Mail, Lock } from "lucide-react";
 
 const Auth = () => {
@@ -12,14 +11,24 @@ const Auth = () => {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const { signIn, user } = useAuth();
+  
+  // Retrieve userRole from the auth context
+  const { signIn, user, userRole } = useAuth(); 
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (user) {
-      navigate("/dashboard");
+    // Only redirect if we have both a user and their role loaded
+    if (user && userRole) {
+      if (userRole === 'hr') {
+        // Redirect HR users to the Sales Metrics page
+        // Ensure '/sales-metrics' matches the route defined in your App.tsx for sales-metricspage
+        navigate("/sales-metrics");
+      } else {
+        // Default redirect for other users
+        navigate("/dashboard");
+      }
     }
-  }, [user, navigate]);
+  }, [user, userRole, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -27,7 +36,7 @@ const Auth = () => {
 
     try {
       await signIn(email, password);
-      // Navigation is handled by the useEffect watching 'user'
+      // Navigation is handled by the useEffect watching 'user' and 'userRole'
     } catch (error) {
       // Error is handled in the context (toast notification)
     } finally {

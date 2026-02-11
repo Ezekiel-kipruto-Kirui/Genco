@@ -12,7 +12,8 @@ import {
   Activity,
   UserPlus,
   LineChart,
-  HeartPulse
+  HeartPulse,
+  Icon
 } from "lucide-react";
 
 import { NavLink } from "@/components/NavLink";
@@ -64,16 +65,15 @@ const baseMenuItems = [
     icon: GraduationCap,
     url: "/dashboard/capacity",
   },
-  { 
-    title: "Livestock Offtake",
+  {
+    title:"Offtake",
     icon: TrendingUp,
-    url: "/dashboard/livestock-offtake"
+    subItems:[
+       { title: "Livestock", url: "/dashboard/livestock-offtake", icon: TrendingUp },
+      { title: "Fodder", url: "/dashboard/fodder-offtake", icon: Wheat },
+    ] // Placeholder icon, replace with an appropriate one
   },
-  { 
-    title: "Fodder Offtake",
-    icon: Wheat,
-    url: "/dashboard/fodder-offtake"
-  },
+  
   { 
     title: "Schedule Activity",
     icon: Activity,
@@ -167,7 +167,7 @@ export function DashboardSidebar() {
                     activeClassName="bg-white text-green-700 font-bold shadow-sm"
                   >
                     <LineChart className="h-4 w-4" />
-                    {!collapsed && <span>Perfomance report</span>}
+                    {!collapsed && <span>Perfomance Report</span>}
                   </NavLink>
                 </SidebarMenuButton>
               </SidebarMenuItem>
@@ -185,7 +185,7 @@ export function DashboardSidebar() {
                     activeClassName="bg-white text-green-700 font-bold shadow-sm"
                   >
                     <LineChart className="h-4 w-4" />
-                    {!collapsed && <span>salesmetrics</span>}
+                    {!collapsed && <span>Sales Metrics</span>}
                   </NavLink>
                 </SidebarMenuButton>
               </SidebarMenuItem>

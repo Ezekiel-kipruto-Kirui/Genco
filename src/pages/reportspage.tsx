@@ -1,9 +1,10 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
-import { 
-  ref, 
-  get
-} from "firebase/database";
-import { db } from "@/lib/firebase"; 
+import * as React from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useAuth } from "@/contexts/AuthContext";
+import { isChiefAdmin } from "@/contexts/authhelper";
+import { getAuth } from "firebase/auth";
+import { ref, onValue, get } from "firebase/database";
+import { db } from "@/lib/firebase";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { 
   PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip, 
@@ -11,11 +12,12 @@ import {
 } from "recharts";
 import { 
   Users, GraduationCap, Beef, TrendingUp, Award, 
-  MapPin, Syringe, TargetIcon
+  MapPin, Syringe, TargetIcon, Loader2, Calendar
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 // --- Constants ---
 const COLORS = {
@@ -34,9 +36,10 @@ const BAR_COLORS = [
   COLORS.purple, COLORS.teal, COLORS.maroon
 ];
 
-// --- Types ---
+// Cache duration: 5 minutes
+const CACHE_DURATION = 5 * 60 * 1000; 
 
-// Updated Farmer Interface based on provided JSON
+// --- Types ---
 interface Farmer {
   id: string;
   name: string;
@@ -60,9 +63,9 @@ interface Farmer {
   farmerId?: string;
   traceability?: boolean;
   username?: string;
+  programme?: string;
 }
 
-// Updated TrainingRecord Interface based on provided JSON
 interface TrainingRecord {
   id: string;
   totalFarmers: number;
@@ -72,14 +75,13 @@ interface TrainingRecord {
   startDate: string;
   endDate: string;
   topicTrained: string;
-  createdAt?: string | number; // Can be "29 Jan 2026" or timestamp
+  createdAt?: string | number;
   programme?: string;
   fieldOfficer?: string;
   username?: string;
 }
 
 // --- Helper Functions ---
-
 const parseDate = (date: any): Date | null => {
   if (!date) return null;
   try {
@@ -87,7 +89,6 @@ const parseDate = (date: any): Date | null => {
     if (date instanceof Date) return date;
     if (typeof date === 'number') return new Date(date);
     if (typeof date === 'string') {
-      // Handle "28 Jan 2026" format
       const parsedCustom = new Date(date);
       if (!isNaN(parsedCustom.getTime())) return parsedCustom;
     } 
@@ -157,48 +158,58 @@ const getCurrentMonthDates = () => {
   };
 };
 
+const getQ1Dates = (year: number) => { 
+  return { startDate: `${year}-01-01`, endDate: `${year}-03-31` };
+};
+
+const getQ2Dates = (year: number) => { 
+  return { startDate: `${year}-01-01`, endDate: `${year}-06-30` };
+};
+
+const getQ3Dates = (year: number) => { 
+  return { startDate: `${year}-01-01`, endDate: `${year}-09-30` };
+};
+
+const getQ4Dates = (year: number) => { 
+  return { startDate: `${year}-01-01`, endDate: `${year}-12-31` };
+};
+
 // --- Custom Hook for Data Processing ---
 const useProcessedData = (
   allFarmers: Farmer[], 
   trainingRecords: TrainingRecord[], 
   dateRange: { startDate: string; endDate: string }, 
-  timeFrame: 'weekly' | 'monthly' | 'yearly'
+  timeFrame: 'weekly' | 'monthly' | 'yearly',
+  selectedProgramme: string | null,
+  selectedYear: number 
 ) => {
   return useMemo(() => {
     if (allFarmers.length === 0 && trainingRecords.length === 0) {
       return {
-        // Stats
         totalFarmers: 0,
         maleFarmers: 0,
         femaleFarmers: 0,
         malePercentage: 0,
         femalePercentage: 0,
-        
         totalAnimals: 0,
         totalGoats: 0,
         totalSheep: 0,
         goatsPercentage: 0,
         sheepPercentage: 0,
-        
         totalTrainedFarmers: 0,
-        
-        // Charts Data
         countyPerformanceData: [],
         registrationTrendData: [],
         topLocations: [],
         topCustomers: [],
-        
-        // Animal Health
         uniqueCounties: 0,
         totalBreedsDistributed: 0,
         breedsMale: 0,
         breedsFemale: 0,
         breedsMalePercentage: 0,
         breedsFemalePercentage: 0,
-        
         vaccinationRate: 0,
-        vaccinatedFarmers: 0,
-        
+        vaccinatedAnimals: 0, // Changed from vaccinatedFarmers
+        vaccinatedFarmersCount: 0, // Kept for reference if needed
         breedsByCountyData: [],
         breedsBySubcountyData: [],
         vaccinationByCountyData: [],
@@ -206,16 +217,20 @@ const useProcessedData = (
       };
     }
 
-    // Filter Farmers
+    // Filter Farmers by Date AND Programme
     const filteredFarmers = allFarmers.filter(farmer => {
       const dateToCheck = farmer.createdAt || farmer.registrationDate;
-      return isDateInRange(dateToCheck, dateRange.startDate, dateRange.endDate);
+      const inDate = isDateInRange(dateToCheck, dateRange.startDate, dateRange.endDate);
+      const inProgramme = !selectedProgramme || farmer.programme === selectedProgramme;
+      return inDate && inProgramme;
     });
 
-    // Filter Training
+    // Filter Training by Date AND Programme
     const filteredTraining = trainingRecords.filter(record => {
-      // Training record has createdAt (string or number) or startDate
-      return isDateInRange(record.createdAt || record.startDate, dateRange.startDate, dateRange.endDate);
+      const dateToCheck = record.createdAt || record.startDate;
+      const inDate = isDateInRange(dateToCheck, dateRange.startDate, dateRange.endDate);
+      const inProgramme = !selectedProgramme || record.programme === selectedProgramme;
+      return inDate && inProgramme;
     });
 
     // --- Calculations ---
@@ -229,30 +244,40 @@ const useProcessedData = (
     let totalGoats = 0;
     let totalSheep = 0;
     let totalCattle = 0;
+    let totalVaccinatedAnimals = 0;
+    let vaccinatedFarmersCount = 0;
 
     filteredFarmers.forEach(f => {
-      // Goats
+      let currentGoats = 0;
       if (typeof f.goats === 'object' && f.goats !== null) {
-        totalGoats += Number(f.goats.total) || 0;
+        currentGoats = Number(f.goats.total) || 0;
       } else if (typeof f.goats === 'number') {
-        totalGoats += f.goats;
+        currentGoats = f.goats;
       }
-      // Sheep
-      totalSheep += getNumberField(f, "sheep");
-      // Cattle
-      totalCattle += getNumberField(f, "cattle");
+      const currentSheep = getNumberField(f, "sheep");
+      const currentCattle = getNumberField(f, "cattle");
+      const currentTotalAnimals = currentGoats + currentSheep + currentCattle;
+
+      totalGoats += currentGoats;
+      totalSheep += currentSheep;
+      totalCattle += currentCattle;
+
+      // Vaccination Calculation: If farmer is marked vaccinated, count ALL their animals
+      if (f.vaccinated === true) {
+        totalVaccinatedAnimals += currentTotalAnimals;
+        vaccinatedFarmersCount++;
+      }
     });
 
     const totalAnimals = totalGoats + totalSheep + totalCattle;
     const goatsPerc = totalAnimals > 0 ? (totalGoats / totalAnimals) * 100 : 0;
     const sheepPerc = totalAnimals > 0 ? (totalSheep / totalAnimals) * 100 : 0;
+    const vacRate = totalAnimals > 0 ? (totalVaccinatedAnimals / totalAnimals) * 100 : 0;
 
-    // 3. Trained Farmers (Sum from capacityBuilding)
+    // 3. Trained Farmers
     const totalTrained = filteredTraining.reduce((sum, record) => sum + (Number(record.totalFarmers) || 0), 0);
 
     // 4. Charts Preparation
-    
-    // County Performance (Farmers per County)
     const countyMap: Record<string, number> = {};
     filteredFarmers.forEach(f => {
       const c = f.county || 'Unknown';
@@ -262,7 +287,6 @@ const useProcessedData = (
       .map(([name, value]) => ({ name, value }))
       .sort((a, b) => b.value - a.value);
 
-    // Top Locations (Farmers per Location)
     const locationMap: Record<string, number> = {};
     filteredFarmers.forEach(f => {
       const l = f.location || 'Unknown';
@@ -273,7 +297,6 @@ const useProcessedData = (
       .sort((a, b) => b.value - a.value)
       .slice(0, 5);
 
-    // Top Customers (Farmers with most animals)
     const topCustomers = filteredFarmers.map(f => {
       let g = 0, s = 0, c = 0;
       if (typeof f.goats === 'object') g = Number(f.goats.total) || 0;
@@ -286,10 +309,8 @@ const useProcessedData = (
     // Registration Trend
     const generateTrendData = () => {
       const trendData: any[] = [];
-      const currentYear = new Date().getFullYear();
       
       if (timeFrame === 'weekly') {
-        // Simple logic: Last 4 weeks from today
         for (let i = 3; i >= 0; i--) {
           const weekStart = new Date();
           weekStart.setDate(weekStart.getDate() - (i * 7) - weekStart.getDay());
@@ -300,15 +321,13 @@ const useProcessedData = (
             const d = parseDate(farmer.createdAt || farmer.registrationDate);
             return d && d >= weekStart && d <= weekEnd;
           }).length;
-
           trendData.push({ name: `Week ${4-i}`, registrations: count });
         }
       } else if (timeFrame === 'monthly') {
         const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-        // Show current year months up to now, or full year? Let's do full year for consistency
         months.forEach((m, idx) => {
-           const monthStart = new Date(currentYear, idx, 1);
-           const monthEnd = new Date(currentYear, idx + 1, 0);
+           const monthStart = new Date(selectedYear, idx, 1);
+           const monthEnd = new Date(selectedYear, idx + 1, 0);
            const count = filteredFarmers.filter(farmer => {
              const d = parseDate(farmer.createdAt || farmer.registrationDate);
              return d && d >= monthStart && d <= monthEnd;
@@ -316,7 +335,7 @@ const useProcessedData = (
            trendData.push({ name: m, registrations: count });
         });
       } else {
-        for (let y = currentYear - 4; y <= currentYear; y++) {
+        for (let y = selectedYear - 4; y <= selectedYear; y++) {
            const yearStart = new Date(y, 0, 1);
            const yearEnd = new Date(y, 11, 31);
            const count = filteredFarmers.filter(farmer => {
@@ -330,11 +349,8 @@ const useProcessedData = (
     };
 
     // --- Animal Health Stats ---
-
-    // Regional Coverage (Unique Counties)
     const uniqueCounties = new Set(filteredFarmers.map(f => f.county)).size;
 
-    // Breeds Distributed
     let bMale = 0;
     let bFemale = 0;
     filteredFarmers.forEach(f => {
@@ -345,13 +361,7 @@ const useProcessedData = (
     const bMalePerc = totalBreeds > 0 ? (bMale / totalBreeds) * 100 : 0;
     const bFemalePerc = totalBreeds > 0 ? (bFemale / totalBreeds) * 100 : 0;
 
-    // Vaccination
-    const vacCount = filteredFarmers.filter(f => f.vaccinated === true).length;
-    const vacRate = filteredFarmers.length > 0 ? (vacCount / filteredFarmers.length) * 100 : 0;
-
-    // Animal Health Charts
-
-    // Breeds per County (Doughnut)
+    // Breeds per County
     const breedsByCountyMap: Record<string, number> = {};
     filteredFarmers.forEach(f => {
       const c = f.county || 'Unknown';
@@ -364,7 +374,7 @@ const useProcessedData = (
       .map(([name, value]) => ({ name, value }))
       .sort((a, b) => b.value - a.value);
 
-    // Breeds per Subcounty (Vertical Bar)
+    // Breeds per Subcounty
     const breedsBySubMap: Record<string, number> = {};
     filteredFarmers.forEach(f => {
       const sc = f.subcounty || 'Unknown';
@@ -376,26 +386,38 @@ const useProcessedData = (
     const breedsBySubcountyData = Object.entries(breedsBySubMap)
       .map(([name, value]) => ({ name, value }))
       .sort((a, b) => b.value - a.value)
-      .slice(0, 10); // Top 10
+      .slice(0, 10);
 
-    // Vaccination per County (Horizontal Bar)
+    // Vaccination per County (Counting Animals now)
     const vacByCountyMap: Record<string, number> = {};
     filteredFarmers.forEach(f => {
-      const c = f.county || 'Unknown';
       if (f.vaccinated) {
-        vacByCountyMap[c] = (vacByCountyMap[c] || 0) + 1;
+        const c = f.county || 'Unknown';
+        let animalCount = 0;
+        if (typeof f.goats === 'object') animalCount += Number(f.goats.total) || 0;
+        else if (typeof f.goats === 'number') animalCount += f.goats;
+        animalCount += getNumberField(f, "sheep");
+        animalCount += getNumberField(f, "cattle");
+
+        vacByCountyMap[c] = (vacByCountyMap[c] || 0) + animalCount;
       }
     });
     const vaccinationByCountyData = Object.entries(vacByCountyMap)
       .map(([name, value]) => ({ name, value }))
       .sort((a, b) => b.value - a.value);
 
-    // Vaccination per Subcounty (Vertical Bar)
+    // Vaccination per Subcounty (Counting Animals now)
     const vacBySubMap: Record<string, number> = {};
     filteredFarmers.forEach(f => {
-      const sc = f.subcounty || 'Unknown';
       if (f.vaccinated) {
-        vacBySubMap[sc] = (vacBySubMap[sc] || 0) + 1;
+        const sc = f.subcounty || 'Unknown';
+        let animalCount = 0;
+        if (typeof f.goats === 'object') animalCount += Number(f.goats.total) || 0;
+        else if (typeof f.goats === 'number') animalCount += f.goats;
+        animalCount += getNumberField(f, "sheep");
+        animalCount += getNumberField(f, "cattle");
+
+        vacBySubMap[sc] = (vacBySubMap[sc] || 0) + animalCount;
       }
     });
     const vaccinationBySubcountyData = Object.entries(vacBySubMap)
@@ -404,44 +426,36 @@ const useProcessedData = (
       .slice(0, 10);
 
     return {
-      // Farmer Stats
       totalFarmers: totalF,
       maleFarmers,
       femaleFarmers,
       malePercentage: totalF > 0 ? ((maleFarmers / totalF) * 100).toFixed(1) : 0,
       femalePercentage: totalF > 0 ? ((femaleFarmers / totalF) * 100).toFixed(1) : 0,
-      
       totalAnimals,
       totalGoats,
       totalSheep,
       goatsPercentage: goatsPerc.toFixed(1),
       sheepPercentage: sheepPerc.toFixed(1),
-      
       totalTrainedFarmers: totalTrained,
-      
-      // Charts
       countyPerformanceData,
       registrationTrendData: generateTrendData(),
       topLocations,
       topCustomers,
-      
-      // Animal Health
       uniqueCounties,
       totalBreedsDistributed: totalBreeds,
       breedsMale: bMale,
       breedsFemale: bFemale,
       breedsMalePercentage: bMalePerc.toFixed(1),
       breedsFemalePercentage: bFemalePerc.toFixed(1),
-      
       vaccinationRate: vacRate.toFixed(1),
-      vaccinatedFarmers: vacCount,
-      
+      vaccinatedAnimals: totalVaccinatedAnimals,
+      vaccinatedFarmersCount,
       breedsByCountyData,
       breedsBySubcountyData,
       vaccinationByCountyData,
       vaccinationBySubcountyData
     };
-  }, [allFarmers, trainingRecords, dateRange, timeFrame]);
+  }, [allFarmers, trainingRecords, dateRange, timeFrame, selectedProgramme, selectedYear]);
 };
 
 // --- Sub Components ---
@@ -449,12 +463,12 @@ const useProcessedData = (
 interface StatsCardProps {
   title: string;
   value: string | number;
-  subtext?: string; // For percentages/gender breakdown
+  subtext?: string;
   icon: React.ElementType;
   color?: 'blue' | 'orange' | 'yellow' | 'green' | 'red' | 'purple' | 'teal';
 }
 
-const StatsCard = ({ title, value, subtext, icon: Icon, color = "blue" }: StatsCardProps) => {
+const StatsCard = React.memo(({ title, value, subtext, icon: Icon, color = "blue" }: StatsCardProps) => {
   const colorMap: Record<string, { border: string, bg: string, text: string }> = {
     blue: { border: 'bg-blue-500', bg: 'bg-blue-50', text: 'text-blue-600' },
     orange: { border: 'bg-orange-500', bg: 'bg-orange-50', text: 'text-orange-600' },
@@ -485,74 +499,120 @@ const StatsCard = ({ title, value, subtext, icon: Icon, color = "blue" }: StatsC
       </CardContent>
     </Card>
   );
-};
+});
 
-const SectionHeader = ({ title }: { title: string }) => (
-  <h2 className="text-lg font-medium text-gray-800 mb-2 flex items-center  border-gray-100">
+const SectionHeader = React.memo(({ title }: { title: string }) => (
+  <h2 className="text-lg font-medium text-gray-800 mb-2 flex items-center border-gray-100">
     {title}
   </h2>
-);
+));
 
 // --- Main Component ---
 
 const PerformanceReport = () => {
+  const { userRole } = useAuth();
+  const auth = getAuth();
+  
+  // Cache mechanism to store raw data across reloads/re-renders
+  const cacheRef = useRef<{
+    farmers: Farmer[] | null;
+    training: TrainingRecord[] | null;
+    timestamp: number;
+  }>({ farmers: null, training: null, timestamp: 0 });
+  
   const [loading, setLoading] = useState(true);
+  const [userPermissionsLoading, setUserPermissionsLoading] = useState(true);
   const [allFarmers, setAllFarmers] = useState<Farmer[]>([]);
   const [trainingRecords, setTrainingRecords] = useState<TrainingRecord[]>([]);
+  
+  // Date & Filter State
   const [dateRange, setDateRange] = useState({ startDate: "", endDate: "" });
   const [timeFrame, setTimeFrame] = useState<'weekly' | 'monthly' | 'yearly'>('monthly');
   
-  const data = useProcessedData(allFarmers, trainingRecords, dateRange, timeFrame);
+  // Year State
+  const currentYear = new Date().getFullYear();
+  const [selectedYear, setSelectedYear] = useState<string>(String(currentYear));
+  
+  const availableYears = useMemo(() => {
+    const years: string[] = [];
+    for(let i = 0; i < 5; i++) {
+      years.push(String(currentYear - i));
+    }
+    return years;
+  }, [currentYear]);
 
-  useEffect(() => {
-    const initialDates = getCurrentMonthDates();
-    setDateRange(initialDates);
-    fetchAllData();
-  }, []);
+  // Programme State
+  const [allowedProgrammes, setAllowedProgrammes] = useState<string[]>([]);
+  const [activeProgram, setActiveProgram] = useState<string>(""); 
+  const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
+  const showProgrammeFilter = userIsChiefAdmin;
+  
+  // Parse year to number for the data hook
+  const selectedYearNum = parseInt(selectedYear, 10);
+  
+  const data = useProcessedData(allFarmers, trainingRecords, dateRange, timeFrame, activeProgram || null, selectedYearNum);
 
+  // Fetch All Data (Cached)
   const fetchAllData = async () => {
     try {
       setLoading(true);
-      
-      // Fetch Farmers
-      const farmersRef = ref(db, 'farmers');
-      const farmersSnap = await get(farmersRef);
-      const farmersList: Farmer[] = [];
+      const now = Date.now();
+      let farmersList: Farmer[] = [];
+      let trainingList: TrainingRecord[] = [];
 
-      if (farmersSnap.exists()) {
-        farmersSnap.forEach((childSnapshot) => {
-          const fData = childSnapshot.val();
-          const id = childSnapshot.key || '';
-          
-          // Direct mapping based on provided JSON structure
-          farmersList.push({
-            id,
-            ...fData,
-            // Ensure defaults if fields are missing
-            goats: fData.goats || { total: 0, male: 0, female: 0 },
-            sheep: fData.sheep || 0,
-            cattle: fData.cattle || 0,
-            vaccinated: fData.vaccinated || false,
-            vaccines: fData.vaccines || [],
-            femaleBreeds: fData.femaleBreeds || 0,
-            maleBreeds: fData.maleBreeds || 0
+      // Check Cache
+      if (cacheRef.current.farmers && 
+          cacheRef.current.training && 
+          (now - cacheRef.current.timestamp < CACHE_DURATION)) {
+        console.log("Using cached data");
+        farmersList = cacheRef.current.farmers;
+        trainingList = cacheRef.current.training;
+      } else {
+        console.log("Fetching new data");
+        // Fetch Farmers
+        const farmersRef = ref(db, 'farmers');
+        const farmersSnap = await get(farmersRef);
+
+        if (farmersSnap.exists()) {
+          farmersSnap.forEach((childSnapshot) => {
+            const fData = childSnapshot.val();
+            const id = childSnapshot.key || '';
+            farmersList.push({
+              id,
+              ...fData,
+              goats: fData.goats || { total: 0, male: 0, female: 0 },
+              sheep: fData.sheep || 0,
+              cattle: fData.cattle || 0,
+              vaccinated: fData.vaccinated || false,
+              vaccines: fData.vaccines || [],
+              femaleBreeds: fData.femaleBreeds || 0,
+              maleBreeds: fData.maleBreeds || 0,
+              programme: fData.programme || undefined
+            });
           });
-        });
-      }
+        }
 
-      // Fetch Capacity Building (Training)
-      const trainingRef = ref(db, 'capacityBuilding');
-      const trainingSnap = await get(trainingRef);
-      const trainingList: TrainingRecord[] = [];
+        // Fetch Training
+        const trainingRef = ref(db, 'capacityBuilding');
+        const trainingSnap = await get(trainingRef);
 
-      if (trainingSnap.exists()) {
-        trainingSnap.forEach((childSnapshot) => {
-          const tData = childSnapshot.val();
-          trainingList.push({
-            id: childSnapshot.key || '',
-            ...tData
+        if (trainingSnap.exists()) {
+          trainingSnap.forEach((childSnapshot) => {
+            const tData = childSnapshot.val();
+            trainingList.push({
+              id: childSnapshot.key || '',
+              ...tData,
+              programme: tData.programme || undefined
+            });
           });
-        });
+        }
+
+        // Update Cache
+        cacheRef.current = {
+          farmers: farmersList,
+          training: trainingList,
+          timestamp: now
+        };
       }
 
       setAllFarmers(farmersList);
@@ -565,22 +625,100 @@ const PerformanceReport = () => {
     }
   };
 
+  // Initialize Dates
+  useEffect(() => {
+    const initialDates = { startDate: `${currentYear}-01-01`, endDate: `${currentYear}-12-31` };
+    setDateRange(initialDates);
+    fetchAllData();
+  }, []);
+
+  // Fetch User Permissions
+  useEffect(() => {
+    const uid = auth.currentUser?.uid;
+    if (!uid) {
+      setUserPermissionsLoading(false);
+      return;
+    }
+
+    const userRef = ref(db, `users/${uid}`);
+    
+    const unsubscribe = onValue(userRef, (snapshot) => {
+      const uData = snapshot.val();
+      if (uData) {
+        const programmesObj = uData.allowedProgrammes || {};
+        const programmesList = Object.keys(programmesObj).filter(key => programmesObj[key] === true);
+        
+        setAllowedProgrammes(programmesList);
+
+        if (!userIsChiefAdmin) {
+          if (programmesList.length > 0) {
+             setActiveProgram(programmesList[0]);
+          }
+        } else {
+          if (!activeProgram) setActiveProgram("KPMD");
+        }
+      }
+      setUserPermissionsLoading(false);
+    }, (error) => {
+      console.error("Error fetching user permissions:", error);
+      setUserPermissionsLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, [auth.currentUser?.uid, userIsChiefAdmin]);
+
   const handleDateRangeChange = useCallback((key: string, value: string) => {
     setDateRange(prev => ({ ...prev, [key]: value }));
   }, []);
 
+  const handleYearChange = useCallback((year: string) => {
+    const yearNum = parseInt(year, 10);
+    setSelectedYear(year);
+    setDateRange({ 
+      startDate: `${yearNum}-01-01`, 
+      endDate: `${yearNum}-12-31` 
+    });
+    setTimeFrame('yearly'); 
+  }, []);
+
+  // Date Filter Handlers
   const setWeekFilter = useCallback(() => {
-    setDateRange(getCurrentWeekDates());
+    const dates = getCurrentWeekDates();
+    setDateRange(dates);
     setTimeFrame('weekly');
   }, []);
 
   const setMonthFilter = useCallback(() => {
-    setDateRange(getCurrentMonthDates());
+    const dates = getCurrentMonthDates();
+    setDateRange(dates);
     setTimeFrame('monthly');
   }, []);
 
+  const setQ1Filter = useCallback(() => {
+    setDateRange(getQ1Dates(parseInt(selectedYear, 10)));
+    setTimeFrame('monthly');
+  }, [selectedYear]);
+
+  const setQ2Filter = useCallback(() => {
+    setDateRange(getQ2Dates(parseInt(selectedYear, 10)));
+    setTimeFrame('monthly');
+  }, [selectedYear]);
+
+  const setQ3Filter = useCallback(() => {
+    setDateRange(getQ3Dates(parseInt(selectedYear, 10)));
+    setTimeFrame('monthly');
+  }, [selectedYear]);
+
+  const setQ4Filter = useCallback(() => {
+    setDateRange(getQ4Dates(parseInt(selectedYear, 10)));
+    setTimeFrame('yearly');
+  }, [selectedYear]);
+
   const clearFilters = useCallback(() => {
-    setDateRange({ startDate: "", endDate: "" });
+    const currentY = String(new Date().getFullYear());
+    setSelectedYear(currentY);
+    const currentNum = parseInt(currentY, 10);
+    setDateRange({ startDate: `${currentNum}-01-01`, endDate: `${currentNum}-12-31` });
     setTimeFrame('monthly');
   }, []);
 
@@ -606,54 +744,93 @@ const PerformanceReport = () => {
     );
   }, []);
 
-  if (loading) {
+  if (loading || userPermissionsLoading) {
     return (
-      <div className="flex justify-center items-center h-64">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent"></div>
-        <p className="ml-2 text-gray-600">Loading analytics data...</p>
+      <div className="flex flex-col justify-center items-center h-96 space-y-4">
+        <Loader2 className="h-12 w-12 animate-spin text-blue-600" />
+        <p className="text-gray-600 font-medium animate-pulse">Loading analytics data...</p>
       </div>
     );
   }
 
   return (
-    <div className="space-y-8 p-1">
+    <div className="space-y-8 p-1 bg-gray-50/50 min-h-screen pb-10">
       {/* Header and Filters */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+      <div className="flex flex-col gap-2">
         <div>
-          <h1 className="text-lg font-medium text-gray-900">Performance Dashboard</h1>
-         
+          <h1 className="text-xl font-semibold text-gray-900">Performance Dashboard</h1>
         </div>
 
         <Card className="w-full md:w-auto border-0 shadow-lg bg-white">
           <CardContent className="p-4">
             <div className="flex flex-col md:flex-row gap-4 items-end">
-              <div className="grid grid-cols-2 gap-4">
+              
+              {/* Year Selector */}
+              <div className="w-full md:w-40 space-y-1">
+                <Label className="text-xs text-gray-500 font-semibold">Fiscal Year</Label>
+                <Select value={selectedYear} onValueChange={handleYearChange}>
+                  <SelectTrigger className="h-9">
+                    <div className="flex items-center gap-2">
+                        <Calendar className="h-4 w-4 text-gray-500" />
+                        <SelectValue placeholder="Select Year" />
+                    </div>
+                  </SelectTrigger>
+                  <SelectContent>
+                     {availableYears.map(year => (
+                       <SelectItem key={year} value={year}>{year}</SelectItem>
+                     ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Programme Selector */}
+              {showProgrammeFilter && (
+                <div className="w-full md:w-48 space-y-1">
+                  <Label className="text-xs text-gray-500 font-semibold">Programme</Label>
+                  <Select value={activeProgram} onValueChange={setActiveProgram}>
+                    <SelectTrigger className="h-9">
+                      <SelectValue placeholder="Select Programme" />
+                    </SelectTrigger>
+                    <SelectContent>
+                       <SelectItem value="RANGE">RANGE</SelectItem>
+                      <SelectItem value="KPMD">KPMD</SelectItem>                     
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-4 w-full md:w-auto">
                 <div className="space-y-1">
-                 
+                  <Label className="text-xs text-gray-500 font-semibold">From</Label>
                   <Input
                     id="startDate"
                     type="date"
                     value={dateRange.startDate}
                     onChange={(e) => handleDateRangeChange("startDate", e.target.value)}
-                    className="border-gray-200 focus:border-blue-500 h-9"
+                    className="border-gray-200 text-[5px] focus:border-blue-500 h-9  pr-20"
                   />
                 </div>
                 <div className="space-y-1">
-                 
+                  <Label className="text-xs text-gray-500 font-semibold">To</Label>
                   <Input
                     id="endDate"
                     type="date"
                     value={dateRange.endDate}
                     onChange={(e) => handleDateRangeChange("endDate", e.target.value)}
-                    className="border-gray-200 focus:border-blue-500 h-9"
+                    className="border-gray-200 text-xs focus:border-blue-500 h-9  pr-20"
                   />
                 </div>
               </div>
-              <div className="flex gap-2">
+
+             
                 <Button variant="outline" onClick={setWeekFilter} size="sm">This Week</Button>
                 <Button variant="outline" onClick={setMonthFilter} size="sm">This Month</Button>
-                <Button onClick={clearFilters} variant="outline" size="sm">Clear</Button>
-              </div>
+                <Button variant="outline" onClick={setQ1Filter} size="sm">Q1</Button>
+                <Button variant="outline" onClick={setQ2Filter} size="sm">Q2</Button>
+                <Button variant="outline" onClick={setQ3Filter} size="sm">Q3</Button>
+                <Button variant="outline" onClick={setQ4Filter} size="sm">Q4</Button>
+                <Button onClick={clearFilters} variant="ghost" size="sm" className="text-red-500 hover:text-red-600">Clear</Button>
+              
             </div>
           </CardContent>
         </Card>
@@ -690,7 +867,7 @@ const PerformanceReport = () => {
           />
         </div>
 
-        {/* Charts Row 1: County Performance (Doughnut) + Registration Trend (Area) */}
+        {/* Charts Row 1 */}
         <div className="grid gap-6 md:grid-cols-2 mb-6">
           <Card className="border-0 shadow-lg bg-white h-[350px]">
             <CardHeader className="pb-2">
@@ -766,7 +943,7 @@ const PerformanceReport = () => {
           </Card>
         </div>
 
-        {/* Charts Row 2: Top Locations (Horiz Bar) + Top Customers (Horiz Bar) */}
+        {/* Charts Row 2 */}
         <div className="grid gap-6 md:grid-cols-2">
           <Card className="border-0 shadow-lg bg-white">
             <CardHeader className="pb-2">
@@ -840,16 +1017,17 @@ const PerformanceReport = () => {
             color="teal"
           />
 
+          {/* UPDATED: Vaccination Card now shows Animals */}
           <StatsCard 
-            title="Vaccination Coverage" 
-            value={`${data.vaccinationRate}%`} 
+            title="Vaccinated Animals" 
+            value={data.vaccinatedAnimals.toLocaleString()} 
             icon={Syringe}
-            subtext={`${data.vaccinatedFarmers} farmers vaccinated`}
+            subtext={`${data.vaccinationRate}% coverage rate (${data.vaccinatedFarmersCount} farmers)`}
             color={Number(data.vaccinationRate) >= 75 ? "green" : Number(data.vaccinationRate) >= 50 ? "yellow" : "red"}
           />
         </div>
 
-        {/* Charts Row 1: Breeds per County (Doughnut) + Subcounty Breeds (Vert Bar) */}
+        {/* Charts Row 1 */}
         <div className="grid gap-6 md:grid-cols-2 mb-6">
           <Card className="border-0 shadow-lg bg-white h-[350px]">
             <CardHeader className="pb-2">
@@ -904,13 +1082,13 @@ const PerformanceReport = () => {
           </Card>
         </div>
 
-        {/* Charts Row 2: Vaccination per County (Horiz Bar) + Vaccination per Subcounty (Vert Bar) */}
+        {/* Charts Row 2 */}
         <div className="grid gap-6 md:grid-cols-2">
           <Card className="border-0 shadow-lg bg-white">
             <CardHeader className="pb-2">
               <CardTitle className="text-sm flex items-center gap-2 text-gray-800">
                 <Syringe className="h-4 w-4 text-red-600" />
-                Vaccination Track per County
+                Vaccinated Animals per County
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -930,7 +1108,7 @@ const PerformanceReport = () => {
             <CardHeader className="pb-2">
               <CardTitle className="text-sm flex items-center gap-2 text-gray-800">
                 <Syringe className="h-4 w-4 text-red-600" />
-                Vaccination Track per Subcounty
+                Vaccinated Animals per Subcounty
               </CardTitle>
             </CardHeader>
             <CardContent>

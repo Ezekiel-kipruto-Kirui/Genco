@@ -1,8 +1,8 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { isChiefAdmin } from "@/contexts/authhelper";
 import { getAuth } from "firebase/auth";
-import { ref, onValue, query, orderByChild, equalTo } from "firebase/database";
+import { ref, onValue, query, orderByChild, equalTo, off } from "firebase/database";
 import { db } from "@/lib/firebase";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { 
@@ -11,7 +11,7 @@ import {
 } from "recharts";
 import { 
   Beef, TrendingUp, Award, Star, 
-  MapPin, DollarSign, Package, Users, Filter, Loader2
+  MapPin, DollarSign, Package, Users, Loader2, Calendar, Filter, Zap
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,7 +29,8 @@ const COLORS = {
   purple: "#7c3aed",
   teal: "#0d9488",
   red: "#dc2626",
-  gray: "#9ca3af"
+  gray: "#9ca3af",
+  lightBlue: "#eff6ff"
 };
 
 const BAR_COLORS = [
@@ -57,6 +58,37 @@ interface OfftakeData {
   username?: string;
 }
 
+// --- Optimized Data Cache Manager ---
+class DataCache {
+  private cache = new Map<string, { data: OfftakeData[], timestamp: number }>();
+  private maxAge = 5 * 60 * 1000; // 5 minutes cache validity
+
+  get(key: string): OfftakeData[] | null {
+    const item = this.cache.get(key);
+    if (!item) return null;
+    
+    // Check if cache is still valid
+    if (Date.now() - item.timestamp > this.maxAge) {
+      this.cache.delete(key);
+      return null;
+    }
+    
+    console.log(`[Cache] Hit for key: ${key}`);
+    return item.data;
+  }
+
+  set(key: string, data: OfftakeData[]) {
+    this.cache.set(key, { data, timestamp: Date.now() });
+    console.log(`[Cache] Set for key: ${key}`);
+  }
+
+  clear() {
+    this.cache.clear();
+  }
+}
+
+const dataCache = new DataCache();
+
 // --- Helper Functions ---
 
 const parseDate = (date: any): Date | null => {
@@ -66,12 +98,8 @@ const parseDate = (date: any): Date | null => {
     if (date instanceof Date) return date;
     if (typeof date === 'number') return new Date(date);
     if (typeof date === 'string') {
-      // Handle "22 Jun 2025" format specifically if standard parse fails
       const parsedISO = new Date(date);
       if (!isNaN(parsedISO.getTime())) return parsedISO;
-      
-      // Fallback for specific formats if needed, though JS Date handles "22 Jun 2025" fine in modern browsers.
-      // If you see invalid dates in console, check this specific string format.
     } 
     if (date?.seconds) return new Date(date.seconds * 1000);
   } catch (error) {
@@ -106,17 +134,33 @@ const isDateInRange = (date: any, startDate: string, endDate: string): boolean =
   return true;
 };
 
+// --- Date Range Helpers ---
+const getCurrentWeekDates = () => {
+  const now = new Date();
+  const startOfWeek = new Date(now);
+  startOfWeek.setDate(now.getDate() - now.getDay());
+  const endOfWeek = new Date(startOfWeek);
+  endOfWeek.setDate(startOfWeek.getDate() + 6);
+  return { startDate: formatDateToLocal(startOfWeek), endDate: formatDateToLocal(endOfWeek) };
+};
+
 const getCurrentMonthDates = () => {
   const now = new Date();
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
   const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-  return {
-    startDate: formatDateToLocal(startOfMonth),
-    endDate: formatDateToLocal(endOfMonth)
-  };
+  return { startDate: formatDateToLocal(startOfMonth), endDate: formatDateToLocal(endOfMonth) };
 };
 
-// --- Custom Hook for Offtake Data Processing ---
+const getQDates = (year: number, quarter: 1 | 2 | 3 | 4) => {
+  const start = `${year}-${(quarter - 1) * 3 + 1}-01`;
+  let endMonth = quarter * 3;
+  let endYear = year;
+  if (endMonth > 12) { endMonth = 12; }
+  const endDay = new Date(endYear, endMonth, 0).getDate();
+  return { startDate: start, endDate: `${endYear}-${String(endMonth).padStart(2,'0')}-${endDay}` };
+};
+
+// --- Custom Hook for Offtake Data Processing (Optimized) ---
 const useOfftakeData = (
   offtakeData: OfftakeData[], 
   dateRange: { startDate: string; endDate: string },
@@ -138,24 +182,25 @@ const useOfftakeData = (
           totalCarcassWeight: 0,
           avgCarcassWeight: 0,
           expenses: 0, 
-          netProfit: 0
+          netProfit: 0,
+          avgCostPerKgCarcass: 0 // New metric
         },
         genderData: [],
         countyData: [],
         topLocations: [],
         topFarmers: [],
-        monthlyTrend: []
+        monthlyTrend: [],
+        top3Months: [] // New metric
       };
     }
 
-    // Filter Data
+    // Filter Data using optimized loop
     const filteredData = offtakeData.filter(record => {
-      const inDate = isDateInRange(record.date, dateRange.startDate, dateRange.endDate);
-      const inProgramme = selectedProgramme ? record.programme === selectedProgramme : true;
-      return inDate && inProgramme;
+      return isDateInRange(record.date, dateRange.startDate, dateRange.endDate) &&
+             (selectedProgramme ? record.programme === selectedProgramme : true);
     });
 
-    // --- Basic Stats Calculation ---
+    // --- Stats Calculation ---
     
     let totalRevenue = 0;
     let totalGoats = 0;
@@ -169,16 +214,13 @@ const useOfftakeData = (
     const countySales: Record<string, number> = {};
     const locationSales: Record<string, number> = {};
     const farmerSales: Record<string, { name: string; revenue: number; animals: number }> = {};
-    
-    // For Trend (Monthly)
-    const monthlyData: Record<string, { month: string; revenue: number; volume: number }> = {};
+    const monthlyData: Record<string, { monthName: string; revenue: number; volume: number; monthIndex: number }> = {};
 
-    filteredData.forEach(record => {
-      // Revenue - Handle case differences
-      const txRevenue = Number(record.totalPrice || (record as any).totalprice) || 0;
+    // Using for...of for slightly better performance on large arrays vs forEach
+    for (const record of filteredData) {
+      const txRevenue = Number(record.totalPrice) || 0;
       totalRevenue += txRevenue;
 
-      // Animals Count & Weights
       const goatsArr = record.goats || [];
       const sheepArr = record.sheep || [];
       const cattleArr = record.cattle || [];
@@ -192,11 +234,12 @@ const useOfftakeData = (
       totalCattle += txCattle;
       totalAnimalsCount += (txGoats + txSheep + txCattle);
 
-      // Weights
-      [...goatsArr, ...sheepArr, ...cattleArr].forEach(animal => {
+      // Aggregate weights efficiently
+      const allAnimals = [...goatsArr, ...sheepArr, ...cattleArr];
+      for(const animal of allAnimals) {
         totalLiveWeight += Number(animal.live) || 0;
         totalCarcassWeight += Number(animal.carcass) || 0;
-      });
+      }
 
       // Gender
       if (record.gender) {
@@ -204,11 +247,10 @@ const useOfftakeData = (
         if (genderCounts[g] !== undefined) genderCounts[g]++;
       }
 
-      // County
+      // Location
       const county = record.county || "Unknown";
       countySales[county] = (countySales[county] || 0) + txGoats;
 
-      // Location
       const loc = record.location || "Unknown";
       locationSales[loc] = (locationSales[loc] || 0) + (txGoats + txSheep + txCattle);
 
@@ -224,50 +266,71 @@ const useOfftakeData = (
       const d = parseDate(record.date);
       if (d) {
         const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+        const monthName = d.toLocaleString('default', { month: 'short' });
+        
         if (!monthlyData[monthKey]) {
-          monthlyData[monthKey] = { month: d.toLocaleString('default', { month: 'short' }), revenue: 0, volume: 0 };
+          monthlyData[monthKey] = { 
+            monthName: monthName, 
+            revenue: 0, 
+            volume: 0,
+            monthIndex: d.getMonth()
+          };
         }
         monthlyData[monthKey].revenue += txRevenue;
         monthlyData[monthKey].volume += (txGoats + txSheep + txCattle);
       }
-    });
+    }
 
-    // Derived Stats
     const costPerGoat = totalGoats > 0 ? totalRevenue / totalGoats : 0;
     const avgLiveWeight = totalAnimalsCount > 0 ? totalLiveWeight / totalAnimalsCount : 0;
     const avgCarcassWeight = totalAnimalsCount > 0 ? totalCarcassWeight / totalAnimalsCount : 0;
-    
-    // Financials (Expenses mocked as 0 since data missing)
     const expenses = 0; 
     const netProfit = totalRevenue - expenses;
+    
+    // NEW: Calculate Average Cost per Kg (Carcass)
+    const avgCostPerKgCarcass = totalCarcassWeight > 0 ? totalRevenue / totalCarcassWeight : 0;
 
-    // --- Data Formatting for Charts ---
-
-    // Gender Doughnut
     const genderData = [
       { name: 'Male', value: genderCounts.Male },
       { name: 'Female', value: genderCounts.Female }
     ].filter(d => d.value > 0);
 
-    // County Bar (Horizontal)
     const countyData = Object.entries(countySales)
       .map(([name, count]) => ({ name, count }))
       .sort((a, b) => b.count - a.count);
 
-    // Top Locations (Vertical, Top 10)
     const topLocationsData = Object.entries(locationSales)
       .map(([name, count]) => ({ name, count }))
       .sort((a, b) => b.count - a.count)
       .slice(0, 10);
 
-    // Top Farmers List
     const topFarmersList = Object.values(farmerSales)
       .sort((a, b) => b.revenue - a.revenue)
       .slice(0, 5);
 
-    // Monthly Trend (Sorted by date)
-    const monthlyTrendData = Object.values(monthlyData)
-      .sort((a, b) => a.month.localeCompare(b.month));
+    // Generate Monthly Trend Data for Chart (Ensure all 12 months appear for consistency)
+    const ALL_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    
+    // Map data for Recharts
+    const monthlyTrendData = ALL_MONTHS.map(monthName => {
+      const existingData = Object.values(monthlyData).find(d => d.monthName === monthName);
+      return {
+        month: monthName,
+        revenue: existingData ? existingData.revenue : 0,
+        volume: existingData ? existingData.volume : 0
+      };
+    });
+
+    // NEW: Calculate Top 3 Months (by revenue)
+    // We use the actual monthlyData here, not the padded ALL_MONTHS array
+    const top3Months = Object.values(monthlyData)
+      .sort((a, b) => b.revenue - a.revenue)
+      .slice(0, 3)
+      .map(m => ({
+        month: m.monthName,
+        revenue: m.revenue,
+        volume: m.volume
+      }));
 
     return {
       filteredData,
@@ -283,13 +346,15 @@ const useOfftakeData = (
         totalCarcassWeight,
         avgCarcassWeight,
         expenses,
-        netProfit
+        netProfit,
+        avgCostPerKgCarcass
       },
       genderData,
       countyData,
       topLocations: topLocationsData,
       topFarmers: topFarmersList,
-      monthlyTrend: monthlyTrendData
+      monthlyTrend: monthlyTrendData,
+      top3Months
     };
   }, [offtakeData, dateRange, selectedProgramme]);
 };
@@ -302,9 +367,10 @@ interface StatsCardProps {
   icon: React.ElementType;
   subText?: string;
   color?: 'blue' | 'orange' | 'yellow' | 'green' | 'red' | 'purple' | 'teal';
+  trend?: 'up' | 'down' | 'neutral';
 }
 
-const StatsCard = ({ title, value, icon: Icon, subText, color = "blue" }: StatsCardProps) => {
+const StatsCard = ({ title, value, icon: Icon, subText, color = "blue", trend = "neutral" }: StatsCardProps) => {
   const colorMap: Record<string, { border: string, bg: string, text: string }> = {
     blue: { border: 'bg-blue-500', bg: 'bg-blue-50', text: 'text-blue-600' },
     orange: { border: 'bg-orange-500', bg: 'bg-orange-50', text: 'text-orange-600' },
@@ -318,19 +384,26 @@ const StatsCard = ({ title, value, icon: Icon, subText, color = "blue" }: StatsC
   const theme = colorMap[color];
 
   return (
-    <Card className="relative overflow-hidden group hover:shadow-xl transition-all duration-300 border-0 bg-white">
-      <div className={`absolute left-0 top-0 bottom-0 w-1 ${theme.border}`}></div>
+    <Card className="group hover:shadow-lg transition-all duration-300 border-0 shadow-sm bg-gradient-to-br from-white to-gray-50/50 rounded-2xl overflow-hidden">
+      <div className={`absolute left-0 top-0 bottom-0 w-1.5 ${theme.border} transition-all group-hover:w-2`}></div>
       
-      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 pt-4 pl-6">
-        <CardTitle className="text-sm font-medium text-gray-600">{title}</CardTitle>
-        <div className={`p-2 rounded-xl ${theme.bg} shadow-sm`}>
-          <Icon className={`h-4 w-4 ${theme.text}`} />
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3 pt-5 pl-6 pr-4">
+        <CardTitle className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{title}</CardTitle>
+        <div className={`p-2.5 rounded-xl ${theme.bg} shadow-sm group-hover:scale-105 transition-transform`}>
+          <Icon className={`h-5 w-5 ${theme.text}`} />
         </div>
       </CardHeader>
-      <CardContent className="pl-6 pb-4">
-        <div className="text-2xl font-bold text-gray-900">{value}</div>
+      <CardContent className="pl-6 pb-5 pr-4">
+        <div className="flex items-baseline gap-2">
+          <div className="text-3xl font-bold text-gray-900 tracking-tight">{value}</div>
+          {trend !== 'neutral' && (
+            <span className={`text-xs font-bold ${trend === 'up' ? 'text-green-600' : 'text-red-600'}`}>
+              {trend === 'up' ? '↑' : '↓'}
+            </span>
+          )}
+        </div>
         {subText && (
-          <p className="text-xs text-gray-500 mt-2 font-medium">{subText}</p>
+          <p className="text-xs text-gray-500 mt-2 font-medium leading-relaxed line-clamp-2">{subText}</p>
         )}
       </CardContent>
     </Card>
@@ -340,8 +413,8 @@ const StatsCard = ({ title, value, icon: Icon, subText, color = "blue" }: StatsC
 const renderCenterLabel = ({ viewBox }: any) => {
   const { cx, cy } = viewBox;
   return (
-    <text x={cx} y={cy} fill="#333" textAnchor="middle" dominantBaseline="middle" className="text-sm font-bold fill-gray-700">
-      Total Farmers
+    <text x={cx} y={cy} fill="#374151" textAnchor="middle" dominantBaseline="middle" className="text-sm font-bold fill-gray-700">
+      Farmers
     </text>
   );
 };
@@ -355,63 +428,47 @@ const salesReport = () => {
   
   const [loading, setLoading] = useState(true);
   const [offtakeData, setOfftakeData] = useState<OfftakeData[]>([]);
+  const [isCacheHit, setIsCacheHit] = useState(false);
   
-  // FIX: Initialize with empty strings to show ALL data initially. 
-  // If you initialized with "Current Month", future dates (like your June 2025 data) would be hidden.
-  const [dateRange, setDateRange] = useState({ startDate: "", endDate: "" });
+  const currentYear = new Date().getFullYear();
+  const [selectedYear, setSelectedYear] = useState<string>(String(currentYear));
+  const [timeFrame, setTimeFrame] = useState<'weekly' | 'monthly' | 'yearly'>('monthly');
+  
+  const [dateRange, setDateRange] = useState({ startDate: `${currentYear}-01-01`, endDate: `${currentYear}-12-31` });
   const [selectedProgramme, setSelectedProgramme] = useState<string | null>(null);
   
-  // User Permissions Logic
+  const availableYears = useMemo(() => {
+    const years: string[] = [];
+    for(let i = 0; i < 5; i++) years.push(String(currentYear - i));
+    return years;
+  }, [currentYear]);
+
   const [allowedProgrammes, setAllowedProgrammes] = useState<string[]>([]);
   const [userPermissionsLoading, setUserPermissionsLoading] = useState(true);
-  
-  // Active Program Logic
   const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
   const [activeProgram, setActiveProgram] = useState<string>(""); 
-
-  // Determine visibility of Programme Filter
   const showProgrammeFilter = userIsChiefAdmin;
 
-  const {
-    stats,
-    genderData,
-    countyData,
-    topLocations,
-    topFarmers,
-    monthlyTrend,
-    filteredData
-  } = useOfftakeData(offtakeData, dateRange, selectedProgramme);
+  const { stats, genderData, countyData, topLocations, topFarmers, monthlyTrend, filteredData, top3Months } = useOfftakeData(offtakeData, dateRange, selectedProgramme);
 
-  // --- Fetch User Permissions ---
+  // Ref to store the unsubscribe function for cleanup
+  const unsubscribeRef = useRef<(() => void) | null>(null);
+
   useEffect(() => {
     const uid = auth.currentUser?.uid;
-    if (!uid) {
-      setUserPermissionsLoading(false);
-      return;
-    }
+    if (!uid) { setUserPermissionsLoading(false); return; }
 
     const userRef = ref(db, `users/${uid}`);
-    
     const unsubscribe = onValue(userRef, (snapshot) => {
       const data = snapshot.val();
       if (data) {
         const programmesObj = data.allowedProgrammes || {};
-        // Extract keys where value is true
         const programmesList = Object.keys(programmesObj).filter(key => programmesObj[key] === true);
-        
         setAllowedProgrammes(programmesList);
-
-        if (!userIsChiefAdmin) {
-          if (programmesList.length > 0) {
-             setActiveProgram(programmesList[0]);
-          } else {
-            console.warn("User has no allowed programmes assigned.");
-            // Only show toast if explicitly needed, otherwise just warn
-            // toast({ title: "Access Restricted", description: "No programmes assigned.", variant: "destructive" });
-          }
-        } else {
-          // Admin: Default to KPMD
-          if (!activeProgram) setActiveProgram("KPMD");
+        if (!userIsChiefAdmin && programmesList.length > 0) {
+           setActiveProgram(programmesList[0]);
+        } else if (userIsChiefAdmin && !activeProgram) {
+          setActiveProgram("KPMD");
         }
       }
       setUserPermissionsLoading(false);
@@ -419,152 +476,156 @@ const salesReport = () => {
       console.error("Error fetching user permissions:", error);
       setUserPermissionsLoading(false);
     });
-
     return () => unsubscribe();
-  }, [auth.currentUser?.uid, userIsChiefAdmin]);
+  }, [auth.currentUser?.uid, userIsChiefAdmin, activeProgram]);
 
-  // --- Fetch Offtake Data ---
   useEffect(() => {
-    // Wait for permissions to load and for an active program to be selected
-    if (userPermissionsLoading) return;
-    if (!activeProgram) {
-        // If no active program (e.g. user with no permissions), don't fetch
-        setLoading(false);
-        return;
+    // Cleanup previous listener
+    if (unsubscribeRef.current) {
+      unsubscribeRef.current();
+      unsubscribeRef.current = null;
     }
 
-    setLoading(true);
-    
-    // Query based on active programme
-    const dbRef = query(ref(db, 'offtakes'), orderByChild('programme'), equalTo(activeProgram));
+    if (userPermissionsLoading || !activeProgram) { setLoading(false); return; }
 
+    // Check Cache first
+    const cachedData = dataCache.get(activeProgram);
+    if (cachedData) {
+      setOfftakeData(cachedData);
+      setLoading(false);
+      setIsCacheHit(true);
+    } else {
+      setLoading(true);
+      setIsCacheHit(false);
+    }
+
+    const dbRef = query(ref(db, 'offtakes'), orderByChild('programme'), equalTo(activeProgram));
+    
     const unsubscribe = onValue(dbRef, (snapshot) => {
       const data = snapshot.val();
-      
-      if (!data) {
-        setOfftakeData([]);
-        setLoading(false);
+      if (!data) { 
+        setOfftakeData([]); 
+        setLoading(false); 
         return;
       }
 
+      // Optimization: Transform data structure once on fetch
       const offtakeList = Object.keys(data).map((key) => {
         const item = data[key];
-        
-        // Date Handling - Supports "22 Jun 2025"
         let dateValue = item.date; 
         if (typeof dateValue === 'number') dateValue = new Date(dateValue);
-        // String check
         else if (typeof dateValue === 'string') {
            const d = new Date(dateValue);
            if (!isNaN(d.getTime())) dateValue = d;
         }
-
         const goatsArr = item.goats || [];
-        
         return {
-          id: key,
-          date: dateValue,
-          farmerName: item.name || '', 
-          gender: item.gender || '',
-          idNumber: item.idNumber || '',
-          location: item.location || '',
-          county: item.county || '',
-          programme: item.programme || activeProgram, 
-          phone: item.phone || '',
-          username: item.username || '',
-          
-          goats: goatsArr, 
-          totalGoats: item.totalGoats || goatsArr.length,
-          totalPrice: item.totalPrice || 0
+          id: key, date: dateValue, farmerName: item.name || '', gender: item.gender || '',
+          idNumber: item.idNumber || '', location: item.location || '', county: item.county || '',
+          programme: item.programme || activeProgram, phone: item.phone || '', username: item.username || '',
+          goats: goatsArr, totalGoats: item.totalGoats || goatsArr.length, totalPrice: item.totalPrice || 0
         };
       });
 
+      // Update Cache
+      dataCache.set(activeProgram, offtakeList);
+      
       setOfftakeData(offtakeList);
       setLoading(false);
+      setIsCacheHit(false);
     }, (error) => {
       console.error("Error fetching offtake data:", error);
-      toast({
-        title: "Error",
-        description: "Failed to load offtake data. You might not have permission for this programme.",
-        variant: "destructive",
-      });
+      toast({ title: "Error", description: "Failed to load offtake data.", variant: "destructive" });
       setLoading(false);
     });
 
-    return () => {
-       if(typeof unsubscribe === 'function') unsubscribe();
-    };
+    unsubscribeRef.current = unsubscribe;
+    return () => { if(unsubscribe) unsubscribe(); };
   }, [activeProgram, userPermissionsLoading, toast]);
 
-  const handleDateRangeChange = useCallback((key: string, value: string) => {
-    setDateRange(prev => ({ ...prev, [key]: value }));
+  const handleDateRangeChange = useCallback((key: string, value: string) => setDateRange(prev => ({ ...prev, [key]: value })), []);
+
+  const handleYearChange = useCallback((year: string) => {
+    const yearNum = parseInt(year, 10);
+    setSelectedYear(year);
+    setDateRange({ startDate: `${yearNum}-01-01`, endDate: `${yearNum}-12-31` });
+    setTimeFrame('yearly'); 
   }, []);
 
-  const formatCurrency = (val: number) => `KES ${val.toLocaleString()}`;
+  const setWeekFilter = useCallback(() => { const dates = getCurrentWeekDates(); setDateRange(dates); setTimeFrame('weekly'); }, []);
+  const setMonthFilter = useCallback(() => { const dates = getCurrentMonthDates(); setDateRange(dates); setTimeFrame('monthly'); }, []);
+  
+  const setQFilter = useCallback((q: 1|2|3|4) => {
+    setDateRange(getQDates(parseInt(selectedYear, 10), q)); 
+    setTimeFrame('monthly'); 
+  }, [selectedYear]);
 
-  const handleProgramChange = (program: string) => {
-    setActiveProgram(program);
-    setSelectedProgramme(program);
-  };
+  const clearFilters = useCallback(() => {
+    const currentY = String(new Date().getFullYear());
+    setSelectedYear(currentY);
+    const currentNum = parseInt(currentY, 10);
+    setDateRange({ startDate: `${currentNum}-01-01`, endDate: `${currentNum}-12-31` });
+    setTimeFrame('monthly');
+  }, []);
 
-  // Calculate Percentages for Animal Stats
+  const formatCurrency = (val: number) => `KES ${val.toLocaleString(undefined, {maximumFractionDigits: 0})}`;
+  const handleProgramChange = (program: string) => { setActiveProgram(program); setSelectedProgramme(program); };
+
   const goatPct = stats.totalAnimals > 0 ? ((stats.totalGoats / stats.totalAnimals) * 100).toFixed(1) : 0;
   const sheepPct = stats.totalAnimals > 0 ? ((stats.totalSheep / stats.totalAnimals) * 100).toFixed(1) : 0;
-  const cattlePct = stats.totalAnimals > 0 ? ((stats.totalCattle / stats.totalAnimals) * 100).toFixed(1) : 0;
 
   if (loading || userPermissionsLoading) {
     return (
       <div className="flex flex-col justify-center items-center h-96 space-y-4">
         <Loader2 className="h-12 w-12 animate-spin text-blue-600" />
         <p className="text-gray-600 font-medium animate-pulse">Loading dashboard data...</p>
+        {isCacheHit && <p className="text-xs text-blue-500">Using cached data...</p>}
       </div>
     );
   }
 
   return (
-    <div className="space-y-8 p-1 bg-gray-50/50 min-h-screen pb-10">
-      
-      {/* Header and Filters */}
-      <div className="flex flex-col justify-between items-start gap-4">
-        <div>
-            <h1 className="text-[20px] font-medium text-gray-900 tracking-tight">Offtake Performance Dashboard</h1>
-            <p className="text-sm text-gray-500 mt-1">
-               Viewing data for: <span className="font-semibold text-blue-600">{activeProgram}</span>
-            </p>
-        </div>
+    <div className="min-h-screen bg-slate-50/80 p-4 md:p-6 lg:p-8 pb-20">
+      <div className="max-w-7xl mx-auto space-y-8">
+        
+        {/* Header Section */}
+        <div className="flex flex-col gap-4 md:gap-6">
+          <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
+            <div>
+              <h1 className="text-2xl md:text-3xl font-bold text-gray-900 tracking-tight">Offtake Dashboard</h1>
+              <p className="text-sm text-gray-500 mt-1 flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-blue-600"></span>
+                Viewing Data: <span className="font-semibold text-blue-700">{activeProgram || "All Programmes"}</span>
+                {isCacheHit && <span className="text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full border border-blue-200">Cached</span>}
+              </p>
+            </div>
+          </div>
 
-        <Card className="w-full lg:w-auto border-0 shadow-lg bg-white">
-          <CardContent className="p-4">
-            <div className="flex flex-col lg:flex-row gap-4 items-end">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  
-                  <Input
-                    id="startDate"
-                    type="date"
-                    value={dateRange.startDate}
-                    onChange={(e) => handleDateRangeChange("startDate", e.target.value)}
-                    className="border-gray-200 focus:border-blue-500"
-                  />
-                </div>
-                <div className="space-y-2">
-                  
-                  <Input
-                    id="endDate"
-                    type="date"
-                    value={dateRange.endDate}
-                    onChange={(e) => handleDateRangeChange("endDate", e.target.value)}
-                    className="border-gray-200 focus:border-blue-500"
-                  />
-                </div>
+          {/* Modern Responsive Filter Control Panel */}
+          <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-200/60">
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
+              
+              {/* Fiscal Year (Col 1) */}
+              <div className="md:col-span-2 space-y-1.5">
+                <Label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Fiscal Year</Label>
+                <Select value={selectedYear} onValueChange={handleYearChange}>
+                  <SelectTrigger className="h-10 w-full rounded-lg border-gray-300 focus:ring-blue-500 focus:border-blue-500 bg-gray-50/50">
+                    <Calendar className="h-4 w-4 text-gray-500 mr-2" />
+                    <SelectValue placeholder="Year" />
+                  </SelectTrigger>
+                  <SelectContent>
+                     {availableYears.map(year => <SelectItem key={year} value={year}>{year}</SelectItem>)}
+                  </SelectContent>
+                </Select>
               </div>
 
+              {/* Programme (Col 2) - Admin Only */}
               {showProgrammeFilter && (
-                <div className="w-full lg:w-48 space-y-2">
-                 
+                <div className="md:col-span-2 space-y-1.5">
+                  <Label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Programme</Label>
                   <Select value={activeProgram} onValueChange={handleProgramChange}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select Programme" />
+                    <SelectTrigger className="h-10 w-full rounded-lg border-gray-300 focus:ring-blue-500 focus:border-blue-500 bg-gray-50/50">
+                      <SelectValue placeholder="Select" />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="KPMD">KPMD</SelectItem>
@@ -573,260 +634,261 @@ const salesReport = () => {
                   </Select>
                 </div>
               )}
-              
-              <Button 
-                onClick={() => setDateRange({ startDate: "", endDate: "" })} 
-                variant="outline" 
-                className="text-xs h-10"
-              >
-                Show All Dates
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
 
-      {/* --- SECTION 1: PURCHASES --- */}
-      <div className="space-y-6">
-        <div className="flex items-center gap-2 border-b pb-2">
-           <Beef className="h-5 w-5 text-blue-600" />
-           <h2 className="text-lg font-bold text-gray-800">Purchases Overview</h2>
-        </div>
-
-        {/* Stats Cards Row */}
-        <div className="grid gap-4 md:grid-cols-3">
-          <StatsCard 
-            title="Total Animals Purchased" 
-            value={stats.totalAnimals.toLocaleString()} 
-            icon={Package}
-            subText={`Goats: ${stats.totalGoats} (${goatPct}%) • Sheep: ${stats.totalSheep} (${sheepPct}%) • Cattle: ${stats.totalCattle} (${cattlePct}%)`}
-            color="blue"
-          />
-
-          <StatsCard 
-            title="Total Revenue" 
-            value={formatCurrency(stats.totalRevenue)} 
-            icon={DollarSign}
-            subText={`Cost per Goat: ${formatCurrency(stats.costPerGoat)}`}
-            color="green"
-          />
-
-          <StatsCard 
-            title="Total Live Weight" 
-            value={`${stats.totalLiveWeight.toLocaleString()} kg`} 
-            icon={TrendingUp}
-            subText={`Avg Live: ${stats.avgLiveWeight.toFixed(1)}kg • Avg Carcass: ${stats.avgCarcassWeight.toFixed(1)}kg`}
-            color="purple"
-          />
-        </div>
-
-        {/* Charts Row 1 */}
-        <div className="grid gap-6 md:grid-cols-2">
-          {/* Doughnut: Gender Split */}
-          <Card className="border-0 shadow-lg bg-white">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-md flex items-center gap-2 text-gray-800">
-                <Users className="h-5 w-5 text-orange-600" />
-                Farmers Demographics
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="h-[300px] w-full relative flex justify-center items-center">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={genderData}
-                      cx="50%"
-                      cy="50%"
-                      innerRadius={70}
-                      outerRadius={100}
-                      paddingAngle={5}
-                      dataKey="value"
-                    >
-                      <Cell fill={COLORS.darkBlue} name="Male" />
-                      <Cell fill={COLORS.orange} name="Female" />
-                      <RechartsLabel content={renderCenterLabel} position="center" />
-                    </Pie>
-                    <Tooltip />
-                    <Legend 
-                      verticalAlign="bottom" 
-                      height={36}
-                      formatter={(value: string) => <span className="text-xs text-gray-600 font-medium capitalize">{value}</span>}
-                    />
-                  </PieChart>
-                </ResponsiveContainer>
-                {/* Overlay Total Count */}
-                <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none mt-4">
-                   <span className="text-2xl font-bold text-gray-800">{filteredData.length}</span>
+              {/* Date Range (Col 3-4) */}
+              <div className="md:col-span-3 grid grid-cols-2 gap-2">
+                <div className="space-y-1.5">
+                  <Label className="text-[10px] font-semibold text-gray-500 uppercase">From</Label>
+                  <Input
+                    id="startDate"
+                    type="date"
+                    value={dateRange.startDate}
+                    onChange={(e) => handleDateRangeChange("startDate", e.target.value)}
+                    className="h-10 text-sm rounded-lg border-gray-300 focus:ring-blue-500 focus:border-blue-500 bg-gray-50/50"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-[10px] font-semibold text-gray-500 uppercase">To</Label>
+                  <Input
+                    id="endDate"
+                    type="date"
+                    value={dateRange.endDate}
+                    onChange={(e) => handleDateRangeChange("endDate", e.target.value)}
+                    className="h-10 text-sm rounded-lg border-gray-300 focus:ring-blue-500 focus:border-blue-500 bg-gray-50/50"
+                  />
                 </div>
               </div>
-            </CardContent>
-          </Card>
 
-          {/* Horizontal Bar: Goats per County */}
-          <Card className="border-0 shadow-lg bg-white">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-md flex items-center gap-2 text-gray-800">
-                <MapPin className="h-5 w-5 text-teal-600" />
-                Goats Purchased per County
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="h-[300px] w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart
-                    data={countyData}
-                    layout="vertical"
-                    margin={{ top: 5, right: 30, left: 80, bottom: 5 }}
-                  >
-                    <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f3f4f6" />
-                    <XAxis type="number" tick={{ fontSize: 11, fill: '#6b7280' }} />
-                    <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: '#374151' }} width={75} />
-                    <Tooltip cursor={{fill: '#f3f4f6'}} />
-                    <Bar dataKey="count" radius={[0, 4, 4, 0]} barSize={12} fill={COLORS.teal}>
-                      {countyData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={BAR_COLORS[index % BAR_COLORS.length]} />
-                      ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
+              {/* Quick Filters (Col 5) - Wraps nicely */}
+              <div className="md:col-span-5 flex flex-wrap gap-2 items-end justify-end w-full">
+                <div className="flex flex-wrap gap-1.5 w-full md:w-auto">
+                  <Button variant="outline" onClick={setWeekFilter} size="sm" className="rounded-lg text-xs h-9 px-3">Week</Button>
+                  <Button variant="outline" onClick={setMonthFilter} size="sm" className="rounded-lg text-xs h-9 px-3">Month</Button>
+                  <div className="w-px h-6 bg-gray-300 mx-1 self-center hidden sm:block"></div>
+                  <Button variant="outline" onClick={() => setQFilter(1)} size="sm" className="rounded-lg text-xs h-9 w-10">Q1</Button>
+                  <Button variant="outline" onClick={() => setQFilter(2)} size="sm" className="rounded-lg text-xs h-9 w-10">Q2</Button>
+                  <Button variant="outline" onClick={() => setQFilter(3)} size="sm" className="rounded-lg text-xs h-9 w-10">Q3</Button>
+                  <Button variant="outline" onClick={() => setQFilter(4)} size="sm" className="rounded-lg text-xs h-9 w-10">Q4</Button>
+                  <Button onClick={clearFilters} variant="ghost" size="sm" className="rounded-lg text-xs h-9 px-3 text-red-500 hover:bg-red-50 hover:text-red-600 ml-auto">Reset</Button>
+                </div>
               </div>
-            </CardContent>
-          </Card>
+            </div>
+          </div>
         </div>
 
-        {/* Charts Row 2 */}
-        <div className="grid gap-6 md:grid-cols-2">
-          {/* Vertical Bar: Top 10 Locations */}
-          <Card className="border-0 shadow-lg bg-white">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-md flex items-center gap-2 text-gray-800">
-                <MapPin className="h-5 w-5 text-purple-600" />
-                Top 10 Locations by Volume
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="h-[300px] w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={topLocations} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
-                    <XAxis dataKey="name" angle={-45} textAnchor="end" height={100} tick={{ fontSize: 10, fill: '#6b7280' }} interval={0} />
-                    <YAxis tick={{ fontSize: 11, fill: '#6b7280' }} />
-                    <Tooltip cursor={{fill: '#f3f4f6'}} />
-                    <Bar dataKey="count" radius={[4, 4, 0, 0]} fill={COLORS.darkBlue} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </CardContent>
-          </Card>
+        {/* --- SECTION 1: PURCHASES --- */}
+        <section className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+          <div className="flex items-center gap-2 pb-1 border-b border-gray-200">
+             <Beef className="h-5 w-5 text-blue-600" />
+             <h2 className="text-lg font-bold text-gray-800">Purchases Overview</h2>
+          </div>
 
-          {/* List: Top Farmers */}
-          <Card className="border-0 shadow-lg bg-white flex flex-col">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-md flex items-center gap-2 text-gray-800">
-                <Award className="h-5 w-5 text-yellow-600" />
-                Top Farmers
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="flex-1">
-              <div className="space-y-3 h-[300px] overflow-y-auto pr-2">
-                {topFarmers.length > 0 ? topFarmers.map((farmer, idx) => (
-                  <div key={idx} className="flex items-center justify-between p-3 rounded-lg bg-gray-50 border border-gray-100 hover:bg-gray-100 transition-colors">
-                    <div className="flex items-center gap-3">
-                      <div className="flex items-center justify-center w-8 h-8 rounded-full bg-blue-100 text-blue-700 font-bold text-xs">
-                        {idx + 1}
-                      </div>
-                      <div>
-                        <p className="text-sm font-semibold text-gray-800">{farmer.name}</p>
-                        <p className="text-xs text-gray-500">{farmer.animals} animals</p>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-sm font-bold text-green-700">{formatCurrency(farmer.revenue)}</p>
-                    </div>
+          <div className="grid gap-4 md:grid-cols-3">
+            <StatsCard 
+              title="Total Animals" 
+              value={stats.totalAnimals.toLocaleString()} 
+              icon={Package} 
+              subText={`Goats: ${stats.totalGoats} (${goatPct}%) • Sheep: ${stats.totalSheep} (${sheepPct}%)`} 
+              color="blue" 
+            />
+            <StatsCard 
+              title="Total COST" 
+              value={formatCurrency(stats.totalRevenue)} 
+              icon={DollarSign} 
+              subText={`Cost/Goat: ${formatCurrency(stats.costPerGoat)} • Avg/Kg: ${formatCurrency(stats.avgCostPerKgCarcass)}`} 
+              color="green" 
+            />
+            <StatsCard 
+              title="Live Weight" 
+              value={`${stats.totalLiveWeight.toLocaleString()} kg`} 
+              icon={TrendingUp} 
+              subText={`Avg: ${stats.avgLiveWeight.toFixed(1)}kg`} 
+              color="purple" 
+            />
+          </div>
+
+          <div className="grid gap-6 md:grid-cols-2">
+            {/* Doughnut */}
+            <Card className="border-0 shadow-sm bg-white rounded-2xl">
+              <CardHeader className="pb-4 pt-6 px-6">
+                <CardTitle className="text-sm font-bold flex items-center gap-2 text-gray-800">
+                  <Users className="h-4 w-4 text-orange-500" />
+                  Farmers Demographics
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="px-6 pb-6">
+                <div className="h-[280px] w-full relative flex justify-center items-center">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie data={genderData} cx="50%" cy="50%" innerRadius={60} outerRadius={90} paddingAngle={5} dataKey="value">
+                        <Cell fill={COLORS.darkBlue} name="Male" />
+                        <Cell fill={COLORS.orange} name="Female" />
+                        <RechartsLabel content={renderCenterLabel} position="center" />
+                      </Pie>
+                      <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
+                      <Legend verticalAlign="bottom" height={36} iconType="circle" formatter={(value: string) => <span className="text-xs text-gray-600 font-medium capitalize">{value}</span>} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                  <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none mt-3">
+                     <span className="text-2xl font-bold text-gray-800">{filteredData.length}</span>
                   </div>
-                )) : (
-                  <p className="text-center text-sm text-gray-400 mt-10">No farmer data available</p>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Top 3 Months - New Feature */}
+            <Card className="border-0 shadow-sm bg-white rounded-2xl flex flex-col">
+              <CardHeader className="pb-4 pt-6 px-6">
+                <CardTitle className="text-sm font-bold flex items-center gap-2 text-gray-800">
+                  <Zap className="h-4 w-4 text-yellow-500" />
+                  Top Performing Months
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="flex-1 px-6 pb-6 flex flex-col justify-center">
+                {top3Months.length > 0 ? (
+                  <div className="space-y-4">
+                    {top3Months.map((m, index) => (
+                      <div key={index} className="flex items-center justify-between p-3 rounded-xl bg-gradient-to-r from-yellow-50/50 to-white border border-yellow-100 hover:shadow-md transition-all">
+                        <div className="flex items-center gap-3">
+                          <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm shadow-sm ${
+                            index === 0 ? 'bg-yellow-400 text-white' : 
+                            index === 1 ? 'bg-gray-300 text-white' : 
+                            'bg-orange-300 text-white'
+                          }`}>
+                            {index + 1}
+                          </div>
+                          <div>
+                            <p className="text-sm font-bold text-gray-800">{m.month}</p>
+                            <p className="text-[11px] text-gray-500">{m.volume} animals sold</p>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-sm font-bold text-green-700">{formatCurrency(m.revenue)}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center text-gray-400 py-8 text-sm">No performance data available for selected range</div>
                 )}
-              </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          <div className="grid gap-6 md:grid-cols-2">
+            {/* Horizontal Bar */}
+            <Card className="border-0 shadow-sm bg-white rounded-2xl">
+              <CardHeader className="pb-4 pt-6 px-6">
+                <CardTitle className="text-sm font-bold flex items-center gap-2 text-gray-800">
+                  <MapPin className="h-4 w-4 text-teal-500" />
+                  Goats by County
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="px-6 pb-6">
+                <div className="h-[280px] w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={countyData} layout="vertical" margin={{ top: 5, right: 20, left: 70, bottom: 5 }}>
+                      <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f1f5f9" />
+                      <XAxis type="number" tick={{ fontSize: 11, fill: '#64748b' }} />
+                      <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: '#334155' }} width={65} />
+                      <Tooltip cursor={{fill: '#f1f5f9'}} contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
+                      <Bar dataKey="count" radius={[0, 4, 4, 0]} barSize={12} fill={COLORS.teal}>
+                        {countyData.map((entry, index) => <Cell key={`cell-${index}`} fill={BAR_COLORS[index % BAR_COLORS.length]} />)}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Top Farmers */}
+            <Card className="border-0 shadow-sm bg-white rounded-2xl flex flex-col">
+              <CardHeader className="pb-4 pt-6 px-6">
+                <CardTitle className="text-sm font-bold flex items-center gap-2 text-gray-800">
+                  <Award className="h-4 w-4 text-purple-500" />
+                  Top Offtake Beneficiaries
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="flex-1 px-6 pb-6">
+                <div className="space-y-3 h-[280px] overflow-y-auto pr-2 custom-scrollbar">
+                  {topFarmers.length > 0 ? topFarmers.map((farmer, idx) => (
+                    <div key={idx} className="flex items-center justify-between p-3 rounded-xl bg-gray-50/80 border border-gray-100 hover:bg-blue-50 hover:border-blue-100 transition-all duration-200">
+                      <div className="flex items-center gap-3">
+                        <div className="flex items-center justify-center w-8 h-8 rounded-full bg-white border border-gray-200 text-blue-700 font-bold text-xs shadow-sm">
+                          {idx + 1}
+                        </div>
+                        <div>
+                          <p className="text-sm font-bold text-gray-800">{farmer.name}</p>
+                          <p className="text-[11px] text-gray-500">{farmer.animals} animals</p>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-sm font-bold text-green-700">{formatCurrency(farmer.revenue)}</p>
+                      </div>
+                    </div>
+                  )) : (
+                    <div className="h-full flex items-center justify-center text-sm text-gray-400">No farmer data available</div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </section>
+
+        {/* --- SECTION 2: FINANCIALS & TREND --- */}
+        <section className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700 delay-100">
+          <div className="flex items-center gap-2 pb-1 border-b border-gray-200">
+             <DollarSign className="h-5 w-5 text-green-600" />
+             <h2 className="text-lg font-bold text-gray-800">Financial and Expenses Tracks </h2>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-3">
+            <StatsCard title="Total Cost" value={formatCurrency(stats.totalRevenue)} icon={DollarSign} subText="Total cost for animal purchased " color="green" />
+            <StatsCard title="Total Revenue" value={formatCurrency(stats.totalRevenue - stats.expenses)} icon={TrendingUp} subText="Total revenue from animal sales" color="red" />
+            <StatsCard title="Net Profit" value={formatCurrency(stats.netProfit)} icon={Star} subText={stats.netProfit >= 0 ? "Positive" : "Negative"} color={stats.netProfit >= 0 ? "blue" : "red"} />
+          </div>
+
+          <Card className="border-0 shadow-sm bg-white rounded-2xl">
+            <CardHeader className="pb-4 pt-6 px-6">
+              <CardTitle className="text-sm font-bold flex items-center gap-2 text-gray-800">
+                <TrendingUp className="h-4 w-4 text-blue-600" />
+                Monthly Offtake Trend
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="px-6 pb-6">
+              <ResponsiveContainer width="100%" height={350}>
+                <AreaChart data={monthlyTrend}>
+                  <defs>
+                    <linearGradient id="colorTrend" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor={COLORS.darkBlue} stopOpacity={0.2}/>
+                      <stop offset="95%" stopColor={COLORS.darkBlue} stopOpacity={0}/>
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+                  <XAxis dataKey="month" tick={{ fontSize: 12, fill: '#64748b' }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fontSize: 12, fill: '#64748b' }} axisLine={false} tickLine={false} />
+                  <Tooltip 
+                    contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                    formatter={(value: number, name: string) => [
+                      name === 'volume' ? `${value} Animals` : formatCurrency(value), 
+                      name === 'volume' ? 'Volume' : 'Revenue'
+                    ]} 
+                  />
+                  <Area 
+                    type="monotone" 
+                    dataKey="volume" 
+                    stroke={COLORS.darkBlue} 
+                    strokeWidth={2}
+                    fillOpacity={1} 
+                    fill="url(#colorTrend)" 
+                    name="volume"
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
             </CardContent>
           </Card>
-        </div>
+        </section>
       </div>
-
-      {/* --- SECTION 2: FINANCIALS & TREND --- */}
-      <div className="space-y-6">
-        <div className="flex items-center gap-2 border-b pb-2">
-           <DollarSign className="h-5 w-5 text-green-600" />
-           <h2 className="text-lg font-bold text-gray-800">Financials & Trends</h2>
-        </div>
-
-        {/* Financial Stats */}
-        <div className="grid gap-4 md:grid-cols-3">
-          <StatsCard 
-            title="Total Revenue" 
-            value={formatCurrency(stats.totalRevenue)} 
-            icon={DollarSign}
-            color="green"
-          />
-
-          <StatsCard 
-            title="Total Expenses" 
-            value={formatCurrency(stats.expenses)} 
-            icon={TrendingUp}
-            subText="Based on recorded operational costs"
-            color="red"
-          />
-
-          <StatsCard 
-            title="Net Profit" 
-            value={formatCurrency(stats.netProfit)} 
-            icon={Star}
-            subText={stats.netProfit >= 0 ? "Positive Margin" : "Negative Margin"}
-            color={stats.netProfit >= 0 ? "blue" : "red"}
-          />
-        </div>
-
-        {/* Monthly Trend Curve */}
-        <Card className="border-0 shadow-lg bg-white">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-md flex items-center gap-2 text-gray-800">
-              <TrendingUp className="h-5 w-5 text-blue-600" />
-              Monthly Offtake Trend (Truck Volume)
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ResponsiveContainer width="100%" height={350}>
-              <AreaChart data={monthlyTrend}>
-                <defs>
-                  <linearGradient id="colorTrend" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor={COLORS.darkBlue} stopOpacity={0.8}/>
-                    <stop offset="95%" stopColor={COLORS.darkBlue} stopOpacity={0.1}/>
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
-                <XAxis dataKey="month" tick={{ fontSize: 12, fill: '#6b7280' }} />
-                <YAxis tick={{ fontSize: 12, fill: '#6b7280' }} />
-                <Tooltip 
-                  formatter={(value: number, name: string) => [
-                    name === 'volume' ? `${value} Animals` : formatCurrency(value), 
-                    name === 'volume' ? 'Volume' : 'Revenue'
-                  ]} 
-                />
-                <Area 
-                  type="monotone" 
-                  dataKey="volume" 
-                  stroke={COLORS.darkBlue} 
-                  fillOpacity={1} 
-                  fill="url(#colorTrend)" 
-                  name="volume"
-                />
-              </AreaChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
-      </div>
-
     </div>
   );
 };
