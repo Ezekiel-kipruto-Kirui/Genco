@@ -999,15 +999,21 @@ const LivestockFarmersPage = () => {
           <h2 className="text-md font-bold mb-2 bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
             Livestock Farmers
           </h2>
+          <div className="flex items-center gap-2">
+                       <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 font-bold px-3 py-1 w-fit">
+                          {activeProgram || "No Access"} PROGRAMME
+                       </Badge>
+                    </div>
         </div>
          
          <div className="flex lg:flex-row  md:flex-row flex-col gap-4 w-full md:w-auto">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full md:w-auto">
+            {/* FIX: Added 'relative z-50' to ensure date pickers render above other elements */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full md:w-auto relative">
                 <div className="space-y-2">
-                    <Input id="startDate" type="date" value={filters.startDate} onChange={(e) => handleFilterChange("startDate", e.target.value)} className="border-gray-300 focus:border-blue-500 bg-white h-9 w-full" />
+                    <Input id="startDate" type="date" value={filters.startDate} onChange={(e) => handleFilterChange("startDate", e.target.value)} className="text-[5px] border-gray-300 focus:border-blue-500 bg-white h-9 w-full" />
                 </div>
                 <div className="space-y-2">
-                    <Input id="endDate" type="date" value={filters.endDate} onChange={(e) => handleFilterChange("endDate", e.target.value)} className="border-gray-300 focus:border-blue-500 bg-white h-9 w-full" />
+                    <Input id="endDate" type="date" value={filters.endDate} onChange={(e) => handleFilterChange("endDate", e.target.value)} className="text-[5px] border-gray-300 focus:border-blue-500 bg-white h-10 w-full" />
                 </div>
             </div>
             

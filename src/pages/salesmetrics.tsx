@@ -11,12 +11,18 @@ import {
 } from "recharts";
 import { 
   Beef, TrendingUp, Award, Star, 
-  MapPin, DollarSign, Package, Users, Loader2, Calendar, Filter, Zap
+  MapPin, DollarSign, Package, Users, Loader2, Calendar, Filter, Zap, ChevronDown
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"; 
 import { useToast } from "@/hooks/use-toast";
 
 // --- Constants ---
@@ -67,19 +73,16 @@ class DataCache {
     const item = this.cache.get(key);
     if (!item) return null;
     
-    // Check if cache is still valid
     if (Date.now() - item.timestamp > this.maxAge) {
       this.cache.delete(key);
       return null;
     }
     
-    console.log(`[Cache] Hit for key: ${key}`);
     return item.data;
   }
 
   set(key: string, data: OfftakeData[]) {
     this.cache.set(key, { data, timestamp: Date.now() });
-    console.log(`[Cache] Set for key: ${key}`);
   }
 
   clear() {
@@ -134,7 +137,6 @@ const isDateInRange = (date: any, startDate: string, endDate: string): boolean =
   return true;
 };
 
-// --- Date Range Helpers ---
 const getCurrentWeekDates = () => {
   const now = new Date();
   const startOfWeek = new Date(now);
@@ -160,7 +162,7 @@ const getQDates = (year: number, quarter: 1 | 2 | 3 | 4) => {
   return { startDate: start, endDate: `${endYear}-${String(endMonth).padStart(2,'0')}-${endDay}` };
 };
 
-// --- Custom Hook for Offtake Data Processing (Optimized) ---
+// --- Custom Hook for Offtake Data Processing ---
 const useOfftakeData = (
   offtakeData: OfftakeData[], 
   dateRange: { startDate: string; endDate: string },
@@ -183,25 +185,22 @@ const useOfftakeData = (
           avgCarcassWeight: 0,
           expenses: 0, 
           netProfit: 0,
-          avgCostPerKgCarcass: 0 // New metric
+          avgCostPerKgCarcass: 0 
         },
         genderData: [],
         countyData: [],
         topLocations: [],
         topFarmers: [],
         monthlyTrend: [],
-        top3Months: [] // New metric
+        top3Months: [] 
       };
     }
 
-    // Filter Data using optimized loop
     const filteredData = offtakeData.filter(record => {
       return isDateInRange(record.date, dateRange.startDate, dateRange.endDate) &&
              (selectedProgramme ? record.programme === selectedProgramme : true);
     });
 
-    // --- Stats Calculation ---
-    
     let totalRevenue = 0;
     let totalGoats = 0;
     let totalSheep = 0;
@@ -213,10 +212,9 @@ const useOfftakeData = (
     const genderCounts: Record<string, number> = { Male: 0, Female: 0 };
     const countySales: Record<string, number> = {};
     const locationSales: Record<string, number> = {};
-    const farmerSales: Record<string, { name: string; revenue: number; animals: number }> = {};
+    const farmerSales: Record<string, { name: string; revenue: number; animals: number; county: string }> = {};
     const monthlyData: Record<string, { monthName: string; revenue: number; volume: number; monthIndex: number }> = {};
 
-    // Using for...of for slightly better performance on large arrays vs forEach
     for (const record of filteredData) {
       const txRevenue = Number(record.totalPrice) || 0;
       totalRevenue += txRevenue;
@@ -234,35 +232,34 @@ const useOfftakeData = (
       totalCattle += txCattle;
       totalAnimalsCount += (txGoats + txSheep + txCattle);
 
-      // Aggregate weights efficiently
       const allAnimals = [...goatsArr, ...sheepArr, ...cattleArr];
       for(const animal of allAnimals) {
         totalLiveWeight += Number(animal.live) || 0;
         totalCarcassWeight += Number(animal.carcass) || 0;
       }
 
-      // Gender
       if (record.gender) {
         const g = record.gender.charAt(0).toUpperCase() + record.gender.slice(1).toLowerCase();
         if (genderCounts[g] !== undefined) genderCounts[g]++;
       }
 
-      // Location
       const county = record.county || "Unknown";
       countySales[county] = (countySales[county] || 0) + txGoats;
 
       const loc = record.location || "Unknown";
       locationSales[loc] = (locationSales[loc] || 0) + (txGoats + txSheep + txCattle);
 
-      // Farmers
       const fName = record.farmerName || "Unknown";
       if (!farmerSales[fName]) {
-        farmerSales[fName] = { name: fName, revenue: 0, animals: 0 };
+        farmerSales[fName] = { name: fName, revenue: 0, animals: 0, county: county };
+      } else {
+        if (county !== "Unknown") {
+             farmerSales[fName].county = county;
+        }
       }
       farmerSales[fName].revenue += txRevenue;
       farmerSales[fName].animals += (txGoats + txSheep + txCattle);
 
-      // Monthly Trend
       const d = parseDate(record.date);
       if (d) {
         const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
@@ -286,8 +283,6 @@ const useOfftakeData = (
     const avgCarcassWeight = totalAnimalsCount > 0 ? totalCarcassWeight / totalAnimalsCount : 0;
     const expenses = 0; 
     const netProfit = totalRevenue - expenses;
-    
-    // NEW: Calculate Average Cost per Kg (Carcass)
     const avgCostPerKgCarcass = totalCarcassWeight > 0 ? totalRevenue / totalCarcassWeight : 0;
 
     const genderData = [
@@ -308,10 +303,8 @@ const useOfftakeData = (
       .sort((a, b) => b.revenue - a.revenue)
       .slice(0, 5);
 
-    // Generate Monthly Trend Data for Chart (Ensure all 12 months appear for consistency)
     const ALL_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
     
-    // Map data for Recharts
     const monthlyTrendData = ALL_MONTHS.map(monthName => {
       const existingData = Object.values(monthlyData).find(d => d.monthName === monthName);
       return {
@@ -321,8 +314,6 @@ const useOfftakeData = (
       };
     });
 
-    // NEW: Calculate Top 3 Months (by revenue)
-    // We use the actual monthlyData here, not the padded ALL_MONTHS array
     const top3Months = Object.values(monthlyData)
       .sort((a, b) => b.revenue - a.revenue)
       .slice(0, 3)
@@ -451,7 +442,6 @@ const salesReport = () => {
 
   const { stats, genderData, countyData, topLocations, topFarmers, monthlyTrend, filteredData, top3Months } = useOfftakeData(offtakeData, dateRange, selectedProgramme);
 
-  // Ref to store the unsubscribe function for cleanup
   const unsubscribeRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
@@ -480,7 +470,6 @@ const salesReport = () => {
   }, [auth.currentUser?.uid, userIsChiefAdmin, activeProgram]);
 
   useEffect(() => {
-    // Cleanup previous listener
     if (unsubscribeRef.current) {
       unsubscribeRef.current();
       unsubscribeRef.current = null;
@@ -488,7 +477,6 @@ const salesReport = () => {
 
     if (userPermissionsLoading || !activeProgram) { setLoading(false); return; }
 
-    // Check Cache first
     const cachedData = dataCache.get(activeProgram);
     if (cachedData) {
       setOfftakeData(cachedData);
@@ -509,7 +497,6 @@ const salesReport = () => {
         return;
       }
 
-      // Optimization: Transform data structure once on fetch
       const offtakeList = Object.keys(data).map((key) => {
         const item = data[key];
         let dateValue = item.date; 
@@ -527,7 +514,6 @@ const salesReport = () => {
         };
       });
 
-      // Update Cache
       dataCache.set(activeProgram, offtakeList);
       
       setOfftakeData(offtakeList);
@@ -644,7 +630,7 @@ const salesReport = () => {
                     type="date"
                     value={dateRange.startDate}
                     onChange={(e) => handleDateRangeChange("startDate", e.target.value)}
-                    className="h-10 text-sm rounded-lg border-gray-300 focus:ring-blue-500 focus:border-blue-500 bg-gray-50/50"
+                    className="h-10 text-sm rounded-lg border-gray-300 focus:ring-blue-500 focus:border-blue-500 bg-gray-50/50 pr-12"
                   />
                 </div>
                 <div className="space-y-1.5">
@@ -654,21 +640,34 @@ const salesReport = () => {
                     type="date"
                     value={dateRange.endDate}
                     onChange={(e) => handleDateRangeChange("endDate", e.target.value)}
-                    className="h-10 text-sm rounded-lg border-gray-300 focus:ring-blue-500 focus:border-blue-500 bg-gray-50/50"
+                    className="h-10 text-sm rounded-lg border-gray-300 focus:ring-blue-500 focus:border-blue-500 bg-gray-50/50 pr-12"
                   />
                 </div>
               </div>
 
-              {/* Quick Filters (Col 5) - Wraps nicely */}
+              {/* Quick Filters (Col 5) - Dropdown for Quarters */}
               <div className="md:col-span-5 flex flex-wrap gap-2 items-end justify-end w-full">
                 <div className="flex flex-wrap gap-1.5 w-full md:w-auto">
                   <Button variant="outline" onClick={setWeekFilter} size="sm" className="rounded-lg text-xs h-9 px-3">Week</Button>
                   <Button variant="outline" onClick={setMonthFilter} size="sm" className="rounded-lg text-xs h-9 px-3">Month</Button>
+                  
+                  {/* Quarter Dropdown */}
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="outline" size="sm" className="rounded-lg text-xs h-9 px-3 gap-1">
+                        Quarters <ChevronDown className="h-3 w-3" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onClick={() => setQFilter(1)}>Q1 (Jan-Mar)</DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => setQFilter(2)}>Q2 (Apr-Jun)</DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => setQFilter(3)}>Q3 (Jul-Sep)</DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => setQFilter(4)}>Q4 (Oct-Dec)</DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+
                   <div className="w-px h-6 bg-gray-300 mx-1 self-center hidden sm:block"></div>
-                  <Button variant="outline" onClick={() => setQFilter(1)} size="sm" className="rounded-lg text-xs h-9 w-10">Q1</Button>
-                  <Button variant="outline" onClick={() => setQFilter(2)} size="sm" className="rounded-lg text-xs h-9 w-10">Q2</Button>
-                  <Button variant="outline" onClick={() => setQFilter(3)} size="sm" className="rounded-lg text-xs h-9 w-10">Q3</Button>
-                  <Button variant="outline" onClick={() => setQFilter(4)} size="sm" className="rounded-lg text-xs h-9 w-10">Q4</Button>
+                  
                   <Button onClick={clearFilters} variant="ghost" size="sm" className="rounded-lg text-xs h-9 px-3 text-red-500 hover:bg-red-50 hover:text-red-600 ml-auto">Reset</Button>
                 </div>
               </div>
@@ -801,7 +800,7 @@ const salesReport = () => {
               </CardContent>
             </Card>
 
-            {/* Top Farmers */}
+            {/* Top Farmers - Added County */}
             <Card className="border-0 shadow-sm bg-white rounded-2xl flex flex-col">
               <CardHeader className="pb-4 pt-6 px-6">
                 <CardTitle className="text-sm font-bold flex items-center gap-2 text-gray-800">
@@ -819,7 +818,10 @@ const salesReport = () => {
                         </div>
                         <div>
                           <p className="text-sm font-bold text-gray-800">{farmer.name}</p>
-                          <p className="text-[11px] text-gray-500">{farmer.animals} animals</p>
+                          <p className="text-[11px] text-gray-500 flex items-center gap-1">
+                             <MapPin className="h-3 w-3" />
+                             {farmer.county} • {farmer.animals} animals
+                          </p>
                         </div>
                       </div>
                       <div className="text-right">

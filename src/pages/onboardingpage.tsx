@@ -1,10 +1,12 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
+import { getAuth } from "firebase/auth";
 import { 
   ref, 
   get, 
   push, 
   update, 
   remove, 
+  onValue, // Using onValue for permission watching like reference, or get for fetch
   set
 } from "firebase/database";
 import { db } from "@/lib/firebase";
@@ -19,6 +21,13 @@ import {
 import { 
   Tabs, TabsContent, TabsList, TabsTrigger 
 } from "@/components/ui/tabs";
+import { 
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { 
   Download, Users, Edit, Trash2, GraduationCap, Eye, MapPin, Upload, Plus, 
   Calendar, X, UserPlus, User, Phone, Map, FileText, MessageSquare, BookOpen, 
@@ -39,7 +48,7 @@ interface FarmerData {
   idNo: string;
   phoneNo: string;
   subcounty: string;
-  region: string;
+  location: string; // Replaced region with location
   gender: string;
   county: string;
 }
@@ -56,6 +65,7 @@ interface OnboardingData {
   comment: string;
   staff: StaffData[];
   farmers: FarmerData[];
+  programme: 'KPMD' | 'RANGE'; 
   createdAt?: Date;
   status: 'pending' | 'completed';
 }
@@ -120,7 +130,7 @@ interface StatsCardProps {
   title: string;
   value: number;
   icon: any;
-  description?: any; // Changed to any to allow ReactNode
+  description?: any; 
 }
 
 const StatsCard = ({ title, value, icon: Icon, description }: StatsCardProps) => (
@@ -165,9 +175,14 @@ const OnboardingCard = ({
   onEdit, 
   onDeleteClick 
 }: OnboardingCardProps) => {
-  const uniqueRegions = useMemo(() => {
-    const regions = record.farmers.map(farmer => farmer.region).filter(Boolean);
-    return [...new Set(regions)];
+  const uniqueLocations = useMemo(() => {
+    const locations = record.farmers.map(farmer => farmer.location).filter(Boolean);
+    return [...new Set(locations)];
+  }, [record.farmers]);
+
+  const uniqueCounties = useMemo(() => {
+     const counties = record.farmers.map(farmer => farmer.county).filter(Boolean);
+     return [...new Set(counties)];
   }, [record.farmers]);
 
   const genderStats = useMemo(() => {
@@ -188,6 +203,7 @@ const OnboardingCard = ({
               <CardTitle className="text-md font-bold text-gray-800">{record.topic}</CardTitle>
             </div>
             <div className="flex items-center justify-between mt-2">
+               <Badge variant="outline" className="mr-2 text-[10px]">{record.programme}</Badge>
               <div className="flex items-center gap-2 text-sm text-gray-600">
                 <Calendar className="h-4 w-4" />
                 <span>{record.date.toLocaleDateString()}</span>
@@ -238,24 +254,35 @@ const OnboardingCard = ({
           </div>
         </div>
 
-        <div className="pt-2 border-t">
+        <div className="pt-2 border-t space-y-2">
+           <div className="flex justify-between m-2 p-1">
+            <div className="flex items-center gap-1 text-xs text-gray-600">
+              <MapPin className="h-3 w-3" />
+              <span>County</span>
+            </div>
+            <div className="text-sm font-semibold text-blue-600">
+              {uniqueCounties.length > 0 ? (
+                 <span>{uniqueCounties[0]}{uniqueCounties.length > 1 ? ` (+${uniqueCounties.length - 1})` : ''}</span>
+              ) : <span className="text-gray-400">N/A</span>}
+            </div>
+          </div>
           <div className="flex justify-between m-2 p-1">
             <div className="flex items-center gap-1 text-xs text-gray-600">
               <MapPin className="h-3 w-3" />
-              <span>Subcounty</span>
+              <span>Location</span>
             </div>
             <div className="text-sm font-semibold text-green-600">
-              {uniqueRegions.length > 0 ? (
+              {uniqueLocations.length > 0 ? (
                 <div className="flex flex-wrap gap-1 justify-end">
-                  {uniqueRegions.slice(0, 2).map((region, i) => (
-                    <Badge key={i} variant="secondary" className="text-xs">{region}</Badge>
+                  {uniqueLocations.slice(0, 2).map((loc, i) => (
+                    <Badge key={i} variant="secondary" className="text-xs">{loc}</Badge>
                   ))}
-                  {uniqueRegions.length > 2 && (
-                    <Badge variant="outline" className="text-xs">+{uniqueRegions.length - 2} more</Badge>
+                  {uniqueLocations.length > 2 && (
+                    <Badge variant="outline" className="text-xs">+{uniqueLocations.length - 2} more</Badge>
                   )}
                 </div>
               ) : (
-                <span className="text-gray-400">No regions</span>
+                <span className="text-gray-400">No locations</span>
               )}
             </div>
           </div>
@@ -300,19 +327,27 @@ const OnboardingCard = ({
 // --- Main Page Component ---
 
 const OnboardingPage = () => {
-  const [onboarding, setOnboarding] = useState<OnboardingData[]>([]);
+  const { user, userRole } = useAuth();
+  const { toast } = useToast();
+
+  // --- Programme State (Mimicking CapacityBuildingPage) ---
+  const [allOnboarding, setAllOnboarding] = useState<OnboardingData[]>([]);
   const [filteredOnboarding, setFilteredOnboarding] = useState<OnboardingData[]>([]);
   const [displayedOnboarding, setDisplayedOnboarding] = useState<OnboardingData[]>([]);
+  const [activeProgram, setActiveProgram] = useState<string>("");
+  const [availablePrograms, setAvailablePrograms] = useState<string[]>([]); 
+
   const [onboardingForm, setOnboardingForm] = useState({
     id: "",
     topic: "",
     comment: "",
     date: "",
-    status: 'pending' as 'pending' | 'completed'
+    status: 'pending' as 'pending' | 'completed',
+    programme: 'KPMD' as 'KPMD' | 'RANGE'
   });
   const [staff, setStaff] = useState<StaffData[]>([{ name: "", role: "" }]);
   const [farmers, setFarmers] = useState<FarmerData[]>([
-    { name: "", idNo: "", phoneNo: "", subcounty: "", region: "", gender: "", county: "" } 
+    { name: "", idNo: "", phoneNo: "", subcounty: "", location: "", gender: "", county: "" } 
   ]);
   
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -325,9 +360,6 @@ const OnboardingPage = () => {
   const [selectedRecords, setSelectedRecords] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [exportLoading, setExportLoading] = useState(false);
-  
-  const { toast } = useToast();
-  const { user, userRole } = useAuth();
 
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
@@ -382,6 +414,45 @@ const OnboardingPage = () => {
     });
   };
 
+  // --- Permission Logic (Mimicking Reference) ---
+  useEffect(() => {
+    if (!userRole) return;
+
+    if (isChiefAdmin(userRole)) {
+      setAvailablePrograms(["RANGE", "KPMD"]);
+      if (!activeProgram) setActiveProgram("KPMD"); // Default for admin
+      return;
+    }
+
+    const auth = getAuth();
+    const uid = auth.currentUser?.uid;
+    
+    if (!uid) return;
+
+    const userRef = ref(db, `users/${uid}`);
+    const unsubscribe = onValue(userRef, (snapshot) => {
+      const data = snapshot.val();
+      if (data && data.allowedProgrammes) {
+        const programs = Object.keys(data.allowedProgrammes).filter(
+          key => data.allowedProgrammes[key] === true
+        );
+        setAvailablePrograms(programs);
+        
+        if (programs.length > 0 && !programs.includes(activeProgram)) {
+          setActiveProgram(programs[0]);
+        } else if (programs.length === 0) {
+            setActiveProgram("");
+        }
+      } else {
+        setAvailablePrograms([]);
+      }
+    }, (error) => {
+        console.error("Error fetching user permissions:", error);
+    });
+
+    return () => unsubscribe();
+  }, [userRole, activeProgram]);
+
   const fetchOnboardingData = async () => {
     try {
       setLoading(true);
@@ -393,21 +464,31 @@ const OnboardingPage = () => {
       if (snapshot.exists()) {
         snapshot.forEach((childSnapshot) => {
           const docData = childSnapshot.val();
-          data.push({
+          const record = {
             id: childSnapshot.key,
             date: docData.date ? new Date(docData.date) : new Date(),
             topic: docData.topic || "",
             comment: docData.comment || "",
             staff: docData.staff || [],
             farmers: docData.farmers || [],
+            programme: docData.programme || 'KPMD',
             createdAt: docData.createdAt ? new Date(docData.createdAt) : new Date(),
             status: docData.status || 'pending'
-          });
+          };
+
+          // Client-side filtering based on Firebase Rules logic (Match CapacityBuilding logic)
+          if (userIsChiefAdmin) {
+            data.push(record);
+          } else {
+            if (availablePrograms.includes(record.programme)) {
+              data.push(record);
+            }
+          }
         });
       }
       
-      setOnboarding(data);
-      setFilteredOnboarding(data);
+      setAllOnboarding(data);
+      // FilteredOnboarding will be updated by the programme filter effect
       setSelectedRecords([]);
     } catch (error) {
       console.error("Error fetching onboarding data:", error);
@@ -424,10 +505,15 @@ const OnboardingPage = () => {
   useEffect(() => {
     fetchOnboardingData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [userRole]); // Re-fetch if user changes
 
-  const filterAndProcessData = useCallback((data: OnboardingData[], filterParams: Filters) => {
+  // --- Filtering Logic including Programme Switcher ---
+  const filterAndProcessData = useCallback((data: OnboardingData[], filterParams: Filters, program: string) => {
     const filtered = data.filter(record => {
+      // 1. Filter by Active Programme
+      if (program && record.programme !== program) return false;
+
+      // 2. Filter by Date
       if (filterParams.startDate || filterParams.endDate) {
         const recordDate = new Date(record.date);
         recordDate.setHours(0, 0, 0, 0);
@@ -469,12 +555,12 @@ const OnboardingPage = () => {
   }, []);
 
   useEffect(() => {
-    if (onboarding.length === 0) return;
-    const result = filterAndProcessData(onboarding, filters);
+    if (allOnboarding.length === 0) return;
+    const result = filterAndProcessData(allOnboarding, filters, activeProgram);
     setFilteredOnboarding(result.filteredOnboarding);
     setStats(result.stats);
     setCurrentPage(1);
-  }, [onboarding, filters, filterAndProcessData]);
+  }, [allOnboarding, filters, activeProgram, filterAndProcessData]);
 
   useEffect(() => {
     const startIndex = (currentPage - 1) * CARDS_PER_PAGE;
@@ -485,6 +571,12 @@ const OnboardingPage = () => {
   const totalPages = Math.ceil(filteredOnboarding.length / CARDS_PER_PAGE);
   const hasNextPage = currentPage < totalPages;
   const hasPrevPage = currentPage > 1;
+
+  const handleProgramChange = (program: string) => {
+    setActiveProgram(program);
+    setFilters(prev => ({ ...prev, ...currentMonth })); // Reset date filters like reference
+    setSelectedRecords([]);
+  };
 
   const handleSelectRecord = (recordId: string) => {
     setSelectedRecords(prev => 
@@ -531,8 +623,8 @@ const OnboardingPage = () => {
 
   const handleAddOnboarding = async () => {
     try {
-      if (!onboardingForm.topic || !onboardingForm.date) {
-        toast({ title: "Validation Error", description: "Please fill required fields", variant: "destructive" });
+      if (!onboardingForm.topic || !onboardingForm.date || !onboardingForm.programme) {
+        toast({ title: "Validation Error", description: "Please fill required fields including programme", variant: "destructive" });
         return;
       }
 
@@ -577,9 +669,12 @@ const OnboardingPage = () => {
   };
 
   const resetForm = () => {
-    setOnboardingForm({ id: "", topic: "", comment: "", date: "", status: 'pending' });
+    // Default to active program when opening new form
+    let defaultProg = activeProgram as 'KPMD' | 'RANGE' || 'KPMD';
+    
+    setOnboardingForm({ id: "", topic: "", comment: "", date: "", status: 'pending', programme: defaultProg });
     setStaff([{ name: "", role: "" }]);
-    setFarmers([{ name: "", idNo: "", phoneNo: "", subcounty: "", region: "", gender: "", county: "" }]);
+    setFarmers([{ name: "", idNo: "", phoneNo: "", subcounty: "", location: "", gender: "", county: "" }]);
   };
 
   const handleDeleteConfirm = async () => {
@@ -628,8 +723,8 @@ const OnboardingPage = () => {
       gender: item.gender || item.Gender || "",
       idNo: item.idNo || item.idNumber || item.farmeridNo || "",
       phoneNo: item.phoneNo || item.phoneNumber || item.farmerphoneNo || "",
-      subcounty: item.subcounty || item.location || item.farmerlocation || "",
-      region: item.region || item.farmerregion || "",
+      subcounty: item.subcounty || "",
+      location: item.location || item.Location || item.farmerLocation || "",
       county: item.county || item.County || ""
     }));
   };
@@ -640,9 +735,9 @@ const OnboardingPage = () => {
       gender: "Gender (Male/Female)",
       idNo: "ID Number",
       phoneNo: "Phone Number",
+      county: "County",
       subcounty: "Subcounty",
-      region: "Region",
-      county: "County"
+      location: "Location"
     }];
     const ws = XLSX.utils.json_to_sheet(templateData);
     const wb = XLSX.utils.book_new();
@@ -660,6 +755,7 @@ const OnboardingPage = () => {
 
       const exportData = filteredOnboarding.flatMap(record => 
         record.farmers.map(farmer => ({
+          Programme: record.programme,
           Date: record.date.toLocaleDateString(),
           Topic: record.topic,
           Comment: record.comment || 'N/A',
@@ -669,9 +765,9 @@ const OnboardingPage = () => {
           'Farmer Gender': farmer.gender || 'N/A',
           'Farmer ID': farmer.idNo,
           'Phone Number': farmer.phoneNo,
-          Subcounty: farmer.subcounty,
-          Region: farmer.region,
           County: farmer.county || 'N/A',
+          Subcounty: farmer.subcounty || 'N/A',
+          Location: farmer.location || 'N/A',
           'Created Date': record.createdAt?.toLocaleDateString() || 'N/A'
         }))
       );
@@ -679,7 +775,7 @@ const OnboardingPage = () => {
       const ws = XLSX.utils.json_to_sheet(exportData);
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "Onboarding Data");
-      XLSX.writeFile(wb, `onboarding_data_${new Date().toISOString().split('T')[0]}.xlsx`);
+      XLSX.writeFile(wb, `onboarding_data_${activeProgram}_${new Date().toISOString().split('T')[0]}.xlsx`);
       toast({ title: "Export Successful", description: `Exported ${exportData.length} records` });
     } catch (error) {
       console.error("Export error:", error);
@@ -699,20 +795,49 @@ const OnboardingPage = () => {
 
   return (
     <div className="container mx-auto p-6 space-y-6">
-      <div className="flex justify-between items-center">
-        <h1 className="text-xl font-bold">Additional Training</h1>
-        <div className="flex gap-2">
+      {/* --- Header with Programme Switcher --- */}
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        <div className="flex flex-col gap-1">
+          <h1 className="text-xl font-bold">Additional Training</h1>
+          <div className="flex items-center gap-2">
+             <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 font-bold px-3 py-1 w-fit">
+                {activeProgram || "No Access"} PROGRAMME
+             </Badge>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
           {userIsChiefAdmin && selectedRecords.length > 0 && (
             <Button variant="destructive" onClick={() => setIsBulkDeleteDialogOpen(true)}>
               <Trash2 className="w-4 h-4 mr-2" /> Delete Selected ({selectedRecords.length})
             </Button>
           )}
+          <Button variant="outline" size="sm" onClick={clearAllFilters}>Clear Filters</Button>
+          <Button variant="outline" size="sm" onClick={resetToCurrentMonth}>This Month</Button>
+           {/* Programme Selector - Visible to Chief Admin or if user has multiple programmes */}
+          {(userIsChiefAdmin || availablePrograms.length > 1) && (
+             <div className="flex justify-end">
+                <Select value={activeProgram} onValueChange={handleProgramChange}>
+                    <SelectTrigger className="w-[200px] border-gray-300 focus:border-blue-500 bg-white">
+                        <SelectValue placeholder="Select Programme" />
+                    </SelectTrigger>
+                    <SelectContent>
+                        {availablePrograms.map(p => (
+                            <SelectItem key={p} value={p}>{p}</SelectItem>
+                        ))}
+                    </SelectContent>
+                </Select>
+             </div>
+          )}
+
           {userIsChiefAdmin && (
              <Button onClick={handleExport} disabled={exportLoading || filteredOnboarding.length === 0}>
               <Download className="w-4 h-4 mr-2" />
               {exportLoading ? "Exporting..." : `Export (${filteredOnboarding.flatMap(r => r.farmers).length})`}
             </Button>
           )}
+          
+         
           {userIsChiefAdmin && (
             <Button onClick={() => { resetForm(); setIsDialogOpen(true); }}>
               <Plus className="w-4 h-4 mr-2" /> Add Training
@@ -721,6 +846,7 @@ const OnboardingPage = () => {
         </div>
       </div>
 
+      {/* Stats */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <StatsCard 
           title="TOTAL FARMERS" 
@@ -728,19 +854,11 @@ const OnboardingPage = () => {
           icon={Users} 
           description={
            <div className="flex items-center gap-1 whitespace-nowrap text-[4px] md:text-xs">
-  <User className="h-3 w-3" />
-
-  <span>
-    Male {stats.maleFarmers} ({malePercent}%)
-  </span>
-
-  <span>|</span>
-
-  <span>
-    Female {stats.femaleFarmers} ({femalePercent}%)
-  </span>
-</div>
-
+              <User className="h-3 w-3" />
+              <span>Male {stats.maleFarmers} ({malePercent}%)</span>
+              <span>|</span>
+              <span>Female {stats.femaleFarmers} ({femalePercent}%)</span>
+            </div>
           } 
         />
         <StatsCard title="TRAINING SESSIONS" value={stats.totalOnboarding} icon={GraduationCap} description={`${stats.completedSessions} completed, ${stats.pendingSessions} pending`} />
@@ -748,6 +866,7 @@ const OnboardingPage = () => {
         <StatsCard title="COUNTIES COVERED" value={stats.uniqueCounties} icon={Map} description="Unique counties reached" />
       </div>
 
+      {/* Date Filters Card */}
       <Card className="shadow-lg border-0 bg-white">
         <CardContent className="space-y-4 pt-6">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -761,14 +880,14 @@ const OnboardingPage = () => {
             </div>
             <div className="space-y-2 flex items-end">
               <div className="flex gap-2 w-full">
-                <Button variant="outline" size="sm" onClick={clearAllFilters} className="flex-1"><X className="w-4 h-4 mr-1" /> Clear</Button>
-                <Button variant="outline" size="sm" onClick={resetToCurrentMonth} className="flex-1"><Calendar className="w-4 h-4 mr-1" /> This Month</Button>
+                {/* Placeholder for potential future filters */}
               </div>
             </div>
           </div>
         </CardContent>
       </Card>
 
+      {/* Main Content Card */}
       <Card className="shadow-lg border-0 bg-white">
         <CardHeader className="flex flex-row items-center justify-between">
           <div className="flex items-center gap-4">
@@ -792,7 +911,9 @@ const OnboardingPage = () => {
           {loading ? (
             <div className="text-center py-12"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div></div>
           ) : displayedOnboarding.length === 0 ? (
-            <div className="text-center py-12 text-muted-foreground">No records found.</div>
+            <div className="text-center py-12 text-muted-foreground">
+                {activeProgram ? "No records found." : "You do not have access to any programme data."}
+            </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {displayedOnboarding.map((record) => (
@@ -809,10 +930,11 @@ const OnboardingPage = () => {
                         topic: record.topic,
                         comment: record.comment || "",
                         date: record.date.toISOString().split('T')[0],
-                        status: record.status
+                        status: record.status,
+                        programme: record.programme
                       });
                       setStaff(record.staff.length > 0 ? record.staff : [{ name: "", role: "" }]);
-                      setFarmers(record.farmers.length > 0 ? record.farmers : [{ name: "", idNo: "", phoneNo: "", subcounty: "", region: "", gender: "", county: "" }]);
+                      setFarmers(record.farmers.length > 0 ? record.farmers : [{ name: "", idNo: "", phoneNo: "", subcounty: "", location: "", gender: "", county: "" }]);
                       setIsDialogOpen(true);
                   }}
                   onDeleteClick={() => { setSelectedRecord(record); setIsDeleteDialogOpen(true); }}
@@ -842,6 +964,22 @@ const OnboardingPage = () => {
                   {/* Tab 1: General Details */}
                   <TabsContent value="details" className="space-y-4">
                     <div className="grid grid-cols-1 gap-4">
+                      <div className="space-y-2">
+                        <Label>Programme *</Label>
+                        <Select 
+                          value={onboardingForm.programme} 
+                          onValueChange={(val: 'KPMD' | 'RANGE') => setOnboardingForm(p => ({ ...p, programme: val }))}
+                          disabled={!!onboardingForm.id} // Lock programme on edit usually
+                        >
+                          <SelectTrigger className="w-full">
+                            <SelectValue placeholder="Select Programme" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="KPMD">KPMD</SelectItem>
+                            <SelectItem value="RANGE">RANGE</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
                       <div className="space-y-2"><Label>Topic *</Label><Input value={onboardingForm.topic} onChange={e => setOnboardingForm(p => ({ ...p, topic: e.target.value }))} placeholder="Enter topic" /></div>
                       <div className="space-y-2"><Label>Comment/Notes</Label><textarea value={onboardingForm.comment} onChange={e => setOnboardingForm(p => ({ ...p, comment: e.target.value }))} rows={3} className="w-full px-3 py-2 border rounded-md" /></div>
                       <div className="space-y-2"><Label>Date *</Label><Input type="date" value={onboardingForm.date} onChange={e => setOnboardingForm(p => ({ ...p, date: e.target.value }))} /></div>
@@ -878,20 +1016,27 @@ const OnboardingPage = () => {
                       <h4 className="text-sm font-medium text-muted-foreground">Manage Farmers</h4>
                       <div className="flex gap-2">
                         <Button type="button" variant="outline" size="sm" onClick={() => setIsUploadDialogOpen(true)}><Upload className="w-4 h-4 mr-1" /> Upload Excel</Button>
-                        <Button type="button" variant="outline" size="sm" onClick={() => setFarmers(p => [...p, { name: "", idNo: "", phoneNo: "", subcounty: "", region: "", gender: "", county: "" }])}><UserPlus className="w-4 h-4 mr-1" /> Add Farmer</Button>
+                        <Button type="button" variant="outline" size="sm" onClick={() => setFarmers(p => [...p, { name: "", idNo: "", phoneNo: "", county: "", subcounty: "", location: "", gender: "" }])}><UserPlus className="w-4 h-4 mr-1" /> Add Farmer</Button>
                       </div>
                     </div>
                     <div className="space-y-3">
                       {farmers.map((f, i) => (
                         <div key={i} className="grid grid-cols-1 md:grid-cols-7 gap-2 items-end p-3 border rounded bg-white">
+                          {/* Order: Name, Gender, ID, Phone, County, Subcounty, Location */}
                           <Input placeholder="Name *" value={f.name} onChange={e => { const newF = [...farmers]; newF[i].name = e.target.value; setFarmers(newF); }} />
                           <select value={f.gender} onChange={e => { const newF = [...farmers]; newF[i].gender = e.target.value; setFarmers(newF); }} className="w-full px-3 py-2 border rounded-md bg-white"><option value="">Select</option><option value="Male">Male</option><option value="Female">Female</option></select>
                           <Input placeholder="ID Number" value={f.idNo} onChange={e => { const newF = [...farmers]; newF[i].idNo = e.target.value; setFarmers(newF); }} />
                           <Input placeholder="Phone" value={f.phoneNo} onChange={e => { const newF = [...farmers]; newF[i].phoneNo = e.target.value; setFarmers(newF); }} />
+                          
+                          {/* County */}
+                          <Input placeholder="County" value={f.county} onChange={e => { const newF = [...farmers]; newF[i].county = e.target.value; setFarmers(newF); }} />
+                          
+                          {/* Subcounty */}
                           <Input placeholder="Subcounty" value={f.subcounty} onChange={e => { const newF = [...farmers]; newF[i].subcounty = e.target.value; setFarmers(newF); }} />
-                          <Input placeholder="Region" value={f.region} onChange={e => { const newF = [...farmers]; newF[i].region = e.target.value; setFarmers(newF); }} />
+                          
+                          {/* Location with delete button container */}
                           <div className="flex gap-2">
-                             <Input placeholder="County" value={f.county} onChange={e => { const newF = [...farmers]; newF[i].county = e.target.value; setFarmers(newF); }} />
+                             <Input placeholder="Location" value={f.location} onChange={e => { const newF = [...farmers]; newF[i].location = e.target.value; setFarmers(newF); }} />
                              {farmers.length > 1 && <Button variant="outline" size="sm" className="h-10 w-10 p-0 text-red-500" onClick={() => setFarmers(p => p.filter((_, idx) => idx !== i))}><X className="h-4 w-4" /></Button>}
                           </div>
                         </div>
@@ -961,13 +1106,17 @@ const OnboardingPage = () => {
                     <span className="text-xs text-muted-foreground block">Topic</span>
                     <span className="font-medium">{selectedRecord.topic}</span>
                   </div>
+                   <div>
+                    <span className="text-xs text-muted-foreground block">Programme</span>
+                    <span className="font-medium">{selectedRecord.programme}</span>
+                  </div>
                   <div>
                     <span className="text-xs text-muted-foreground block">Status</span>
                     {getStatusBadge(selectedRecord.status)}
                   </div>
-                  <div>
-                    <span className="text-xs text-muted-foreground block">Comment</span>
-                    <span className="font-medium text-sm truncate block" title={selectedRecord.comment}>{selectedRecord.comment || 'N/A'}</span>
+                  <div className="md:col-span-4">
+                     <span className="text-xs text-muted-foreground block">Comment</span>
+                     <span className="font-medium text-sm">{selectedRecord.comment || 'N/A'}</span>
                   </div>
                 </div>
               </div>
@@ -1003,9 +1152,9 @@ const OnboardingPage = () => {
                           <th className="text-left py-2 px-3 font-medium border">Gender</th>
                           <th className="text-left py-2 px-3 font-medium border">ID No</th>
                           <th className="text-left py-2 px-3 font-medium border">Phone</th>
-                          <th className="text-left py-2 px-3 font-medium border">Subcounty</th>
-                          <th className="text-left py-2 px-3 font-medium border">Region</th>
                           <th className="text-left py-2 px-3 font-medium border">County</th>
+                          <th className="text-left py-2 px-3 font-medium border">Subcounty</th>
+                          <th className="text-left py-2 px-3 font-medium border">Location</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -1015,9 +1164,9 @@ const OnboardingPage = () => {
                             <td className="py-2 px-3 border text-gray-700"><Badge variant={f.gender === 'Male' ? 'default' : 'secondary'} className={f.gender === 'Male' ? 'bg-blue-100 text-blue-800' : 'bg-pink-100 text-pink-800'}>{f.gender || 'N/A'}</Badge></td>
                             <td className="py-2 px-3 border text-gray-700"><code className="bg-gray-100 px-2 py-1 rounded text-xs">{f.idNo || 'N/A'}</code></td>
                             <td className="py-2 px-3 border text-gray-700">{f.phoneNo || 'N/A'}</td>
-                            <td className="py-2 px-3 border text-gray-700"><Badge variant="secondary">{f.subcounty || 'N/A'}</Badge></td>
-                            <td className="py-2 px-3 border text-gray-700"><Badge variant="secondary">{f.region || 'N/A'}</Badge></td>
                             <td className="py-2 px-3 border text-gray-700"><Badge variant="outline" className="bg-purple-50 text-purple-700">{f.county || 'N/A'}</Badge></td>
+                            <td className="py-2 px-3 border text-gray-700"><Badge variant="secondary">{f.subcounty || 'N/A'}</Badge></td>
+                            <td className="py-2 px-3 border text-gray-700"><Badge variant="secondary">{f.location || 'N/A'}</Badge></td>
                           </tr>
                         ))}
                       </tbody>

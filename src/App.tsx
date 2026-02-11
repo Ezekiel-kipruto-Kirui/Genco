@@ -8,7 +8,7 @@ import { AuthProvider } from "@/contexts/AuthContext";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import DashboardLayout from "@/components/DashboardLayout";
 
-// Lazy load page components to split code
+// Lazy load page components
 const Auth = lazy(() => import("./pages/Auth"));
 const DashboardOverview = lazy(() => import("./pages/DashboardOverview"));
 const PerformanceReport = lazy(() => import("./pages/reportspage"));
@@ -30,7 +30,6 @@ const RequsitionPage = lazy(() => import("./pages/requisitionpage"));
 
 const queryClient = new QueryClient();
 
-// A simple loading component to show while chunks are loading
 const PageLoader = () => (
   <div className="flex h-screen w-screen items-center justify-center">
     <div className="text-lg font-semibold text-muted-foreground">Loading page...</div>
@@ -50,6 +49,20 @@ const App = () => (
               <Route path="/" element={<Navigate to="/auth" replace />} />
               <Route path="/auth" element={<Auth />} />
               
+              {/* --- NEW: HR Standalone Route --- */}
+              {/* This route is outside DashboardLayout, so no sidebar appears. */}
+              <Route
+                path="/requisition"
+                element={
+                  <ProtectedRoute allowedRoles={["hr"]}>
+                    <div className="min-h-screen bg-slate-50/80 p-4 md:p-6 lg:p-8 pb-20">
+                      <RequsitionPage />
+                    </div>
+                  </ProtectedRoute>
+                }
+              />
+              {/* ------------------------------- */}
+
               {/* Protected Dashboard Routes */}
               <Route
                 path="/dashboard"
@@ -62,7 +75,6 @@ const App = () => (
                 {/* Nested routes under DashboardLayout */}
                 <Route index element={<DashboardOverview />} />
                 
-                {/* Report route - Removed inner ProtectedRoute as parent handles auth */}
                 <Route path="reports" element={<PerformanceReport />} />
                 <Route path="salesreport" element={<SalesReport />} />
                 
@@ -79,7 +91,7 @@ const App = () => (
                 
                 <Route path="capacity" element={<CapacityBuildingPage />} />
                 
-                {/* Offtake Routes - Simplified structure */}
+                {/* Offtake Routes */}
                 <Route path="livestock-offtake" element={<LivestockOfftakePage />} />
                 <Route path="fodder-offtake" element={<FodderOfftakePage />} />
                 
@@ -87,8 +99,11 @@ const App = () => (
                 <Route path="onboarding" element={<OnboardingPage />} />
                 <Route path="animalhealth" element={<AnimalHealthPage />} />
 
-                {/* Admin Only Routes - Removed inner ProtectedRoute as parent handles auth */}
+                {/* Admin Only Routes */}
                 <Route path="users" element={<UserManagementPage />} />
+                
+                {/* Note: Admins can still access requisition inside the dashboard via sidebar if needed, 
+                    or we can remove this if requisition is strictly HR-only. */}
                 <Route path="requisition" element={<RequsitionPage />} />
                 
               </Route>

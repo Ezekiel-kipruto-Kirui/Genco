@@ -208,8 +208,8 @@ const useProcessedData = (
         breedsMalePercentage: 0,
         breedsFemalePercentage: 0,
         vaccinationRate: 0,
-        vaccinatedAnimals: 0, // Changed from vaccinatedFarmers
-        vaccinatedFarmersCount: 0, // Kept for reference if needed
+        vaccinatedAnimals: 0,
+        vaccinatedFarmersCount: 0,
         breedsByCountyData: [],
         breedsBySubcountyData: [],
         vaccinationByCountyData: [],
@@ -262,7 +262,6 @@ const useProcessedData = (
       totalSheep += currentSheep;
       totalCattle += currentCattle;
 
-      // Vaccination Calculation: If farmer is marked vaccinated, count ALL their animals
       if (f.vaccinated === true) {
         totalVaccinatedAnimals += currentTotalAnimals;
         vaccinatedFarmersCount++;
@@ -388,7 +387,7 @@ const useProcessedData = (
       .sort((a, b) => b.value - a.value)
       .slice(0, 10);
 
-    // Vaccination per County (Counting Animals now)
+    // Vaccination per County
     const vacByCountyMap: Record<string, number> = {};
     filteredFarmers.forEach(f => {
       if (f.vaccinated) {
@@ -406,7 +405,7 @@ const useProcessedData = (
       .map(([name, value]) => ({ name, value }))
       .sort((a, b) => b.value - a.value);
 
-    // Vaccination per Subcounty (Counting Animals now)
+    // Vaccination per Subcounty
     const vacBySubMap: Record<string, number> = {};
     filteredFarmers.forEach(f => {
       if (f.vaccinated) {
@@ -513,7 +512,6 @@ const PerformanceReport = () => {
   const { userRole } = useAuth();
   const auth = getAuth();
   
-  // Cache mechanism to store raw data across reloads/re-renders
   const cacheRef = useRef<{
     farmers: Farmer[] | null;
     training: TrainingRecord[] | null;
@@ -525,11 +523,9 @@ const PerformanceReport = () => {
   const [allFarmers, setAllFarmers] = useState<Farmer[]>([]);
   const [trainingRecords, setTrainingRecords] = useState<TrainingRecord[]>([]);
   
-  // Date & Filter State
   const [dateRange, setDateRange] = useState({ startDate: "", endDate: "" });
   const [timeFrame, setTimeFrame] = useState<'weekly' | 'monthly' | 'yearly'>('monthly');
   
-  // Year State
   const currentYear = new Date().getFullYear();
   const [selectedYear, setSelectedYear] = useState<string>(String(currentYear));
   
@@ -541,18 +537,15 @@ const PerformanceReport = () => {
     return years;
   }, [currentYear]);
 
-  // Programme State
   const [allowedProgrammes, setAllowedProgrammes] = useState<string[]>([]);
   const [activeProgram, setActiveProgram] = useState<string>(""); 
   const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
   const showProgrammeFilter = userIsChiefAdmin;
   
-  // Parse year to number for the data hook
   const selectedYearNum = parseInt(selectedYear, 10);
   
   const data = useProcessedData(allFarmers, trainingRecords, dateRange, timeFrame, activeProgram || null, selectedYearNum);
 
-  // Fetch All Data (Cached)
   const fetchAllData = async () => {
     try {
       setLoading(true);
@@ -560,7 +553,6 @@ const PerformanceReport = () => {
       let farmersList: Farmer[] = [];
       let trainingList: TrainingRecord[] = [];
 
-      // Check Cache
       if (cacheRef.current.farmers && 
           cacheRef.current.training && 
           (now - cacheRef.current.timestamp < CACHE_DURATION)) {
@@ -569,7 +561,6 @@ const PerformanceReport = () => {
         trainingList = cacheRef.current.training;
       } else {
         console.log("Fetching new data");
-        // Fetch Farmers
         const farmersRef = ref(db, 'farmers');
         const farmersSnap = await get(farmersRef);
 
@@ -592,7 +583,6 @@ const PerformanceReport = () => {
           });
         }
 
-        // Fetch Training
         const trainingRef = ref(db, 'capacityBuilding');
         const trainingSnap = await get(trainingRef);
 
@@ -607,7 +597,6 @@ const PerformanceReport = () => {
           });
         }
 
-        // Update Cache
         cacheRef.current = {
           farmers: farmersList,
           training: trainingList,
@@ -625,14 +614,12 @@ const PerformanceReport = () => {
     }
   };
 
-  // Initialize Dates
   useEffect(() => {
     const initialDates = { startDate: `${currentYear}-01-01`, endDate: `${currentYear}-12-31` };
     setDateRange(initialDates);
     fetchAllData();
   }, []);
 
-  // Fetch User Permissions
   useEffect(() => {
     const uid = auth.currentUser?.uid;
     if (!uid) {
@@ -681,7 +668,39 @@ const PerformanceReport = () => {
     setTimeFrame('yearly'); 
   }, []);
 
-  // Date Filter Handlers
+  // --- New Handler for Quarter Dropdown ---
+  const handleQuarterChange = useCallback((value: string) => {
+    const yearNum = parseInt(selectedYear, 10);
+    if (value === 'q1') {
+      setDateRange(getQ1Dates(yearNum));
+      setTimeFrame('monthly');
+    } else if (value === 'q2') {
+      setDateRange(getQ2Dates(yearNum));
+      setTimeFrame('monthly');
+    } else if (value === 'q3') {
+      setDateRange(getQ3Dates(yearNum));
+      setTimeFrame('monthly');
+    } else if (value === 'q4') {
+      setDateRange(getQ4Dates(yearNum));
+      setTimeFrame('yearly');
+    }
+  }, [selectedYear]);
+
+  // --- Updated Clear Filters ---
+  const clearFilters = useCallback(() => {
+    // Reset Year to current year
+    const currentY = String(new Date().getFullYear());
+    setSelectedYear(currentY);
+    
+    // Reset Date Range to empty strings to show ALL data
+    setDateRange({ startDate: "", endDate: "" });
+    
+    // Reset TimeFrame
+    setTimeFrame('monthly');
+    
+    // Note: activeProgram is NOT reset as per requirements
+  }, []);
+
   const setWeekFilter = useCallback(() => {
     const dates = getCurrentWeekDates();
     setDateRange(dates);
@@ -691,34 +710,6 @@ const PerformanceReport = () => {
   const setMonthFilter = useCallback(() => {
     const dates = getCurrentMonthDates();
     setDateRange(dates);
-    setTimeFrame('monthly');
-  }, []);
-
-  const setQ1Filter = useCallback(() => {
-    setDateRange(getQ1Dates(parseInt(selectedYear, 10)));
-    setTimeFrame('monthly');
-  }, [selectedYear]);
-
-  const setQ2Filter = useCallback(() => {
-    setDateRange(getQ2Dates(parseInt(selectedYear, 10)));
-    setTimeFrame('monthly');
-  }, [selectedYear]);
-
-  const setQ3Filter = useCallback(() => {
-    setDateRange(getQ3Dates(parseInt(selectedYear, 10)));
-    setTimeFrame('monthly');
-  }, [selectedYear]);
-
-  const setQ4Filter = useCallback(() => {
-    setDateRange(getQ4Dates(parseInt(selectedYear, 10)));
-    setTimeFrame('yearly');
-  }, [selectedYear]);
-
-  const clearFilters = useCallback(() => {
-    const currentY = String(new Date().getFullYear());
-    setSelectedYear(currentY);
-    const currentNum = parseInt(currentY, 10);
-    setDateRange({ startDate: `${currentNum}-01-01`, endDate: `${currentNum}-12-31` });
     setTimeFrame('monthly');
   }, []);
 
@@ -755,7 +746,6 @@ const PerformanceReport = () => {
 
   return (
     <div className="space-y-8 p-1 bg-gray-50/50 min-h-screen pb-10">
-      {/* Header and Filters */}
       <div className="flex flex-col gap-2">
         <div>
           <h1 className="text-xl font-semibold text-gray-900">Performance Dashboard</h1>
@@ -763,7 +753,7 @@ const PerformanceReport = () => {
 
         <Card className="w-full md:w-auto border-0 shadow-lg bg-white">
           <CardContent className="p-4">
-            <div className="flex flex-col md:flex-row gap-4 items-end">
+            <div className="flex flex-col xl:flex-row gap-4 items-end">
               
               {/* Year Selector */}
               <div className="w-full md:w-40 space-y-1">
@@ -799,6 +789,22 @@ const PerformanceReport = () => {
                 </div>
               )}
 
+              {/* Quarter Selector (Replaces Q1-Q4 Buttons) */}
+              <div className="w-full md:w-40 space-y-1">
+                <Label className="text-xs text-gray-500 font-semibold">Quarter</Label>
+                <Select onValueChange={handleQuarterChange}>
+                  <SelectTrigger className="h-9">
+                    <SelectValue placeholder="Select Quarter" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="q1">Q1 (Jan-Mar)</SelectItem>
+                    <SelectItem value="q2">Q2 (Jan-Jun)</SelectItem>
+                    <SelectItem value="q3">Q3 (Jan-Sep)</SelectItem>
+                    <SelectItem value="q4">Q4 (Full Year)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
               <div className="grid grid-cols-2 gap-4 w-full md:w-auto">
                 <div className="space-y-1">
                   <Label className="text-xs text-gray-500 font-semibold">From</Label>
@@ -822,15 +828,11 @@ const PerformanceReport = () => {
                 </div>
               </div>
 
-             
+              <div className="flex gap-2 w-full md:w-auto">
                 <Button variant="outline" onClick={setWeekFilter} size="sm">This Week</Button>
                 <Button variant="outline" onClick={setMonthFilter} size="sm">This Month</Button>
-                <Button variant="outline" onClick={setQ1Filter} size="sm">Q1</Button>
-                <Button variant="outline" onClick={setQ2Filter} size="sm">Q2</Button>
-                <Button variant="outline" onClick={setQ3Filter} size="sm">Q3</Button>
-                <Button variant="outline" onClick={setQ4Filter} size="sm">Q4</Button>
-                <Button onClick={clearFilters} variant="ghost" size="sm" className="text-red-500 hover:text-red-600">Clear</Button>
-              
+                <Button onClick={clearFilters} variant="ghost" size="sm" className="text-red-500 hover:text-red-600">Reset Filters</Button>
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -840,7 +842,6 @@ const PerformanceReport = () => {
       <section>
         <SectionHeader title="Farmer Registration" />
         
-        {/* 3 Stats Cards */}
         <div className="grid gap-4 md:grid-cols-3 mb-6">
           <StatsCard 
             title="Total Farmers Registered" 
@@ -867,7 +868,6 @@ const PerformanceReport = () => {
           />
         </div>
 
-        {/* Charts Row 1 */}
         <div className="grid gap-6 md:grid-cols-2 mb-6">
           <Card className="border-0 shadow-lg bg-white h-[350px]">
             <CardHeader className="pb-2">
@@ -943,7 +943,6 @@ const PerformanceReport = () => {
           </Card>
         </div>
 
-        {/* Charts Row 2 */}
         <div className="grid gap-6 md:grid-cols-2">
           <Card className="border-0 shadow-lg bg-white">
             <CardHeader className="pb-2">
@@ -999,7 +998,6 @@ const PerformanceReport = () => {
       <section>
         <SectionHeader title="Animal Health" />
 
-        {/* 3 Stats Cards */}
         <div className="grid gap-4 md:grid-cols-3 mb-6">
           <StatsCard 
             title="Regional Coverage" 
@@ -1017,7 +1015,6 @@ const PerformanceReport = () => {
             color="teal"
           />
 
-          {/* UPDATED: Vaccination Card now shows Animals */}
           <StatsCard 
             title="Vaccinated Animals" 
             value={data.vaccinatedAnimals.toLocaleString()} 
@@ -1027,7 +1024,6 @@ const PerformanceReport = () => {
           />
         </div>
 
-        {/* Charts Row 1 */}
         <div className="grid gap-6 md:grid-cols-2 mb-6">
           <Card className="border-0 shadow-lg bg-white h-[350px]">
             <CardHeader className="pb-2">
@@ -1082,7 +1078,6 @@ const PerformanceReport = () => {
           </Card>
         </div>
 
-        {/* Charts Row 2 */}
         <div className="grid gap-6 md:grid-cols-2">
           <Card className="border-0 shadow-lg bg-white">
             <CardHeader className="pb-2">

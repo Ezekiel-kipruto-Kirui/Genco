@@ -20,9 +20,8 @@ const Auth = () => {
     // Only redirect if we have both a user and their role loaded
     if (user && userRole) {
       if (userRole === 'hr') {
-        // Redirect HR users to the Sales Metrics page
-        // Ensure '/sales-metrics' matches the route defined in your App.tsx for sales-metricspage
-        navigate("/salesreport");
+        // Redirect HR users to the dashboard requisition route
+        navigate("/requisition");
       } else {
         // Default redirect for other users
         navigate("/dashboard");

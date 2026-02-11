@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef, ChangeEvent, memo } from "react";
+import { useNavigate } from "react-router-dom"; 
 import { useAuth } from "@/contexts/AuthContext";
-import { getAuth } from "firebase/auth";
+import { getAuth, signOut } from "firebase/auth"; 
 import { ref, set, update, remove, push, onValue, query, orderByChild, equalTo } from "firebase/database";
 import { db } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
@@ -11,15 +12,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu"; // Added for Dropdown
-import { Download, Eye, Calendar, FileText, Edit, Trash2, Car, Wallet, CheckCircle, XCircle, MapPin, Printer, Plus, Minus, Save, FileImage, ExternalLink, MoreHorizontal } from "lucide-react"; // Added MoreHorizontal
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu"; 
+import { Download, Eye, Calendar, FileText, Edit, Trash2, Car, Wallet, CheckCircle, XCircle, MapPin, Printer, Plus, Minus, Save, FileImage, ExternalLink, MoreHorizontal, LogOut } from "lucide-react"; 
 import { useToast } from "@/hooks/use-toast";
 import { isChiefAdmin } from "@/contexts/authhelper";
 import html2canvas from "html2canvas";
 import { jsPDF } from "jspdf";
 
 // --- Types ---
-
 interface PerdiemItem {
   date?: string | number; 
   name: string;
@@ -65,7 +65,7 @@ interface RequisitionData {
   // Mobile App Upload Fields
   fileUploaded?: boolean;
   fileUploadedAt?: string | number;
-  requisitionUrl?: string; // Pipe separated URLs string
+  requisitionUrl?: string;
 }
 
 interface Filters {
@@ -94,7 +94,6 @@ interface Pagination {
 const PAGE_LIMIT = 10;
 
 // --- Helper Functions ---
-
 const parseDate = (date: any): Date | null => {
   if (!date) return null;
   try {
@@ -119,7 +118,6 @@ const formatDate = (date: any): string => {
   }) : 'N/A';
 };
 
-// Helper for Input type="date"
 const toInputDate = (date: any): string => {
   const d = parseDate(date);
   if (!d) return "";
@@ -143,10 +141,8 @@ const getCurrentMonthDates = () => {
   };
 };
 
-// Helper to parse the pipe-separated URLs from requisitionUrl
 const getRequisitionImages = (urlString: string | undefined): string[] => {
   if (!urlString) return [];
-  // Split by pipe, trim whitespace, and filter empty strings
   return urlString.split('|').map(url => url.trim()).filter(url => url.length > 0);
 };
 
@@ -154,12 +150,13 @@ const getRequisitionImages = (urlString: string | undefined): string[] => {
 
 const RequisitionsPage = () => {
   const { user, userRole, userName } = useAuth();
+  const navigate = useNavigate(); 
   const { toast } = useToast();
   
   // List State
   const [allRequisitions, setAllRequisitions] = useState<RequisitionData[]>([]);
   const [filteredRequisitions, setFilteredRequisitions] = useState<RequisitionData[]>([]);
-  const [activeProgram, setActiveProgram] = useState<string>(""); 
+  const [activeProgram, setActiveProgram] = useState<string>("ALL"); // Default to ALL for HR
   const [availablePrograms, setAvailablePrograms] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [exportLoading, setExportLoading] = useState(false);
@@ -169,7 +166,6 @@ const RequisitionsPage = () => {
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
   const [viewingRecord, setViewingRecord] = useState<RequisitionData | null>(null);
   
-  // Image Viewer State (New)
   const [isImageViewerOpen, setIsImageViewerOpen] = useState(false);
   const [viewingImages, setViewingImages] = useState<string[]>([]);
   
@@ -179,14 +175,15 @@ const RequisitionsPage = () => {
   const [editFormData, setEditFormData] = useState<Partial<RequisitionData>>({});
   const [isSaving, setIsSaving] = useState(false);
 
+  // Print State
+  const [printDate, setPrintDate] = useState<string>('');
+
   // Delete State
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   const [recordToDelete, setRecordToDelete] = useState<RequisitionData | null>(null);
   
-  // Ref for PDF Generation
   const docRef = useRef<HTMLDivElement>(null);
-  
   const currentMonth = useMemo(getCurrentMonthDates, []);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
@@ -215,14 +212,22 @@ const RequisitionsPage = () => {
 
   const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
 
-  // --- 1. Fetch User Permissions ---
+  // --- 1. Fetch User Permissions (HR SEES ALL) ---
   useEffect(() => {
-    if (isChiefAdmin(userRole)) {
-      setAvailablePrograms(["RANGE", "KPMD"]);
-      if (!activeProgram) setActiveProgram("RANGE");
+    if (userRole === 'hr') {
+      // HR sees everything (KPMD & RANGE) combined, no specific filter needed in UI
+      setAvailablePrograms([]);
+      setActiveProgram("ALL");
       return;
     }
 
+    if (isChiefAdmin(userRole)) {
+      setAvailablePrograms(["RANGE", "KPMD"]);
+      if (!activeProgram || activeProgram === "ALL") setActiveProgram("RANGE");
+      return;
+    }
+
+    // Regular Admin logic
     const auth = getAuth();
     const uid = auth.currentUser?.uid;
     
@@ -231,16 +236,18 @@ const RequisitionsPage = () => {
     const userRef = ref(db, `users/${uid}`);
     const unsubscribe = onValue(userRef, (snapshot) => {
       const data = snapshot.val();
+      
       if (data && data.allowedProgrammes) {
         const programs = Object.keys(data.allowedProgrammes).filter(
           key => data.allowedProgrammes[key] === true
         );
         setAvailablePrograms(programs);
         
-        if (programs.length > 0 && !programs.includes(activeProgram)) {
+        if (programs.length > 0 && (!activeProgram || activeProgram === "ALL")) {
           setActiveProgram(programs[0]);
         } else if (programs.length === 0) {
-            setActiveProgram("");
+            // Admins with no programmes
+            setActiveProgram(""); 
         }
       } else {
         setAvailablePrograms([]);
@@ -252,21 +259,26 @@ const RequisitionsPage = () => {
     return () => unsubscribe();
   }, [userRole, activeProgram]);
 
-  // --- 2. Data Fetching (Requisitions) ---
+  // --- 2. Data Fetching (HR FETCHES ALL NODES, OTHERS FETCH SPECIFIC) ---
   useEffect(() => {
-    if (!activeProgram) {
+    // If Admin and no active program, stop.
+    // If HR, activeProgram is "ALL", so this check passes.
+    if (userRole !== 'hr' && !activeProgram) {
         setAllRequisitions([]);
         setLoading(false);
         return;
     }
-
     setLoading(true);
 
-    const reqQuery = query(
-        ref(db, 'requisitions'), 
-        orderByChild('programme'), 
-        equalTo(activeProgram)
-    );
+    // Logic: If HR, fetch root. If Admin, fetch by programme.
+    let reqQuery;
+    if (userRole === 'hr' || activeProgram === "ALL") {
+        // Fetching entire requisitions node to expose both KPMD and RANGE
+        reqQuery = ref(db, 'requisitions');
+    } else {
+        // Fetching specific programme
+        reqQuery = query(ref(db, 'requisitions'), orderByChild('programme'), equalTo(activeProgram));
+    }
 
     const unsubscribe = onValue(reqQuery, (snapshot) => {
         const data = snapshot.val();
@@ -277,7 +289,6 @@ const RequisitionsPage = () => {
         }
         const records = Object.keys(data).map((key) => {
             const item = data[key];
-            
             let dateVal = item.submittedAt;
             if (typeof dateVal === 'string') {
                const d = parseDate(dateVal);
@@ -285,9 +296,7 @@ const RequisitionsPage = () => {
             } else if (typeof dateVal !== 'number') {
                dateVal = Date.now();
             }
-
             const isFuel = item.type === 'fuel and Service';
-            
             return {
                 id: key,
                 ...item,
@@ -295,13 +304,10 @@ const RequisitionsPage = () => {
                 items: Array.isArray(item.items) ? item.items : [], 
                 createdAt: dateVal, 
                 totalAmount: (isFuel ? item.fuelAmount : item.total) || 0,
-                // Ensure fileUploaded is captured
                 fileUploaded: item.fileUploaded || false
             };
         });
-        
         records.sort((a, b) => (b.createdAt as number) - (a.createdAt as number));
-        
         setAllRequisitions(records);
         setLoading(false);
     }, (error) => {
@@ -309,19 +315,23 @@ const RequisitionsPage = () => {
         toast({ title: "Error", description: "Failed to load requisition data", variant: "destructive" });
         setLoading(false);
     });
-
     return () => { if(typeof unsubscribe === 'function') unsubscribe(); };
-  }, [activeProgram, toast]);
+  }, [activeProgram, userRole, toast]);
 
-  // --- 3. Filtering & Stats Logic ---
+  // --- 3. Filtering & Stats Logic (HR SEES APPROVED ONLY) ---
   useEffect(() => {
     if (allRequisitions.length === 0) {
       setFilteredRequisitions([]);
       setStats({ totalRequests: 0, pendingRequests: 0, totalAmount: 0 });
       return;
     }
-
     let filteredList = allRequisitions.filter(record => {
+      // --- HR ONLY LOGIC: Approved Only ---
+      if (userRole === 'hr') {
+        if (record.status !== 'approved') return false;
+      }
+
+      // Standard Filtering
       if (filters.startDate || filters.endDate) {
         const recordDate = parseDate(record.createdAt);
         if (recordDate) {
@@ -335,10 +345,13 @@ const RequisitionsPage = () => {
           if (endDate && recordDateOnly > endDate) return false;
         } else if (filters.startDate || filters.endDate) return false;
       }
-
-      if (filters.status !== "all" && record.status?.toLowerCase() !== filters.status.toLowerCase()) return false;
+      
+      // If HR, we ignore the status dropdown filter because we already forced it above.
+      // But we respect Type and Search.
+      if (userRole !== 'hr' && filters.status !== "all" && record.status?.toLowerCase() !== filters.status.toLowerCase()) return false;
+      
       if (filters.type !== "all" && record.type?.toLowerCase() !== filters.type.toLowerCase()) return false;
-
+      
       if (filters.search) {
         const term = filters.search.toLowerCase();
         const match = [
@@ -348,15 +361,15 @@ const RequisitionsPage = () => {
       }
       return true;
     });
-
     setFilteredRequisitions(filteredList);
-
+    
+    // Stats calculation automatically respects the filtered list
     const totalRequests = filteredList.length;
-    const pendingRequests = filteredList.filter(r => r.status === 'pending').length;
+    const pendingRequests = filteredList.filter(r => r.status === 'pending').length; // Will be 0 for HR
     const totalAmount = filteredList.reduce((sum, r) => sum + (r.totalAmount || 0), 0);
     
     setStats({ totalRequests, pendingRequests, totalAmount });
-
+    
     const totalPages = Math.ceil(filteredList.length / pagination.limit);
     const currentPage = Math.min(pagination.page, Math.max(1, totalPages));
     setPagination(prev => ({
@@ -365,6 +378,16 @@ const RequisitionsPage = () => {
   }, [allRequisitions, filters, pagination.limit, pagination.page]);
 
   // --- Handlers ---
+  const handleLogout = async () => {
+    try {
+      await signOut(getAuth());
+      navigate("/auth");
+      toast({ title: "Logged out", description: "You have been logged out successfully." });
+    } catch (error) {
+      console.error("Logout error:", error);
+      toast({ title: "Error", description: "Failed to log out", variant: "destructive" });
+    }
+  };
 
   const handleProgramChange = (program: string) => {
     setActiveProgram(program);
@@ -404,7 +427,6 @@ const RequisitionsPage = () => {
     setIsViewDialogOpen(true); 
   }, []);
 
-  // --- Image Handlers (New) ---
   const handleOpenImageViewer = (record: RequisitionData, printImmediately = false) => {
     const images = getRequisitionImages(record.requisitionUrl);
     if (images.length === 0) {
@@ -413,15 +435,9 @@ const RequisitionsPage = () => {
     }
     setViewingImages(images);
     setIsImageViewerOpen(true);
-    
-    if (printImmediately) {
-        setTimeout(() => {
-            window.print();
-        }, 500);
-    }
+    if (printImmediately) setTimeout(() => window.print(), 500);
   };
 
-  // --- Edit Handlers ---
   const openEditDialog = useCallback((record: RequisitionData) => {
     setEditRecord(record);
     setEditFormData({
@@ -441,7 +457,6 @@ const RequisitionsPage = () => {
       i === index ? { ...item, [field]: value } : item
     );
     setEditFormData(prev => ({ ...prev, items: updatedItems }));
-    
     if (field === 'price') {
       const newTotal = updatedItems.reduce((sum, item) => sum + (Number(item.price) || 0), 0);
       setEditFormData(prev => ({ ...prev, total: newTotal }));
@@ -473,7 +488,6 @@ const RequisitionsPage = () => {
         tripPurpose: editFormData.tripPurpose,
         status: editFormData.status,
       };
-
       if (editRecord.type === 'fuel and Service') {
         updatePayload.lastReading = editFormData.lastReading;
         updatePayload.currentReading = editFormData.currentReading;
@@ -490,7 +504,6 @@ const RequisitionsPage = () => {
         updatePayload.total = editFormData.total;
         updatePayload.location = editFormData.location;
       }
-
       await update(ref(db, `requisitions/${editRecord.id}`), updatePayload);
       toast({ title: "Success", description: "Requisition updated successfully." });
       setIsEditDialogOpen(false);
@@ -501,8 +514,6 @@ const RequisitionsPage = () => {
       setIsSaving(false);
     }
   };
-
-  // --- Delete Handlers ---
 
   const confirmDelete = (record: RequisitionData) => {
     setRecordToDelete(record);
@@ -525,7 +536,6 @@ const RequisitionsPage = () => {
     }
   };
 
-  // --- Approve Logic ---
   const handleApprove = async () => {
     if (!viewingRecord) return;
     try {
@@ -544,11 +554,21 @@ const RequisitionsPage = () => {
   };
   
   const handleDeleteMultiple = async () => {
-    // Optional: Implement delete if needed
+    // Optional
   };
 
   const handleExport = async () => {
-    // Optional: Implement Export
+    // Optional
+  };
+
+  // --- NEW PRINT HANDLER ---
+  const handlePrint = () => {
+    // Set the timestamp just before printing so it's accurate
+    setPrintDate(new Date().toLocaleString());
+    // Small delay to ensure state updates (though print is usually synchronous in dialog)
+    setTimeout(() => {
+        window.print();
+    }, 100);
   };
 
   const handleDownload = useCallback(async () => {
@@ -581,7 +601,6 @@ const RequisitionsPage = () => {
     return filteredRequisitions.slice(startIndex, endIndex);
   }, [filteredRequisitions, pagination.page, pagination.limit]);
 
-  // --- Sub-components ---
   const StatsCard = memo(({ title, value, icon: Icon, color = "blue", description }: any) => (
     <Card className="bg-white text-slate-900 shadow-lg border border-gray-200 relative overflow-hidden">
       <div className={`absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-${color}-600 to-purple-800`}></div>
@@ -602,6 +621,63 @@ const RequisitionsPage = () => {
 
   // --- Render ---
   return (
+    <>
+    {/* CSS Styles for Printing */}
+    <style>
+        {`
+        @media print {
+            /* Remove default browser margins to hide URL and Title header */
+            @page { 
+                margin: 0; 
+                size: auto;
+            }
+            body { 
+                background: white !important;
+                -webkit-print-color-adjust: exact; 
+                print-color-adjust: exact; 
+            }
+            
+            /* Hide everything except the print content */
+            body > *:not(.print-content) {
+                display: none !important;
+            }
+
+            /* Ensure the dialog expands to full page without gray background */
+            .print-content {
+                display: block !important;
+                position: absolute;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                margin: 0;
+                padding: 0;
+                background: white !important;
+                border: none !important;
+                box-shadow: none !important;
+                border-radius: 0 !important;
+            }
+            
+            /* Hide Dialog UI elements (buttons, scrollbars) */
+            .print-content .bg-gray-200 {
+                background: white !important;
+                border: none !important;
+            }
+            
+            .print-content button, 
+            .print-content .no-print {
+                display: none !important;
+            }
+
+            .print-content .overflow-y-auto {
+                overflow: visible !important;
+                max-height: none !important;
+                height: auto !important;
+            }
+        }
+        `}
+    </style>
+
     <div className="space-y-6 px-2 sm:px-4 md:px-0">
       {/* Header Section */}
       <div className="flex flex-col md:flex-row justify-between items-start gap-4 md:items-center">
@@ -612,7 +688,7 @@ const RequisitionsPage = () => {
         </div>
          
          <div className="flex lg:flex-row md:flex-row flex-col gap-4 w-full md:w-auto">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full md:w-auto">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full md:w-auto relative z-50">
                 <div className="">
                     <Label className="sr-only">Start Date</Label>
                     <Input type="date" value={filters.startDate} onChange={(e) => handleFilterChange("startDate", e.target.value)} className="border-gray-300 focus:border-blue-500 bg-white h-9 w-full" />
@@ -623,7 +699,8 @@ const RequisitionsPage = () => {
                 </div>
             </div>
             
-            {userIsChiefAdmin && (
+            {/* Programme Filter - Hidden for HR */}
+            {userIsChiefAdmin && userRole !== 'hr' && (
                 <div className="space-y-2 w-full md:w-[180px]">
                     <Select value={activeProgram} onValueChange={handleProgramChange} disabled={availablePrograms.length === 0}>
                         <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white h-9 font-bold w-full">
@@ -642,16 +719,24 @@ const RequisitionsPage = () => {
                 </Button>
             </div>
           
-          
         <div className="flex flex-wrap gap-2 w-full md:w-auto mt-2 md:mt-0 justify-end">
-          {selectedRecords.length > 0 && (
+          {/* Delete Multiple Button - Hidden for HR */}
+          {userRole !== 'hr' && selectedRecords.length > 0 && (
             <Button variant="destructive" size="sm" onClick={handleDeleteMultiple} className="text-xs">
                Delete ({selectedRecords.length})
             </Button>
           )}
-           <Button onClick={handleExport} disabled={exportLoading} className="bg-gradient-to-r from-blue-800 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white shadow-md text-xs">
-            <Download className="h-4 w-4 mr-2" /> Export ({filteredRequisitions.length})
-          </Button>
+           
+           {/* Conditional Button: Export vs Logout */}
+           {userRole === 'hr' ? (
+             <Button onClick={handleLogout} variant="outline" size="sm" className="h-9 px-6 w-full md:w-auto text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700">
+               <LogOut className="h-4 w-4 mr-2" /> Logout
+             </Button>
+           ) : (
+             <Button onClick={handleExport} disabled={exportLoading} className="bg-gradient-to-r from-blue-800 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white shadow-md text-xs h-9 px-6 w-full md:w-auto">
+                <Download className="h-4 w-4 mr-2" /> Export ({filteredRequisitions.length})
+              </Button>
+           )}
         </div>
         </div>
       </div>
@@ -681,7 +766,7 @@ const RequisitionsPage = () => {
 
             <div className="space-y-2">
                 <Label className="font-semibold text-gray-700 text-xs uppercase">Status</Label>
-                <Select value={filters.status} onValueChange={(value) => handleFilterChange("status", value)}>
+                <Select value={filters.status} onValueChange={(value) => handleFilterChange("status", value)} disabled={userRole === 'hr'}>
                     <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white h-9"><SelectValue placeholder="All Statuses" /></SelectTrigger>
                     <SelectContent>
                         <SelectItem value="all">All Statuses</SelectItem>
@@ -751,9 +836,12 @@ const RequisitionsPage = () => {
                         <td className="py-2 px-3">
                           <div className="flex gap-1 items-center">
                             <Button variant="ghost" size="sm" className="h-7 w-7 text-blue-600 hover:bg-blue-50" onClick={() => openViewDialog(record)}><Eye className="h-3.5 w-3.5" /></Button>
-                            <Button variant="ghost" size="sm" className="h-7 w-7 text-gray-600 hover:bg-gray-50" onClick={() => openEditDialog(record)}><Edit className="h-3.5 w-3.5" /></Button>
                             
-                            {/* Image Dropdown (New) */}
+                            {/* Edit Button - Hidden for HR */}
+                            {userRole !== 'hr' && (
+                                <Button variant="ghost" size="sm" className="h-7 w-7 text-gray-600 hover:bg-gray-50" onClick={() => openEditDialog(record)}><Edit className="h-3.5 w-3.5" /></Button>
+                            )}
+                            
                             <DropdownMenu>
                                 <DropdownMenuTrigger asChild>
                                     <Button variant="ghost" size="sm" className="h-7 w-7 text-purple-600 hover:bg-purple-50">
@@ -770,7 +858,10 @@ const RequisitionsPage = () => {
                                 </DropdownMenuContent>
                             </DropdownMenu>
 
-                            <Button variant="ghost" size="sm" className="h-7 w-7 text-red-600 hover:bg-red-50" onClick={() => confirmDelete(record)}><Trash2 className="h-3.5 w-3.5" /></Button>
+                            {/* Delete Button - Hidden for HR */}
+                            {userRole !== 'hr' && (
+                                <Button variant="ghost" size="sm" className="h-7 w-7 text-red-600 hover:bg-red-50" onClick={() => confirmDelete(record)}><Trash2 className="h-3.5 w-3.5" /></Button>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -793,11 +884,12 @@ const RequisitionsPage = () => {
 
       {/* --- VIEW DIALOG --- */}
       <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
-        <DialogContent className="font-times sm:max-w-5xl bg-gray-200 rounded-none w-[95vw] sm:w-full max-h-[95vh] flex flex-col">
+        {/* Added 'print-content' class to identify this for CSS */}
+        <DialogContent className="print-content font-times sm:max-w-5xl bg-gray-200 rounded-none w-[95vw] sm:w-full max-h-[95vh] flex flex-col">
           <div className="overflow-y-auto flex-1">
             {viewingRecord && (
-              <div ref={docRef} className="grid grid-cols-1 bg-white shadow-lg w-full p-15 md:p-12 min-h-[800px] relative">
-                <div className="pb-10">
+              <div ref={docRef} className="gridgrid-cols-1  bg-white shadow-lg w-full  md:p-12 min-h-[800px] relative flex flex-col">
+                <div className="pb-10 flex-1 ml-20 mr-20">
                   <div className="flex flex-col items-center justify-center">
                       <div className="w-[260px] m-0 p-0">
                         <img src="/img/logo.png" alt="Logo" className="w-full" />
@@ -878,12 +970,18 @@ const RequisitionsPage = () => {
                     </div>
                   </div>
                 </div>
+                
+                {/* PRINT FOOTER */}
+                <div className=" absolute bottom-0 left-0 right-0 mt-8 text-center text-xs text-gray-700 font-serif pt-4 border-t border-dashed no-print-invisible">
+                    Printed on {printDate || new Date().toLocaleString()}
+                </div>
               </div>
             )}
           </div>
-          <div className="bg-gray-200 p-4 flex flex-col-reverse sm:flex-row justify-between items-center gap-4 border-t border-gray-300 z-10 shrink-0">
+          <div className="bg-gray-200 p-4 flex flex-col-reverse sm:flex-row justify-between items-center gap-4 border-t border-gray-300 z-10 shrink-0 no-print">
             <div className="flex gap-2 w-full sm:w-auto">
-              <Button variant="outline" onClick={() => window.print()} className="flex-1 sm:flex-none"><Printer className="h-4 w-4 mr-2" /> Print</Button>
+              {/* Updated Button */}
+              <Button variant="outline" onClick={handlePrint} className="flex-1 sm:flex-none"><Printer className="h-4 w-4 mr-2" /> Print</Button>
               <Button variant="outline" onClick={handleDownload} className="flex-1 sm:flex-none"><Download className="h-4 w-4 mr-2" /> Download</Button>
             </div>
             <div className="flex gap-2 w-full sm:w-auto justify-end">
@@ -898,7 +996,7 @@ const RequisitionsPage = () => {
         </DialogContent>
       </Dialog>
 
-      {/* --- IMAGE VIEWER DIALOG (New) --- */}
+      {/* --- IMAGE VIEWER DIALOG --- */}
       <Dialog open={isImageViewerOpen} onOpenChange={setIsImageViewerOpen}>
         <DialogContent className="sm:max-w-4xl max-h-[90vh] flex flex-col bg-gray-50">
             <DialogHeader>
@@ -1019,7 +1117,7 @@ const RequisitionsPage = () => {
           <DialogHeader>
             <DialogTitle>Are you sure?</DialogTitle>
             <DialogDescription className="text-base">
-              You are about to delete the <strong>{recordToDelete?.type}</strong> requisition submitted by <strong>{getOfficerName(recordToDelete)}</strong>.
+              You are about to delete <strong>{recordToDelete?.type}</strong> requisition submitted by <strong>{getOfficerName(recordToDelete)}</strong>.
               <br/><br/>
               This action cannot be undone.
             </DialogDescription>
@@ -1034,6 +1132,7 @@ const RequisitionsPage = () => {
       </Dialog>
 
     </div>
+    </>
   );
 };
 

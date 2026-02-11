@@ -44,14 +44,11 @@ const baseMenuItems = [
     icon: Beef,
     subItems: [
       { title: "Dashboard", url: "/dashboard/livestock/analytics", icon: BarChart3 },
-      { title: "Farmer Data", url: "/dashboard/livestock", icon: Database },
+      { title: "Livestock Farmer", url: "/dashboard/livestock", icon: Database },
+      { title: "Fodder Farmer", url: "/dashboard/fodder-farmer", icon: Database },
     ]
   },
-  {
-    title: "Fodder Farmers",
-    icon: Wheat,
-    url: "/dashboard/fodder",
-  },
+  
   {
     title: "Infrastructure",
     icon: Building2,
