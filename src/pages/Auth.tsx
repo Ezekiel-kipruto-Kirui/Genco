@@ -22,7 +22,7 @@ const Auth = () => {
       if (userRole === 'hr') {
         // Redirect HR users to the Sales Metrics page
         // Ensure '/sales-metrics' matches the route defined in your App.tsx for sales-metricspage
-        navigate("/sales-metrics");
+        navigate("/salesreport");
       } else {
         // Default redirect for other users
         navigate("/dashboard");
