@@ -8,50 +8,28 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { 
-  Tabs, TabsList, TabsTrigger 
-} from "@/components/ui/tabs"; // Added Tabs
-import { 
-  Users, 
-  GraduationCap, 
-  Beef, 
-  MapPin, 
-  Plus, 
-  Calendar,
-  Activity,
-  Eye,
-  Bell,
-  ArrowRight,
-  Trash2,
-  Loader2
+  Users, GraduationCap, Beef, MapPin, Plus, Activity, Eye, Bell, ArrowRight, Trash2, Loader2
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Link } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
+import { useQuery, useQueryClient } from "@tanstack/react-query"; // Import React Query
+import { Calendar } from "@/components/ui/calendar";
 
 const PROGRAMME_OPTIONS = ["KPMD", "RANGE"];
 
 // --- Interfaces ---
-
 interface FarmerData extends Record<string, any> {
   id: string;
-  programme?: string; // Important for filtering
+  programme?: string;
   goats?: number | { male: number; female: number; total: number };
   cattle?: string | number;
   sheep?: string | number;
   gender?: string;
   region?: string;
-}
-
-interface StatCardProps {
-  title: string;
-  icon: React.ReactNode;
-  maleCount?: number;
-  femaleCount?: number;
-  total: number;
-  gradient: string;
-  description?: string;
 }
 
 interface Participant {
@@ -70,7 +48,7 @@ interface Activity {
   subcounty: string;
   createdAt: any;
   status: 'pending' | 'in-progress' | 'completed' | 'cancelled';
-  programme?: string; // Important for filtering
+  programme?: string;
   totalFarmers?: number;
 }
 
@@ -82,7 +60,6 @@ interface RegionStats {
 }
 
 // --- Helper Functions ---
-
 const getGoatTotal = (goats: any): number => {
   if (typeof goats === 'number') return goats;
   if (typeof goats === 'object' && goats !== null && typeof goats.total === 'number') return goats.total;
@@ -90,8 +67,7 @@ const getGoatTotal = (goats: any): number => {
 };
 
 // --- Components ---
-
-const StatCard = ({ title, icon, maleCount, femaleCount, total, gradient, description }: StatCardProps) => (
+const StatCard = ({ title, icon, maleCount, femaleCount, total, gradient, description }: any) => (
   <div className="group relative bg-white">
     <div className="relative bg-white backdrop-blur-sm rounded-2xl shadow-xl hover:shadow-2xl transition-all duration-300 p-6">
       <div className="flex items-center">
@@ -103,7 +79,6 @@ const StatCard = ({ title, icon, maleCount, femaleCount, total, gradient, descri
         <div className="ml-5 flex-1">
           <p className="text-sm font-medium text-slate-600 uppercase tracking-wide">{title}</p>
           <p className="text-2xl font-bold text-slate-900 mt-1">{total.toLocaleString()}</p>
-          
           {(maleCount !== undefined && femaleCount !== undefined) ? (
             <div className="flex gap-4 mt-3">
               <div className="flex flex-col">
@@ -129,21 +104,18 @@ const ActivityTable = ({ activities }: { activities: Activity[] }) => {
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
     return isNaN(date.getTime()) ? 'Invalid Date' : date.toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric'
+      year: 'numeric', month: 'short', day: 'numeric'
     });
   };
 
   const getStatusBadge = (status: string) => {
-    const statusConfig = {
+    const statusConfig: any = {
       'pending': { color: 'bg-yellow-100 text-yellow-800', label: 'Pending' },
       'in-progress': { color: 'bg-blue-100 text-blue-800', label: 'In Progress' },
       'completed': { color: 'bg-green-100 text-green-800', label: 'Completed' },
       'cancelled': { color: 'bg-red-100 text-red-800', label: 'Cancelled' }
     };
-    
-    const config = statusConfig[status as keyof typeof statusConfig] || statusConfig.pending;
+    const config = statusConfig[status] || statusConfig.pending;
     return <Badge className={`${config.color} border-0 text-xs`}>{config.label}</Badge>;
   };
 
@@ -162,37 +134,20 @@ const ActivityTable = ({ activities }: { activities: Activity[] }) => {
           </thead>
           <tbody className="divide-y divide-slate-100">
             {activities.map((activity) => (
-              <tr 
-                key={activity.id} 
-                className="hover:bg-slate-50/50 transition-colors duration-200 group"
-              >
+              <tr key={activity.id} className="hover:bg-slate-50/50 transition-colors duration-200 group">
                 <td className="p-4">
                   <div className="flex items-center gap-3">
                     <div className="w-2 h-2 bg-gradient-to-r from-blue-500 to-purple-500 rounded-full"></div>
-                    <span className="font-medium text-slate-900 group-hover:text-blue-600 transition-colors">
-                      {activity.activityName}
-                    </span>
+                    <span className="font-medium text-slate-900 group-hover:text-blue-600 transition-colors">{activity.activityName}</span>
                   </div>
                 </td>
+                <td className="p-4"><Badge className="bg-blue-100 text-blue-700 border-0 shadow-sm">{formatDate(activity.date)}</Badge></td>
+                <td className="p-4">{getStatusBadge(activity.status)}</td>
                 <td className="p-4">
-                  <Badge className="bg-blue-100 text-blue-700 border-0 shadow-sm">
-                    {formatDate(activity.date)}
-                  </Badge>
+                  <div className="flex items-center gap-2"><MapPin className="h-4 w-4 text-slate-500" /><span className="text-slate-700">{activity.location}</span></div>
                 </td>
                 <td className="p-4">
-                  {getStatusBadge(activity.status)}
-                </td>
-                <td className="p-4">
-                  <div className="flex items-center gap-2">
-                    <MapPin className="h-4 w-4 text-slate-500" />
-                    <span className="text-slate-700">{activity.location}</span>
-                  </div>
-                </td>
-                <td className="p-4">
-                  <div className="flex items-center gap-2">
-                    <Users className="h-4 w-4 text-slate-500" />
-                    <span className="font-semibold text-slate-900">{activity.numberOfPersons}</span>
-                  </div>
+                  <div className="flex items-center gap-2"><Users className="h-4 w-4 text-slate-500" /><span className="font-semibold text-slate-900">{activity.numberOfPersons}</span></div>
                 </td>
               </tr>
             ))}
@@ -209,6 +164,7 @@ const DashboardOverview = () => {
   const auth = getAuth();
   const { user } = useAuth();
   const { toast } = useToast();
+  const queryClient = useQueryClient();
 
   // Permissions State
   const [userRole, setUserRole] = useState<string | null>(null);
@@ -216,12 +172,7 @@ const DashboardOverview = () => {
   const [loadingPermissions, setLoadingPermissions] = useState(true);
 
   // Dashboard View State
-  const [selectedProgramme, setSelectedProgramme] = useState<string>("All"); // "All", "KPMD", "RANGE"
-  const [loadingData, setLoadingData] = useState(true);
-
-  // Raw Data States (Fetched once)
-  const [rawFarmers, setRawFarmers] = useState<FarmerData[]>([]);
-  const [rawActivities, setRawActivities] = useState<Activity[]>([]);
+  const [selectedProgramme, setSelectedProgramme] = useState<string>("All");
 
   // Dialog State
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
@@ -230,118 +181,39 @@ const DashboardOverview = () => {
   const [activeProgrammeForAdd, setActiveProgrammeForAdd] = useState<string>("KPMD");
   
   const [activityForm, setActivityForm] = useState({
-    activityName: "",
-    date: "",
-    county: "",
-    subcounty: "",
-    location: "",
+    activityName: "", date: "", county: "", subcounty: "", location: "",
   });
 
   const programmeOptions = userRole === "chief-admin" ? PROGRAMME_OPTIONS : allowedProgrammes;
 
-  // --- Filters ---
+  // --- Optimized Data Fetching with React Query ---
 
-  const filteredFarmers = useMemo(() => {
-    if (selectedProgramme === "All") return rawFarmers;
-    return rawFarmers.filter(f => f.programme === selectedProgramme);
-  }, [rawFarmers, selectedProgramme]);
-
-  const filteredActivities = useMemo(() => {
-    let activities = rawActivities;
-    if (selectedProgramme !== "All") {
-      activities = activities.filter(a => a.programme === selectedProgramme);
-    }
-    return activities.sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  }, [rawActivities, selectedProgramme]);
-
-  // --- Stats Calculations (Reactive to Filters) ---
-
-  const stats = useMemo(() => {
-    const data = filteredFarmers;
-
-    // 1. Gender Stats
-    const maleFarmers = data.filter(f => String(f.gender || f.Gender).toLowerCase() === 'male').length;
-    const femaleFarmers = data.filter(f => String(f.gender || f.Gender).toLowerCase() === 'female').length;
-
-    // 2. Trained Stats (Sum totalFarmers from filtered activities)
-    // Note: We need to map farmers to activities? The previous code summed "totalFarmers" property from capacityBuilding.
-    // Assuming capacityBuilding data was fetched into rawActivities (or we need to fetch it separately).
-    // *Correction*: The original code fetched 'capacityBuilding' for trained stats, but 'Recent Activities' for the table.
-    // We need to fetch capacity building data too.
-    return {
-      totalFarmers: data.length,
-      maleFarmers,
-      femaleFarmers,
-      trainedFarmers: 0, // Placeholder, will be updated below
-      trainedMale: 0,
-      trainedFemale: 0,
-      totalGoats: 0,
-      totalSheep: 0,
-      totalCattle: 0,
-      maleGoats: 0,
-      femaleGoats: 0,
-      regionsVisited: 0,
-    };
-  }, [filteredFarmers]);
-
-  const regionStats = useMemo(() => {
-    const regionMap: Record<string, RegionStats> = {};
-    filteredFarmers.forEach((farmer) => {
-      const region = farmer.region || farmer.Region || farmer.county || farmer.County;
-      if (region) {
-        const regionName = String(region).trim();
-        if (!regionMap[regionName]) {
-          regionMap[regionName] = { name: regionName, farmerCount: 0, maleFarmers: 0, femaleFarmers: 0 };
-        }
-        regionMap[regionName].farmerCount++;
-        const gender = String(farmer.gender || farmer.Gender).toLowerCase();
-        if (gender === 'male') regionMap[regionName].maleFarmers++;
-        else if (gender === 'female') regionMap[regionName].femaleFarmers++;
-      }
-    });
-    return Object.values(regionMap).sort((a, b) => b.farmerCount - a.farmerCount);
-  }, [filteredFarmers]);
-
-  // Animal Census
-  const animalStats = useMemo(() => {
-    let totalGoats = 0, maleGoats = 0, femaleGoats = 0, totalSheep = 0, totalCattle = 0;
-    filteredFarmers.forEach((farmer) => {
-      const g = getGoatTotal(farmer.goats);
-      totalGoats += g;
-      if (farmer.goats && typeof farmer.goats === 'object') {
-        maleGoats += Number(farmer.goats.male || 0);
-        femaleGoats += Number(farmer.goats.female || 0);
-      }
-      totalSheep += Number(farmer.sheep || 0);
-      totalCattle += Number(farmer.cattle || 0);
-    });
-    return { totalGoats, maleGoats, femaleGoats, totalSheep, totalCattle, regionsVisited: regionStats.length };
-  }, [filteredFarmers, regionStats.length]);
-
-  // Merge stats objects
-  const finalStats = { ...stats, ...animalStats };
-
-  // Recent Activities (Top 3)
-  const recentActivities = useMemo(() => filteredActivities.slice(0, 3), [filteredActivities]);
-  const pendingActivitiesCount = useMemo(() => filteredActivities.filter(a => a.status === 'pending').length, [filteredActivities]);
-
-
-  // --- Data Fetching ---
-
+  // 1. The Fetcher Function (Cached Logic)
   const fetchSecureCollection = async (nodePath: string): Promise<any[]> => {
     if (!auth.currentUser) return [];
+    
+    const uid = auth.currentUser.uid;
+    // Get current permissions fresh from context or state if needed, 
+    // but here we rely on the closure capturing current state or pass them as args.
+    // For simplicity in this refactor, we grab the role/programmes from state.
+    // Note: In complex apps, pass dependencies to queryFn.
+    
+    // However, since this function is inside the component, it captures the current state variables.
+    const role = userRole; 
+    const programmes = allowedProgrammes;
 
     // Chief Admin: Fetch all
-    if (userRole === 'chief-admin') {
+    if (role === 'chief-admin') {
       const snapshot = await get(ref(db, nodePath));
       if (!snapshot.exists()) return [];
       return Object.keys(snapshot.val()).map(key => ({ id: key, ...snapshot.val()[key] }));
     }
 
     // Non-Admin: Fetch by allowed programmes
-    if (allowedProgrammes.length === 0) return [];
+    if (programmes.length === 0) return [];
 
-    const promises = allowedProgrammes.map(programme => {
+    // Attempt Index Query first
+    const promises = programmes.map(programme => {
       const q = query(ref(db, nodePath), orderByChild('programme'), equalTo(programme));
       return get(q);
     });
@@ -358,18 +230,126 @@ const DashboardOverview = () => {
           });
         }
       });
-
       return results;
     } catch (error) {
-      console.warn(`Query failed for ${nodePath}, falling back to client-side filter.`, error);
+      console.warn(`Index query failed for ${nodePath}, falling back to client filter.`, error);
+      // Fallback: Fetch all and filter
       const snapshot = await get(ref(db, nodePath));
       if (!snapshot.exists()) return [];
       const data = snapshot.val();
       return Object.keys(data)
         .map(key => ({ id: key, ...data[key] }))
-        .filter(item => allowedProgrammes.includes(item.programme));
+        .filter((item: any) => programmes.includes(item.programme));
     }
   };
+
+  // 2. React Query Hooks
+  // We use 'enabled' to prevent fetching before we know user permissions
+  const { data: rawFarmers = [], isLoading: isLoadingFarmers } = useQuery({
+    queryKey: ['farmers', userRole, allowedProgrammes],
+    queryFn: () => fetchSecureCollection("farmers"),
+    enabled: !!userRole && !loadingPermissions,
+    staleTime: 5 * 60 * 1000, // 5 minutes
+    gcTime: 10 * 60 * 1000, // Cache in memory for 10 mins
+  });
+
+  const { data: rawActivities = [], isLoading: isLoadingActivities } = useQuery({
+    queryKey: ['activities', userRole, allowedProgrammes],
+    queryFn: () => fetchSecureCollection("Recent Activities"),
+    enabled: !!userRole && !loadingPermissions,
+    staleTime: 2 * 60 * 1000, // 2 minutes
+  });
+
+  const { data: rawCapacityData = [] } = useQuery({
+    queryKey: ['capacityBuilding', userRole, allowedProgrammes],
+    queryFn: () => fetchSecureCollection("capacityBuilding"),
+    enabled: !!userRole && !loadingPermissions,
+    staleTime: 10 * 60 * 1000, // 10 minutes
+  });
+
+  // Combined loading state
+  const isLoadingData = loadingPermissions || (isLoadingFarmers && userRole);
+
+  // --- Filters & Stats ---
+
+  const filteredFarmers = useMemo(() => {
+    if (selectedProgramme === "All") return rawFarmers;
+    return rawFarmers.filter((f: FarmerData) => f.programme === selectedProgramme);
+  }, [rawFarmers, selectedProgramme]);
+
+  const filteredActivities = useMemo(() => {
+    let activities = rawActivities;
+    if (selectedProgramme !== "All") {
+      activities = activities.filter((a: Activity) => a.programme === selectedProgramme);
+    }
+    return activities.sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }, [rawActivities, selectedProgramme]);
+
+  const stats = useMemo(() => {
+    const data = filteredFarmers;
+    const maleFarmers = data.filter((f: FarmerData) => String(f.gender || f.Gender).toLowerCase() === 'male').length;
+    const femaleFarmers = data.filter((f: FarmerData) => String(f.gender || f.Gender).toLowerCase() === 'female').length;
+
+    return {
+      totalFarmers: data.length,
+      maleFarmers,
+      femaleFarmers,
+      trainedFarmers: 0, 
+      trainedMale: 0,
+      trainedFemale: 0,
+    };
+  }, [filteredFarmers]);
+
+  const regionStats = useMemo(() => {
+    const regionMap: Record<string, RegionStats> = {};
+    filteredFarmers.forEach((farmer: FarmerData) => {
+      const region = farmer.region || farmer.Region || farmer.county || farmer.County;
+      if (region) {
+        const regionName = String(region).trim();
+        if (!regionMap[regionName]) {
+          regionMap[regionName] = { name: regionName, farmerCount: 0, maleFarmers: 0, femaleFarmers: 0 };
+        }
+        regionMap[regionName].farmerCount++;
+        const gender = String(farmer.gender || farmer.Gender).toLowerCase();
+        if (gender === 'male') regionMap[regionName].maleFarmers++;
+        else if (gender === 'female') regionMap[regionName].femaleFarmers++;
+      }
+    });
+    return Object.values(regionMap).sort((a, b) => b.farmerCount - a.farmerCount);
+  }, [filteredFarmers]);
+
+  const animalStats = useMemo(() => {
+    let totalGoats = 0, maleGoats = 0, femaleGoats = 0, totalSheep = 0, totalCattle = 0;
+    filteredFarmers.forEach((farmer: FarmerData) => {
+      const g = getGoatTotal(farmer.goats);
+      totalGoats += g;
+      if (farmer.goats && typeof farmer.goats === 'object') {
+        maleGoats += Number(farmer.goats.male || 0);
+        femaleGoats += Number(farmer.goats.female || 0);
+      }
+      totalSheep += Number(farmer.sheep || 0);
+      totalCattle += Number(farmer.cattle || 0);
+    });
+    return { totalGoats, maleGoats, femaleGoats, totalSheep, totalCattle, regionsVisited: regionStats.length };
+  }, [filteredFarmers, regionStats.length]);
+
+  const finalStats = { ...stats, ...animalStats };
+
+  const calculatedStats = useMemo(() => {
+    let filteredCapacity = rawCapacityData;
+    if (selectedProgramme !== "All") {
+      filteredCapacity = rawCapacityData.filter((c: any) => c.programme === selectedProgramme);
+    }
+    const totalTrained = filteredCapacity.reduce((sum: number, t: any) => sum + (Number(t.totalFarmers) || 0), 0);
+
+    return { ...finalStats, trainedFarmers: totalTrained };
+  }, [finalStats, rawCapacityData, selectedProgramme]); 
+
+  const recentActivities = useMemo(() => filteredActivities.slice(0, 3), [filteredActivities]);
+  const pendingActivitiesCount = useMemo(() => filteredActivities.filter((a: Activity) => a.status === 'pending').length, [filteredActivities]);
+
+
+  // --- Effects & Handlers ---
 
   useEffect(() => {
     const uid = auth.currentUser?.uid;
@@ -389,13 +369,13 @@ const DashboardOverview = () => {
           
           const programmesObj = data.allowedProgrammes || {};
           const programmesList = Object.keys(programmesObj).filter(k => programmesObj[k] === true);
+          
           if (data.role === "chief-admin") {
             setAllowedProgrammes(PROGRAMME_OPTIONS);
           } else {
             setAllowedProgrammes(programmesList);
           }
           
-          // Set default add programme
           const defaultProgrammes = data.role === "chief-admin" ? PROGRAMME_OPTIONS : programmesList;
           if (defaultProgrammes.length > 0) {
             setActiveProgrammeForAdd(defaultProgrammes[0]);
@@ -411,55 +391,6 @@ const DashboardOverview = () => {
     fetchUserDetails();
   }, [auth.currentUser?.uid]);
 
-  // Fetch Data on permissions load
-  useEffect(() => {
-    if (loadingPermissions) return;
-    fetchData();
-  }, [userRole, allowedProgrammes, loadingPermissions]);
-
-  const fetchData = async () => {
-    try {
-      setLoadingData(true);
-      
-      const [farmersData, activitiesData, capacityData] = await Promise.all([
-        fetchSecureCollection("farmers"),
-        fetchSecureCollection("Recent Activities"),
-        fetchSecureCollection("capacityBuilding")
-      ]);
-
-      setRawFarmers(farmersData);
-      setRawActivities(activitiesData);
-
-      setRawCapacityData(capacityData);
-
-    } catch (error) {
-      console.error("Error fetching data:", error);
-    } finally {
-      setLoadingData(false);
-    }
-  };
-
-  const [rawCapacityData, setRawCapacityData] = useState<any[]>([]);
-
-  // Re-calculate stats when raw data or selection changes
-  // We need to merge this into the previous `stats` useMemo or create a combined one.
-  // I will adjust the `finalStats` calculation to include this.
-
-  const calculatedStats = useMemo(() => {
-    // Recalculate trained based on raw capacity
-    let filteredCapacity = rawCapacityData;
-    if (selectedProgramme !== "All") {
-      filteredCapacity = rawCapacityData.filter((c: any) => c.programme === selectedProgramme);
-    }
-    const totalTrained = filteredCapacity.reduce((sum, t: any) => sum + (Number(t.totalFarmers) || 0), 0);
-
-    return {
-        ...finalStats,
-        trainedFarmers: totalTrained
-    };
-  }, [finalStats, rawCapacityData, selectedProgramme]); 
-
-  // Handlers
   const handleAddParticipant = () => {
     if (participantForm.name.trim() && participantForm.role.trim()) {
       setParticipants([...participants, { ...participantForm }]);
@@ -468,8 +399,7 @@ const DashboardOverview = () => {
   };
 
   const removeParticipant = (index: number) => {
-    const updatedParticipants = participants.filter((_, i) => i !== index);
-    setParticipants(updatedParticipants);
+    setParticipants(participants.filter((_, i) => i !== index));
   };
 
   const handleAddActivity = async () => {
@@ -494,13 +424,14 @@ const DashboardOverview = () => {
       setActivityForm({ activityName: "", date: "", county: "", subcounty: "", location: "" });
       setParticipants([]);
       setIsAddDialogOpen(false);
-      fetchData(); // Refresh to show new activity
+      
+      // Invalidate queries to trigger a refetch
+      queryClient.invalidateQueries({ queryKey: ['activities'] });
     } catch (error) {
       toast({ title: "Error", description: "Failed to schedule activity.", variant: "destructive" });
     }
   };
 
-  // Update Add Dialog default programme when Tab changes
   useEffect(() => {
     if (selectedProgramme !== "All") {
       setActiveProgrammeForAdd(selectedProgramme);
@@ -516,16 +447,11 @@ const DashboardOverview = () => {
           <div key={i} className="group relative">
             <div className="relative bg-white/95 backdrop-blur-sm rounded-2xl shadow-xl p-6">
               <div className="flex items-center">
-                <div className="flex-shrink-0">
-                  <Skeleton className="w-14 h-14 rounded-xl" />
-                </div>
+                <div className="flex-shrink-0"><Skeleton className="w-14 h-14 rounded-xl" /></div>
                 <div className="ml-5 flex-1">
                   <Skeleton className="h-4 w-32 mb-2" />
                   <Skeleton className="h-8 w-20 mb-3" />
-                  <div className="flex gap-4">
-                    <Skeleton className="h-10 flex-1 rounded-lg" />
-                    <Skeleton className="h-10 flex-1 rounded-lg" />
-                  </div>
+                  <div className="flex gap-4"><Skeleton className="h-10 flex-1 rounded-lg" /><Skeleton className="h-10 flex-1 rounded-lg" /></div>
                 </div>
               </div>
             </div>
@@ -548,14 +474,7 @@ const DashboardOverview = () => {
   if (userRole !== 'chief-admin' && allowedProgrammes.length === 0) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100/80 p-6">
-        <Card className="max-w-md mx-auto mt-20">
-          <CardHeader>
-            <CardTitle>No Access</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p>You are not assigned to any programmes. Please contact your administrator.</p>
-          </CardContent>
-        </Card>
+        <Card className="max-w-md mx-auto mt-20"><CardHeader><CardTitle>No Access</CardTitle></CardHeader><CardContent><p>You are not assigned to any programmes.</p></CardContent></Card>
       </div>
     );
   }
@@ -569,86 +488,50 @@ const DashboardOverview = () => {
             <h1 className="text-md font-bold text-slate-900">Dashboard Overview</h1>
             {userRole !== 'chief-admin' && (
                <div className="flex gap-2 mt-2">
-                 {programmeOptions.map(p => (
-                   <Badge key={p} variant="outline" className="text-xs">{p}</Badge>
-                 ))}
+                 {programmeOptions.map(p => (<Badge key={p} variant="outline" className="text-xs">{p}</Badge>))}
                </div>
             )}
           </div>
           <Link to="/activities">
             <Button variant="outline" className="relative">
-              <Bell className="h-4 w-4 mr-2" />
-              Activities
+              <Bell className="h-4 w-4 mr-2" /> Activities
               {pendingActivitiesCount > 0 && (
-                <span className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 text-xs flex items-center justify-center">
-                  {pendingActivitiesCount}
-                </span>
+                <span className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 text-xs flex items-center justify-center">{pendingActivitiesCount}</span>
               )}
             </Button>
           </Link>
         </div>
 
-        {loadingData ? (
+        {isLoadingData ? (
           <LoadingSkeleton />
         ) : (
           <>
-            {/* Programme Switcher Tabs */}
+            {/* Tabs */}
             {programmeOptions.length > 1 && (
                <div className="flex justify-center mb-6">
                  <Tabs value={selectedProgramme} onValueChange={setSelectedProgramme} className="bg-white p-1 rounded-xl shadow-sm border border-slate-200">
                    <TabsList className="bg-transparent w-auto p-0">
                      {userRole === 'chief-admin' && (
-                       <TabsTrigger value="All" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white text-slate-600 rounded-lg px-6">
-                         All
-                       </TabsTrigger>
+                       <TabsTrigger value="All" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white text-slate-600 rounded-lg px-6">All</TabsTrigger>
                      )}
                      {programmeOptions.map(prog => (
-                       <TabsTrigger key={prog} value={prog} className="data-[state=active]:bg-blue-600 data-[state=active]:text-white text-slate-600 rounded-lg px-6">
-                         {prog}
-                       </TabsTrigger>
+                       <TabsTrigger key={prog} value={prog} className="data-[state=active]:bg-blue-600 data-[state=active]:text-white text-slate-600 rounded-lg px-6">{prog}</TabsTrigger>
                      ))}
                    </TabsList>
                  </Tabs>
                </div>
             )}
 
-            {/* Main Stats Grid */}
+            {/* Stats Grid */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <StatCard
-                title="Farmers Registered"
-                icon={<Users className="h-7 w-7 text-blue-600" />}
-                maleCount={calculatedStats.maleFarmers}
-                femaleCount={calculatedStats.femaleFarmers}
-                total={calculatedStats.totalFarmers}
-                gradient="bg-gradient-to-br from-blue-100 to-blue-50"
-              />
-              
-              <StatCard
-                title="Trained Farmers"
-                icon={<GraduationCap className="h-7 w-7 text-green-600" />}
-                maleCount={calculatedStats.trainedMale}
-                femaleCount={calculatedStats.trainedFemale}
-                total={calculatedStats.trainedFarmers}
-                gradient="bg-gradient-to-br from-green-100 to-green-50"
-                description={`Data from ${selectedProgramme === "All" ? "All Programmes" : selectedProgramme}`}
-              />
-
-              <StatCard
-                title="Animal Census"
-                icon={<Beef className="h-7 w-7 text-orange-600" />}
-                maleCount={calculatedStats.maleGoats}
-                femaleCount={calculatedStats.femaleGoats}
-                total={calculatedStats.totalGoats}
-                gradient="bg-gradient-to-br from-orange-100 to-orange-50"
-              />
-              
+              <StatCard title="Farmers Registered" icon={<Users className="h-7 w-7 text-blue-600" />} maleCount={calculatedStats.maleFarmers} femaleCount={calculatedStats.femaleFarmers} total={calculatedStats.totalFarmers} gradient="bg-gradient-to-br from-blue-100 to-blue-50" />
+              <StatCard title="Trained Farmers" icon={<GraduationCap className="h-7 w-7 text-green-600" />} maleCount={calculatedStats.trainedMale} femaleCount={calculatedStats.trainedFemale} total={calculatedStats.trainedFarmers} gradient="bg-gradient-to-br from-green-100 to-green-50" description={`Data from ${selectedProgramme === "All" ? "All Programmes" : selectedProgramme}`} />
+              <StatCard title="Animal Census" icon={<Beef className="h-7 w-7 text-orange-600" />} maleCount={calculatedStats.maleGoats} femaleCount={calculatedStats.femaleGoats} total={calculatedStats.totalGoats} gradient="bg-gradient-to-br from-orange-100 to-orange-50" />
               <div className="group relative">
                 <div className="relative bg-white/95 backdrop-blur-sm rounded-2xl shadow-xl hover:shadow-2xl transition-all duration-300 p-6">
                   <div className="flex items-center">
                     <div className="flex-shrink-0">
-                      <div className="w-14 h-14 bg-gradient-to-br from-purple-100 to-purple-50 rounded-xl flex items-center justify-center shadow-lg">
-                        <MapPin className="h-7 w-7 text-purple-600" />
-                      </div>
+                      <div className="w-14 h-14 bg-gradient-to-br from-purple-100 to-purple-50 rounded-xl flex items-center justify-center shadow-lg"><MapPin className="h-7 w-7 text-purple-600" /></div>
                     </div>
                     <div className="ml-5 flex-1">
                      <div className="flex items-center justify-between mb-1"> 
@@ -660,48 +543,31 @@ const DashboardOverview = () => {
                           {topRegions.map((region) => (
                             <div key={region.name} className="bg-slate-50/80 rounded-lg p-1 shadow-sm">
                               <div className="flex items-center justify-between mb-1">
-                                <span className="text-xs font-semibold text-slate-700 truncate">
-                                  {region.name}
-                                </span>
-                                <Badge className="bg-purple-100 text-purple-700 border-0 text-xs">
-                                  {region.farmerCount}
-                                </Badge>
+                                <span className="text-xs font-semibold text-slate-700 truncate">{region.name}</span>
+                                <Badge className="bg-purple-100 text-purple-700 border-0 text-xs">{region.farmerCount}</Badge>
                               </div>
                             </div>
                           ))}
                         </div>
                       )}
-                      
-                      {topRegions.length === 0 && (
-                        <div className="mt-3 text-sm text-slate-500">
-                          No region data available
-                        </div>
-                      )}
+                      {topRegions.length === 0 && <div className="mt-3 text-sm text-slate-500">No region data available</div>}
                     </div>
                   </div>
                 </div>
               </div>
             </div>
 
-            {/* Recent Activities Section */}
+            {/* Activities */}
             <div className="space-y-6">
               <div className="bg-white/95 backdrop-blur-sm rounded-2xl shadow-xl overflow-hidden">
                 <div className="px-6 py-4 bg-gradient-to-r from-slate-50 to-slate-100/80 shadow-sm">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center">
-                      <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-500 rounded-lg flex items-center justify-center shadow-lg mr-3">
-                        <Activity className="w-4 h-4 text-white" />
-                      </div>
+                      <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-500 rounded-lg flex items-center justify-center shadow-lg mr-3"><Activity className="w-4 h-4 text-white" /></div>
                       <h3 className="text-lg font-semibold text-slate-900">Recent Activities</h3>
-                      {selectedProgramme !== "All" && (
-                          <Badge className="ml-2 bg-blue-100 text-blue-700 border-0">{selectedProgramme}</Badge>
-                      )}
+                      {selectedProgramme !== "All" && <Badge className="ml-2 bg-blue-100 text-blue-700 border-0">{selectedProgramme}</Badge>}
                     </div>
-                    <Link to="/dashboard/activities">
-                      <Button variant="ghost" size="sm" className="text-slate-600 hover:text-slate-900">
-                        View All <ArrowRight className="h-4 w-4 ml-1" />
-                      </Button>
-                    </Link>
+                    <Link to="/dashboard/activities"><Button variant="ghost" size="sm" className="text-slate-600 hover:text-slate-900">View All <ArrowRight className="h-4 w-4 ml-1" /></Button></Link>
                   </div>
                 </div>
 
@@ -709,143 +575,45 @@ const DashboardOverview = () => {
                   {recentActivities.length > 0 ? (
                     <>
                       <ActivityTable activities={recentActivities} />
-                      
                       <div className="flex justify-between items-center pt-6 mt-6 border-t border-slate-200">
-                        <Link to="/dashboard/activities">
-                          <Button variant="outline" className="border-slate-300 text-slate-700 hover:bg-slate-50 font-medium px-4 py-2 rounded-xl transition-all duration-200 shadow-sm">
-                            <Eye className="h-4 w-4 mr-2" />
-                            View All Activities
-                          </Button>
-                        </Link>
-                        
+                        <Link to="/dashboard/activities"><Button variant="outline" className="border-slate-300 text-slate-700 hover:bg-slate-50 font-medium px-4 py-2 rounded-xl transition-all duration-200 shadow-sm"><Eye className="h-4 w-4 mr-2" /> View All Activities</Button></Link>
                         <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
-                          <DialogTrigger asChild>
-                            <Button className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white font-semibold px-4 py-2 rounded-xl shadow-lg hover:shadow-xl transition-all duration-200">
-                              <Plus className="h-4 w-4 mr-2" />
-                              Schedule Activity
-                            </Button>
-                          </DialogTrigger>
+                          <DialogTrigger asChild><Button className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white font-semibold px-4 py-2 rounded-xl shadow-lg hover:shadow-xl transition-all duration-200"><Plus className="h-4 w-4 mr-2" /> Schedule Activity</Button></DialogTrigger>
                           <DialogContent className="sm:max-w-[700px] bg-white rounded-2xl border-0 shadow-2xl max-h-[90vh] overflow-y-auto">
-                            <DialogHeader>
-                              <DialogTitle className="text-xl font-semibold text-slate-900">
-                                Schedule New Activity
-                              </DialogTitle>
-                            </DialogHeader>
+                            <DialogHeader><DialogTitle className="text-xl font-semibold text-slate-900">Schedule New Activity</DialogTitle></DialogHeader>
                             <div className="grid gap-6 py-4">
-                              {/* Programme Selector (Hidden if user has only 1) */}
                               {userRole !== 'chief-admin' && programmeOptions.length > 1 && (
                                 <div className="space-y-2">
                                   <Label htmlFor="programmeSelect">Programme</Label>
-                                  <select 
-                                    id="programmeSelect"
-                                    value={activeProgrammeForAdd}
-                                    onChange={(e) => setActiveProgrammeForAdd(e.target.value)}
-                                    className="flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm ring-offset-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-950"
-                                  >
-                                    {allowedProgrammes.map(p => (
-                                      <option key={p} value={p}>{p}</option>
-                                    ))}
+                                  <select id="programmeSelect" value={activeProgrammeForAdd} onChange={(e) => setActiveProgrammeForAdd(e.target.value)} className="flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm ring-offset-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-950">
+                                    {allowedProgrammes.map(p => (<option key={p} value={p}>{p}</option>))}
                                   </select>
                                 </div>
                               )}
-
                               <div className="grid grid-cols-2 gap-4">
-                                <div className="space-y-2">
-                                  <Label htmlFor="activityName">Activity Name</Label>
-                                  <Input
-                                    id="activityName"
-                                    value={activityForm.activityName}
-                                    onChange={(e) => setActivityForm({...activityForm, activityName: e.target.value})}
-                                    placeholder="Enter activity name"
-                                  />
-                                </div>
-                                <div className="space-y-2">
-                                  <Label htmlFor="date">Date</Label>
-                                  <Input
-                                    id="date"
-                                    type="date"
-                                    value={activityForm.date}
-                                    onChange={(e) => setActivityForm({...activityForm, date: e.target.value})}
-                                  />
-                                </div>
+                                <div className="space-y-2"><Label htmlFor="activityName">Activity Name</Label><Input id="activityName" value={activityForm.activityName} onChange={(e) => setActivityForm({...activityForm, activityName: e.target.value})} placeholder="Enter activity name" /></div>
+                                <div className="space-y-2"><Label htmlFor="date">Date</Label><Input id="date" type="date" value={activityForm.date} onChange={(e) => setActivityForm({...activityForm, date: e.target.value})} /></div>
                               </div>
                               <div className="grid grid-cols-2 gap-4">
-                                <div className="space-y-2">
-                                  <Label htmlFor="county">County</Label>
-                                  <Input
-                                    id="county"
-                                    value={activityForm.county}
-                                    onChange={(e) => setActivityForm({...activityForm, county: e.target.value})}
-                                    placeholder="Enter county"
-                                  />
-                                </div>
-                                <div className="space-y-2">
-                                  <Label htmlFor="subcounty">Subcounty</Label>
-                                  <Input
-                                    id="subcounty"
-                                    value={activityForm.subcounty}
-                                    onChange={(e) => setActivityForm({...activityForm, subcounty: e.target.value})}
-                                    placeholder="Enter subcounty"
-                                  />
-                                </div>
+                                <div className="space-y-2"><Label htmlFor="county">County</Label><Input id="county" value={activityForm.county} onChange={(e) => setActivityForm({...activityForm, county: e.target.value})} placeholder="Enter county" /></div>
+                                <div className="space-y-2"><Label htmlFor="subcounty">Subcounty</Label><Input id="subcounty" value={activityForm.subcounty} onChange={(e) => setActivityForm({...activityForm, subcounty: e.target.value})} placeholder="Enter subcounty" /></div>
                               </div>
-                              <div className="space-y-2">
-                                <Label htmlFor="location">Location</Label>
-                                <Input
-                                  id="location"
-                                  value={activityForm.location}
-                                  onChange={(e) => setActivityForm({...activityForm, location: e.target.value})}
-                                  placeholder="Enter location"
-                                />
-                              </div>
-
-                              {/* Participants Section */}
+                              <div className="space-y-2"><Label htmlFor="location">Location</Label><Input id="location" value={activityForm.location} onChange={(e) => setActivityForm({...activityForm, location: e.target.value})} placeholder="Enter location" /></div>
                               <div className="space-y-4 border-t pt-4">
-                                <div className="flex items-center justify-between">
-                                  <Label>Participants ({participants.length})</Label>
-                                  <span className="text-xs text-slate-500">Add participants with their roles</span>
-                                </div>
-                                
+                                <div className="flex items-center justify-between"><Label>Participants ({participants.length})</Label><span className="text-xs text-slate-500">Add participants with their roles</span></div>
                                 <div className="grid grid-cols-2 gap-3">
-                                  <Input
-                                    placeholder="Participant Name"
-                                    value={participantForm.name}
-                                    onChange={(e) => setParticipantForm({...participantForm, name: e.target.value})}
-                                  />
+                                  <Input placeholder="Participant Name" value={participantForm.name} onChange={(e) => setParticipantForm({...participantForm, name: e.target.value})} />
                                   <div className="flex gap-2">
-                                    <Input
-                                      placeholder="Role"
-                                      value={participantForm.role}
-                                      onChange={(e) => setParticipantForm({...participantForm, role: e.target.value})}
-                                    />
-                                    <Button 
-                                      type="button" 
-                                      onClick={handleAddParticipant}
-                                      className="bg-blue-500 hover:bg-blue-600 text-white"
-                                      disabled={!participantForm.name.trim() || !participantForm.role.trim()}
-                                    >
-                                      <Plus className="h-4 w-4" />
-                                    </Button>
+                                    <Input placeholder="Role" value={participantForm.role} onChange={(e) => setParticipantForm({...participantForm, role: e.target.value})} />
+                                    <Button type="button" onClick={handleAddParticipant} className="bg-blue-500 hover:bg-blue-600 text-white" disabled={!participantForm.name.trim() || !participantForm.role.trim()}><Plus className="h-4 w-4" /></Button>
                                   </div>
                                 </div>
-
                                 {participants.length > 0 && (
                                   <div className="space-y-2 max-h-40 overflow-y-auto">
                                     {participants.map((participant, index) => (
                                       <div key={index} className="flex items-center justify-between bg-slate-50 rounded-lg p-3">
-                                        <div className="flex-1">
-                                          <p className="font-medium text-slate-900">{participant.name}</p>
-                                          <p className="text-sm text-slate-600">{participant.role}</p>
-                                        </div>
-                                        <Button
-                                          type="button"
-                                          variant="ghost"
-                                          size="sm"
-                                          onClick={() => removeParticipant(index)}
-                                          className="text-red-500 hover:text-red-700 hover:bg-red-50"
-                                        >
-                                          <Trash2 className="h-4 w-4" />
-                                        </Button>
+                                        <div className="flex-1"><p className="font-medium text-slate-900">{participant.name}</p><p className="text-sm text-slate-600">{participant.role}</p></div>
+                                        <Button type="button" variant="ghost" size="sm" onClick={() => removeParticipant(index)} className="text-red-500 hover:text-red-700 hover:bg-red-50"><Trash2 className="h-4 w-4" /></Button>
                                       </div>
                                     ))}
                                   </div>
@@ -853,24 +621,8 @@ const DashboardOverview = () => {
                               </div>
                             </div>
                             <div className="flex justify-end gap-3 pt-4">
-                              <Button 
-                                variant="outline" 
-                                onClick={() => {
-                                  setIsAddDialogOpen(false);
-                                  setParticipants([]);
-                                  setActivityForm({ activityName: "", date: "", county: "", subcounty: "", location: "" });
-                                }}
-                              >
-                                Cancel
-                              </Button>
-                              <Button 
-                                onClick={handleAddActivity}
-                                disabled={participants.length === 0}
-                                className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 rounded-xl text-white font-semibold shadow-lg hover:shadow-xl transition-all disabled:opacity-50"
-                              >
-                                <Calendar className="h-4 w-4 mr-2" />
-                                Schedule Activity
-                              </Button>
+                              <Button variant="outline" onClick={() => { setIsAddDialogOpen(false); setParticipants([]); setActivityForm({ activityName: "", date: "", county: "", subcounty: "", location: "" }); }}>Cancel</Button>
+                              <Button onClick={handleAddActivity} disabled={participants.length === 0} className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 rounded-xl text-white font-semibold shadow-lg hover:shadow-xl transition-all disabled:opacity-50"><Calendar className="h-4 w-4 mr-2" /> Schedule Activity</Button>
                             </div>
                           </DialogContent>
                         </Dialog>
@@ -878,23 +630,12 @@ const DashboardOverview = () => {
                     </>
                   ) : (
                     <div className="text-center p-8 border-2 border-dashed border-slate-300 rounded-2xl bg-slate-50/50">
-                      <div className="w-16 h-16 bg-gradient-to-r from-blue-500 to-purple-500 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg">
-                        <Activity className="h-8 w-8 text-white" />
-                      </div>
-                      <h4 className="text-xl font-bold text-slate-800 mb-2">
-                        No activities yet
-                      </h4>
-                      <p className="text-slate-600 mb-4">
-                        Start scheduling your field activities and events to see them displayed here.
-                      </p>
+                      <div className="w-16 h-16 bg-gradient-to-r from-blue-500 to-purple-500 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg"><Activity className="h-8 w-8 text-white" /></div>
+                      <h4 className="text-xl font-bold text-slate-800 mb-2">No activities yet</h4>
+                      <p className="text-slate-600 mb-4">Start scheduling your field activities and events to see them displayed here.</p>
                       <div className="flex justify-center">
                         <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
-                          <DialogTrigger asChild>
-                            <Button className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white font-semibold px-4 py-2 rounded-xl shadow-lg hover:shadow-xl transition-all duration-200">
-                              <Plus className="h-4 w-4 mr-2" />
-                              Schedule Your First Activity
-                            </Button>
-                          </DialogTrigger>
+                          <DialogTrigger asChild><Button className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white font-semibold px-4 py-2 rounded-xl shadow-lg hover:shadow-xl transition-all duration-200"><Plus className="h-4 w-4 mr-2" /> Schedule Your First Activity</Button></DialogTrigger>
                         </Dialog>
                       </div>
                     </div>

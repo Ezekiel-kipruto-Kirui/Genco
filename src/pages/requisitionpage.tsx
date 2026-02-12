@@ -13,7 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu"; 
-import { Download, Eye, Calendar, FileText, Edit, Trash2, Car, Wallet, CheckCircle, XCircle, MapPin, Printer, Plus, Minus, Save, FileImage, ExternalLink, MoreHorizontal, LogOut } from "lucide-react"; 
+import { Download, Eye, Calendar, FileText, Edit, Trash2, Car, Wallet, CheckCircle, XCircle, MapPin, Printer, Plus, Minus, Save, FileImage, ExternalLink, MoreHorizontal, LogOut, History, Clock, ChevronDown } from "lucide-react"; 
 import { useToast } from "@/hooks/use-toast";
 import { isChiefAdmin } from "@/contexts/authhelper";
 import html2canvas from "html2canvas";
@@ -26,10 +26,18 @@ interface PerdiemItem {
   price: number;
 }
 
+interface HistoryEntry {
+  id?: string; 
+  action: string;
+  actor: string;
+  timestamp: number;
+  details?: string;
+}
+
 interface RequisitionData {
   id: string;
   type: 'fuel and Service' | 'perdiem';
-  status: 'pending' | 'approved' | 'rejected';
+  status: 'pending' | 'approved' | 'rejected' | 'complete';
   username: string;
   name?: string;
   userName?: string;
@@ -41,8 +49,11 @@ interface RequisitionData {
   phoneNumber?: string;
   approvedBy?: string;
   approvedAt?: string | number;
+  authorizedBy?: string;
+  authorizedAt?: string | number;
   createdAt?: number | string;
   totalAmount?: number;
+  history?: HistoryEntry[];
   
   // Fuel & Service Fields
   lastReading?: number;
@@ -146,6 +157,26 @@ const getRequisitionImages = (urlString: string | undefined): string[] => {
   return urlString.split('|').map(url => url.trim()).filter(url => url.length > 0);
 };
 
+// --- Helper to Log History ---
+const logHistory = async (recordId: string, action: string, details: string) => {
+  const auth = getAuth();
+  const currentUser = auth.currentUser;
+  if (!currentUser) return;
+
+  const entry: HistoryEntry = {
+    action,
+    actor: currentUser.displayName || currentUser.email || "Admin",
+    timestamp: Date.now(),
+    details
+  };
+
+  try {
+    await push(ref(db, `requisitions/${recordId}/history`), entry);
+  } catch (error) {
+    console.error("Failed to log history:", error);
+  }
+};
+
 // --- Main Component ---
 
 const RequisitionsPage = () => {
@@ -156,7 +187,7 @@ const RequisitionsPage = () => {
   // List State
   const [allRequisitions, setAllRequisitions] = useState<RequisitionData[]>([]);
   const [filteredRequisitions, setFilteredRequisitions] = useState<RequisitionData[]>([]);
-  const [activeProgram, setActiveProgram] = useState<string>("ALL"); // Default to ALL for HR
+  const [activeProgram, setActiveProgram] = useState<string>("ALL"); 
   const [availablePrograms, setAvailablePrograms] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [exportLoading, setExportLoading] = useState(false);
@@ -169,6 +200,10 @@ const RequisitionsPage = () => {
   const [isImageViewerOpen, setIsImageViewerOpen] = useState(false);
   const [viewingImages, setViewingImages] = useState<string[]>([]);
   
+  // History State
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [historyList, setHistoryList] = useState<HistoryEntry[]>([]);
+
   // Edit State
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [editRecord, setEditRecord] = useState<RequisitionData | null>(null);
@@ -215,7 +250,6 @@ const RequisitionsPage = () => {
   // --- 1. Fetch User Permissions (HR SEES ALL) ---
   useEffect(() => {
     if (userRole === 'hr') {
-      // HR sees everything (KPMD & RANGE) combined, no specific filter needed in UI
       setAvailablePrograms([]);
       setActiveProgram("ALL");
       return;
@@ -227,42 +261,32 @@ const RequisitionsPage = () => {
       return;
     }
 
-    // Regular Admin logic
     const auth = getAuth();
     const uid = auth.currentUser?.uid;
-    
     if (!uid) return;
 
     const userRef = ref(db, `users/${uid}`);
     const unsubscribe = onValue(userRef, (snapshot) => {
       const data = snapshot.val();
-      
       if (data && data.allowedProgrammes) {
         const programs = Object.keys(data.allowedProgrammes).filter(
           key => data.allowedProgrammes[key] === true
         );
         setAvailablePrograms(programs);
-        
         if (programs.length > 0 && (!activeProgram || activeProgram === "ALL")) {
           setActiveProgram(programs[0]);
         } else if (programs.length === 0) {
-            // Admins with no programmes
             setActiveProgram(""); 
         }
       } else {
         setAvailablePrograms([]);
       }
-    }, (error) => {
-        console.error("Error fetching user permissions:", error);
-    });
-
+    }, (error) => { console.error("Error fetching user permissions:", error); });
     return () => unsubscribe();
   }, [userRole, activeProgram]);
 
-  // --- 2. Data Fetching (HR FETCHES ALL NODES, OTHERS FETCH SPECIFIC) ---
+  // --- 2. Data Fetching ---
   useEffect(() => {
-    // If Admin and no active program, stop.
-    // If HR, activeProgram is "ALL", so this check passes.
     if (userRole !== 'hr' && !activeProgram) {
         setAllRequisitions([]);
         setLoading(false);
@@ -270,13 +294,10 @@ const RequisitionsPage = () => {
     }
     setLoading(true);
 
-    // Logic: If HR, fetch root. If Admin, fetch by programme.
     let reqQuery;
     if (userRole === 'hr' || activeProgram === "ALL") {
-        // Fetching entire requisitions node to expose both KPMD and RANGE
         reqQuery = ref(db, 'requisitions');
     } else {
-        // Fetching specific programme
         reqQuery = query(ref(db, 'requisitions'), orderByChild('programme'), equalTo(activeProgram));
     }
 
@@ -318,7 +339,7 @@ const RequisitionsPage = () => {
     return () => { if(typeof unsubscribe === 'function') unsubscribe(); };
   }, [activeProgram, userRole, toast]);
 
-  // --- 3. Filtering & Stats Logic (HR SEES APPROVED ONLY) ---
+  // --- 3. Filtering & Stats Logic ---
   useEffect(() => {
     if (allRequisitions.length === 0) {
       setFilteredRequisitions([]);
@@ -326,12 +347,10 @@ const RequisitionsPage = () => {
       return;
     }
     let filteredList = allRequisitions.filter(record => {
-      // --- HR ONLY LOGIC: Approved Only ---
       if (userRole === 'hr') {
-        if (record.status !== 'approved') return false;
+        if (record.status !== 'approved' && record.status !== 'complete') return false;
       }
 
-      // Standard Filtering
       if (filters.startDate || filters.endDate) {
         const recordDate = parseDate(record.createdAt);
         if (recordDate) {
@@ -346,8 +365,6 @@ const RequisitionsPage = () => {
         } else if (filters.startDate || filters.endDate) return false;
       }
       
-      // If HR, we ignore the status dropdown filter because we already forced it above.
-      // But we respect Type and Search.
       if (userRole !== 'hr' && filters.status !== "all" && record.status?.toLowerCase() !== filters.status.toLowerCase()) return false;
       
       if (filters.type !== "all" && record.type?.toLowerCase() !== filters.type.toLowerCase()) return false;
@@ -363,9 +380,8 @@ const RequisitionsPage = () => {
     });
     setFilteredRequisitions(filteredList);
     
-    // Stats calculation automatically respects the filtered list
     const totalRequests = filteredList.length;
-    const pendingRequests = filteredList.filter(r => r.status === 'pending').length; // Will be 0 for HR
+    const pendingRequests = filteredList.filter(r => r.status === 'pending').length;
     const totalAmount = filteredList.reduce((sum, r) => sum + (r.totalAmount || 0), 0);
     
     setStats({ totalRequests, pendingRequests, totalAmount });
@@ -375,7 +391,7 @@ const RequisitionsPage = () => {
     setPagination(prev => ({
       ...prev, page: currentPage, totalPages, hasNext: currentPage < totalPages, hasPrev: currentPage > 1
     }));
-  }, [allRequisitions, filters, pagination.limit, pagination.page]);
+  }, [allRequisitions, filters, pagination.limit, pagination.page, userRole]);
 
   // --- Handlers ---
   const handleLogout = async () => {
@@ -384,7 +400,6 @@ const RequisitionsPage = () => {
       navigate("/auth");
       toast({ title: "Logged out", description: "You have been logged out successfully." });
     } catch (error) {
-      console.error("Logout error:", error);
       toast({ title: "Error", description: "Failed to log out", variant: "destructive" });
     }
   };
@@ -422,9 +437,43 @@ const RequisitionsPage = () => {
     });
   }, [filteredRequisitions.length]);
 
-  const openViewDialog = useCallback((record: RequisitionData) => { 
+  const openViewDialog = useCallback(async (record: RequisitionData) => { 
     setViewingRecord(record); 
+    
+    // Fetch history for this record
+    if (record.id) {
+      const historyRef = ref(db, `requisitions/${record.id}/history`);
+      onValue(historyRef, (snapshot) => {
+        const data = snapshot.val();
+        if (data) {
+            const historyArr = Object.keys(data).map(key => ({ id: key, ...data[key] }));
+            historyArr.sort((a, b) => b.timestamp - a.timestamp);
+            setHistoryList(historyArr);
+        } else {
+            setHistoryList([]);
+        }
+      });
+    }
+    
     setIsViewDialogOpen(true); 
+  }, []);
+
+  const openHistoryOnly = useCallback((record: RequisitionData) => {
+    setViewingRecord(record);
+    if (record.id) {
+      const historyRef = ref(db, `requisitions/${record.id}/history`);
+      onValue(historyRef, (snapshot) => {
+        const data = snapshot.val();
+        if (data) {
+            const historyArr = Object.keys(data).map(key => ({ id: key, ...data[key] }));
+            historyArr.sort((a, b) => b.timestamp - a.timestamp);
+            setHistoryList(historyArr);
+        } else {
+            setHistoryList([]);
+        }
+        setIsHistoryOpen(true);
+      }, { onlyOnce: true });
+    }
   }, []);
 
   const handleOpenImageViewer = (record: RequisitionData, printImmediately = false) => {
@@ -505,6 +554,10 @@ const RequisitionsPage = () => {
         updatePayload.location = editFormData.location;
       }
       await update(ref(db, `requisitions/${editRecord.id}`), updatePayload);
+      
+      // Log History
+      await logHistory(editRecord.id, "Edited", "Requisition details updated.");
+
       toast({ title: "Success", description: "Requisition updated successfully." });
       setIsEditDialogOpen(false);
     } catch (error) {
@@ -529,7 +582,6 @@ const RequisitionsPage = () => {
       setIsDeleteConfirmOpen(false);
       setRecordToDelete(null);
     } catch (error) {
-      console.error(error);
       toast({ title: "Error", description: "Failed to delete", variant: "destructive" });
     } finally {
       setDeleteLoading(false);
@@ -545,42 +597,76 @@ const RequisitionsPage = () => {
             approvedBy: approverName,
             approvedAt: Date.now()
         });
+        
+        await logHistory(viewingRecord.id, "Approved", `Approved by ${approverName}`);
+        
         toast({ title: "Approved", description: "Requisition approved successfully" });
         setIsViewDialogOpen(false); 
     } catch (error) {
-        console.error(error);
         toast({ title: "Error", description: "Failed to approve", variant: "destructive" });
     }
   };
-  
-  const handleDeleteMultiple = async () => {
-    // Optional
+
+  const handleMarkComplete = async () => {
+    if (!viewingRecord) return;
+    try {
+        // Removed logic to capture user name for authorizedBy as per request
+        await update(ref(db, `requisitions/${viewingRecord.id}`), {
+            status: 'complete',
+            authorizedAt: Date.now()
+        });
+
+        await logHistory(viewingRecord.id, "Completed/Authorized", `Marked complete.`);
+
+        toast({ title: "Completed", description: "Requisition marked as complete." });
+        setViewingRecord(prev => prev ? { ...prev, status: 'complete' } : null);
+        setIsHistoryOpen(false);
+    } catch (error) {
+        toast({ title: "Error", description: "Failed to mark complete", variant: "destructive" });
+    }
   };
 
-  const handleExport = async () => {
-    // Optional
-  };
-
-  // --- NEW PRINT HANDLER ---
   const handlePrint = () => {
-    // Set the timestamp just before printing so it's accurate
     setPrintDate(new Date().toLocaleString());
-    // Small delay to ensure state updates (though print is usually synchronous in dialog)
+    // Allow the state to update before triggering print
     setTimeout(() => {
         window.print();
-    }, 100);
+    }, 300);
   };
 
   const handleDownload = useCallback(async () => {
     if (!docRef.current || !viewingRecord) return;
     const element = docRef.current;
-    toast({ title: "Generating PDF", description: "Please wait while we create your document..." });
+    const parent = element.parentElement as HTMLElement; 
+    const grandParent = parent?.parentElement as HTMLElement; 
+    
+    toast({ title: "Generating PDF", description: "Please wait..." });
+    
+    const originalParentOverflow = parent?.style.overflow;
+    const originalParentHeight = parent?.style.height;
+    const originalGrandParentMaxHeight = grandParent?.style.maxHeight;
+    const originalGrandParentHeight = grandParent?.style.height;
+
     try {
-      const canvas = await html2canvas(element, {
-        scale: 2,
-        useCORS: true,
-        backgroundColor: '#ffffff' 
+      if (parent) {
+        parent.style.overflow = 'visible';
+        parent.style.height = 'auto';
+      }
+      if (grandParent) {
+        grandParent.style.maxHeight = 'none';
+        grandParent.style.height = 'auto';
+        grandParent.style.overflow = 'visible';
+      }
+
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      const canvas = await html2canvas(element, { 
+        scale: 2, 
+        useCORS: true, 
+        backgroundColor: '#ffffff',
+        windowWidth: element.scrollWidth, 
       });
+      
       const imgData = canvas.toDataURL('image/png');
       const pdf = new jsPDF('p', 'mm', 'a4');
       const pdfWidth = pdf.internal.pageSize.getWidth();
@@ -588,10 +674,19 @@ const RequisitionsPage = () => {
       const imgHeight = (imgProps.height * pdfWidth) / imgProps.width;
       pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, imgHeight);
       pdf.save(`Requisition_${viewingRecord.id}_${viewingRecord.type}.pdf`);
-      toast({ title: "Success", description: "Document downloaded successfully." });
+      toast({ title: "Success", description: "Document downloaded." });
     } catch (error) {
-      console.error("PDF Generation Error:", error);
+      console.error("PDF Gen Error:", error);
       toast({ title: "Error", description: "Failed to generate PDF", variant: "destructive" });
+    } finally {
+      if (parent) {
+        parent.style.overflow = originalParentOverflow || '';
+        parent.style.height = originalParentHeight || '';
+      }
+      if (grandParent) {
+        grandParent.style.maxHeight = originalGrandParentMaxHeight || '';
+        grandParent.style.height = originalGrandParentHeight || '';
+      }
     }
   }, [viewingRecord, toast]);
 
@@ -622,73 +717,139 @@ const RequisitionsPage = () => {
   // --- Render ---
   return (
     <>
-    {/* CSS Styles for Printing */}
-    <style>
-        {`
-        @media print {
-            /* Remove default browser margins to hide URL and Title header */
-            @page { 
-                margin: 0; 
-                size: auto;
-            }
-            body { 
-                background: white !important;
-                -webkit-print-color-adjust: exact; 
-                print-color-adjust: exact; 
-            }
-            
-            /* Hide everything except the print content */
-            body > *:not(.print-content) {
-                display: none !important;
-            }
+   <style>
+{`
+@media print {
 
-            /* Ensure the dialog expands to full page without gray background */
-            .print-content {
-                display: block !important;
-                position: absolute;
-                top: 0;
-                left: 0;
-                width: 100%;
-                height: 100%;
-                margin: 0;
-                padding: 0;
-                background: white !important;
-                border: none !important;
-                box-shadow: none !important;
-                border-radius: 0 !important;
-            }
-            
-            /* Hide Dialog UI elements (buttons, scrollbars) */
-            .print-content .bg-gray-200 {
-                background: white !important;
-                border: none !important;
-            }
-            
-            .print-content button, 
-            .print-content .no-print {
-                display: none !important;
-            }
+    /* Paper setup */
+    @page { 
+        size: A4 portrait; 
+        margin: 10mm; 
+    }
 
-            .print-content .overflow-y-auto {
-                overflow: visible !important;
-                max-height: none !important;
-                height: auto !important;
-            }
-        }
-        `}
-    </style>
+    /* Reset root */
+    html, body {
+        width: 100% !important;
+        height: auto !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        overflow: visible !important;
+        background: white !important;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+
+    /* Hide everything except print wrapper */
+    body > *:not(.print-content-wrapper) {
+        display: none !important;
+    }
+
+    /* Main wrapper */
+    .print-content-wrapper {
+        position: static !important;  /* 🔥 FIXED */
+        width: 100% !important;
+        max-width: 100% !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        background: white !important;
+        display: block !important;
+        height: auto !important;
+        min-height: auto !important;
+        max-height: none !important;
+        overflow: visible !important;
+        border: none !important;
+        box-shadow: none !important;
+        transform: none !important;
+    }
+
+    /* Remove dialog UI elements */
+    .print-content-wrapper button,
+    .print-content-wrapper .fixed,
+    .print-content-wrapper .no-print {
+        display: none !important;
+    }
+
+    /* Remove scroll containers */
+    .print-content-wrapper .overflow-y-auto,
+    .print-content-wrapper .overflow-auto {
+        overflow: visible !important;
+        max-height: none !important;
+        height: auto !important;
+    }
+
+    /* Main printable content */
+    .printable-area {
+        width: 100% !important;
+        max-width: 100% !important;
+        height: auto !important;
+        min-height: auto !important;
+        max-height: none !important;
+        overflow: visible !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        border: none !important;
+        box-shadow: none !important;
+    }
+
+    /* Tables */
+    table {
+        width: 100% !important;
+        border-collapse: collapse !important;
+    }
+
+    /* Fix grid layouts breaking */
+    .grid {
+        display: block !important;
+    }
+
+    .grid > div {
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
+        margin-bottom: 20px !important;
+    }
+
+    /* Fix Tailwind aspect ratio issue */
+    .aspect-\\[4\\/3\\] {
+        aspect-ratio: auto !important;
+        height: auto !important;
+    }
+
+    /* Images */
+    .print-content-wrapper img {
+        max-width: 100% !important;
+        width: 100% !important;
+        height: auto !important;
+        display: block !important;
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
+        margin-bottom: 15px !important;
+    }
+
+}
+`}
+</style>
+
 
     <div className="space-y-6 px-2 sm:px-4 md:px-0">
       {/* Header Section */}
-      <div className="flex flex-col md:flex-row justify-between items-start gap-4 md:items-center">
-        <div className="w-full md:w-auto">
-          <h2 className="text-md font-bold mb-2 bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+      <div className="flex flex-row md:flex-row justify-between items-start gap-4 md:items-center">
+        <div className="w-full md:w-auto flex flex-row items-center gap-4">
+          <h2 className="text-md font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
             Requisitions
           </h2>
+          {userRole === 'hr' && ( <div className="flex justify-between items-center text-sm">
+              <div className="font-semibold text-gray-700 rounded-md bg-gray-100 px-2 py-1 border border-gray-300">
+                  <span className="font-normal">{userName || user?.email || "System"}</span>
+              </div>
+            </div> )}
+            
+          
         </div>
          
          <div className="flex lg:flex-row md:flex-row flex-col gap-4 w-full md:w-auto">
+          
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full md:w-auto relative z-50">
+              
                 <div className="">
                     <Label className="sr-only">Start Date</Label>
                     <Input type="date" value={filters.startDate} onChange={(e) => handleFilterChange("startDate", e.target.value)} className="border-gray-300 focus:border-blue-500 bg-white h-9 w-full" />
@@ -699,7 +860,6 @@ const RequisitionsPage = () => {
                 </div>
             </div>
             
-            {/* Programme Filter - Hidden for HR */}
             {userIsChiefAdmin && userRole !== 'hr' && (
                 <div className="space-y-2 w-full md:w-[180px]">
                     <Select value={activeProgram} onValueChange={handleProgramChange} disabled={availablePrograms.length === 0}>
@@ -720,20 +880,18 @@ const RequisitionsPage = () => {
             </div>
           
         <div className="flex flex-wrap gap-2 w-full md:w-auto mt-2 md:mt-0 justify-end">
-          {/* Delete Multiple Button - Hidden for HR */}
           {userRole !== 'hr' && selectedRecords.length > 0 && (
-            <Button variant="destructive" size="sm" onClick={handleDeleteMultiple} className="text-xs">
+            <Button variant="destructive" size="sm" onClick={() => {}} className="text-xs">
                Delete ({selectedRecords.length})
             </Button>
           )}
            
-           {/* Conditional Button: Export vs Logout */}
            {userRole === 'hr' ? (
              <Button onClick={handleLogout} variant="outline" size="sm" className="h-9 px-6 w-full md:w-auto text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700">
                <LogOut className="h-4 w-4 mr-2" /> Logout
              </Button>
            ) : (
-             <Button onClick={handleExport} disabled={exportLoading} className="bg-gradient-to-r from-blue-800 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white shadow-md text-xs h-9 px-6 w-full md:w-auto">
+             <Button onClick={() => {}} disabled={exportLoading} className="bg-gradient-to-r from-blue-800 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white shadow-md text-xs h-9 px-6 w-full md:w-auto">
                 <Download className="h-4 w-4 mr-2" /> Export ({filteredRequisitions.length})
               </Button>
            )}
@@ -773,6 +931,7 @@ const RequisitionsPage = () => {
                         <SelectItem value="pending">Pending</SelectItem>
                         <SelectItem value="approved">Approved</SelectItem>
                         <SelectItem value="rejected">Rejected</SelectItem>
+                        <SelectItem value="complete">Complete</SelectItem>
                     </SelectContent>
                 </Select>
             </div>
@@ -804,7 +963,7 @@ const RequisitionsPage = () => {
                       <th className="py-3 px-3 font-semibold text-gray-700">Purpose</th>
                       <th className="py-3 px-3 font-semibold text-gray-700">Amount</th>
                       <th className="py-3 px-3 font-semibold text-gray-700">Status</th>
-                      <th className="py-3 px-3 font-semibold text-gray-700">Actions</th>
+                      <th className="py-3 px-3 font-semibold text-gray-700 text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -827,42 +986,48 @@ const RequisitionsPage = () => {
                         </td>
                         <td className="py-2 px-3">
                              <Badge 
-                                variant={record.status === 'approved' ? "default" : record.status === 'rejected' ? "destructive" : "outline"}
-                                className={record.status === 'approved' ? "bg-green-100 text-green-800 hover:bg-green-100" : ""}
+                                variant={record.status === 'approved' || record.status === 'complete' ? "default" : record.status === 'rejected' ? "destructive" : "outline"}
+                                className={record.status === 'approved' ? "bg-green-100 text-green-800 hover:bg-green-100" : record.status === 'complete' ? "bg-blue-100 text-blue-800 hover:bg-blue-100" : ""}
                              >
                                 {record.status}
                              </Badge>
                         </td>
-                        <td className="py-2 px-3">
-                          <div className="flex gap-1 items-center">
-                            <Button variant="ghost" size="sm" className="h-7 w-7 text-blue-600 hover:bg-blue-50" onClick={() => openViewDialog(record)}><Eye className="h-3.5 w-3.5" /></Button>
-                            
-                            {/* Edit Button - Hidden for HR */}
-                            {userRole !== 'hr' && (
-                                <Button variant="ghost" size="sm" className="h-7 w-7 text-gray-600 hover:bg-gray-50" onClick={() => openEditDialog(record)}><Edit className="h-3.5 w-3.5" /></Button>
-                            )}
-                            
-                            <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                    <Button variant="ghost" size="sm" className="h-7 w-7 text-purple-600 hover:bg-purple-50">
-                                        <FileImage className="h-3.5 w-3.5" />
-                                    </Button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end">
-                                    <DropdownMenuItem onClick={() => handleOpenImageViewer(record)}>
-                                        View Images
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem onClick={() => handleOpenImageViewer(record, true)}>
-                                        Print Images
-                                    </DropdownMenuItem>
-                                </DropdownMenuContent>
-                            </DropdownMenu>
+                        <td className="py-2 px-3 text-right">
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="sm" className="  border-b border-gray-500 h-8 w-8 bodder p-2 mr-2 text-gray-500 hover:text-gray-900">
+                                    <span className="sr-only">Open menu</span>
+                                    <ChevronDown className="h-4 w-4" />
+                                </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                                <DropdownMenuItem onClick={() => openViewDialog(record)}>
+                                    <Eye className="mr-2 h-4 w-4 text-blue-600" /> <span className="text-gray-700">View Details</span>
+                                </DropdownMenuItem>
+                                
+                                <DropdownMenuItem onClick={() => openHistoryOnly(record)}>
+                                    <Clock className="mr-2 h-4 w-4 text-purple-600" /> <span className="text-gray-700">View History</span>
+                                </DropdownMenuItem>
+                                
+                                <DropdownMenuItem onClick={() => handleOpenImageViewer(record)}>
+                                    <FileImage className="mr-2 h-4 w-4 text-indigo-600" /> <span className="text-gray-700">View Images</span>
+                                </DropdownMenuItem>
 
-                            {/* Delete Button - Hidden for HR */}
-                            {userRole !== 'hr' && (
-                                <Button variant="ghost" size="sm" className="h-7 w-7 text-red-600 hover:bg-red-50" onClick={() => confirmDelete(record)}><Trash2 className="h-3.5 w-3.5" /></Button>
-                            )}
-                          </div>
+                                {userRole !== 'hr' && <DropdownMenuSeparator />}
+                                
+                                {userRole !== 'hr' && (
+                                    <DropdownMenuItem onClick={() => openEditDialog(record)}>
+                                        <Edit className="mr-2 h-4 w-4 text-gray-600" /> <span className="text-gray-700">Edit</span>
+                                    </DropdownMenuItem>
+                                )}
+                                
+                                {userRole !== 'hr' && (
+                                    <DropdownMenuItem onClick={() => confirmDelete(record)} className="text-red-600 focus:text-red-700 focus:bg-red-50">
+                                        <Trash2 className="mr-2 h-4 w-4" /> Delete
+                                    </DropdownMenuItem>
+                                )}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         </td>
                       </tr>
                     ))}
@@ -884,21 +1049,23 @@ const RequisitionsPage = () => {
 
       {/* --- VIEW DIALOG --- */}
       <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
-        {/* Added 'print-content' class to identify this for CSS */}
-        <DialogContent className="print-content font-times sm:max-w-5xl bg-gray-200 rounded-none w-[95vw] sm:w-full max-h-[95vh] flex flex-col">
+        <DialogContent className="print-content-wrapper font-times sm:max-w-5xl bg-gray-200 rounded-none w-[95vw] sm:w-full max-h-[95vh] flex flex-col">
           <div className="overflow-y-auto flex-1">
             {viewingRecord && (
-              <div ref={docRef} className="gridgrid-cols-1  bg-white shadow-lg w-full  md:p-12 min-h-[800px] relative flex flex-col">
-                <div className="pb-10 flex-1 ml-20 mr-20">
+              <div ref={docRef} className="gridgrid-cols-1 bg-white shadow-lg w-full md:p-12 min-h-[800px] relative flex flex-col printable-area">
+                <div className="pb-10 flex-1 ml-10 mr-10">
                   <div className="flex flex-col items-center justify-center">
-                      <div className="w-[260px] m-0 p-0">
+                      <div className="w-[260px] m-0 p-0 mb-4">
                         <img src="/img/logo.png" alt="Logo" className="w-full" />
                       </div>
-                      <h1 className="font-times  text-2xl font-bold uppercase tracking-tight leading-tight mb-2">
+                      <h1 className="font-times text-2xl font-bold uppercase tracking-tight leading-tight mb-2">
                         {viewingRecord.type === "fuel and Service" ? "Fuel & Service" : "Perdiem"}{" "}
                         Requisition Form
                       </h1>
                   </div>
+                  
+                 
+
                   <div className="mt-5 flex flex-col gap-2 mb-2 text-sm">
                     <div className="flex flex-row gap-2"><span className="text-gray-700 text-[17px]">Date of Request:</span><span className="font-medium flex-1 text-[17px]">{formatDate(viewingRecord.submittedAt)}</span></div>
                     <div className="flex flex-row gap-2"><span className="text-gray-700 text-[17px]">County:</span><span className="font-medium flex-1 text-[17px]">{viewingRecord.county}</span></div>
@@ -929,7 +1096,7 @@ const RequisitionsPage = () => {
                         <div className="flex flex-row items-center"><span className="text-gray-800 text-[17px]  flex items-center gap-2">Location :</span><span className="font-medium">{viewingRecord.location || 'N/A'}</span></div>
                       </div>
                       <div className="mt-4 flex flex-col items-center justify-center">
-                        <span className="text-gray-800 text-xl uppercase font-bold block ">Cost Breakdown</span>
+                        <span className="text-gray-800 text-xl uppercase font-bold block mb-2 ">Cost Breakdown</span>
                         <div className="w-full text-sm border-collapse border border-gray-400">
                           <table className="w-full border-collapse border border-gray-300">
                             <thead><tr className="bg-gray-100"><td className="p-2 border border-gray-500 text-left text-[17px] font-semibold text-gray-700">Date</td><td className="p-2 border border-gray-500 text-left text-[17px] font-semibold text-gray-700">Item/Description</td><td className="p-2 border border-gray-500 text-right text-[17px] font-semibold text-gray-700">Amount (KES)</td></tr></thead>
@@ -945,62 +1112,135 @@ const RequisitionsPage = () => {
                     </div>
                   )}
 
-                  <div className="mt-2">
+                  <div className="mt-8">
                     <div className="grid grid-cols-1 top-5 gap-8">
                       <div className="flex flex-col">
                         <div className="flex flex-row justify-between">
                           <div className="flex flex-col gap-2 items-center justify-start"></div>
                         </div>
                       </div>
-                      <div className="grid grid-cols-2 mt-4 gap-6">
+                      <div className="grid grid-cols-2 mt-4 gap-8">
                         <div className="flex flex-row">
                           <span className="text-[17px] text-gray-700">Approved By : </span>
                           <div className="flex-1 flex relative h-6">{viewingRecord.approvedBy ? <span className="text-[17px] ml-2">{viewingRecord.approvedBy} (Project Manager)</span> : <span className="text-xs italic text-gray-300">Pending Approval</span>}</div></div>
-                        <div className="flex flex-row"><span className="text-[17px]">Date : </span><div className="flex justify-between text-2xs text-gray-900 ml-2"><span>{viewingRecord.approvedAt ? formatDate(viewingRecord.approvedAt) : 'Date'}<div className="flex-1 border-b-2 border-black mb-1"></div></span></div></div>
-                        <div className="flex-1 flex flex-col justify-between gap-4">
-                          <span className="text-[17px] text-gray-800 ">Authorized By :</span><div className="flex-1"></div>
-                          <span className="text-[17px]">Signature : </span>
-                        </div>
-                        <div className="flex-1 flex flex-col justify-between">
-                          <span className="text-[17px]">Date : </span><div className="flex-1"></div>
-                          <span className="text-[17px]">Official Stamp : </span>
-                        </div>
+                        <div className="flex flex-row"><span className="text-[17px]">Date : </span><div className="flex justify-between text-2xs text-gray-900 ml-2"><span>{viewingRecord.approvedAt ? formatDate(viewingRecord.approvedAt) : 'Date'}</span></div></div>
+                        
+                       
+                          <div className="flex flex-row">
+                             <span className="text-[17px] text-gray-800 ">Authorized By :</span>
+                          <div className="flex-1 h-6 ml-2">
+                            {viewingRecord.authorizedBy ? <span className="text-[17px]">{viewingRecord.authorizedBy}</span> : ""}
+                          </div>
 
+                          </div>
+                          <div className="flex-1 flex flex-row justify-between mt-2">
+                          <span className="text-[17px]">Date : </span>
+                          <div className="flex-1 h-6  ml-2">
+                            {viewingRecord.authorizedAt ? formatDate(viewingRecord.authorizedAt) : ""}
+                          </div>
+                        </div>
+                          
+                          <div>
+                            <div className="flex-1 flex flex-col justify-between mt-2">
+                          <span className="text-[17px]">Signature : </span>
+                          
+                        </div>
+                          </div>
+                          <div><div className="flex-1 flex flex-col justify-between mt-2">
+                          <span className="text-[17px]">Official Stumb : </span>
+                         
+                        </div></div>
+                          
+                         
+                       
+                        
                       </div>
                     </div>
                   </div>
                 </div>
                 
-                {/* PRINT FOOTER */}
-                <div className=" absolute bottom-0 left-0 right-0 mt-8 text-center text-xs text-gray-700 font-serif pt-4 border-t border-dashed no-print-invisible">
-                    Printed on {printDate || new Date().toLocaleString()}
+                {/* PRINT FOOTER - Always at bottom of printable area */}
+                <div className="shrink-0 mt-8 pt-6 text-center">
+                    <p className="text-sm font-semibold text-gray-800 mb-2">Printed on {printDate || new Date().toLocaleString()}</p>
+                    <p className="text-xs italic text-gray-600 mb-1">This document is marked complete once transaction receipt is received.</p>
+                    
                 </div>
               </div>
             )}
           </div>
+
+          {/* Dialog Actions (Non-Printable) */}
           <div className="bg-gray-200 p-4 flex flex-col-reverse sm:flex-row justify-between items-center gap-4 border-t border-gray-300 z-10 shrink-0 no-print">
             <div className="flex gap-2 w-full sm:w-auto">
-              {/* Updated Button */}
               <Button variant="outline" onClick={handlePrint} className="flex-1 sm:flex-none"><Printer className="h-4 w-4 mr-2" /> Print</Button>
               <Button variant="outline" onClick={handleDownload} className="flex-1 sm:flex-none"><Download className="h-4 w-4 mr-2" /> Download</Button>
             </div>
             <div className="flex gap-2 w-full sm:w-auto justify-end">
-              {!viewingRecord?.approvedBy && (
+              {userRole !== 'hr' && !viewingRecord?.approvedBy && (
                 <Button onClick={handleApprove} className="bg-green-600 hover:bg-green-700 flex-1 sm:flex-none">
                   <CheckCircle className="h-4 w-4 mr-2" /> Approve Requisition
                 </Button>
               )}
+              
+              {userRole === 'hr' && viewingRecord?.status === 'approved' && (
+                <Button onClick={handleMarkComplete} className="bg-blue-800 hover:bg-blue-900 flex-1 sm:flex-none">
+                  <CheckCircle className="h-4 w-4 mr-2" /> Mark Complete
+                </Button>
+              )}
+
               <Button variant="outline" onClick={() => setIsViewDialogOpen(false)} className="flex-1 sm:flex-none">Close</Button>
             </div>
           </div>
         </DialogContent>
       </Dialog>
 
-      {/* --- IMAGE VIEWER DIALOG --- */}
-      <Dialog open={isImageViewerOpen} onOpenChange={setIsImageViewerOpen}>
-        <DialogContent className="sm:max-w-4xl max-h-[90vh] flex flex-col bg-gray-50">
+      {/* --- HISTORY DIALOG --- */}
+      <Dialog open={isHistoryOpen} onOpenChange={setIsHistoryOpen}>
+        <DialogContent className="sm:max-w-lg">
             <DialogHeader>
                 <DialogTitle className="flex items-center gap-2">
+                    <Clock className="h-5 w-5" />
+                    Document History
+                </DialogTitle>
+            </DialogHeader>
+            <div className="max-h-[400px] overflow-y-auto">
+                {historyList.length === 0 ? (
+                    <p className="text-sm text-gray-500 italic text-center py-4">No history recorded for this document.</p>
+                ) : (
+                    <div className="space-y-4">
+                        {historyList.map((entry) => (
+                            <div key={entry.id} className="flex gap-4 text-sm">
+                                <div className="flex flex-col items-center">
+                                    <div className="w-2 h-2 rounded-full bg-blue-600 mt-1.5"></div>
+                                    <div className="w-0.5 h-full bg-gray-200 mt-1"></div>
+                                </div>
+                                <div className="pb-4 flex-1">
+                                    <div className="flex justify-between items-start">
+                                        <span className="font-semibold text-gray-800">{entry.action}</span>
+                                        <span className="text-xs text-gray-500 whitespace-nowrap">
+                                            {formatDate(entry.timestamp)}
+                                        </span>
+                                    </div>
+                                    <p className="text-gray-600 text-xs mt-1">{entry.actor}</p>
+                                    {entry.details && <p className="text-gray-500 text-xs mt-0.5 italic">{entry.details}</p>}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </div>
+            <DialogFooter>
+                <Button variant="outline" onClick={() => setIsHistoryOpen(false)}>Close</Button>
+            </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* --- IMAGE VIEWER DIALOG --- */}
+      {/* FIXED: Added print-content-wrapper class here to enable printing */}
+      <Dialog open={isImageViewerOpen} onOpenChange={setIsImageViewerOpen}>
+        <DialogContent className="print-content-wrapper sm:max-w-4xl max-h-[90vh] flex flex-col bg-gray-50">
+            <DialogHeader>
+                <DialogTitle className="flex items-center gap-2 no-print">
                     <FileImage className="h-5 w-5" />
                     Uploaded Receipts
                 </DialogTitle>
@@ -1020,7 +1260,7 @@ const RequisitionsPage = () => {
                                 </div>
                                 <div className="p-3 border-t border-gray-100 flex justify-between items-center">
                                     <span className="text-sm font-medium text-gray-700">Receipt #{idx + 1}</span>
-                                    <a href={url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-800 text-xs flex items-center gap-1">
+                                    <a href={url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-800 text-xs flex items-center gap-1 no-print">
                                         Open Original <ExternalLink className="h-3 w-3"/>
                                     </a>
                                 </div>
@@ -1031,7 +1271,7 @@ const RequisitionsPage = () => {
                     <div className="text-center py-10 text-gray-500">No images to display.</div>
                 )}
             </div>
-            <DialogFooter className="bg-white border-t p-4">
+            <DialogFooter className="bg-white border-t p-4 no-print">
                 <Button variant="outline" onClick={() => setIsImageViewerOpen(false)}>Close</Button>
                 <Button onClick={() => window.print()} variant="default">
                     <Printer className="h-4 w-4 mr-2" /> Print Images
@@ -1054,7 +1294,7 @@ const RequisitionsPage = () => {
                   <div className="space-y-2"><Label>Status</Label>
                     <Select value={editFormData.status} onValueChange={(val) => handleEditFieldChange('status', val)}>
                       <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent><SelectItem value="pending">Pending</SelectItem><SelectItem value="approved">Approved</SelectItem><SelectItem value="rejected">Rejected</SelectItem></SelectContent>
+                      <SelectContent><SelectItem value="pending">Pending</SelectItem><SelectItem value="approved">Approved</SelectItem><SelectItem value="rejected">Rejected</SelectItem><SelectItem value="complete">Complete</SelectItem></SelectContent>
                     </Select>
                   </div>
                   <div className="space-y-2"><Label>County</Label><Input value={editFormData.county || ''} onChange={(e) => handleEditFieldChange('county', e.target.value)} /></div>

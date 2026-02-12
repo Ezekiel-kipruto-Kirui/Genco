@@ -40,12 +40,13 @@ import { isChiefAdmin } from "@/contexts/authhelper";
 // Base menu items without User Management
 const baseMenuItems = [
   {
-    title: "Livestock Farmers",
+    title: "Farmers Data",
     icon: Beef,
     subItems: [
       { title: "Dashboard", url: "/dashboard/livestock/analytics", icon: BarChart3 },
       { title: "Livestock Farmer", url: "/dashboard/livestock", icon: Database },
-      { title: "Fodder Farmer", url: "/dashboard/fodder-farmer", icon: Database },
+      { title: "Fodder Farmer", url: "/dashboard/fodder", icon: Database },
+      { title: "Capacity Building",url: "/dashboard/capacity",icon: GraduationCap},
     ]
   },
   
@@ -57,11 +58,7 @@ const baseMenuItems = [
       { title: "Borehole", url: "/dashboard/borehole", icon: Database },
     ]
   },
-  {
-    title: "Capacity Building",
-    icon: GraduationCap,
-    url: "/dashboard/capacity",
-  },
+  
   {
     title:"Offtake",
     icon: TrendingUp,
@@ -128,7 +125,7 @@ export function DashboardSidebar() {
 
               {!collapsed && (
                 <div className="truncate">
-                  <h1 className="text-base font-bold text-white">GenCo Company</h1>
+                  <h1 className="text-base font-bold text-white">GENCO L.Export ltd</h1>
                 </div>
               )}
             </div>
