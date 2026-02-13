@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState, type FC, type ReactNode } from "react";
 import { User, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "firebase/auth";
-import { ref, get } from "firebase/database";
+import { ref, get, query, orderByChild, equalTo } from "firebase/database";
 import { auth, db } from "@/lib/firebase";
 import { useToast } from "@/hooks/use-toast";
 
@@ -58,14 +58,14 @@ export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
         };
       }
 
-      // 2. Fallback scan (Legacy structure)
-      console.warn("User not found at direct UID path, falling back to scan...");
-      const usersRef = ref(db, "users");
-      const allSnapshot = await get(usersRef);
+      // 2. Fallback query for legacy structure where UID is stored inside each user object
+      console.warn("User not found at direct UID path, falling back to uid query...");
+      const usersByUidQuery = query(ref(db, "users"), orderByChild("uid"), equalTo(uid));
+      const matchingUsersSnapshot = await get(usersByUidQuery);
 
-      if (allSnapshot.exists()) {
-        const data = allSnapshot.val();
-        const match = Object.values(data as Record<string, any>).find((u: any) => u?.uid === uid) as any;
+      if (matchingUsersSnapshot.exists()) {
+        const data = matchingUsersSnapshot.val() as Record<string, any>;
+        const match = Object.values(data)[0];
         if (match) {
           return {
             role: match.role || null,

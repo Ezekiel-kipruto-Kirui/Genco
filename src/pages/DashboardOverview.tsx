@@ -1,6 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
 import { ref, push, get, query, orderByChild, equalTo } from "firebase/database"; 
-import { getAuth } from "firebase/auth";
 import { db } from "@/lib/firebase"; 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -161,129 +160,125 @@ const ActivityTable = ({ activities }: { activities: Activity[] }) => {
 // --- Main Page ---
 
 const DashboardOverview = () => {
-  const auth = getAuth();
-  const { user } = useAuth();
+  const { user, userRole, allowedProgrammes, loading } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  // Permissions State
-  const [userRole, setUserRole] = useState<string | null>(null);
-  const [allowedProgrammes, setAllowedProgrammes] = useState<string[]>([]);
-  const [loadingPermissions, setLoadingPermissions] = useState(true);
-
   // Dashboard View State
-  const [selectedProgramme, setSelectedProgramme] = useState<string>("All");
+  const [selectedProgramme, setSelectedProgramme] = useState<string>("");
 
   // Dialog State
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [participantForm, setParticipantForm] = useState({ name: "", role: "" });
   const [participants, setParticipants] = useState<Participant[]>([]);
-  const [activeProgrammeForAdd, setActiveProgrammeForAdd] = useState<string>("KPMD");
+  const [activeProgrammeForAdd, setActiveProgrammeForAdd] = useState<string>("");
   
   const [activityForm, setActivityForm] = useState({
     activityName: "", date: "", county: "", subcounty: "", location: "",
   });
 
-  const programmeOptions = userRole === "chief-admin" ? PROGRAMME_OPTIONS : allowedProgrammes;
+  const programmeOptions = useMemo(() => {
+    if (userRole === "chief-admin") return PROGRAMME_OPTIONS;
+    if (!allowedProgrammes) return [];
+    return Object.keys(allowedProgrammes).filter((programme) => allowedProgrammes[programme] === true);
+  }, [userRole, allowedProgrammes]);
 
   // --- Optimized Data Fetching with React Query ---
 
-  // 1. The Fetcher Function (Cached Logic)
-  const fetchSecureCollection = async (nodePath: string): Promise<any[]> => {
-    if (!auth.currentUser) return [];
-    
-    const uid = auth.currentUser.uid;
-    // Get current permissions fresh from context or state if needed, 
-    // but here we rely on the closure capturing current state or pass them as args.
-    // For simplicity in this refactor, we grab the role/programmes from state.
-    // Note: In complex apps, pass dependencies to queryFn.
-    
-    // However, since this function is inside the component, it captures the current state variables.
-    const role = userRole; 
-    const programmes = allowedProgrammes;
+  const toArray = (snapshot: any): any[] => {
+    if (!snapshot.exists()) return [];
+    const data = snapshot.val();
+    return Object.keys(data).map((key) => ({ id: key, ...data[key] }));
+  };
 
-    // Chief Admin: Fetch all
-    if (role === 'chief-admin') {
-      const snapshot = await get(ref(db, nodePath));
-      if (!snapshot.exists()) return [];
-      return Object.keys(snapshot.val()).map(key => ({ id: key, ...snapshot.val()[key] }));
-    }
-
-    // Non-Admin: Fetch by allowed programmes
-    if (programmes.length === 0) return [];
-
-    // Attempt Index Query first
-    const promises = programmes.map(programme => {
-      const q = query(ref(db, nodePath), orderByChild('programme'), equalTo(programme));
-      return get(q);
-    });
-
+  const fetchByProgramme = async (nodePath: string, programme: string): Promise<any[]> => {
     try {
-      const snapshots = await Promise.all(promises);
-      const results: any[] = [];
-
-      snapshots.forEach(snapshot => {
-        if (snapshot.exists()) {
-          const data = snapshot.val();
-          Object.keys(data).forEach(key => {
-            results.push({ id: key, ...data[key] });
-          });
-        }
-      });
-      return results;
+      const programmeQuery = query(ref(db, nodePath), orderByChild("programme"), equalTo(programme));
+      const snapshot = await get(programmeQuery);
+      return toArray(snapshot);
     } catch (error) {
       console.warn(`Index query failed for ${nodePath}, falling back to client filter.`, error);
-      // Fallback: Fetch all and filter
       const snapshot = await get(ref(db, nodePath));
-      if (!snapshot.exists()) return [];
-      const data = snapshot.val();
-      return Object.keys(data)
-        .map(key => ({ id: key, ...data[key] }))
-        .filter((item: any) => programmes.includes(item.programme));
+      return toArray(snapshot).filter((item: any) => item.programme === programme);
     }
   };
 
+  // 1. Fetch only data needed for the selected programme to avoid heavy startup work.
+  const fetchSecureCollection = async (nodePath: string, programmeFilter: string): Promise<any[]> => {
+    if (!user?.uid || !userRole) return [];
+
+    if (userRole === "chief-admin") {
+      if (!programmeFilter || programmeFilter === "All") {
+        const snapshot = await get(ref(db, nodePath));
+        return toArray(snapshot);
+      }
+      return fetchByProgramme(nodePath, programmeFilter);
+    }
+
+    if (programmeOptions.length === 0) return [];
+
+    if (programmeFilter && programmeFilter !== "All") {
+      if (!programmeOptions.includes(programmeFilter)) return [];
+      return fetchByProgramme(nodePath, programmeFilter);
+    }
+
+    const chunks = await Promise.all(programmeOptions.map((programme) => fetchByProgramme(nodePath, programme)));
+    return chunks.flat();
+  };
+
   // 2. React Query Hooks
-  // We use 'enabled' to prevent fetching before we know user permissions
+  const programmeKey = programmeOptions.join("|");
+  const canLoadCollections = !!userRole && !loading && !!selectedProgramme;
+
   const { data: rawFarmers = [], isLoading: isLoadingFarmers } = useQuery({
-    queryKey: ['farmers', userRole, allowedProgrammes],
-    queryFn: () => fetchSecureCollection("farmers"),
-    enabled: !!userRole && !loadingPermissions,
+    queryKey: ["farmers", userRole, programmeKey, selectedProgramme],
+    queryFn: () => fetchSecureCollection("farmers", selectedProgramme || "All"),
+    enabled: canLoadCollections,
     staleTime: 5 * 60 * 1000, // 5 minutes
     gcTime: 10 * 60 * 1000, // Cache in memory for 10 mins
   });
 
   const { data: rawActivities = [], isLoading: isLoadingActivities } = useQuery({
-    queryKey: ['activities', userRole, allowedProgrammes],
-    queryFn: () => fetchSecureCollection("Recent Activities"),
-    enabled: !!userRole && !loadingPermissions,
+    queryKey: ["activities", userRole, programmeKey, selectedProgramme],
+    queryFn: () => fetchSecureCollection("Recent Activities", selectedProgramme || "All"),
+    enabled: canLoadCollections,
     staleTime: 2 * 60 * 1000, // 2 minutes
   });
 
-  const { data: rawCapacityData = [] } = useQuery({
-    queryKey: ['capacityBuilding', userRole, allowedProgrammes],
-    queryFn: () => fetchSecureCollection("capacityBuilding"),
-    enabled: !!userRole && !loadingPermissions,
+  const { data: rawCapacityData = [], isLoading: isLoadingCapacity } = useQuery({
+    queryKey: ["capacityBuilding", userRole, programmeKey, selectedProgramme],
+    queryFn: () => fetchSecureCollection("capacityBuilding", selectedProgramme || "All"),
+    enabled: canLoadCollections,
     staleTime: 10 * 60 * 1000, // 10 minutes
   });
 
   // Combined loading state
-  const isLoadingData = loadingPermissions || (isLoadingFarmers && userRole);
+  const isLoadingData = loading || isLoadingFarmers || isLoadingActivities || isLoadingCapacity;
 
   // --- Filters & Stats ---
 
   const filteredFarmers = useMemo(() => {
+    if (!selectedProgramme) return [];
     if (selectedProgramme === "All") return rawFarmers;
     return rawFarmers.filter((f: FarmerData) => f.programme === selectedProgramme);
   }, [rawFarmers, selectedProgramme]);
 
   const filteredActivities = useMemo(() => {
-    let activities = rawActivities;
-    if (selectedProgramme !== "All") {
-      activities = activities.filter((a: Activity) => a.programme === selectedProgramme);
-    }
-    return activities.sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    const activities =
+      selectedProgramme === "All"
+        ? rawActivities
+        : rawActivities.filter((a: Activity) => a.programme === selectedProgramme);
+
+    // Clone before sorting to avoid mutating React Query cache data.
+    return [...activities].sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }, [rawActivities, selectedProgramme]);
+
+  const filteredCapacityData = useMemo(() => {
+    if (selectedProgramme !== "All") {
+      return rawCapacityData.filter((c: any) => c.programme === selectedProgramme);
+    }
+    return rawCapacityData;
+  }, [rawCapacityData, selectedProgramme]);
 
   const stats = useMemo(() => {
     const data = filteredFarmers;
@@ -333,17 +328,13 @@ const DashboardOverview = () => {
     return { totalGoats, maleGoats, femaleGoats, totalSheep, totalCattle, regionsVisited: regionStats.length };
   }, [filteredFarmers, regionStats.length]);
 
-  const finalStats = { ...stats, ...animalStats };
+  const finalStats = useMemo(() => ({ ...stats, ...animalStats }), [stats, animalStats]);
 
   const calculatedStats = useMemo(() => {
-    let filteredCapacity = rawCapacityData;
-    if (selectedProgramme !== "All") {
-      filteredCapacity = rawCapacityData.filter((c: any) => c.programme === selectedProgramme);
-    }
-    const totalTrained = filteredCapacity.reduce((sum: number, t: any) => sum + (Number(t.totalFarmers) || 0), 0);
+    const totalTrained = filteredCapacityData.reduce((sum: number, t: any) => sum + (Number(t.totalFarmers) || 0), 0);
 
     return { ...finalStats, trainedFarmers: totalTrained };
-  }, [finalStats, rawCapacityData, selectedProgramme]); 
+  }, [filteredCapacityData, finalStats]); 
 
   const recentActivities = useMemo(() => filteredActivities.slice(0, 3), [filteredActivities]);
   const pendingActivitiesCount = useMemo(() => filteredActivities.filter((a: Activity) => a.status === 'pending').length, [filteredActivities]);
@@ -352,44 +343,23 @@ const DashboardOverview = () => {
   // --- Effects & Handlers ---
 
   useEffect(() => {
-    const uid = auth.currentUser?.uid;
-    if (!uid) {
-      setLoadingPermissions(false);
+    if (!userRole) {
+      setSelectedProgramme("");
       return;
     }
 
-    const fetchUserDetails = async () => {
-      try {
-        const userRef = ref(db, `users/${uid}`);
-        const snapshot = await get(userRef);
-        
-        if (snapshot.exists()) {
-          const data = snapshot.val();
-          setUserRole(data.role || null);
-          
-          const programmesObj = data.allowedProgrammes || {};
-          const programmesList = Object.keys(programmesObj).filter(k => programmesObj[k] === true);
-          
-          if (data.role === "chief-admin") {
-            setAllowedProgrammes(PROGRAMME_OPTIONS);
-          } else {
-            setAllowedProgrammes(programmesList);
-          }
-          
-          const defaultProgrammes = data.role === "chief-admin" ? PROGRAMME_OPTIONS : programmesList;
-          if (defaultProgrammes.length > 0) {
-            setActiveProgrammeForAdd(defaultProgrammes[0]);
-          }
-        }
-      } catch (error) {
-        console.error("Error fetching user permissions:", error);
-      } finally {
-        setLoadingPermissions(false);
-      }
-    };
+    if (userRole === "chief-admin") {
+      setSelectedProgramme((prev) => (prev ? prev : PROGRAMME_OPTIONS[0]));
+      return;
+    }
 
-    fetchUserDetails();
-  }, [auth.currentUser?.uid]);
+    if (programmeOptions.length === 0) {
+      setSelectedProgramme("");
+      return;
+    }
+
+    setSelectedProgramme((prev) => (prev && programmeOptions.includes(prev) ? prev : programmeOptions[0]));
+  }, [userRole, programmeOptions]);
 
   const handleAddParticipant = () => {
     if (participantForm.name.trim() && participantForm.role.trim()) {
@@ -405,6 +375,10 @@ const DashboardOverview = () => {
   const handleAddActivity = async () => {
     if (participants.length === 0) {
       toast({ title: "Error", description: "Please add at least one participant", variant: "destructive" });
+      return;
+    }
+    if (!activeProgrammeForAdd) {
+      toast({ title: "Error", description: "Select a programme first.", variant: "destructive" });
       return;
     }
 
@@ -433,10 +407,12 @@ const DashboardOverview = () => {
   };
 
   useEffect(() => {
-    if (selectedProgramme !== "All") {
+    if (selectedProgramme && selectedProgramme !== "All") {
       setActiveProgrammeForAdd(selectedProgramme);
     } else if (programmeOptions.length > 0) {
       setActiveProgrammeForAdd(programmeOptions[0]);
+    } else {
+      setActiveProgrammeForAdd("");
     }
   }, [selectedProgramme, programmeOptions]);
 
@@ -463,7 +439,7 @@ const DashboardOverview = () => {
 
   const topRegions = regionStats.slice(0, 4);
 
-  if (loadingPermissions) {
+  if (loading) {
     return (
        <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100/80 p-6 flex items-center justify-center">
          <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
@@ -471,7 +447,7 @@ const DashboardOverview = () => {
     );
   }
 
-  if (userRole !== 'chief-admin' && allowedProgrammes.length === 0) {
+  if (userRole !== 'chief-admin' && programmeOptions.length === 0) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100/80 p-6">
         <Card className="max-w-md mx-auto mt-20"><CardHeader><CardTitle>No Access</CardTitle></CardHeader><CardContent><p>You are not assigned to any programmes.</p></CardContent></Card>
@@ -492,7 +468,7 @@ const DashboardOverview = () => {
                </div>
             )}
           </div>
-          <Link to="/activities">
+          <Link to="/dashboard/activities">
             <Button variant="outline" className="relative">
               <Bell className="h-4 w-4 mr-2" /> Activities
               {pendingActivitiesCount > 0 && (
@@ -586,7 +562,7 @@ const DashboardOverview = () => {
                                 <div className="space-y-2">
                                   <Label htmlFor="programmeSelect">Programme</Label>
                                   <select id="programmeSelect" value={activeProgrammeForAdd} onChange={(e) => setActiveProgrammeForAdd(e.target.value)} className="flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm ring-offset-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-950">
-                                    {allowedProgrammes.map(p => (<option key={p} value={p}>{p}</option>))}
+                                    {programmeOptions.map(p => (<option key={p} value={p}>{p}</option>))}
                                   </select>
                                 </div>
                               )}

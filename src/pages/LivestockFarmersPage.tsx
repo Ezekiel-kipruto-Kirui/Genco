@@ -254,7 +254,7 @@ const LivestockFarmersPage = () => {
   useEffect(() => {
     if (isChiefAdmin(userRole)) {
       setAvailablePrograms(["RANGE", "KPMD"]);
-      if (!activeProgram) setActiveProgram("RANGE");
+      setActiveProgram((prev) => (prev ? prev : "RANGE"));
       return;
     }
 
@@ -271,19 +271,20 @@ const LivestockFarmersPage = () => {
           key => data.allowedProgrammes[key] === true
         );
         setAvailablePrograms(programs);
-        if (programs.length > 0 && !programs.includes(activeProgram)) {
-          setActiveProgram(programs[0]);
-        } else if (programs.length === 0) {
-            setActiveProgram("");
-        }
+        setActiveProgram((prev) => {
+          if (programs.length === 0) return "";
+          if (!prev || !programs.includes(prev)) return programs[0];
+          return prev;
+        });
       } else {
         setAvailablePrograms([]);
+        setActiveProgram("");
       }
     }, (error) => {
         console.error("Error fetching user permissions:", error);
     });
     return () => unsubscribe();
-  }, [userRole, activeProgram]);
+  }, [userRole]);
 
   useEffect(() => {
     if (!activeProgram) {

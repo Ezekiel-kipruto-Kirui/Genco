@@ -4,81 +4,34 @@ import { Button } from "@/components/ui/button";
 import { LogOut, Bell } from "lucide-react";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { DashboardSidebar } from "./DashboardSidebar";
-import { fetchData } from "@/lib/firebase";
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 // CHANGED: Import Realtime Database functions
-import { ref, get } from "firebase/database";
+import { ref, get, query, orderByChild, equalTo } from "firebase/database";
 import { db } from "@/lib/firebase";
 
-// CHANGED: Added 'id' because fetchData returns objects with 'id' from RTDB keys
-interface AppUser {
-  id: any;
-  email: string;
-  name?: string;
-}
-
-interface Activity {
-  id: string;
-  status: 'pending' | 'completed' | 'cancelled';
-}
-
 const DashboardLayout = () => {
-  const { user, userRole, signOutUser } = useAuth();
-  const [username, setUsername] = useState("");
+  const { user, userRole, userName, signOutUser } = useAuth();
   const [pendingActivitiesCount, setPendingActivitiesCount] = useState(0);
 
   useEffect(() => {
-    const getUser = async () => {
-      if (!user?.email) return;
-      
-      try {
-        const data = await fetchData();
-        
-        // FIX: Explicitly cast to AppUser[] to resolve type mismatch.
-        // This tells TypeScript to trust that the objects in the array 
-        // match the AppUser interface (including 'email'), even if 
-        // the inferred type from 'fetchData' is generic.
-        const users = (data?.users || []) as AppUser[];
-
-        // Find user by email
-        const userData = users.find((u) => u.email === user.email);
-
-        // Set username safely
-        setUsername(userData?.name || user.email);
-        
-      } catch (error) {
-        console.error("Error fetching user:", error);
-        setUsername(user.email || "User");
-      }
-    };
-
-    getUser();
     fetchPendingActivitiesCount();
-  }, [user?.email]);
+  }, []);
 
   const fetchPendingActivitiesCount = async () => {
     try {
-      // CHANGED: Use RTDB ref() and get() instead of Firestore collection/getDocs
-      const activitiesRef = ref(db, "Recent Activities");
-      const snapshot = await get(activitiesRef);
-
-      if (!snapshot.exists()) {
-        setPendingActivitiesCount(0);
-        return;
-      }
-
-      // CHANGED: RTDB returns a JSON object, not an array. We must convert it.
-      const data = snapshot.val();
-      const activities: Activity[] = Object.keys(data).map((key) => ({
-        id: key,
-        ...data[key]
-      }));
-
-      const pendingCount = activities.filter(activity => activity.status === 'pending').length;
+      // Query only pending activities to avoid downloading full collection on login.
+      const pendingActivitiesQuery = query(
+        ref(db, "Recent Activities"),
+        orderByChild("status"),
+        equalTo("pending")
+      );
+      const snapshot = await get(pendingActivitiesQuery);
+      const pendingCount = snapshot.exists() ? Object.keys(snapshot.val()).length : 0;
       setPendingActivitiesCount(pendingCount);
     } catch (error) {
       console.error("Error fetching pending activities:", error);
+      setPendingActivitiesCount(0);
     }
   };
 
@@ -95,7 +48,7 @@ const DashboardLayout = () => {
               <div className="flex items-center gap-2 sm:gap-3">
                 <SidebarTrigger className="flex-shrink-0" />
                 <p className="text-sm text-muted-foreground truncate">
-                  {username || user?.email || "User"}
+                  {userName || user?.email || "User"}
                 </p>
               </div>
 

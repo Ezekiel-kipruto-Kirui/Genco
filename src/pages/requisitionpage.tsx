@@ -257,7 +257,7 @@ const RequisitionsPage = () => {
 
     if (isChiefAdmin(userRole)) {
       setAvailablePrograms(["RANGE", "KPMD"]);
-      if (!activeProgram || activeProgram === "ALL") setActiveProgram("RANGE");
+      setActiveProgram((prev) => (!prev || prev === "ALL" ? "RANGE" : prev));
       return;
     }
 
@@ -273,17 +273,18 @@ const RequisitionsPage = () => {
           key => data.allowedProgrammes[key] === true
         );
         setAvailablePrograms(programs);
-        if (programs.length > 0 && (!activeProgram || activeProgram === "ALL")) {
-          setActiveProgram(programs[0]);
-        } else if (programs.length === 0) {
-            setActiveProgram(""); 
-        }
+        setActiveProgram((prev) => {
+          if (programs.length === 0) return "";
+          if (!prev || prev === "ALL" || !programs.includes(prev)) return programs[0];
+          return prev;
+        });
       } else {
         setAvailablePrograms([]);
+        setActiveProgram("");
       }
     }, (error) => { console.error("Error fetching user permissions:", error); });
     return () => unsubscribe();
-  }, [userRole, activeProgram]);
+  }, [userRole]);
 
   // --- 2. Data Fetching ---
   useEffect(() => {
