@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Download, Users, MapPin, Eye, Calendar, Scale, Phone, CreditCard, Edit, Trash2, Weight, Upload, Loader2 } from "lucide-react";
 import { toast, useToast } from "@/hooks/use-toast";
 import { isChiefAdmin } from "@/contexts/authhelper";
@@ -245,6 +246,11 @@ const calculateAverage = (data: number[]): number => {
 const calculateTotal = (data: number[]): number => {
   if (!data || data.length === 0) return 0;
   return data.reduce((acc, val) => acc + (Number(val) || 0), 0);
+};
+
+const getFarmerGroupingKey = (record: OfftakeData): string => {
+  const normalizedId = String(record.idNumber || '').trim().toLowerCase();
+  return normalizedId ? `id:${normalizedId}` : `record:${record.id}`;
 };
 
 const LivestockOfftakePage = () => {
@@ -772,11 +778,21 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
     const totalRevenue = filtered.reduce((sum, record) => sum + (record.totalprice || 0), 0);
     
     const uniqueRegions = new Set(filtered.map(f => f.region).filter(Boolean));
-    const totalFarmers = filtered.length;
-    
+
+    // Count farmers by unique ID number so repeated sessions are treated as one farmer.
+    const uniqueFarmersMap = new Map<string, OfftakeData>();
+    filtered.forEach((record) => {
+      const farmerKey = getFarmerGroupingKey(record);
+      if (!uniqueFarmersMap.has(farmerKey)) {
+        uniqueFarmersMap.set(farmerKey, record);
+      }
+    });
+    const uniqueFarmers = Array.from(uniqueFarmersMap.values());
+    const totalFarmers = uniqueFarmers.length;
+
     let totalMaleFarmers = 0;
     let totalFemaleFarmers = 0;
-    filtered.forEach(record => {
+    uniqueFarmers.forEach(record => {
       if (record.gender?.toLowerCase() === 'male') totalMaleFarmers++;
       else if (record.gender?.toLowerCase() === 'female') totalFemaleFarmers++;
     });
@@ -908,7 +924,7 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
       const totalAnimals = filteredOfftake.reduce((sum, record) => sum + (record.noSheepGoats || 0), 0);
       const totalRevenue = filteredOfftake.reduce((sum, record) => sum + (record.totalprice || 0), 0);
       const grandTotalRow = [
-        `GRAND TOTALS (${filteredOfftake.length} Farmers)`, '', '', '', '', '', '', '', '', 
+        `GRAND TOTALS (${filteredOfftake.length} Sessions)`, '', '', '', '', '', '', '', '', 
         totalAnimals.toString(), '', '', '', totalRevenue.toFixed(2)
       ];
 
@@ -936,7 +952,7 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
 
       toast({
         title: "Export Successful",
-        description: `Exported data for ${filteredOfftake.length} transactions`,
+        description: `Exported detailed data for ${filteredOfftake.length} sessions`,
       });
 
     } catch (error) {
@@ -944,6 +960,178 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
       toast({
         title: "Export Failed",
         description: "Failed to export data. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setExportLoading(false);
+    }
+  };
+
+  const handleExportAggregatedByFarmer = async () => {
+    try {
+      setExportLoading(true);
+
+      if (filteredOfftake.length === 0) {
+        toast({
+          title: "No Data to Export",
+          description: "There are no records matching your current filters",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      type AggregatedFarmer = {
+        idNumber: string;
+        farmerName: string;
+        gender: string;
+        programme: string;
+        region: string;
+        subcounty: string;
+        location: string;
+        phoneNumber: string;
+        sessions: number;
+        totalAnimals: number;
+        totalLiveWeight: number;
+        totalCarcassWeight: number;
+        totalRevenue: number;
+      };
+
+      const groupedFarmers = new Map<string, AggregatedFarmer>();
+
+      filteredOfftake.forEach((record) => {
+        const groupKey = getFarmerGroupingKey(record);
+        const existing = groupedFarmers.get(groupKey);
+
+        const liveWeightSum = calculateTotal(
+          Array.isArray(record.liveWeight) ? record.liveWeight : [Number(record.liveWeight) || 0],
+        );
+        const carcassWeightSum = calculateTotal(
+          Array.isArray(record.carcassWeight) ? record.carcassWeight : [Number(record.carcassWeight) || 0],
+        );
+
+        if (!existing) {
+          groupedFarmers.set(groupKey, {
+            idNumber: record.idNumber || 'N/A',
+            farmerName: record.farmerName || 'N/A',
+            gender: record.gender || 'N/A',
+            programme: record.programme || 'N/A',
+            region: record.region || 'N/A',
+            subcounty: record.subcounty || 'N/A',
+            location: record.location || 'N/A',
+            phoneNumber: record.phoneNumber || 'N/A',
+            sessions: 1,
+            totalAnimals: Number(record.noSheepGoats) || 0,
+            totalLiveWeight: liveWeightSum,
+            totalCarcassWeight: carcassWeightSum,
+            totalRevenue: Number(record.totalprice) || 0,
+          });
+          return;
+        }
+
+        existing.sessions += 1;
+        existing.totalAnimals += Number(record.noSheepGoats) || 0;
+        existing.totalLiveWeight += liveWeightSum;
+        existing.totalCarcassWeight += carcassWeightSum;
+        existing.totalRevenue += Number(record.totalprice) || 0;
+
+        if (existing.farmerName === 'N/A' && record.farmerName) existing.farmerName = record.farmerName;
+        if (existing.gender === 'N/A' && record.gender) existing.gender = record.gender;
+        if (existing.phoneNumber === 'N/A' && record.phoneNumber) existing.phoneNumber = record.phoneNumber;
+        if (existing.region === 'N/A' && record.region) existing.region = record.region;
+        if (existing.subcounty === 'N/A' && record.subcounty) existing.subcounty = record.subcounty;
+        if (existing.location === 'N/A' && record.location) existing.location = record.location;
+      });
+
+      const aggregatedFarmers = Array.from(groupedFarmers.values());
+
+      const headers = [
+        'ID Number',
+        'Farmer Name',
+        'Gender',
+        'Programme',
+        'Region (County)',
+        'Subcounty',
+        'Location',
+        'Phone Number',
+        'Sessions',
+        'Total Animals',
+        'Total Live Weight (kg)',
+        'Total Carcass Weight (kg)',
+        'Total Revenue (KES)',
+      ];
+
+      const csvRows = aggregatedFarmers.map((farmer) => [
+        farmer.idNumber,
+        farmer.farmerName,
+        farmer.gender,
+        farmer.programme,
+        farmer.region,
+        farmer.subcounty,
+        farmer.location,
+        farmer.phoneNumber,
+        farmer.sessions.toString(),
+        farmer.totalAnimals.toString(),
+        farmer.totalLiveWeight.toFixed(1),
+        farmer.totalCarcassWeight.toFixed(2),
+        farmer.totalRevenue.toFixed(2),
+      ]);
+
+      const totals = aggregatedFarmers.reduce((acc, farmer) => {
+        acc.sessions += farmer.sessions;
+        acc.animals += farmer.totalAnimals;
+        acc.liveWeight += farmer.totalLiveWeight;
+        acc.carcassWeight += farmer.totalCarcassWeight;
+        acc.revenue += farmer.totalRevenue;
+        return acc;
+      }, { sessions: 0, animals: 0, liveWeight: 0, carcassWeight: 0, revenue: 0 });
+
+      const grandTotalRow = [
+        `GRAND TOTALS (${aggregatedFarmers.length} Farmers)`,
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        totals.sessions.toString(),
+        totals.animals.toString(),
+        totals.liveWeight.toFixed(1),
+        totals.carcassWeight.toFixed(2),
+        totals.revenue.toFixed(2),
+      ];
+
+      const csvContent = [headers, ...csvRows, grandTotalRow]
+        .map((row) => row.map((field) => `"${field}"`).join(','))
+        .join('\n');
+
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+
+      const programLabel = userIsChiefAdmin ? activeProgram : "ASSIGNED_PROGRAMS";
+      let filename = `livestock-offtake-aggregated-${programLabel}`;
+      if (filters.startDate || filters.endDate) {
+        filename += `_${filters.startDate || 'start'}_to_${filters.endDate || 'end'}`;
+      }
+      filename += `_${new Date().toISOString().split('T')[0]}.csv`;
+
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+
+      toast({
+        title: "Export Successful",
+        description: `Exported aggregated data for ${aggregatedFarmers.length} unique farmers`,
+      });
+    } catch (error) {
+      console.error("Error exporting aggregated data:", error);
+      toast({
+        title: "Export Failed",
+        description: "Failed to export aggregated data. Please try again.",
         variant: "destructive",
       });
     } finally {
@@ -1417,10 +1605,24 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
           </Button>
 
           {isChiefAdmin(userRole) && (
-             <Button onClick={handleExport} disabled={exportLoading || filteredOfftake.length === 0} className="bg-gradient-to-r from-blue-800 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white shadow-md text-xs">
-              <Download className="h-4 w-4 mr-2" />
-              {exportLoading ? "Exporting..." : `Export (${filteredOfftake.length})`}
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button disabled={exportLoading || filteredOfftake.length === 0} className="bg-gradient-to-r from-blue-800 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white shadow-md text-xs">
+                  <Download className="h-4 w-4 mr-2" />
+                  {exportLoading ? "Exporting..." : `Export (${filteredOfftake.length})`}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-64">
+                <DropdownMenuItem onSelect={() => handleExport()} disabled={exportLoading}>
+                  <Download className="h-4 w-4 mr-2" />
+                  Export Detailed Data
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => handleExportAggregatedByFarmer()} disabled={exportLoading}>
+                  <Users className="h-4 w-4 mr-2" />
+                  Export Summed by Farmer ID
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           )}
         </div>
       </div>
