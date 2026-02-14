@@ -129,6 +129,19 @@ const formatDate = (date: any): string => {
   }) : 'N/A';
 };
 
+const formatDateTime = (date: any): string => {
+  const parsedDate = parseDate(date);
+  return parsedDate ? parsedDate.toLocaleString('en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: true,
+  }) : 'N/A';
+};
+
 const toInputDate = (date: any): string => {
   const d = parseDate(date);
   if (!d) return "";
@@ -246,6 +259,9 @@ const RequisitionsPage = () => {
   });
 
   const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
+  const canApproveRequisition = userRole === 'admin' || userIsChiefAdmin;
+  const canAuthorizeRequisition = userRole === 'hr';
+  const canCompleteRequisition = canApproveRequisition || canAuthorizeRequisition;
 
   // --- 1. Fetch User Permissions (HR SEES ALL) ---
   useEffect(() => {
@@ -532,12 +548,39 @@ const RequisitionsPage = () => {
     if (!editRecord) return;
     setIsSaving(true);
     try {
+      const actorName = userName || user?.displayName || user?.email || "Admin";
+      const previousStatus = String(editRecord.status || '').toLowerCase();
+      const nextStatus = String(editFormData.status || editRecord.status || '').toLowerCase();
+      const statusChanged = previousStatus !== nextStatus;
+
       const updatePayload: any = {
         county: editFormData.county,
         subcounty: editFormData.subcounty,
         tripPurpose: editFormData.tripPurpose,
         status: editFormData.status,
       };
+
+      if (statusChanged && nextStatus === 'approved') {
+        if (!canApproveRequisition) {
+          toast({ title: "Unauthorized", description: "Only Admin and Chief Admin can approve requisitions.", variant: "destructive" });
+          return;
+        }
+        updatePayload.approvedBy = actorName;
+        updatePayload.approvedAt = Date.now();
+      }
+
+      if (statusChanged && nextStatus === 'complete') {
+        if (!canCompleteRequisition) {
+          toast({ title: "Unauthorized", description: "Only HR, Admin or Chief Admin can complete requisitions.", variant: "destructive" });
+          return;
+        }
+        const authorizedBy = String(editRecord.authorizedBy || '').trim();
+        if (!authorizedBy) {
+          toast({ title: "Authorization Required", description: "Requisition can only be completed after HR authorization.", variant: "destructive" });
+          return;
+        }
+      }
+
       if (editRecord.type === 'fuel and Service') {
         updatePayload.lastReading = editFormData.lastReading;
         updatePayload.currentReading = editFormData.currentReading;
@@ -555,9 +598,16 @@ const RequisitionsPage = () => {
         updatePayload.location = editFormData.location;
       }
       await update(ref(db, `requisitions/${editRecord.id}`), updatePayload);
-      
-      // Log History
-      await logHistory(editRecord.id, "Edited", "Requisition details updated.");
+
+      if (statusChanged && nextStatus === 'approved') {
+        await logHistory(editRecord.id, "Approved", `Approved by ${actorName}`);
+      } else if (statusChanged && nextStatus === 'complete') {
+        await logHistory(editRecord.id, "Completed", `Marked complete by ${actorName}`);
+      } else if (statusChanged && nextStatus === 'rejected') {
+        await logHistory(editRecord.id, "Rejected", `Rejected by ${actorName}`);
+      } else {
+        await logHistory(editRecord.id, "Edited", "Requisition details updated.");
+      }
 
       toast({ title: "Success", description: "Requisition updated successfully." });
       setIsEditDialogOpen(false);
@@ -591,6 +641,10 @@ const RequisitionsPage = () => {
 
   const handleApprove = async () => {
     if (!viewingRecord) return;
+    if (!canApproveRequisition) {
+      toast({ title: "Unauthorized", description: "Only Admin and Chief Admin can approve requisitions.", variant: "destructive" });
+      return;
+    }
     try {
         const approverName = userName || user?.displayName || user?.email || "Admin";
         await update(ref(db, `requisitions/${viewingRecord.id}`), {
@@ -608,18 +662,69 @@ const RequisitionsPage = () => {
     }
   };
 
-  const handleMarkComplete = async () => {
+  // --- HR Authorization Handler ---
+  const handleAuthorize = async () => {
     if (!viewingRecord) return;
+    if (!canAuthorizeRequisition) {
+      toast({ title: "Unauthorized", description: "Only HR can authorize requisitions.", variant: "destructive" });
+      return;
+    }
+    if (viewingRecord.status !== 'approved') {
+      toast({ title: "Invalid Status", description: "Only approved requisitions can be authorized.", variant: "destructive" });
+      return;
+    }
     try {
-        // Removed logic to capture user name for authorizedBy as per request
+        const actorName = userName || user?.displayName || user?.email || "Admin";
+        
+        // Only updates authorizedBy and authorizedAt, keeps status as 'approved'
         await update(ref(db, `requisitions/${viewingRecord.id}`), {
-            status: 'complete',
+            authorizedBy: actorName,
             authorizedAt: Date.now()
         });
 
-        await logHistory(viewingRecord.id, "Completed/Authorized", `Marked complete.`);
+        await logHistory(viewingRecord.id, "Authorized", `Authorized by ${actorName}`);
+
+        toast({ title: "Authorized", description: "Requisition authorized successfully." });
+        
+        // Update local state
+        setViewingRecord(prev => prev ? { 
+            ...prev, 
+            authorizedBy: actorName, 
+            authorizedAt: Date.now() 
+        } : null);
+    } catch (error) {
+        toast({ title: "Error", description: "Failed to authorize", variant: "destructive" });
+    }
+  };
+
+  // --- Mark Complete Handler ---
+  const handleMarkComplete = async () => {
+    if (!viewingRecord) return;
+    if (!canCompleteRequisition) {
+      toast({ title: "Unauthorized", description: "Only HR, Admin or Chief Admin can complete requisitions.", variant: "destructive" });
+      return;
+    }
+    if (viewingRecord.status !== 'approved') {
+      toast({ title: "Invalid Status", description: "Only approved requisitions can be marked complete.", variant: "destructive" });
+      return;
+    }
+    if (!viewingRecord.authorizedBy) {
+      toast({ title: "Authorization Required", description: "Requisition can only be completed after HR authorization.", variant: "destructive" });
+      return;
+    }
+    try {
+        const actorName = userName || user?.displayName || user?.email || "Admin";
+        
+        const updatePayload: any = {
+            status: 'complete',
+        };
+
+        await update(ref(db, `requisitions/${viewingRecord.id}`), updatePayload);
+
+        await logHistory(viewingRecord.id, "Completed", `Marked complete by ${actorName}`);
 
         toast({ title: "Completed", description: "Requisition marked as complete." });
+        
         setViewingRecord(prev => prev ? { ...prev, status: 'complete' } : null);
         setIsHistoryOpen(false);
     } catch (error) {
@@ -1123,8 +1228,8 @@ const RequisitionsPage = () => {
                       <div className="grid grid-cols-2 mt-4 gap-8">
                         <div className="flex flex-row">
                           <span className="text-[17px] text-gray-700">Approved By : </span>
-                          <div className="flex-1 flex relative h-6">{viewingRecord.approvedBy ? <span className="text-[17px] ml-2">{viewingRecord.approvedBy} (Project Manager)</span> : <span className="text-xs italic text-gray-300">Pending Approval</span>}</div></div>
-                        <div className="flex flex-row"><span className="text-[17px]">Date : </span><div className="flex justify-between text-2xs text-gray-900 ml-2"><span>{viewingRecord.approvedAt ? formatDate(viewingRecord.approvedAt) : 'Date'}</span></div></div>
+                          <div className="flex-1 flex relative h-6">{viewingRecord.approvedBy ? <span className="text-[17px] ml-2">{viewingRecord.approvedBy} (Admin/Chief Admin)</span> : <span className="text-xs italic text-gray-300">Pending Approval</span>}</div></div>
+                        <div className="flex flex-row"><span className="text-[17px]">Date : </span><div className="flex justify-between text-2xs text-gray-900 ml-2"><span>{viewingRecord.approvedAt ? formatDateTime(viewingRecord.approvedAt) : 'Date'}</span></div></div>
                         
                        
                           <div className="flex flex-row">
@@ -1137,7 +1242,7 @@ const RequisitionsPage = () => {
                           <div className="flex-1 flex flex-row justify-between mt-2">
                           <span className="text-[17px]">Date : </span>
                           <div className="flex-1 h-6  ml-2">
-                            {viewingRecord.authorizedAt ? formatDate(viewingRecord.authorizedAt) : ""}
+                            {viewingRecord.authorizedAt ? formatDateTime(viewingRecord.authorizedAt) : ""}
                           </div>
                         </div>
                           
@@ -1177,13 +1282,21 @@ const RequisitionsPage = () => {
               <Button variant="outline" onClick={handleDownload} className="flex-1 sm:flex-none"><Download className="h-4 w-4 mr-2" /> Download</Button>
             </div>
             <div className="flex gap-2 w-full sm:w-auto justify-end">
-              {userRole !== 'hr' && !viewingRecord?.approvedBy && (
+              {canApproveRequisition && !viewingRecord?.approvedBy && (
                 <Button onClick={handleApprove} className="bg-green-600 hover:bg-green-700 flex-1 sm:flex-none">
                   <CheckCircle className="h-4 w-4 mr-2" /> Approve Requisition
                 </Button>
               )}
               
-              {userRole === 'hr' && viewingRecord?.status === 'approved' && (
+              {/* HR Authorization Button */}
+              {canAuthorizeRequisition && viewingRecord?.status === 'approved' && !viewingRecord.authorizedBy && (
+                <Button onClick={handleAuthorize} className="bg-indigo-600 hover:bg-indigo-700 flex-1 sm:flex-none">
+                  <CheckCircle className="h-4 w-4 mr-2" /> Authorize
+                </Button>
+              )}
+
+              {/* HR/Admin/Chief Mark Complete Button (after HR authorization) */}
+              {canCompleteRequisition && viewingRecord?.status === 'approved' && !!viewingRecord.authorizedBy && (
                 <Button onClick={handleMarkComplete} className="bg-blue-800 hover:bg-blue-900 flex-1 sm:flex-none">
                   <CheckCircle className="h-4 w-4 mr-2" /> Mark Complete
                 </Button>
@@ -1219,7 +1332,7 @@ const RequisitionsPage = () => {
                                     <div className="flex justify-between items-start">
                                         <span className="font-semibold text-gray-800">{entry.action}</span>
                                         <span className="text-xs text-gray-500 whitespace-nowrap">
-                                            {formatDate(entry.timestamp)}
+                                            {formatDateTime(entry.timestamp)}
                                         </span>
                                     </div>
                                     <p className="text-gray-600 text-xs mt-1">{entry.actor}</p>

@@ -1,0 +1,33 @@
+{
+  "name": "functions",
+  "scripts": {
+    "lint": "node -e \"const path=require('node:path');const cp=require('node:child_process');const pkg=process.env.npm_package_json||path.resolve('functions/package.json');const cwd=path.dirname(pkg);const eslintPkg=require.resolve('eslint/package.json',{paths:[cwd]});const eslintBin=path.join(path.dirname(eslintPkg),'bin','eslint.js');const env={...process.env,ESLINT_USE_FLAT_CONFIG:'false'};const res=cp.spawnSync(process.execPath,[eslintBin,'--ext','.js,.ts','.'],{cwd,env,stdio:'inherit'});process.exit(res.status??1);\"",
+    "build": "tsc",
+    "build:watch": "tsc --watch",
+    "serve": "npm run build && firebase emulators:start --only functions",
+    "shell": "npm run build && firebase functions:shell",
+    "start": "npm run shell",
+    "deploy": "firebase deploy --only functions",
+    "logs": "firebase functions:log"
+  },
+  "engines": {
+    "node": "24"
+  },
+  "main": "lib/index.js",
+  "dependencies": {
+    "firebase-admin": "^13.6.0",
+    "firebase-functions": "^7.0.0",
+    "nodemailer": "^8.0.1"
+  },
+  "devDependencies": {
+    "@types/nodemailer": "^7.0.9",
+    "@typescript-eslint/eslint-plugin": "^5.12.0",
+    "@typescript-eslint/parser": "^5.12.0",
+    "eslint": "^8.9.0",
+    "eslint-config-google": "^0.14.0",
+    "eslint-plugin-import": "^2.25.4",
+    "firebase-functions-test": "^3.4.1",
+    "typescript": "^5.7.3"
+  },
+  "private": true
+}

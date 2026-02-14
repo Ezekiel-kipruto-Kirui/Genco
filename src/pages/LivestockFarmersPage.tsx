@@ -882,9 +882,9 @@ const LivestockFarmersPage = () => {
                     </div>
         </div>
          
-         <div className="flex lg:flex-row  md:flex-row flex-col gap-4 w-full md:w-auto items-end">
+         <div className="flex flex-col md:flex-row md:flex-wrap gap-4 w-full items-end md:justify-end">
             {/* UPDATED DATE INPUTS SECTION */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full md:w-auto relative items-center z-50">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full md:w-auto md:min-w-[22rem] shrink-0 items-center">
                 <div className="w-full">
                     <Label className="sr-only">Start Date</Label>
                     <Input 
@@ -892,8 +892,7 @@ const LivestockFarmersPage = () => {
                         type="date" 
                         value={filters.startDate} 
                         onChange={(e) => handleFilterChange("startDate", e.target.value)} 
-                        // FIX: Increased text size to 'text-sm', fixed height to 'h-10', added 'pr-10' for icon space, and 'w-full' to prevent shrinking
-                        className="border-gray-300 focus:border-blue-500 bg-white h-10 w-full text-sm pr-10 cursor-pointer" 
+                        className="border-gray-300 focus:border-blue-500 bg-white h-10 w-full text-sm pr-10 cursor-pointer appearance-auto md:min-w-[170px]" 
                     />
                 </div>
                 <div className="w-full">
@@ -903,8 +902,7 @@ const LivestockFarmersPage = () => {
                         type="date" 
                         value={filters.endDate} 
                         onChange={(e) => handleFilterChange("endDate", e.target.value)} 
-                        // FIX: Increased text size to 'text-sm', fixed height to 'h-10', added 'pr-10' for icon space, and 'w-full' to prevent shrinking
-                        className="border-gray-300 focus:border-blue-500 bg-white h-10 w-full text-sm pr-10 cursor-pointer" 
+                        className="border-gray-300 focus:border-blue-500 bg-white h-10 w-full text-sm pr-10 cursor-pointer appearance-auto md:min-w-[170px]" 
                     />
                 </div>
             </div>

@@ -22,3 +22,11 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Local environment secrets
+.env
+.env.*
+functions/.env
+functions/.env.*
+!.env.example
+!functions/.env.example

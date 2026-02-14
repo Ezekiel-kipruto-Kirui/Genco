@@ -511,6 +511,7 @@ const SectionHeader = React.memo(({ title }: { title: string }) => (
 const PerformanceReport = () => {
   const { userRole } = useAuth();
   const auth = getAuth();
+  const currentMonthDates = useMemo(() => getCurrentMonthDates(), []);
   
   const cacheRef = useRef<{
     farmers: Farmer[] | null;
@@ -523,7 +524,10 @@ const PerformanceReport = () => {
   const [allFarmers, setAllFarmers] = useState<Farmer[]>([]);
   const [trainingRecords, setTrainingRecords] = useState<TrainingRecord[]>([]);
   
-  const [dateRange, setDateRange] = useState({ startDate: "", endDate: "" });
+  const [dateRange, setDateRange] = useState({
+    startDate: currentMonthDates.startDate,
+    endDate: currentMonthDates.endDate,
+  });
   const [timeFrame, setTimeFrame] = useState<'weekly' | 'monthly' | 'yearly'>('monthly');
   
   const currentYear = new Date().getFullYear();
@@ -615,7 +619,7 @@ const PerformanceReport = () => {
   };
 
   useEffect(() => {
-    const initialDates = { startDate: `${currentYear}-01-01`, endDate: `${currentYear}-12-31` };
+    const initialDates = getCurrentMonthDates();
     setDateRange(initialDates);
     fetchAllData();
   }, []);
@@ -692,8 +696,9 @@ const PerformanceReport = () => {
     const currentY = String(new Date().getFullYear());
     setSelectedYear(currentY);
     
-    // Reset Date Range to empty strings to show ALL data
-    setDateRange({ startDate: "", endDate: "" });
+    // Reset Date Range to current month
+    const dates = getCurrentMonthDates();
+    setDateRange({ startDate: dates.startDate, endDate: dates.endDate });
     
     // Reset TimeFrame
     setTimeFrame('monthly');

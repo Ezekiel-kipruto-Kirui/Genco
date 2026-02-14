@@ -416,6 +416,7 @@ const salesReport = () => {
   const { userRole } = useAuth();
   const { toast } = useToast();
   const auth = getAuth();
+  const currentMonthDates = useMemo(() => getCurrentMonthDates(), []);
   
   const [loading, setLoading] = useState(true);
   const [offtakeData, setOfftakeData] = useState<OfftakeData[]>([]);
@@ -425,7 +426,10 @@ const salesReport = () => {
   const [selectedYear, setSelectedYear] = useState<string>(String(currentYear));
   const [timeFrame, setTimeFrame] = useState<'weekly' | 'monthly' | 'yearly'>('monthly');
   
-  const [dateRange, setDateRange] = useState({ startDate: `${currentYear}-01-01`, endDate: `${currentYear}-12-31` });
+  const [dateRange, setDateRange] = useState({
+    startDate: currentMonthDates.startDate,
+    endDate: currentMonthDates.endDate,
+  });
   const [selectedProgramme, setSelectedProgramme] = useState<string | null>(null);
   
   const availableYears = useMemo(() => {
@@ -549,10 +553,11 @@ const salesReport = () => {
   const clearFilters = useCallback(() => {
     const currentY = String(new Date().getFullYear());
     setSelectedYear(currentY);
-    const currentNum = parseInt(currentY, 10);
-    setDateRange({ startDate: `${currentNum}-01-01`, endDate: `${currentNum}-12-31` });
+    // Reset all date filters so the selected programme shows all its data.
+    setDateRange({ startDate: "", endDate: "" });
     setTimeFrame('monthly');
-  }, []);
+    setSelectedProgramme(activeProgram || null);
+  }, [activeProgram]);
 
   const formatCurrency = (val: number) => `KES ${val.toLocaleString(undefined, {maximumFractionDigits: 0})}`;
   const handleProgramChange = (program: string) => { setActiveProgram(program); setSelectedProgramme(program); };
