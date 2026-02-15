@@ -46,6 +46,7 @@ interface RequisitionData {
   county?: string;
   subcounty?: string;
   programme?: string;
+  phone?: string;
   phoneNumber?: string;
   approvedBy?: string;
   approvedAt?: string | number;
@@ -335,9 +336,11 @@ const RequisitionsPage = () => {
                dateVal = Date.now();
             }
             const isFuel = item.type === 'fuel and Service';
+            const normalizedPhone = item.phoneNumber || item.phone || item.phone_number || item.Phone || item.mobile || item.contact || item.telephone || '';
             return {
                 id: key,
                 ...item,
+                phoneNumber: normalizedPhone,
                 tripPurpose: isFuel ? item.fuelPurpose : item.tripPurpose,
                 items: Array.isArray(item.items) ? item.items : [], 
                 createdAt: dateVal, 
@@ -1177,7 +1180,7 @@ const RequisitionsPage = () => {
                     <div className="flex flex-row gap-2"><span className="text-gray-700 text-[17px]">County:</span><span className="font-medium flex-1 text-[17px]">{viewingRecord.county}</span></div>
                     <div className="flex flex-row gap-2"><span className="text-gray-700 text-[17px]">Sub County:</span><span className="font-medium flex-1 text-[17px]">{viewingRecord.subcounty}</span></div>
                     <div className="flex flex-row gap-2"><span className="text-gray-700 text-[17px]">Requested By:</span><span className="font-medium flex-1 text-[17px]">{getOfficerName(viewingRecord)}</span></div>
-                    <div className="flex flex-row gap-2"><span className="text-gray-700 text-[17px]">Phone: </span><span className="font-medium  flex-1 text-[17px]">{viewingRecord.phoneNumber}</span></div>
+                    <div className="flex flex-row gap-2"><span className="text-gray-700 text-[17px]">Phone: </span><span className="font-medium  flex-1 text-[17px]">{viewingRecord.phoneNumber || viewingRecord.phone || 'N/A'}</span></div>
                     <div className="flex flex-row gap-2"><span className="text-gray-700 text-[17px]">Purpose : </span><span className="font-medium  flex-1 text-[17px]">{viewingRecord.tripPurpose}</span></div>
                   </div>
 
