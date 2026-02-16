@@ -34,7 +34,8 @@ interface Borehole {
   people?: string | number;
   waterUsed?: number;
   drilled?: boolean;
-  maintained?: boolean;
+  equipped?: boolean;   // Added Equipped
+  rehabilitated?: boolean; // Added Rehabilitated
 }
 
 interface Filters {
@@ -47,7 +48,8 @@ interface Filters {
 interface Stats {
   totalBoreholes: number;
   drilledBoreholes: number;
-  maintainedBoreholes: number;
+  equippedBoreholes: number; // Replaced maintained
+  rehabilitatedBoreholes: number; // Added
   totalPeople: number;
   totalWaterUsed: number;
 }
@@ -304,13 +306,15 @@ const BoreholePage = () => {
     people: 0,
     waterUsed: 0,
     drilled: false,
-    maintained: false
+    equipped: false,   // Added Equipped
+    rehabilitated: false // Added Rehabilitated
   });
 
   const [stats, setStats] = useState<Stats>({
     totalBoreholes: 0,
     drilledBoreholes: 0,
-    maintainedBoreholes: 0,
+    equippedBoreholes: 0, // Updated
+    rehabilitatedBoreholes: 0, // Added
     totalPeople: 0,
     totalWaterUsed: 0
   });
@@ -351,7 +355,8 @@ const BoreholePage = () => {
             people: item.PeopleUsingBorehole || item.people || 0,
             waterUsed: item.WaterUsed || item.waterUsed || 0,
             drilled: item.drilled || false,
-            maintained: item.maintained || false
+            equipped: item.equipped || false, // Map Equipped
+            rehabilitated: item.rehabilitated || false // Map Rehabilitated
           };
         });
         
@@ -382,7 +387,8 @@ const BoreholePage = () => {
       setStats({
         totalBoreholes: 0,
         drilledBoreholes: 0,
-        maintainedBoreholes: 0,
+        equippedBoreholes: 0,
+        rehabilitatedBoreholes: 0,
         totalPeople: 0,
         totalWaterUsed: 0
       });
@@ -437,14 +443,16 @@ const BoreholePage = () => {
     const totalPeople = filtered.reduce((sum, record) => sum + safePeopleToNumber(record.people), 0);
     const totalWaterUsed = filtered.reduce((sum, record) => sum + (record.waterUsed || 0), 0);
     const drilledBoreholes = filtered.filter(record => record.drilled).length;
-    const maintainedBoreholes = filtered.filter(record => record.maintained).length;
+    const equippedBoreholes = filtered.filter(record => record.equipped).length; // Updated
+    const rehabilitatedBoreholes = filtered.filter(record => record.rehabilitated).length; // Added
 
-    console.log("Stats - Total Boreholes:", filtered.length, "Drilled:", drilledBoreholes, "Maintained:", maintainedBoreholes, "People:", totalPeople, "Water Used:", totalWaterUsed);
+    console.log("Stats - Total Boreholes:", filtered.length, "Drilled:", drilledBoreholes, "Equipped:", equippedBoreholes, "Rehabilitated:", rehabilitatedBoreholes, "People:", totalPeople, "Water Used:", totalWaterUsed);
 
     setStats({
       totalBoreholes: filtered.length,
       drilledBoreholes,
-      maintainedBoreholes,
+      equippedBoreholes,
+      rehabilitatedBoreholes,
       totalPeople,
       totalWaterUsed
     });
@@ -517,7 +525,8 @@ const BoreholePage = () => {
         PeopleUsingBorehole: newBorehole.people || 0,
         WaterUsed: newBorehole.waterUsed || 0,
         drilled: newBorehole.drilled || false,
-        maintained: newBorehole.maintained || false,
+        equipped: newBorehole.equipped || false,   // Added Equipped
+        rehabilitated: newBorehole.rehabilitated || false, // Added Rehabilitated
         date: new Date(newBorehole.date || new Date()).toISOString()
       };
 
@@ -541,7 +550,8 @@ const BoreholePage = () => {
           people: 0,
           waterUsed: 0,
           drilled: false,
-          maintained: false
+          equipped: false,
+          rehabilitated: false
         });
         setIsCreateDialogOpen(false);
 
@@ -587,7 +597,8 @@ const BoreholePage = () => {
         PeopleUsingBorehole: editingRecord.people || 0,
         WaterUsed: editingRecord.waterUsed || 0,
         drilled: editingRecord.drilled || false,
-        maintained: editingRecord.maintained || false,
+        equipped: editingRecord.equipped || false,    // Added Equipped
+        rehabilitated: editingRecord.rehabilitated || false, // Added Rehabilitated
         date: editingRecord.date // Pass existing date
       };
 
@@ -774,10 +785,11 @@ const BoreholePage = () => {
         displayPeopleValue(record.people),
         (record.waterUsed || 0).toString(),
         record.drilled ? 'Yes' : 'No',
-        record.maintained ? 'Yes' : 'No'
+        record.equipped ? 'Yes' : 'No',      // Added Equipped
+        record.rehabilitated ? 'Yes' : 'No' // Added Rehabilitated
       ]);
 
-      const headers = ['Date', 'Borehole Location', 'County', 'Sub-County', 'People Using Water', 'Water Used', 'Drilled', 'Maintained'];
+      const headers = ['Date', 'Borehole Location', 'County', 'Sub-County', 'People Using Water', 'Water Used', 'Drilled', 'Equipped', 'Rehabilitated'];
       const csvContent = [headers, ...csvData]
         .map(row => row.map(field => `"${field}"`).join(','))
         .join('\n');
@@ -955,12 +967,15 @@ const BoreholePage = () => {
         <span className="font-bold text-cyan-700">{record.waterUsed || 0} L</span>
       </td>
       <td className="py-3 px-4">
-        <div className="flex gap-1">
-          <Badge variant={record.drilled ? "default" : "secondary"} className={record.drilled ? "bg-green-100 text-green-800" : "bg-gray-100 text-gray-800"}>
+        <div className="flex flex-col gap-1">
+          <Badge variant={record.drilled ? "default" : "secondary"} className={record.drilled ? "bg-green-100 text-green-800 w-fit" : "bg-gray-100 text-gray-800 w-fit"}>
             {record.drilled ? 'Drilled' : 'Not Drilled'}
           </Badge>
-          <Badge variant={record.maintained ? "default" : "secondary"} className={record.maintained ? "bg-blue-100 text-blue-800" : "bg-gray-100 text-gray-800"}>
-            {record.maintained ? 'Maintained' : 'Not Maintained'}
+          <Badge variant={record.equipped ? "default" : "secondary"} className={record.equipped ? "bg-blue-100 text-blue-800 w-fit" : "bg-gray-100 text-gray-800 w-fit"}>
+            {record.equipped ? 'Equipped' : 'Not Equipped'}
+          </Badge>
+          <Badge variant={record.rehabilitated ? "default" : "secondary"} className={record.rehabilitated ? "bg-orange-100 text-orange-800 w-fit" : "bg-gray-100 text-gray-800 w-fit"}>
+            {record.rehabilitated ? 'Rehabilitated' : 'Not Rehabilitated'}
           </Badge>
         </div>
       </td>
@@ -1081,7 +1096,8 @@ const BoreholePage = () => {
           additionalInfo={
             <>
               <div>• {stats.drilledBoreholes} drilled</div>
-              <div>• {stats.maintainedBoreholes} maintained</div>
+              <div>• {stats.equippedBoreholes} equipped</div>
+              <div>• {stats.rehabilitatedBoreholes} rehabilitated</div>
             </>
           }
         />
@@ -1249,19 +1265,26 @@ const BoreholePage = () => {
                   <Building className="h-4 w-4" />
                   Borehole Status
                 </h3>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div>
-                    <Label className="text-sm font-medium text-slate-600">Drilled</Label>
+                    <Label className="text-sm font-medium text-slate-600 mb-1 block">Drilled</Label>
                     <Badge variant={viewingRecord.drilled ? "default" : "secondary"} 
                       className={viewingRecord.drilled ? "bg-green-100 text-green-800" : "bg-gray-100 text-gray-800"}>
                       {viewingRecord.drilled ? 'Yes' : 'No'}
                     </Badge>
                   </div>
                   <div>
-                    <Label className="text-sm font-medium text-slate-600">Maintained</Label>
-                    <Badge variant={viewingRecord.maintained ? "default" : "secondary"} 
-                      className={viewingRecord.maintained ? "bg-blue-100 text-blue-800" : "bg-gray-100 text-gray-800"}>
-                      {viewingRecord.maintained ? 'Yes' : 'No'}
+                    <Label className="text-sm font-medium text-slate-600 mb-1 block">Equipped</Label>
+                    <Badge variant={viewingRecord.equipped ? "default" : "secondary"} 
+                      className={viewingRecord.equipped ? "bg-blue-100 text-blue-800" : "bg-gray-100 text-gray-800"}>
+                      {viewingRecord.equipped ? 'Yes' : 'No'}
+                    </Badge>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-medium text-slate-600 mb-1 block">Rehabilitated</Label>
+                    <Badge variant={viewingRecord.rehabilitated ? "default" : "secondary"} 
+                      className={viewingRecord.rehabilitated ? "bg-orange-100 text-orange-800" : "bg-gray-100 text-gray-800"}>
+                      {viewingRecord.rehabilitated ? 'Yes' : 'No'}
                     </Badge>
                   </div>
                 </div>
@@ -1384,7 +1407,7 @@ const BoreholePage = () => {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-3 pt-2">
               <div className="flex items-center space-x-2">
                 <Checkbox
                   id="create-drilled"
@@ -1396,11 +1419,20 @@ const BoreholePage = () => {
 
               <div className="flex items-center space-x-2">
                 <Checkbox
-                  id="create-maintained"
-                  checked={newBorehole.maintained || false}
-                  onCheckedChange={(checked) => setNewBorehole(prev => ({ ...prev, maintained: checked as boolean }))}
+                  id="create-equipped"
+                  checked={newBorehole.equipped || false}
+                  onCheckedChange={(checked) => setNewBorehole(prev => ({ ...prev, equipped: checked as boolean }))}
                 />
-                <Label htmlFor="create-maintained" className="font-semibold text-gray-700">Maintained</Label>
+                <Label htmlFor="create-equipped" className="font-semibold text-gray-700">Equipped</Label>
+              </div>
+
+              <div className="flex items-center space-x-2">
+                <Checkbox
+                  id="create-rehabilitated"
+                  checked={newBorehole.rehabilitated || false}
+                  onCheckedChange={(checked) => setNewBorehole(prev => ({ ...prev, rehabilitated: checked as boolean }))}
+                />
+                <Label htmlFor="create-rehabilitated" className="font-semibold text-gray-700">Rehabilitated</Label>
               </div>
             </div>
           </div>
@@ -1418,7 +1450,8 @@ const BoreholePage = () => {
                   people: 0,
                   waterUsed: 0,
                   drilled: false,
-                  maintained: false
+                  equipped: false,
+                  rehabilitated: false
                 });
               }}
               disabled={createLoading}
@@ -1523,7 +1556,7 @@ const BoreholePage = () => {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-3 pt-2">
                 <div className="flex items-center space-x-2">
                   <Checkbox
                     id="edit-drilled"
@@ -1535,11 +1568,20 @@ const BoreholePage = () => {
 
                 <div className="flex items-center space-x-2">
                   <Checkbox
-                    id="edit-maintained"
-                    checked={editingRecord.maintained || false}
-                    onCheckedChange={(checked) => setEditingRecord(prev => prev ? { ...prev, maintained: checked as boolean } : null)}
+                    id="edit-equipped"
+                    checked={editingRecord.equipped || false}
+                    onCheckedChange={(checked) => setEditingRecord(prev => prev ? { ...prev, equipped: checked as boolean } : null)}
                   />
-                  <Label htmlFor="edit-maintained" className="font-semibold text-gray-700">Maintained</Label>
+                  <Label htmlFor="edit-equipped" className="font-semibold text-gray-700">Equipped</Label>
+                </div>
+
+                <div className="flex items-center space-x-2">
+                  <Checkbox
+                    id="edit-rehabilitated"
+                    checked={editingRecord.rehabilitated || false}
+                    onCheckedChange={(checked) => setEditingRecord(prev => prev ? { ...prev, rehabilitated: checked as boolean } : null)}
+                  />
+                  <Label htmlFor="edit-rehabilitated" className="font-semibold text-gray-700">Rehabilitated</Label>
                 </div>
               </div>
             </div>
