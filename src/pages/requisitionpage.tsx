@@ -18,6 +18,7 @@ import { useToast } from "@/hooks/use-toast";
 import { isChiefAdmin } from "@/contexts/authhelper";
 import html2canvas from "html2canvas";
 import { jsPDF } from "jspdf";
+import { millify } from 'millify';
 
 // --- Types ---
 interface PerdiemItem {
@@ -816,7 +817,7 @@ const RequisitionsPage = () => {
             <div className="rounded-full bg-gray-50 p-2">
                 <Icon className={`h-5 w-5 text-${color}-600`} />
             </div>
-            <div className="text-3xl font-bold text-gray-800">{value}</div>
+            <div className="text-xl font-bold text-gray-800">{value}</div>
         </div>
         {description && <p className="text-xs mt-2 bg-gray-50 px-2 py-1 rounded-md border border-slate-100">{description}</p>}
       </CardContent>
@@ -939,20 +940,14 @@ const RequisitionsPage = () => {
 </style>
 
 
-    <div className="space-y-6 px-2 sm:px-4 md:px-0">
+    <div className="space-y-6 px-2 sm:px-4 md:px-0 items-center">
       {/* Header Section */}
-      <div className="flex flex-row md:flex-row justify-between items-start gap-4 md:items-center">
-        <div className="w-full md:w-auto flex flex-row items-center gap-4">
+       {!userRole || userRole !== 'hr' && ( <div className="flex justify-between items-center text-sm">
+             <div className="flex flex-row md:flex-row justify-between items-start gap-4 md:items-center">
+       <div className="w-full md:w-auto flex flex-row items-center gap-4">
           <h2 className="text-md font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
             Requisitions
           </h2>
-          {userRole === 'hr' && ( <div className="flex justify-between items-center text-sm">
-              <div className="font-semibold text-gray-700 rounded-md bg-gray-100 px-2 py-1 border border-gray-300">
-                  <span className="font-normal">{userName || user?.email || "System"}</span>
-              </div>
-            </div> )}
-            
-          
         </div>
          
          <div className="flex lg:flex-row md:flex-row flex-col gap-4 w-full md:w-auto">
@@ -1008,11 +1003,101 @@ const RequisitionsPage = () => {
         </div>
       </div>
 
+              
+            </div> )}
+      {userRole === 'hr' && ( <div className="flex justify-between items-center text-sm">
+    
+      <div className="flex flex-row md:flex-row justify-between items-center gap-4 md:items-center">
+        
+         <div className="w-full md:w-auto flex flex-row items-center gap-4">
+          
+          <div className="flex flex-row gap-4">
+            
+          <div className="flex flex-row gp-4 items-center justify-center">
+            <div className="w-10 rounded-full shaddow-full">
+               <img src="/img/logo copy.png" alt="" className="w-full rounded-full" />
+            </div>
+           
+            <p>Human Resource Management</p>
+          </div>
+          </div>
+          
+         
+          
+            <h2 className="text-md font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+            Requisitions
+          </h2>
+            
+          
+        </div>
+         
+         <div className="flex lg:flex-row md:flex-row flex-col gap-4 w-full md:w-auto">
+          
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full md:w-auto relative z-50">
+              
+                <div className="">
+                    <Label className="sr-only">Start Date</Label>
+                    <Input type="date" value={filters.startDate} onChange={(e) => handleFilterChange("startDate", e.target.value)} className="border-gray-300 focus:border-blue-500 bg-white h-9 w-full" />
+                </div>
+                <div className="">
+                    <Label className="sr-only">End Date</Label>
+                    <Input type="date" value={filters.endDate} onChange={(e) => handleFilterChange("endDate", e.target.value)} className="border-gray-300 focus:border-blue-500 bg-white h-9 w-full" />
+                </div>
+            </div>
+            
+            {userIsChiefAdmin && userRole !== 'hr' && (
+                <div className="space-y-2 w-full md:w-[180px]">
+                    <Select value={activeProgram} onValueChange={handleProgramChange} disabled={availablePrograms.length === 0}>
+                        <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white h-9 font-bold w-full">
+                            <SelectValue placeholder="Select Programme" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            {availablePrograms.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+                        </SelectContent>
+                    </Select>
+                </div>
+            )}
+
+            <div className="w-full md:w-auto flex justify-end">
+                <Button variant="outline" size="sm" onClick={() => setFilters({ ...filters, search: "", startDate: "", endDate: "", type: "all", status: "all" })} className="h-9 px-6 w-full md:w-auto">
+                    Clear Filters
+                </Button>
+            </div>
+          
+        <div className="flex flex-wrap gap-2 w-full md:w-auto mt-2 md:mt-0 justify-end">
+          {userRole !== 'hr' && selectedRecords.length > 0 && (
+            <Button variant="destructive" size="sm" onClick={() => {}} className="text-xs">
+               Delete ({selectedRecords.length})
+            </Button>
+          )}
+           
+           {userRole === 'hr' ? (
+             <Button onClick={handleLogout} variant="outline" size="sm" className="h-9 px-6 w-full md:w-auto text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700">
+               <LogOut className="h-4 w-4 mr-2" /> Logout
+             </Button>
+           ) : (
+             <Button onClick={() => {}} disabled={exportLoading} className="bg-gradient-to-r from-blue-800 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white shadow-md text-xs h-9 px-6 w-full md:w-auto">
+                <Download className="h-4 w-4 mr-2" /> Export ({filteredRequisitions.length})
+              </Button>
+           )}
+
+            <div className="flex justify-between items-center text-sm">
+            
+              <div className="font-semibold text-gray-700 rounded-md bg-gray-100 px-2 py-1 border border-gray-300">
+                  <span className="font-normal">{userName+" - "+userRole || user?.email || "System"}</span>
+              </div>
+            </div>
+        </div>
+        </div>
+      </div>
+            </div> )}
+     
+
       {/* Stats Section */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         <StatsCard title="TOTAL REQUESTS" value={stats.totalRequests.toLocaleString()} icon={FileText} color="blue"/>
         <StatsCard title="PENDING APPROVAL" value={stats.pendingRequests.toLocaleString()} icon={Calendar} color="orange"/>
-        <StatsCard title="TOTAL AMOUNT" value={`KES ${stats.totalAmount.toLocaleString()}`} icon={Wallet} color="green"/>
+        <StatsCard title="TOTAL AMOUNT" value={`KES ${millify(stats.totalAmount)}`} icon={Wallet} color="green"/>
       </div>
 
       {/* Filter Section */}
@@ -1187,9 +1272,9 @@ const RequisitionsPage = () => {
                   {viewingRecord.type === 'fuel and Service' ? (
                     <div className="space-y-2 font-times">
                       <div className="grid grid-cols-1 gap-4">
-                        <div className="flex flex-row items-center gap-2"><span className="text-gray-800 text-[17px] ">Last Speedometer Reading : </span><span className="text-gray-800">{viewingRecord.lastReading} km</span></div>
+                        <div className="flex flex-row items-center gap-2"><span className="text-gray-800 text-[17px] ">Last Speedometer Reading : </span><span className="text-gray-800">{viewingRecord.lastReading} Km</span></div>
                         <div className="flex flex-row items-center gap-2"><span className="text-gray-800 text-[17px] ">Current Speedometer Reading :</span><span className="text-gray-800">{viewingRecord.currentReading} km</span></div>
-                        <div className="flex flex-row items-center gap-2"><span className="text-gray-800 text-[17px] ">Distance Traveled : </span><span className="text-gray-800">{viewingRecord.distanceTraveled} km</span></div>
+                        <div className="flex flex-row items-center gap-2"><span className="text-gray-800 text-[17px] ">Distance Traveled : </span><span className="text-gray-800">{viewingRecord.distanceTraveled} Km</span></div>
                         <div className="flex flex-row items-center gap-2"><span className="text-gray-800 text-[17px] ">Amount Requested : </span><span className="text-gray-800">KES {viewingRecord.fuelAmount?.toLocaleString()}</span></div>
                       </div>
                     </div>
@@ -1231,7 +1316,7 @@ const RequisitionsPage = () => {
                       <div className="grid grid-cols-2 mt-4 gap-8">
                         <div className="flex flex-row">
                           <span className="text-[17px] text-gray-700">Approved By : </span>
-                          <div className="flex-1 flex relative h-6">{viewingRecord.approvedBy ? <span className="text-[17px] ml-2">{viewingRecord.approvedBy} (Admin/Chief Admin)</span> : <span className="text-xs italic text-gray-300">Pending Approval</span>}</div></div>
+                          <div className="flex-1 flex relative h-6">{viewingRecord.approvedBy ? <span className="text-[17px] ml-2">{viewingRecord.approvedBy} (Project Manger)</span> : <span className="text-xs italic text-gray-300">Pending Approval</span>}</div></div>
                         <div className="flex flex-row"><span className="text-[17px]">Date : </span><div className="flex justify-between text-2xs text-gray-900 ml-2"><span>{viewingRecord.approvedAt ? formatDateTime(viewingRecord.approvedAt) : 'Date'}</span></div></div>
                         
                        
@@ -1256,7 +1341,7 @@ const RequisitionsPage = () => {
                         </div>
                           </div>
                           <div><div className="flex-1 flex flex-col justify-between mt-2">
-                          <span className="text-[17px]">Official Stumb : </span>
+                          <span className="text-[17px]">Official Stamp : </span>
                          
                         </div></div>
                           

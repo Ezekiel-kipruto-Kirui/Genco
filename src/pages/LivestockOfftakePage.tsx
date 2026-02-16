@@ -1496,7 +1496,7 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
           <Icon className="h-8 w-8 text-blue-600" />
         </div>
         <div>
-          <div className="text-2xl font-bold text-green-500 mb-2">{value}</div>
+          <div className="text-xl font-bold text-green-500 mb-2">{value}</div>
           {subValue && <div className="text-sm font-medium text-slate-600 mb-2">{subValue}</div>}
           {description && <p className="text-[10px] mt-2 bg-orange-50 px-2 py-1 rounded-md border border-slate-100">{description}</p>}
         </div>

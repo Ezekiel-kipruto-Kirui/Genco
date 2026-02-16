@@ -845,7 +845,7 @@ const LivestockFarmersPage = () => {
             <div className="rounded-full bg-gray-50 p-2">
                 <Icon className={`h-5 w-5 text-${color}-600`} />
             </div>
-            <div className="text-3xl font-bold text-gray-800">{value}</div>
+            <div className="text-xl font-bold text-gray-800">{value}</div>
         </div>
         {(maleCount !== undefined && femaleCount !== undefined) ? (
           <div className="mt-3 flex items-center justify-between w-full bg-gray-50 text-xs">
