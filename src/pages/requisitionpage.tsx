@@ -1316,7 +1316,7 @@ const RequisitionsPage = () => {
                       <div className="grid grid-cols-2 mt-4 gap-8">
                         <div className="flex flex-row">
                           <span className="text-[17px] text-gray-700">Approved By : </span>
-                          <div className="flex-1 flex relative h-6">{viewingRecord.approvedBy ? <span className="text-[17px] ml-2">{viewingRecord.approvedBy} (Project Manger)</span> : <span className="text-xs italic text-gray-300">Pending Approval</span>}</div></div>
+                          <div className="flex-1 flex relative h-6">{viewingRecord.approvedBy ? <span className="text-[17px] ml-2">{viewingRecord.approvedBy} (Project Manager)</span> : <span className="text-xs italic text-gray-300">Pending Approval</span>}</div></div>
                         <div className="flex flex-row"><span className="text-[17px]">Date : </span><div className="flex justify-between text-2xs text-gray-900 ml-2"><span>{viewingRecord.approvedAt ? formatDateTime(viewingRecord.approvedAt) : 'Date'}</span></div></div>
                         
                        
@@ -1376,14 +1376,14 @@ const RequisitionsPage = () => {
                 </Button>
               )}
               
-              {/* HR Authorization Button */}
+              
               {canAuthorizeRequisition && viewingRecord?.status === 'approved' && !viewingRecord.authorizedBy && (
                 <Button onClick={handleAuthorize} className="bg-indigo-600 hover:bg-indigo-700 flex-1 sm:flex-none">
                   <CheckCircle className="h-4 w-4 mr-2" /> Authorize
                 </Button>
               )}
 
-              {/* HR/Admin/Chief Mark Complete Button (after HR authorization) */}
+        
               {canCompleteRequisition && viewingRecord?.status === 'approved' && !!viewingRecord.authorizedBy && (
                 <Button onClick={handleMarkComplete} className="bg-blue-800 hover:bg-blue-900 flex-1 sm:flex-none">
                   <CheckCircle className="h-4 w-4 mr-2" /> Mark Complete
