@@ -39,7 +39,7 @@ interface HayStorage {
   county: string;
   subcounty: string;
   land_under_pasture: number;
-  land_ownership: string; // NEW FIELD: 'Community Owned' | 'Leased'
+  land_ownership: string; 
   pasture_stages: PastureStage[];
   storage_facility?: string;
   bales_harvested_stored?: number;
@@ -103,6 +103,13 @@ const PASTURE_STAGES = [
   "preflowering stage",
   "harvesting",
   "baling"
+];
+
+const STORAGE_FACILITIES = [
+  "Nomotio",
+  "Yare Block A",
+  "Yare Block B",
+  "Loosuk"
 ];
 
 // --- Helper Functions ---
@@ -232,6 +239,9 @@ const TableRow = ({ record, isSelected, onSelectRecord, onView, onEdit, onDelete
   const balance = (record.bales_harvested_stored || 0) - (record.bales_sold || 0);
   const balanceColor = balance >= 0 ? "text-green-600" : "text-red-600";
 
+  // Determine if this is an aggregated record (aggregated records use storage_facility as ID)
+  const isAggregated = STORAGE_FACILITIES.includes(record.id);
+
   return (
   <tr className="border-b hover:bg-blue-50 transition-colors duration-200 group text-sm whitespace-nowrap">
     <td className="py-3 px-4">
@@ -243,7 +253,6 @@ const TableRow = ({ record, isSelected, onSelectRecord, onView, onEdit, onDelete
     <td className="py-3 px-4">{formatDate(record.date_planted)}</td>
     <td className="py-3 px-4">{record.location || 'N/A'}</td>
     <td className="py-3 px-4">{record.land_under_pasture || 0} acres</td>
-    {/* <td className="py-3 px-4 capitalize"><Badge variant="outline">{record.land_ownership || 'N/A'}</Badge></td> */}
     <td className="py-3 px-4">
       {record.pasture_stages.length > 0 ? (
         <Badge variant="outline" className="bg-blue-50 text-blue-700">
@@ -275,7 +284,8 @@ const TableRow = ({ record, isSelected, onSelectRecord, onView, onEdit, onDelete
         >
           <Eye className="h-4 w-4 text-blue-500" />
         </Button>
-        {userIsChiefAdmin && (
+        {/* Hide Edit/Delete for aggregated records to avoid logic errors with summed data */}
+        {!isAggregated && userIsChiefAdmin && (
           <>
             <Button
               variant="outline"
@@ -314,6 +324,7 @@ const HayStoragePage = () => {
   // State
   const [allHayStorage, setAllHayStorage] = useState<HayStorage[]>([]);
   const [filteredHayStorage, setFilteredHayStorage] = useState<HayStorage[]>([]);
+  const [rawFilteredHayStorage, setRawFilteredHayStorage] = useState<HayStorage[]>([]); // NEW: Store raw data for export
   const [loading, setLoading] = useState(true);
   const [exportLoading, setExportLoading] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
@@ -336,7 +347,7 @@ const HayStoragePage = () => {
     county: '',
     subcounty: '',
     land_under_pasture: 0,
-    land_ownership: '', // NEW FIELD
+    land_ownership: '', 
     pasture_stages: [
       { stage: '', date: '' },
       { stage: '', date: '' },
@@ -472,7 +483,7 @@ const HayStoragePage = () => {
             county: item.county || '',
             subcounty: item.subcounty || '',
             land_under_pasture: Number(item.land_under_pasture || 0),
-            land_ownership: item.land_ownership || 'N/A', // NEW FIELD
+            land_ownership: item.land_ownership || 'N/A', 
             pasture_stages: item.pasture_stages || [],
             storage_facility: item.storage_facility || '',
             bales_harvested_stored: Number(item.bales_harvested_stored || 0),
@@ -503,6 +514,7 @@ const HayStoragePage = () => {
   const applyFilters = useCallback(() => {
     if (allHayStorage.length === 0) {
       setFilteredHayStorage([]);
+      setRawFilteredHayStorage([]);
       setStats({
         totalLandUnderPasture: 0,
         totalRevenue: 0,
@@ -514,6 +526,7 @@ const HayStoragePage = () => {
       return;
     }
 
+    // 1. Filter Raw Data based on criteria
     let filtered = allHayStorage.filter(record => {
       if (filters.county !== "all" && record.county?.toLowerCase() !== filters.county.toLowerCase()) return false;
       if (filters.subcounty !== "all" && record.subcounty?.toLowerCase() !== filters.subcounty.toLowerCase()) return false;
@@ -545,24 +558,71 @@ const HayStoragePage = () => {
       return true;
     });
 
-    setFilteredHayStorage(filtered);
+    // Save raw filtered data for Export
+    setRawFilteredHayStorage(filtered);
 
-    const totalRevenue = filtered.reduce((sum, record) => sum + (record.revenue_generated || 0), 0);
-    const totalBalesHarvested = filtered.reduce((sum, record) => sum + (record.bales_harvested_stored || 0), 0);
-    const totalBalesSold = filtered.reduce((sum, record) => sum + (record.bales_sold || 0), 0);
-    const totalLandUnderPasture = filtered.reduce((sum, record) => sum + (record.land_under_pasture || 0), 0);
-    const uniqueFacilities = new Set(filtered.map(record => record.storage_facility).filter(facility => facility && facility.trim() !== ''));
+    // 2. Aggregate (Sum) by Storage Facility
+    const groupedByFacility = filtered.reduce((acc, curr) => {
+      const facility = curr.storage_facility || 'Unknown Facility';
+      
+      if (!acc[facility]) {
+        // Initialize with the first record's data, but zero out sums
+        acc[facility] = {
+          ...curr,
+          id: facility, // Use facility name as ID for the table row
+          bales_harvested_stored: 0,
+          bales_sold: 0,
+          revenue_generated: 0,
+          land_under_pasture: 0,
+          pasture_stages: [],
+          date_planted: curr.date_planted || null,
+        };
+      }
+
+      // Keep the most recent planted date per facility for display.
+      const existingDate = parseDate(acc[facility].date_planted);
+      const currentDate = parseDate(curr.date_planted);
+      if (currentDate && (!existingDate || currentDate > existingDate)) {
+        acc[facility].date_planted = curr.date_planted;
+      }
+
+      // Sum numeric values
+      acc[facility].bales_harvested_stored += (curr.bales_harvested_stored || 0);
+      acc[facility].bales_sold += (curr.bales_sold || 0);
+      acc[facility].revenue_generated += (curr.revenue_generated || 0);
+      acc[facility].land_under_pasture += (curr.land_under_pasture || 0);
+      
+      // Merge stages (flatten array)
+      acc[facility].pasture_stages = [...acc[facility].pasture_stages, ...(curr.pasture_stages || [])];
+
+      return acc;
+    }, {} as Record<string, HayStorage>);
+
+    const aggregatedData = Object.values(groupedByFacility);
+
+    // Update Display Data
+    setFilteredHayStorage(aggregatedData);
+
+    // Calculate Stats based on Aggregated Data (or filtered, both sum to same total)
+    // Using aggregatedData for consistency with view
+    const totalRevenue = aggregatedData.reduce((sum, record) => sum + (record.revenue_generated || 0), 0);
+    const totalBalesHarvested = aggregatedData.reduce((sum, record) => sum + (record.bales_harvested_stored || 0), 0);
+    const totalBalesSold = aggregatedData.reduce((sum, record) => sum + (record.bales_sold || 0), 0);
+    const totalLandUnderPasture = aggregatedData.reduce((sum, record) => sum + (record.land_under_pasture || 0), 0);
+    
+    // Facilities are the keys in our aggregation
+    const uniqueFacilities = aggregatedData.length; 
 
     setStats({
       totalLandUnderPasture,
       totalRevenue,
       totalBalesHarvested,
       totalBalesSold,
-      totalFacilities: uniqueFacilities.size,
+      totalFacilities: uniqueFacilities,
       totalBalesBalance: totalBalesHarvested - totalBalesSold
     });
 
-    const totalPages = Math.ceil(filtered.length / pagination.limit);
+    const totalPages = Math.ceil(aggregatedData.length / pagination.limit);
     setPagination(prev => ({
       ...prev,
       totalPages,
@@ -573,7 +633,6 @@ const HayStoragePage = () => {
 
   // --- REALTIME DATABASE ADD FUNCTION (WITH TOP UP LOGIC) ---
   const handleAddRecord = async () => {
-    // Validation
     if (!addingRecord.date_planted || !addingRecord.location || !addingRecord.county || !addingRecord.subcounty || !addingRecord.land_ownership) {
       toast({
         title: "Validation Error",
@@ -589,24 +648,17 @@ const HayStoragePage = () => {
       const validStages = (addingRecord.pasture_stages || [])
         .filter(stage => stage.stage.trim() !== '' && stage.date.trim() !== '');
 
-      // Check for existing record (Top Up Logic)
-      // We match by Location AND County to ensure we update the correct farm
       const existingRecord = allHayStorage.find(r => 
         r.location.toLowerCase() === addingRecord.location.toLowerCase() && 
         r.county.toLowerCase() === addingRecord.county.toLowerCase()
       );
 
       if (existingRecord) {
-        // --- TOP UP LOGIC ---
-        // Update existing record by summing values
         const updatedPayload = {
           bales_harvested_stored: (existingRecord.bales_harvested_stored || 0) + (Number(addingRecord.bales_harvested_stored) || 0),
           bales_sold: (existingRecord.bales_sold || 0) + (Number(addingRecord.bales_sold) || 0),
           revenue_generated: (existingRecord.revenue_generated || 0) + (Number(addingRecord.revenue_generated) || 0),
-          // Note: We generally do NOT update date_planted for a top-up to preserve original planting date,
-          // unless specific business logic dictates otherwise. We keep the original land details.
-          pasture_stages: [...(existingRecord.pasture_stages || []), ...validStages], // Append new stages
-          // Update storage facility if the new one is provided
+          pasture_stages: [...(existingRecord.pasture_stages || []), ...validStages],
           storage_facility: addingRecord.storage_facility || existingRecord.storage_facility
         };
 
@@ -616,14 +668,13 @@ const HayStoragePage = () => {
           description: "Existing record topped up successfully.",
         });
       } else {
-        // --- CREATE NEW RECORD ---
         const payload = {
           date_planted: new Date(addingRecord.date_planted).toISOString(),
           location: addingRecord.location,
           county: addingRecord.county,
           subcounty: addingRecord.subcounty,
           land_under_pasture: Number(addingRecord.land_under_pasture) || 0,
-          land_ownership: addingRecord.land_ownership, // NEW FIELD
+          land_ownership: addingRecord.land_ownership, 
           pasture_stages: validStages,
           storage_facility: addingRecord.storage_facility || '',
           bales_harvested_stored: Number(addingRecord.bales_harvested_stored) || 0,
@@ -644,7 +695,6 @@ const HayStoragePage = () => {
         });
       }
 
-      // Reset Form
       setIsAddDialogOpen(false);
       setAddingRecord({
         date_planted: '',
@@ -715,7 +765,6 @@ const HayStoragePage = () => {
     if (editingRecord) setEditingRecord(prev => prev ? { ...prev, [field]: value } : null);
   };
 
-  // --- REALTIME DATABASE UPDATE FUNCTION ---
   const handleSaveEdit = async () => {
     if (!editingRecord) return;
     try {
@@ -742,7 +791,6 @@ const HayStoragePage = () => {
     }
   };
 
-  // --- REALTIME DATABASE DELETE FUNCTION ---
   const handleDeleteSelected = async () => {
     if (selectedRecords.length === 0) return;
     try {
@@ -763,7 +811,6 @@ const HayStoragePage = () => {
     }
   };
 
-  // Upload Functions
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
@@ -807,29 +854,29 @@ const HayStoragePage = () => {
     }
   };
 
-  // Export Function
+  // Export Function - Uses Raw Data
   const handleExport = async () => {
     try {
       setExportLoading(true);
-      if (filteredHayStorage.length === 0) {
+      if (rawFilteredHayStorage.length === 0) {
         toast({ title: "No Data to Export", description: "There are no records", variant: "destructive" });
         return;
       }
 
-      const csvData = filteredHayStorage.map(record => {
+      const csvData = rawFilteredHayStorage.map(record => {
         const balance = (record.bales_harvested_stored || 0) - (record.bales_sold || 0);
         return [
           formatDate(record.date_planted),
           record.location || 'N/A',
           record.county || 'N/A',
           record.subcounty || 'N/A',
-          record.land_ownership || 'N/A', // NEW COLUMN
+          record.land_ownership || 'N/A', 
           record.land_under_pasture || 0,
           record.pasture_stages.map(stage => `${stage.stage}: ${formatDate(stage.date)}`).join('; '),
           record.storage_facility || 'N/A',
           record.bales_harvested_stored || 0,
           record.bales_sold || 0,
-          balance, // NEW COLUMN
+          balance, 
           formatDate(record.date_sold),
           formatCurrency(record.revenue_generated || 0)
         ];
@@ -846,7 +893,7 @@ const HayStoragePage = () => {
       link.click();
       document.body.removeChild(link);
       window.URL.revokeObjectURL(url);
-      toast({ title: "Export Successful", description: `Exported ${filteredHayStorage.length} records` });
+      toast({ title: "Export Successful", description: `Exported ${rawFilteredHayStorage.length} records` });
     } catch (error) {
       console.error("Error exporting data:", error);
       toast({ title: "Export Failed", description: "Failed to export data", variant: "destructive" });
@@ -895,8 +942,8 @@ const HayStoragePage = () => {
                   <Trash2 className="h-4 w-4 mr-2" /> {deleteLoading ? "Deleting..." : `Delete (${selectedRecords.length})`}
                 </Button>
               )}
-              <Button onClick={handleExport} disabled={exportLoading || filteredHayStorage.length === 0} className="bg-gradient-to-r from-blue-600 to-purple-700 hover:from-blue-700 hover:to-purple-800 text-white shadow-md text-xs">
-                <Download className="h-4 w-4 mr-2" /> {exportLoading ? "Exporting..." : `Export (${filteredHayStorage.length})`}
+              <Button onClick={handleExport} disabled={exportLoading || rawFilteredHayStorage.length === 0} className="bg-gradient-to-r from-blue-600 to-purple-700 hover:from-blue-700 hover:to-purple-800 text-white shadow-md text-xs">
+                <Download className="h-4 w-4 mr-2" /> {exportLoading ? "Exporting..." : `Export (${rawFilteredHayStorage.length})`}
               </Button>
             </>
           )}
@@ -913,7 +960,7 @@ const HayStoragePage = () => {
           icon={Package}
           description={`Sold: ${stats.totalBalesSold.toLocaleString()} | Balance: ${stats.totalBalesBalance.toLocaleString()}`}
         />
-        <StatsCard title="Storage Facilities" value={stats.totalFacilities} icon={Warehouse} description="Unique storage facilities used" />
+        <StatsCard title="Storage Facilities" value={stats.totalFacilities} icon={Warehouse} description="" />
       </div>
 
       {/* Filters Section */}
@@ -952,10 +999,9 @@ const HayStoragePage = () => {
                           onCheckedChange={handleSelectAll}
                         />
                       </th>
-                      <th className="py-1 text-xs text-left px-6 font-medium text-gray-600">Date Harvested</th>
+                      <th className="py-1 text-xs text-left px-6 font-medium text-gray-600">Date Planted</th>
                       <th className="py-1 text-xs text-left px-6 font-medium text-gray-600">Land Location</th>
                       <th className="py-1 text-xs text-left px-6 font-medium text-gray-600">Land (acres)</th>
-                      {/* <th className="py-1 text-xs text-left px-6 font-medium text-gray-600">Model</th> */}
                       <th className="py-1 text-xs text-left px-6 font-medium text-gray-600">Pasture Stages</th>
                       <th className="py-1 text-xs text-left px-6 font-medium text-gray-600">Storage Facility</th>
                       <th className="py-1 text-xs text-left px-6 font-medium text-gray-600">Bales Harvested</th>
@@ -982,7 +1028,7 @@ const HayStoragePage = () => {
                 </table>
               </div>
               <div className="flex items-center justify-between p-4 border-t bg-gray-50">
-                <div className="text-sm text-muted-foreground">{filteredHayStorage.length} total records • {getCurrentPageRecords().length} on this page</div>
+                <div className="text-sm text-muted-foreground">{filteredHayStorage.length} total facilities • {getCurrentPageRecords().length} on this page</div>
                 <div className="flex gap-2">
                   <Button variant="outline" size="sm" disabled={!pagination.hasPrev} onClick={() => handlePageChange(pagination.page - 1)} className="border-gray-300 hover:bg-gray-100">Previous</Button>
                   <Button variant="outline" size="sm" disabled={!pagination.hasNext} onClick={() => handlePageChange(pagination.page + 1)} className="border-gray-300 hover:bg-gray-100">Next</Button>
@@ -1010,7 +1056,6 @@ const HayStoragePage = () => {
                 <div className="space-y-2"><Label htmlFor="add-subcounty" className="text-sm font-medium text-slate-600">Subcounty *</Label><Input id="add-subcounty" value={addingRecord.subcounty || ''} onChange={(e) => setAddingRecord(prev => ({ ...prev, subcounty: e.target.value }))} className="border-gray-300 focus:border-blue-500" placeholder="Enter subcounty" required /></div>
                 <div className="space-y-2 col-span-2"><Label htmlFor="add-land-pasture" className="text-sm font-medium text-slate-600">Land Under Pasture (acres) *</Label><Input id="add-land-pasture" type="number" step="0.1" min="0" value={addingRecord.land_under_pasture || 0} onChange={(e) => setAddingRecord(prev => ({ ...prev, land_under_pasture: parseFloat(e.target.value) || 0 }))} className="border-gray-300 focus:border-blue-500" placeholder="Enter land area in acres" required /></div>
                 
-                {/* NEW FIELD: Land Ownership */}
                 <div className="space-y-2 col-span-2">
                   <Label htmlFor="add-ownership" className="text-sm font-medium text-slate-600">Land Ownership *</Label>
                   <Select value={addingRecord.land_ownership} onValueChange={(value) => setAddingRecord(prev => ({ ...prev, land_ownership: value }))}>
@@ -1053,7 +1098,21 @@ const HayStoragePage = () => {
             <div className="bg-slate-50 rounded-xl p-4">
               <h3 className="font-semibold text-slate-800 mb-3 flex items-center gap-2"><Warehouse className="h-4 w-4" /> Optional Information</h3>
               <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2"><Label htmlFor="add-storage-facility" className="text-sm font-medium text-slate-600">Storage Facility</Label><Input id="add-storage-facility" value={addingRecord.storage_facility || ''} onChange={(e) => setAddingRecord(prev => ({ ...prev, storage_facility: e.target.value }))} className="border-gray-300 focus:border-blue-500" placeholder="Enter storage facility" /></div>
+                {/* UPDATED: Storage Facility Select */}
+                <div className="space-y-2 col-span-2">
+                  <Label htmlFor="add-storage-facility" className="text-sm font-medium text-slate-600">Storage Facility</Label>
+                  <Select value={addingRecord.storage_facility} onValueChange={(value) => setAddingRecord(prev => ({ ...prev, storage_facility: value }))}>
+                    <SelectTrigger className="border-gray-300 focus:border-blue-500">
+                      <SelectValue placeholder="Select facility" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {STORAGE_FACILITIES.map(facility => (
+                        <SelectItem key={facility} value={facility}>{facility}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
                 <div className="space-y-2"><Label htmlFor="add-bales-harvested" className="text-sm font-medium text-slate-600">Bales Harvested & Stored</Label><Input id="add-bales-harvested" type="number" value={addingRecord.bales_harvested_stored || 0} onChange={(e) => setAddingRecord(prev => ({ ...prev, bales_harvested_stored: parseInt(e.target.value) || 0 }))} className="border-gray-300 focus:border-blue-500" /></div>
                 <div className="space-y-2"><Label htmlFor="add-bales-sold" className="text-sm font-medium text-slate-600">Bales Sold</Label><Input id="add-bales-sold" type="number" value={addingRecord.bales_sold || 0} onChange={(e) => setAddingRecord(prev => ({ ...prev, bales_sold: parseInt(e.target.value) || 0 }))} className="border-gray-300 focus:border-blue-500" /></div>
                 <div className="space-y-2"><Label htmlFor="add-date-sold" className="text-sm font-medium text-slate-600">Date Sold</Label><Input id="add-date-sold" type="date" value={addingRecord.date_sold as string} onChange={(e) => setAddingRecord(prev => ({ ...prev, date_sold: e.target.value }))} className="border-gray-300 focus:border-blue-500" /></div>
@@ -1137,7 +1196,6 @@ const HayStoragePage = () => {
                   <div className="space-y-2"><Label htmlFor="edit-subcounty" className="text-sm font-medium text-slate-600">Subcounty</Label><Input id="edit-subcounty" value={editingRecord.subcounty || ''} onChange={(e) => handleEditChange('subcounty', e.target.value)} className="border-gray-300 focus:border-blue-500" /></div>
                   <div className="space-y-2 col-span-2"><Label htmlFor="edit-land-pasture" className="text-sm font-medium text-slate-600">Land Under Pasture (acres)</Label><Input id="edit-land-pasture" type="number" step="0.1" min="0" value={editingRecord.land_under_pasture || 0} onChange={(e) => handleEditChange('land_under_pasture', parseFloat(e.target.value) || 0)} className="border-gray-300 focus:border-blue-500" /></div>
                   
-                  {/* NEW FIELD: Land Ownership */}
                   <div className="space-y-2 col-span-2">
                     <Label htmlFor="edit-ownership" className="text-sm font-medium text-slate-600">Land Ownership</Label>
                     <Select value={editingRecord.land_ownership} onValueChange={(value) => handleEditChange('land_ownership', value)}>
@@ -1179,7 +1237,19 @@ const HayStoragePage = () => {
               <div className="bg-slate-50 rounded-xl p-4">
                 <h3 className="font-semibold text-slate-800 mb-3 flex items-center gap-2"><Warehouse className="h-4 w-4" /> Storage & Sales Information</h3>
                 <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2"><Label htmlFor="edit-storage-facility" className="text-sm font-medium text-slate-600">Storage Facility</Label><Input id="edit-storage-facility" value={editingRecord.storage_facility || ''} onChange={(e) => handleEditChange('storage_facility', e.target.value)} className="border-gray-300 focus:border-blue-500" /></div>
+                <div className="space-y-2 col-span-2">
+                    <Label htmlFor="edit-storage-facility" className="text-sm font-medium text-slate-600">Storage Facility</Label>
+                    <Select value={editingRecord.storage_facility} onValueChange={(value) => handleEditChange('storage_facility', value)}>
+                      <SelectTrigger className="border-gray-300 focus:border-blue-500">
+                        <SelectValue placeholder="Select facility" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {STORAGE_FACILITIES.map(facility => (
+                            <SelectItem key={facility} value={facility}>{facility}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
                   <div className="space-y-2"><Label htmlFor="edit-bales-harvested" className="text-sm font-medium text-slate-600">Bales Harvested & Stored</Label><Input id="edit-bales-harvested" type="number" value={editingRecord.bales_harvested_stored || 0} onChange={(e) => handleEditChange('bales_harvested_stored', parseInt(e.target.value) || 0)} className="border-gray-300 focus:border-blue-500" /></div>
                   <div className="space-y-2"><Label htmlFor="edit-bales-sold" className="text-sm font-medium text-slate-600">Bales Sold</Label><Input id="edit-bales-sold" type="number" value={editingRecord.bales_sold || 0} onChange={(e) => handleEditChange('bales_sold', parseInt(e.target.value) || 0)} className="border-gray-300 focus:border-blue-500" /></div>
                   <div className="space-y-2"><Label htmlFor="edit-date-sold" className="text-sm font-medium text-slate-600">Date Sold</Label><Input id="edit-date-sold" type="date" value={formatDateForInput(editingRecord.date_sold)} onChange={(e) => handleEditChange('date_sold', e.target.value)} className="border-gray-300 focus:border-blue-500" /></div>

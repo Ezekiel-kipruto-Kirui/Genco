@@ -990,11 +990,12 @@ const RequisitionsPage = () => {
             </Button>
           )}
            
-           {userRole === 'hr' ? (
+           {userRole === 'hr' && (
              <Button onClick={handleLogout} variant="outline" size="sm" className="h-9 px-6 w-full md:w-auto text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700">
                <LogOut className="h-4 w-4 mr-2" /> Logout
              </Button>
-           ) : (
+           )}
+           { userRole !== 'hr' && userRole !== 'admin' && (
              <Button onClick={() => {}} disabled={exportLoading} className="bg-gradient-to-r from-blue-800 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white shadow-md text-xs h-9 px-6 w-full md:w-auto">
                 <Download className="h-4 w-4 mr-2" /> Export ({filteredRequisitions.length})
               </Button>
@@ -1065,17 +1066,18 @@ const RequisitionsPage = () => {
             </div>
           
         <div className="flex flex-wrap gap-2 w-full md:w-auto mt-2 md:mt-0 justify-end">
-          {userRole !== 'hr' && selectedRecords.length > 0 && (
+          {(
             <Button variant="destructive" size="sm" onClick={() => {}} className="text-xs">
                Delete ({selectedRecords.length})
             </Button>
           )}
            
-           {userRole === 'hr' ? (
+           {userRole === 'hr' && (
              <Button onClick={handleLogout} variant="outline" size="sm" className="h-9 px-6 w-full md:w-auto text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700">
                <LogOut className="h-4 w-4 mr-2" /> Logout
              </Button>
-           ) : (
+           )}
+           { userRole !== 'hr' && (
              <Button onClick={() => {}} disabled={exportLoading} className="bg-gradient-to-r from-blue-800 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white shadow-md text-xs h-9 px-6 w-full md:w-auto">
                 <Download className="h-4 w-4 mr-2" /> Export ({filteredRequisitions.length})
               </Button>
@@ -1209,13 +1211,13 @@ const RequisitionsPage = () => {
 
                                 {userRole !== 'hr' && <DropdownMenuSeparator />}
                                 
-                                {userRole !== 'hr' && (
+                                {userRole !== 'hr' && userRole !== 'admin' && (
                                     <DropdownMenuItem onClick={() => openEditDialog(record)}>
                                         <Edit className="mr-2 h-4 w-4 text-gray-600" /> <span className="text-gray-700">Edit</span>
                                     </DropdownMenuItem>
                                 )}
                                 
-                                {userRole !== 'hr' && (
+                                {userRole !== 'hr' && userRole !== 'admin' && (
                                     <DropdownMenuItem onClick={() => confirmDelete(record)} className="text-red-600 focus:text-red-700 focus:bg-red-50">
                                         <Trash2 className="mr-2 h-4 w-4" /> Delete
                                     </DropdownMenuItem>
