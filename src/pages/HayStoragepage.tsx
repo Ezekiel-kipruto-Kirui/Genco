@@ -18,7 +18,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
-import { Download, Warehouse, Eye, Calendar, Building, DollarSign, Package, Archive, Edit, Save, X, Upload, Trash2, Plus, LandPlot, Scale } from "lucide-react";
+import { Download, Warehouse, Eye, Calendar, Building, DollarSign, Package, Archive, Edit, Save, X, Upload, Trash2, Plus, LandPlot } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { isChiefAdmin } from "@/contexts/authhelper";
 import { uploadDataWithValidation, formatValidationErrors, UploadResult } from "@/lib/uploads-util";
@@ -61,8 +61,9 @@ interface Stats {
   totalLandUnderPasture: number;
   totalRevenue: number;
   totalBalesHarvested: number;
+  totalBalesSold: number;
   totalFacilities: number;
-  totalBalesBalance: number; // NEW STAT
+  totalBalesBalance: number;
 }
 
 // Props for extracted components
@@ -231,7 +232,7 @@ const TableRow = ({ record, isSelected, onSelectRecord, onView, onEdit, onDelete
   const balanceColor = balance >= 0 ? "text-green-600" : "text-red-600";
 
   return (
-  <tr className="border-b hover:bg-blue-50 transition-colors duration-200 group text-sm">
+  <tr className="border-b hover:bg-blue-50 transition-colors duration-200 group text-sm whitespace-nowrap">
     <td className="py-3 px-4">
       <Checkbox
         checked={isSelected}
@@ -260,7 +261,7 @@ const TableRow = ({ record, isSelected, onSelectRecord, onView, onEdit, onDelete
     </td>
     <td className="py-3 px-4">{record.bales_harvested_stored || 0}</td>
     <td className="py-3 px-4">{record.bales_sold || 0}</td>
-    <td className="py-3 px-4 font-bold {balanceColor}">{balance}</td>
+    <td className={`py-3 px-4 font-bold ${balanceColor}`}>{balance}</td>
     <td className="py-3 px-4">{formatCurrency(record.revenue_generated || 0)}</td>
     <td className="py-3 px-4">
       <div className="flex gap-2">
@@ -369,6 +370,7 @@ const HayStoragePage = () => {
     totalLandUnderPasture: 0,
     totalRevenue: 0,
     totalBalesHarvested: 0,
+    totalBalesSold: 0,
     totalFacilities: 0,
     totalBalesBalance: 0,
   });
@@ -504,6 +506,7 @@ const HayStoragePage = () => {
         totalLandUnderPasture: 0,
         totalRevenue: 0,
         totalBalesHarvested: 0,
+        totalBalesSold: 0,
         totalFacilities: 0,
         totalBalesBalance: 0
       });
@@ -553,8 +556,9 @@ const HayStoragePage = () => {
       totalLandUnderPasture,
       totalRevenue,
       totalBalesHarvested,
+      totalBalesSold,
       totalFacilities: uniqueFacilities.size,
-      totalBalesBalance: totalBalesHarvested - totalBalesSold // NEW STAT CALCULATION
+      totalBalesBalance: totalBalesHarvested - totalBalesSold
     });
 
     const totalPages = Math.ceil(filtered.length / pagination.limit);
@@ -871,8 +875,8 @@ const HayStoragePage = () => {
       {/* Header */}
       <div className="flex md:flex-row flex-col justify-between items-start sm:items-center gap-4">
         <div>
-          <h2 className="text-2xl font-bold mb-2 bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">Hay Storage Management</h2>
-          <p className="text-sm text-gray-600">Manage pasture growth stages and hay storage data</p>
+          <h2 className="text-xl font-bold mb-2 bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">Hay Storage Management</h2>
+         
         </div>
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" size="sm" onClick={clearAllFilters} className="text-xs border-gray-300 hover:bg-gray-50">Clear All Filters</Button>
@@ -902,8 +906,13 @@ const HayStoragePage = () => {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatsCard title="Land Size" value={formatArea(stats.totalLandUnderPasture)} icon={LandPlot} description="Total land area under pasture cultivation" />
         <StatsCard title="Total Revenue" value={formatCurrency(stats.totalRevenue)} icon={DollarSign} description="Revenue from hay sales" />
-        <StatsCard title="Bales Harvested" value={stats.totalBalesHarvested} icon={Package} description="Total bales harvested & stored" />
-        <StatsCard title="Current Stock Balance" value={stats.totalBalesBalance} icon={Scale} description="Total bales in stock (Harvested - Sold)" />
+        <StatsCard
+          title="Bales Harvested"
+          value={stats.totalBalesHarvested}
+          icon={Package}
+          description={`Sold: ${stats.totalBalesSold.toLocaleString()} | Balance: ${stats.totalBalesBalance.toLocaleString()}`}
+        />
+        <StatsCard title="Storage Facilities" value={stats.totalFacilities} icon={Warehouse} description="Unique storage facilities used" />
       </div>
 
       {/* Filters Section */}
@@ -933,8 +942,8 @@ const HayStoragePage = () => {
           ) : (
             <>
               <div className="w-full overflow-x-auto rounded-md">
-                <table className="w-full border-collapse border border-gray-300 text-sm text-left">
-                  <thead className="rounded">
+                <table className="min-w-max w-full border-collapse border border-gray-300 text-left whitespace-nowrap">
+                  <thead className="rounded whitespace-nowrap">
                     <tr className="bg-blue-100">
                       <th className="py-3 px-4">
                         <Checkbox
@@ -942,17 +951,17 @@ const HayStoragePage = () => {
                           onCheckedChange={handleSelectAll}
                         />
                       </th>
-                      <th className="py-3 px-4 font-medium text-gray-600">Date Planted</th>
-                      <th className="py-3 px-4 font-medium text-gray-600">Location</th>
-                      <th className="py-3 px-4 font-medium text-gray-600">Land (acres)</th>
-                      <th className="py-3 px-4 font-medium text-gray-600">Ownership</th>
-                      <th className="py-3 px-4 font-medium text-gray-600">Pasture Stages</th>
-                      <th className="py-3 px-4 font-medium text-gray-600">Storage Facility</th>
-                      <th className="py-3 px-4 font-medium text-gray-600">Bales Harvested</th>
-                      <th className="py-3 px-4 font-medium text-gray-600">Bales Sold</th>
-                      <th className="py-3 px-4 font-medium text-gray-600">Balance</th>
-                      <th className="py-3 px-4 font-medium text-gray-600">Revenue</th>
-                      <th className="py-3 px-4 font-medium text-gray-600">Actions</th>
+                      <th className="py-1 text-xs text-left px-6 font-medium text-gray-600">Date Planted</th>
+                      <th className="py-1 text-xs text-left px-6 font-medium text-gray-600">Location</th>
+                      <th className="py-1 text-xs text-left px-6 font-medium text-gray-600">Land (acres)</th>
+                      <th className="py-1 text-xs text-left px-6 font-medium text-gray-600">Ownership</th>
+                      <th className="py-1 text-xs text-left px-6 font-medium text-gray-600">Pasture Stages</th>
+                      <th className="py-1 text-xs text-left px-6 font-medium text-gray-600">Storage Facility</th>
+                      <th className="py-1 text-xs text-left px-6 font-medium text-gray-600">Bales Harvested</th>
+                      <th className="py-1 text-xs text-left px-6 font-medium text-gray-600">Bales Sold</th>
+                      <th className="py-1 text-xs text-left px-6 font-medium text-gray-600">Bales Balance</th>
+                      <th className="py-1 text-xs text-left px-6 font-medium text-gray-600">Revenue</th>
+                      <th className="py-1 text-xs text-left px-6 font-medium text-gray-600">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
