@@ -952,8 +952,8 @@ const HayStoragePage = () => {
                           onCheckedChange={handleSelectAll}
                         />
                       </th>
-                      <th className="py-1 text-xs text-left px-6 font-medium text-gray-600">Date Planted</th>
-                      <th className="py-1 text-xs text-left px-6 font-medium text-gray-600">Location</th>
+                      <th className="py-1 text-xs text-left px-6 font-medium text-gray-600">Date Harvested</th>
+                      <th className="py-1 text-xs text-left px-6 font-medium text-gray-600">Land Location</th>
                       <th className="py-1 text-xs text-left px-6 font-medium text-gray-600">Land (acres)</th>
                       <th className="py-1 text-xs text-left px-6 font-medium text-gray-600">Model</th>
                       <th className="py-1 text-xs text-left px-6 font-medium text-gray-600">Pasture Stages</th>
