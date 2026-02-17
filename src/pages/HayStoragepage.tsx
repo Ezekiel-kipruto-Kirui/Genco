@@ -239,9 +239,6 @@ const TableRow = ({ record, isSelected, onSelectRecord, onView, onEdit, onDelete
   const balance = (record.bales_harvested_stored || 0) - (record.bales_sold || 0);
   const balanceColor = balance >= 0 ? "text-green-600" : "text-red-600";
 
-  // Determine if this is an aggregated record (aggregated records use storage_facility as ID)
-  const isAggregated = STORAGE_FACILITIES.includes(record.id);
-
   return (
   <tr className="border-b hover:bg-blue-50 transition-colors duration-200 group text-sm whitespace-nowrap">
     <td className="py-3 px-4">
@@ -251,17 +248,9 @@ const TableRow = ({ record, isSelected, onSelectRecord, onView, onEdit, onDelete
       />
     </td>
     <td className="py-3 px-4">{formatDate(record.date_planted)}</td>
-    <td className="py-3 px-4">{record.location || 'N/A'}</td>
+  
     <td className="py-3 px-4">{record.land_under_pasture || 0} acres</td>
-    <td className="py-3 px-4">
-      {record.pasture_stages.length > 0 ? (
-        <Badge variant="outline" className="bg-blue-50 text-blue-700">
-          {record.pasture_stages.length} stages
-        </Badge>
-      ) : (
-        'No stages'
-      )}
-    </td>
+    
     <td className="py-3 px-4">
       {record.storage_facility ? (
         <span className="font-medium text-slate-700">{record.storage_facility}</span>
@@ -284,8 +273,8 @@ const TableRow = ({ record, isSelected, onSelectRecord, onView, onEdit, onDelete
         >
           <Eye className="h-4 w-4 text-blue-500" />
         </Button>
-        {/* Hide Edit/Delete for aggregated records to avoid logic errors with summed data */}
-        {!isAggregated && userIsChiefAdmin && (
+        {/* Edit/Delete available for all raw records now */}
+        {userIsChiefAdmin && (
           <>
             <Button
               variant="outline"
@@ -324,7 +313,7 @@ const HayStoragePage = () => {
   // State
   const [allHayStorage, setAllHayStorage] = useState<HayStorage[]>([]);
   const [filteredHayStorage, setFilteredHayStorage] = useState<HayStorage[]>([]);
-  const [rawFilteredHayStorage, setRawFilteredHayStorage] = useState<HayStorage[]>([]); // NEW: Store raw data for export
+  const [rawFilteredHayStorage, setRawFilteredHayStorage] = useState<HayStorage[]>([]);
   const [loading, setLoading] = useState(true);
   const [exportLoading, setExportLoading] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
@@ -558,60 +547,18 @@ const HayStoragePage = () => {
       return true;
     });
 
-    // Save raw filtered data for Export
+    // 2. UPDATE: No longer aggregating. Show all records.
+    setFilteredHayStorage(filtered);
     setRawFilteredHayStorage(filtered);
 
-    // 2. Aggregate (Sum) by Storage Facility
-    const groupedByFacility = filtered.reduce((acc, curr) => {
-      const facility = curr.storage_facility || 'Unknown Facility';
-      
-      if (!acc[facility]) {
-        // Initialize with the first record's data, but zero out sums
-        acc[facility] = {
-          ...curr,
-          id: facility, // Use facility name as ID for the table row
-          bales_harvested_stored: 0,
-          bales_sold: 0,
-          revenue_generated: 0,
-          land_under_pasture: 0,
-          pasture_stages: [],
-          date_planted: curr.date_planted || null,
-        };
-      }
-
-      // Keep the most recent planted date per facility for display.
-      const existingDate = parseDate(acc[facility].date_planted);
-      const currentDate = parseDate(curr.date_planted);
-      if (currentDate && (!existingDate || currentDate > existingDate)) {
-        acc[facility].date_planted = curr.date_planted;
-      }
-
-      // Sum numeric values
-      acc[facility].bales_harvested_stored += (curr.bales_harvested_stored || 0);
-      acc[facility].bales_sold += (curr.bales_sold || 0);
-      acc[facility].revenue_generated += (curr.revenue_generated || 0);
-      acc[facility].land_under_pasture += (curr.land_under_pasture || 0);
-      
-      // Merge stages (flatten array)
-      acc[facility].pasture_stages = [...acc[facility].pasture_stages, ...(curr.pasture_stages || [])];
-
-      return acc;
-    }, {} as Record<string, HayStorage>);
-
-    const aggregatedData = Object.values(groupedByFacility);
-
-    // Update Display Data
-    setFilteredHayStorage(aggregatedData);
-
-    // Calculate Stats based on Aggregated Data (or filtered, both sum to same total)
-    // Using aggregatedData for consistency with view
-    const totalRevenue = aggregatedData.reduce((sum, record) => sum + (record.revenue_generated || 0), 0);
-    const totalBalesHarvested = aggregatedData.reduce((sum, record) => sum + (record.bales_harvested_stored || 0), 0);
-    const totalBalesSold = aggregatedData.reduce((sum, record) => sum + (record.bales_sold || 0), 0);
-    const totalLandUnderPasture = aggregatedData.reduce((sum, record) => sum + (record.land_under_pasture || 0), 0);
+    // 3. Calculate Stats based on Raw Data (since we aren't aggregating)
+    const totalRevenue = filtered.reduce((sum, record) => sum + (record.revenue_generated || 0), 0);
+    const totalBalesHarvested = filtered.reduce((sum, record) => sum + (record.bales_harvested_stored || 0), 0);
+    const totalBalesSold = filtered.reduce((sum, record) => sum + (record.bales_sold || 0), 0);
+    const totalLandUnderPasture = filtered.reduce((sum, record) => sum + (record.land_under_pasture || 0), 0);
     
-    // Facilities are the keys in our aggregation
-    const uniqueFacilities = aggregatedData.length; 
+    // Count unique facilities in the view
+    const uniqueFacilities = new Set(filtered.map(r => r.storage_facility).filter(Boolean)).size; 
 
     setStats({
       totalLandUnderPasture,
@@ -622,7 +569,7 @@ const HayStoragePage = () => {
       totalBalesBalance: totalBalesHarvested - totalBalesSold
     });
 
-    const totalPages = Math.ceil(aggregatedData.length / pagination.limit);
+    const totalPages = Math.ceil(filtered.length / pagination.limit);
     setPagination(prev => ({
       ...prev,
       totalPages,
@@ -631,7 +578,7 @@ const HayStoragePage = () => {
     }));
   }, [allHayStorage, filters, pagination.limit]);
 
-  // --- REALTIME DATABASE ADD FUNCTION (WITH TOP UP LOGIC) ---
+  // --- REALTIME DATABASE ADD FUNCTION (NO TOP UP LOGIC) ---
   const handleAddRecord = async () => {
     if (!addingRecord.date_planted || !addingRecord.location || !addingRecord.county || !addingRecord.subcounty || !addingRecord.land_ownership) {
       toast({
@@ -648,52 +595,34 @@ const HayStoragePage = () => {
       const validStages = (addingRecord.pasture_stages || [])
         .filter(stage => stage.stage.trim() !== '' && stage.date.trim() !== '');
 
-      const existingRecord = allHayStorage.find(r => 
-        r.location.toLowerCase() === addingRecord.location.toLowerCase() && 
-        r.county.toLowerCase() === addingRecord.county.toLowerCase()
-      );
+      // REMOVED: Existing record check and top-up logic.
+      // We always create a new record now.
 
-      if (existingRecord) {
-        const updatedPayload = {
-          bales_harvested_stored: (existingRecord.bales_harvested_stored || 0) + (Number(addingRecord.bales_harvested_stored) || 0),
-          bales_sold: (existingRecord.bales_sold || 0) + (Number(addingRecord.bales_sold) || 0),
-          revenue_generated: (existingRecord.revenue_generated || 0) + (Number(addingRecord.revenue_generated) || 0),
-          pasture_stages: [...(existingRecord.pasture_stages || []), ...validStages],
-          storage_facility: addingRecord.storage_facility || existingRecord.storage_facility
-        };
+      const payload = {
+        date_planted: new Date(addingRecord.date_planted).toISOString(),
+        location: addingRecord.location,
+        county: addingRecord.county,
+        subcounty: addingRecord.subcounty,
+        land_under_pasture: Number(addingRecord.land_under_pasture) || 0,
+        land_ownership: addingRecord.land_ownership, 
+        pasture_stages: validStages,
+        storage_facility: addingRecord.storage_facility || '',
+        bales_harvested_stored: Number(addingRecord.bales_harvested_stored) || 0,
+        bales_sold: Number(addingRecord.bales_sold) || 0,
+        date_sold: addingRecord.date_sold ? new Date(addingRecord.date_sold).toISOString() : null,
+        revenue_generated: Number(addingRecord.revenue_generated) || 0,
+        created_at: new Date().toISOString(),
+        created_by: user?.email || 'unknown'
+      };
 
-        await update(ref(rtdb, "HayStorage/" + existingRecord.id), updatedPayload);
-        toast({
-          title: "Success",
-          description: "Existing record topped up successfully.",
-        });
-      } else {
-        const payload = {
-          date_planted: new Date(addingRecord.date_planted).toISOString(),
-          location: addingRecord.location,
-          county: addingRecord.county,
-          subcounty: addingRecord.subcounty,
-          land_under_pasture: Number(addingRecord.land_under_pasture) || 0,
-          land_ownership: addingRecord.land_ownership, 
-          pasture_stages: validStages,
-          storage_facility: addingRecord.storage_facility || '',
-          bales_harvested_stored: Number(addingRecord.bales_harvested_stored) || 0,
-          bales_sold: Number(addingRecord.bales_sold) || 0,
-          date_sold: addingRecord.date_sold ? new Date(addingRecord.date_sold).toISOString() : null,
-          revenue_generated: Number(addingRecord.revenue_generated) || 0,
-          created_at: new Date().toISOString(),
-          created_by: user?.email || 'unknown'
-        };
+      const listRef = ref(rtdb, "HayStorage");
+      const newRef: DatabaseReference = push(listRef);
+      await update(newRef, payload);
 
-        const listRef = ref(rtdb, "HayStorage");
-        const newRef: DatabaseReference = push(listRef);
-        await update(newRef, payload);
-
-        toast({
-          title: "Success",
-          description: "Hay storage record created successfully."
-        });
-      }
+      toast({
+        title: "Success",
+        description: "Hay storage record created successfully."
+      });
 
       setIsAddDialogOpen(false);
       setAddingRecord({
@@ -854,7 +783,7 @@ const HayStoragePage = () => {
     }
   };
 
-  // Export Function - Uses Raw Data
+  // Export Function
   const handleExport = async () => {
     try {
       setExportLoading(true);
@@ -952,7 +881,7 @@ const HayStoragePage = () => {
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatsCard title="Land Size" value={formatArea(stats.totalLandUnderPasture)} icon={LandPlot} description="Total land area under pasture cultivation" />
+        <StatsCard title="Land Size" value={formatArea(stats.totalLandUnderPasture)} icon={LandPlot} description="Total Land planted" />
         <StatsCard title="Total Revenue" value={`KSh ${millify(stats.totalRevenue)}`} icon={DollarSign} description="Revenue from hay sales" />
         <StatsCard
           title="Bales Harvested"
@@ -960,7 +889,7 @@ const HayStoragePage = () => {
           icon={Package}
           description={`Sold: ${stats.totalBalesSold.toLocaleString()} | Balance: ${stats.totalBalesBalance.toLocaleString()}`}
         />
-        <StatsCard title="Storage Facilities" value={stats.totalFacilities} icon={Warehouse} description="" />
+        <StatsCard title="Storage Facilities" value={stats.totalFacilities} icon={Warehouse} description="Unique facilities in view" />
       </div>
 
       {/* Filters Section */}
@@ -999,10 +928,10 @@ const HayStoragePage = () => {
                           onCheckedChange={handleSelectAll}
                         />
                       </th>
-                      <th className="py-1 text-xs text-left px-6 font-medium text-gray-600">Date Planted</th>
-                      <th className="py-1 text-xs text-left px-6 font-medium text-gray-600">Land Location</th>
-                      <th className="py-1 text-xs text-left px-6 font-medium text-gray-600">Land (acres)</th>
-                      <th className="py-1 text-xs text-left px-6 font-medium text-gray-600">Pasture Stages</th>
+                      <th className="py-1 text-xs text-left px-6 font-medium text-gray-600">Harvesting Date</th>
+                      
+                      <th className="py-1 text-xs text-left px-6 font-medium text-gray-600">No of accres</th>
+                     
                       <th className="py-1 text-xs text-left px-6 font-medium text-gray-600">Storage Facility</th>
                       <th className="py-1 text-xs text-left px-6 font-medium text-gray-600">Bales Harvested</th>
                       <th className="py-1 text-xs text-left px-6 font-medium text-gray-600">Bales Sold</th>
@@ -1028,7 +957,7 @@ const HayStoragePage = () => {
                 </table>
               </div>
               <div className="flex items-center justify-between p-4 border-t bg-gray-50">
-                <div className="text-sm text-muted-foreground">{filteredHayStorage.length} total facilities • {getCurrentPageRecords().length} on this page</div>
+                <div className="text-sm text-muted-foreground">{filteredHayStorage.length} total records • {getCurrentPageRecords().length} on this page</div>
                 <div className="flex gap-2">
                   <Button variant="outline" size="sm" disabled={!pagination.hasPrev} onClick={() => handlePageChange(pagination.page - 1)} className="border-gray-300 hover:bg-gray-100">Previous</Button>
                   <Button variant="outline" size="sm" disabled={!pagination.hasNext} onClick={() => handlePageChange(pagination.page + 1)} className="border-gray-300 hover:bg-gray-100">Next</Button>
@@ -1044,7 +973,7 @@ const HayStoragePage = () => {
         <DialogContent className="sm:max-w-3xl bg-white rounded-2xl max-h-[90vh] overflow-hidden">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-slate-900"><Plus className="h-5 w-5 text-green-600" /> Add New Hay Storage Record</DialogTitle>
-            <DialogDescription>Enter details for new hay storage record. Fields marked with * are required. If the Location already exists, the data will be added (topped up) to it.</DialogDescription>
+            <DialogDescription>Enter details for new hay storage record. Fields marked with * are required. Each submission creates a distinct new record.</DialogDescription>
           </DialogHeader>
           <div className="space-y-6 py-4 overflow-y-auto max-h-[60vh]">
             <div className="bg-slate-50 rounded-xl p-4">
@@ -1098,7 +1027,6 @@ const HayStoragePage = () => {
             <div className="bg-slate-50 rounded-xl p-4">
               <h3 className="font-semibold text-slate-800 mb-3 flex items-center gap-2"><Warehouse className="h-4 w-4" /> Optional Information</h3>
               <div className="grid grid-cols-2 gap-4">
-                {/* UPDATED: Storage Facility Select */}
                 <div className="space-y-2 col-span-2">
                   <Label htmlFor="add-storage-facility" className="text-sm font-medium text-slate-600">Storage Facility</Label>
                   <Select value={addingRecord.storage_facility} onValueChange={(value) => setAddingRecord(prev => ({ ...prev, storage_facility: value }))}>
