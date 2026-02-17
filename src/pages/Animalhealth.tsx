@@ -68,6 +68,8 @@ interface AnimalHealthActivity {
   subcounty: string;
   location: string;
   comment: string;
+  malebeneficiaries?: number;
+  femalebeneficiaries?: number;
   vaccines?: Vaccine[];
   vaccinetype?: string;
   number_doses?: number;
@@ -125,8 +127,10 @@ const AnimalHealthPage = () => {
     county: "",
     subcounty: "",
     location: "",
+    malebeneficiaries: "",
+    femalebeneficiaries: "",
     comment: "",
-    programme: "KPMD", // Default Programme
+    programme: "RANGE", // Default Programme
   });
   const { userRole } = useAuth();
   const userIsChiefAdmin = useMemo(() => {
@@ -185,10 +189,12 @@ const AnimalHealthPage = () => {
             subcounty: item.subcounty || '',
             location: item.location || '',
             comment: item.comment || '',
+            malebeneficiaries: Number(item.malebeneficiaries ?? item.maleneneficiaries) || 0,
+            femalebeneficiaries: Number(item.femalebeneficiaries) || 0,
             vaccines,
             fieldofficers,
             issues, 
-            programme: item.programme || 'KPMD', // Ensure programme is present
+            programme: item.programme, // Ensure programme is present
             createdAt: item.createdAt,
             createdBy: item.createdBy || 'unknown',
             status: item.status || 'completed'
@@ -243,7 +249,7 @@ const AnimalHealthPage = () => {
     }
 
     // Programme is inherited from the main Activity Form
-    const parentProgramme = activityForm.programme || "KPMD";
+    const parentProgramme = activityForm.programme ;
 
     const newIssue: Issue = {
       id: Date.now().toString(),
@@ -337,6 +343,8 @@ const AnimalHealthPage = () => {
         county: activityForm.county.trim(),
         subcounty: activityForm.subcounty.trim(),
         location: activityForm.location.trim(),
+        malebeneficiaries: Number(activityForm.malebeneficiaries) || 0,
+        femalebeneficiaries: Number(activityForm.femalebeneficiaries) || 0,
         comment: activityForm.comment.trim(),
         programme: activityForm.programme, // Save Programme
         vaccines: vaccines,
@@ -361,6 +369,8 @@ const AnimalHealthPage = () => {
         county: "",
         subcounty: "",
         location: "",
+        malebeneficiaries: "",
+        femalebeneficiaries: "",
         comment: "",
         programme: "KPMD",
       });
@@ -395,6 +405,8 @@ const AnimalHealthPage = () => {
         county: activityForm.county.trim(),
         subcounty: activityForm.subcounty.trim(),
         location: activityForm.location.trim(),
+        malebeneficiaries: Number(activityForm.malebeneficiaries) || 0,
+        femalebeneficiaries: Number(activityForm.femalebeneficiaries) || 0,
         comment: activityForm.comment.trim(),
         programme: activityForm.programme, // Update Programme
         vaccines: vaccines,
@@ -417,6 +429,8 @@ const AnimalHealthPage = () => {
         county: "",
         subcounty: "",
         location: "",
+        malebeneficiaries: "",
+        femalebeneficiaries: "",
         comment: "",
         programme: "KPMD",
       });
@@ -580,6 +594,8 @@ const AnimalHealthPage = () => {
       county: activity.county || '',
       subcounty: activity.subcounty || '',
       location: activity.location || '',
+      malebeneficiaries: (activity.malebeneficiaries || 0).toString(),
+      femalebeneficiaries: (activity.femalebeneficiaries || 0).toString(),
       comment: activity.comment || '',
       programme: activity.programme || 'KPMD', // Load Programme
     });
@@ -597,7 +613,7 @@ const AnimalHealthPage = () => {
 
   const exportToCSV = () => {
     try {
-      const headers = ['Date', 'Programme', 'County', 'Subcounty', 'Location', 'Vaccines', 'Total Doses', 'Field Officers', 'Issues Summary', 'Comment'];
+      const headers = ['Date', 'Programme', 'County', 'Subcounty', 'Location', 'Male Beneficiaries', 'Female Beneficiaries', 'Vaccines', 'Total Doses', 'Field Officers', 'Issues Summary', 'Comment'];
       const csvData = filteredActivities.map(activity => {
         const activityVaccines = getActivityVaccines(activity);
         const vaccineText = activityVaccines.map(v => `${v.type} (${v.doses} doses)`).join('; ');
@@ -613,6 +629,8 @@ const AnimalHealthPage = () => {
           activity.county || '',
           activity.subcounty || '',
           activity.location || '',
+          String(activity.malebeneficiaries || 0),
+          String(activity.femalebeneficiaries || 0),
           vaccineText,
           totalDoses.toString(),
           (activity.fieldofficers || []).map(officer => `${officer.name} (${officer.role})`).join('; ') || '',
@@ -762,6 +780,33 @@ const AnimalHealthPage = () => {
                     className="rounded-xl border-slate-300 focus:border-green-500 focus:ring-green-500 transition-all bg-white"
                     required
                   />
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="male-beneficiaries" className="text-sm font-medium text-slate-700">Male Beneficiaries</Label>
+                    <Input
+                      id="male-beneficiaries"
+                      type="number"
+                      min="0"
+                      value={activityForm.malebeneficiaries}
+                      onChange={(e) => setActivityForm({ ...activityForm, malebeneficiaries: e.target.value })}
+                      placeholder="Enter male beneficiaries"
+                      className="rounded-xl border-slate-300 focus:border-green-500 focus:ring-green-500 transition-all bg-white"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="female-beneficiaries" className="text-sm font-medium text-slate-700">Female Beneficiaries</Label>
+                    <Input
+                      id="female-beneficiaries"
+                      type="number"
+                      min="0"
+                      value={activityForm.femalebeneficiaries}
+                      onChange={(e) => setActivityForm({ ...activityForm, femalebeneficiaries: e.target.value })}
+                      placeholder="Enter female beneficiaries"
+                      className="rounded-xl border-slate-300 focus:border-green-500 focus:ring-green-500 transition-all bg-white"
+                    />
+                  </div>
                 </div>
 
                 {/* Vaccines Section */}
@@ -984,7 +1029,7 @@ const AnimalHealthPage = () => {
                   onClick={() => {
                     setIsAddDialogOpen(false);
                     // Reset all states
-                    setActivityForm({ date: "", county: "", subcounty: "", location: "", comment: "", programme: "KPMD" });
+                    setActivityForm({ date: "", county: "", subcounty: "", location: "", malebeneficiaries: "", femalebeneficiaries: "", comment: "", programme: "KPMD" });
                     setFieldOfficers([]);
                     setFieldOfficerForm({ name: "", role: "" });
                     setSelectedVaccines([]);
@@ -1153,6 +1198,8 @@ const AnimalHealthPage = () => {
                       <th className="p-4 text-left font-semibold text-slate-700 text-sm">Programme</th>
                       <th className="p-4 text-left font-semibold text-slate-700 text-sm">County</th>
                       <th className="p-4 text-left font-semibold text-slate-700 text-sm">Location</th>
+                      <th className="p-4 text-left font-semibold text-slate-700 text-sm">Male Ben.</th>
+                      <th className="p-4 text-left font-semibold text-slate-700 text-sm">Female Ben.</th>
                       <th className="p-4 text-left font-semibold text-slate-700 text-sm">Vaccines</th>
                       <th className="p-4 text-left font-semibold text-slate-700 text-sm">Total Doses</th>
                       <th className="p-4 text-left font-semibold text-slate-700 text-sm">Issues</th> 
@@ -1187,6 +1234,16 @@ const AnimalHealthPage = () => {
                             <MapPin className="h-4 w-4 text-slate-500" />
                             <span className="text-slate-700">{activity.location}</span>
                           </div>
+                        </td>
+                        <td className="p-4">
+                          <span className="font-semibold text-slate-900">
+                            {(activity.malebeneficiaries || 0).toLocaleString()}
+                          </span>
+                        </td>
+                        <td className="p-4">
+                          <span className="font-semibold text-slate-900">
+                            {(activity.femalebeneficiaries || 0).toLocaleString()}
+                          </span>
                         </td>
                         <td className="p-4">
                           <div className="flex items-center gap-2">
@@ -1298,6 +1355,17 @@ const AnimalHealthPage = () => {
               <div>
                 <Label className="text-sm font-medium text-slate-600">Location</Label>
                 <p className="text-slate-900 font-medium">{viewingActivity.location}</p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label className="text-sm font-medium text-slate-600">Male Beneficiaries</Label>
+                  <p className="text-slate-900 font-medium">{(viewingActivity.malebeneficiaries || 0).toLocaleString()}</p>
+                </div>
+                <div>
+                  <Label className="text-sm font-medium text-slate-600">Female Beneficiaries</Label>
+                  <p className="text-slate-900 font-medium">{(viewingActivity.femalebeneficiaries || 0).toLocaleString()}</p>
+                </div>
               </div>
 
               <div>
@@ -1438,6 +1506,33 @@ const AnimalHealthPage = () => {
                 className="rounded-xl border-slate-300 focus:border-green-500 focus:ring-green-500 transition-all bg-white"
                 required
               />
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="edit-male-beneficiaries" className="text-sm font-medium text-slate-700">Male Beneficiaries</Label>
+                <Input
+                  id="edit-male-beneficiaries"
+                  type="number"
+                  min="0"
+                  value={activityForm.malebeneficiaries}
+                  onChange={(e) => setActivityForm({ ...activityForm, malebeneficiaries: e.target.value })}
+                  placeholder="Enter male beneficiaries"
+                  className="rounded-xl border-slate-300 focus:border-green-500 focus:ring-green-500 transition-all bg-white"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-female-beneficiaries" className="text-sm font-medium text-slate-700">Female Beneficiaries</Label>
+                <Input
+                  id="edit-female-beneficiaries"
+                  type="number"
+                  min="0"
+                  value={activityForm.femalebeneficiaries}
+                  onChange={(e) => setActivityForm({ ...activityForm, femalebeneficiaries: e.target.value })}
+                  placeholder="Enter female beneficiaries"
+                  className="rounded-xl border-slate-300 focus:border-green-500 focus:ring-green-500 transition-all bg-white"
+                />
+              </div>
             </div>
 
             <div className="space-y-4 border-t pt-4">
@@ -1612,7 +1707,7 @@ const AnimalHealthPage = () => {
                 setIssues([]);
                 setIssueForm({ name: "", raisedBy: "", description: "", status: "not responded" });
                 setShowIssueForm(false);
-                setActivityForm({ date: "", county: "", subcounty: "", location: "", comment: "", programme: "KPMD" });
+                setActivityForm({ date: "", county: "", subcounty: "", location: "", malebeneficiaries: "", femalebeneficiaries: "", comment: "", programme: "KPMD" });
               }}
               className="rounded-xl border-slate-300 hover:border-slate-400 transition-all text-slate-700"
             >
