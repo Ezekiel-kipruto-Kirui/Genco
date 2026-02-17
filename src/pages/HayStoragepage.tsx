@@ -243,7 +243,7 @@ const TableRow = ({ record, isSelected, onSelectRecord, onView, onEdit, onDelete
     <td className="py-3 px-4">{formatDate(record.date_planted)}</td>
     <td className="py-3 px-4">{record.location || 'N/A'}</td>
     <td className="py-3 px-4">{record.land_under_pasture || 0} acres</td>
-    <td className="py-3 px-4 capitalize"><Badge variant="outline">{record.land_ownership || 'N/A'}</Badge></td>
+    {/* <td className="py-3 px-4 capitalize"><Badge variant="outline">{record.land_ownership || 'N/A'}</Badge></td> */}
     <td className="py-3 px-4">
       {record.pasture_stages.length > 0 ? (
         <Badge variant="outline" className="bg-blue-50 text-blue-700">
@@ -955,7 +955,7 @@ const HayStoragePage = () => {
                       <th className="py-1 text-xs text-left px-6 font-medium text-gray-600">Date Harvested</th>
                       <th className="py-1 text-xs text-left px-6 font-medium text-gray-600">Land Location</th>
                       <th className="py-1 text-xs text-left px-6 font-medium text-gray-600">Land (acres)</th>
-                      <th className="py-1 text-xs text-left px-6 font-medium text-gray-600">Model</th>
+                      {/* <th className="py-1 text-xs text-left px-6 font-medium text-gray-600">Model</th> */}
                       <th className="py-1 text-xs text-left px-6 font-medium text-gray-600">Pasture Stages</th>
                       <th className="py-1 text-xs text-left px-6 font-medium text-gray-600">Storage Facility</th>
                       <th className="py-1 text-xs text-left px-6 font-medium text-gray-600">Bales Harvested</th>
