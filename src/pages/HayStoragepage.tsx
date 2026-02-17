@@ -23,6 +23,7 @@ import { useToast } from "@/hooks/use-toast";
 import { isChiefAdmin } from "@/contexts/authhelper";
 import { uploadDataWithValidation, formatValidationErrors, UploadResult } from "@/lib/uploads-util";
 import { db } from "@/lib/firebase";
+import { millify} from "millify";
 
 // --- Types ---
 
@@ -905,7 +906,7 @@ const HayStoragePage = () => {
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatsCard title="Land Size" value={formatArea(stats.totalLandUnderPasture)} icon={LandPlot} description="Total land area under pasture cultivation" />
-        <StatsCard title="Total Revenue" value={formatCurrency(stats.totalRevenue)} icon={DollarSign} description="Revenue from hay sales" />
+        <StatsCard title="Total Revenue" value={`KSh ${millify(stats.totalRevenue)}`} icon={DollarSign} description="Revenue from hay sales" />
         <StatsCard
           title="Bales Harvested"
           value={stats.totalBalesHarvested}
@@ -954,7 +955,7 @@ const HayStoragePage = () => {
                       <th className="py-1 text-xs text-left px-6 font-medium text-gray-600">Date Planted</th>
                       <th className="py-1 text-xs text-left px-6 font-medium text-gray-600">Location</th>
                       <th className="py-1 text-xs text-left px-6 font-medium text-gray-600">Land (acres)</th>
-                      <th className="py-1 text-xs text-left px-6 font-medium text-gray-600">Ownership</th>
+                      <th className="py-1 text-xs text-left px-6 font-medium text-gray-600">Model</th>
                       <th className="py-1 text-xs text-left px-6 font-medium text-gray-600">Pasture Stages</th>
                       <th className="py-1 text-xs text-left px-6 font-medium text-gray-600">Storage Facility</th>
                       <th className="py-1 text-xs text-left px-6 font-medium text-gray-600">Bales Harvested</th>

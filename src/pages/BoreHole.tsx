@@ -969,13 +969,13 @@ const BoreholePage = () => {
       <td className="py-3 px-4">
         <div className="flex flex-col gap-1">
           <Badge variant={record.drilled ? "default" : "secondary"} className={record.drilled ? "bg-green-100 text-green-800 w-fit" : "bg-gray-100 text-gray-800 w-fit"}>
-            {record.drilled ? 'Drilled' : 'Not Drilled'}
+            {record.drilled}
           </Badge>
           <Badge variant={record.equipped ? "default" : "secondary"} className={record.equipped ? "bg-blue-100 text-blue-800 w-fit" : "bg-gray-100 text-gray-800 w-fit"}>
-            {record.equipped ? 'Equipped' : 'Not Equipped'}
+            {record.equipped}
           </Badge>
           <Badge variant={record.rehabilitated ? "default" : "secondary"} className={record.rehabilitated ? "bg-orange-100 text-orange-800 w-fit" : "bg-gray-100 text-gray-800 w-fit"}>
-            {record.rehabilitated ? 'Rehabilitated' : 'Not Rehabilitated'}
+            {record.rehabilitated}
           </Badge>
         </div>
       </td>
@@ -1103,10 +1103,10 @@ const BoreholePage = () => {
         />
 
         <StatsCard 
-          title="People Served" 
+          title="Household Served" 
           value={stats.totalPeople.toLocaleString()} 
           icon={Users}
-          description="Total people using boreholes"
+          description="Total households using boreholes"
         />
 
         <StatsCard 
