@@ -909,7 +909,7 @@ const HayStoragePage = () => {
         <StatsCard title="Total Revenue" value={`KSh ${millify(stats.totalRevenue)}`} icon={DollarSign} description="Revenue from hay sales" />
         <StatsCard
           title="Bales Harvested"
-          value={stats.totalBalesHarvested}
+          value={`${millify(stats.totalBalesHarvested)}`}
           icon={Package}
           description={`Sold: ${stats.totalBalesSold.toLocaleString()} | Balance: ${stats.totalBalesBalance.toLocaleString()}`}
         />
