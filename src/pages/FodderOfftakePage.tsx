@@ -1,27 +1,44 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, ChangeEvent } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import { fetchData } from "@/lib/firebase";
+import { getAuth } from "firebase/auth";
+import { ref, update, push, onValue, query, orderByChild, equalTo } from "firebase/database";
+import { db } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
-import { Download, User, Phone, MapPin, Globe, Calendar, DollarSign, Eye, Edit, Save, X, Upload, Trash2 } from "lucide-react";
+import { Download, Users, MapPin, Eye, Calendar, Sprout, Globe, LayoutGrid, Edit, Trash2, Upload, UserCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { isChiefAdmin } from "@/contexts/authhelper";
-import { uploadDataWithValidation, formatValidationErrors, UploadResult } from "@/lib/uploads-util";
 
-// Types
-interface FodderOfftake {
+// --- Types ---
+
+// Updated to match JSON structure (idNo, phoneNo)
+interface Farmer {
+  idNo?: string;
+  name?: string;
+  phoneNo?: string;
+  gender?: string;
+}
+
+interface FodderFarmer {
   id: string;
   date: any;
-  farmer_name?: string;
-  phone_number?: string;
-  bale_price?: number;
+  landSize?: number;
   location?: string;
-  region?: string;
+  model?: string;
+  region?: string; // Mapped from 'county' in JSON
+  subcounty?: string; // Added
+  username?: string; // Added
+  totalAcresPasture?: number;
+  totalBales?: number;
+  yieldPerHarvest?: number;
+  farmers?: Farmer[];
+  programme?: string;
 }
 
 interface Filters {
@@ -30,13 +47,13 @@ interface Filters {
   endDate: string;
   location: string;
   region: string;
+  model: string;
 }
 
 interface Stats {
-  totalRegions: number;
-  totalRevenue: number;
   totalFarmers: number;
-  totalRecords: number;
+  totalRegions: number;
+  totalModels: number;
 }
 
 interface Pagination {
@@ -47,15 +64,16 @@ interface Pagination {
   hasPrev: boolean;
 }
 
-// Constants
+// --- Constants ---
 const PAGE_LIMIT = 15;
-const SEARCH_DEBOUNCE_DELAY = 300; // milliseconds
+const SEARCH_DEBOUNCE_DELAY = 300;
 
-// Helper functions
+// --- Helper Functions ---
+
 const parseDate = (date: any): Date | null => {
   if (!date) return null;
-  
   try {
+    // Handle Firestore Timestamp objects
     if (date.toDate && typeof date.toDate === 'function') {
       return date.toDate();
     } else if (date instanceof Date) {
@@ -73,7 +91,6 @@ const parseDate = (date: any): Date | null => {
   } catch (error) {
     console.error('Error parsing date:', error, date);
   }
-  
   return null;
 };
 
@@ -86,58 +103,37 @@ const formatDate = (date: any): string => {
   }) : 'N/A';
 };
 
-const formatDateForInput = (date: any): string => {
-  const parsedDate = parseDate(date);
-  return parsedDate ? parsedDate.toISOString().split('T')[0] : '';
-};
-
-const formatCurrency = (amount: number): string => {
-  return new Intl.NumberFormat('en-KE', {
-    style: 'currency',
-    currency: 'KES',
-  }).format(amount || 0);
-};
-
-const formatPhoneNumber = (phone: string): string => {
-  if (!phone) return 'N/A';
-  // Basic phone formatting for Kenya numbers
-  const cleaned = phone.replace(/\D/g, '');
-  if (cleaned.length === 10 && cleaned.startsWith('0')) {
-    return `+254 ${cleaned.slice(1, 4)} ${cleaned.slice(4, 7)} ${cleaned.slice(7)}`;
-  }
-  return phone;
-};
-
 const getCurrentMonthDates = () => {
   const now = new Date();
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
   const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-  
   return {
     startDate: startOfMonth.toISOString().split('T')[0],
     endDate: endOfMonth.toISOString().split('T')[0]
   };
 };
 
-const FodderOfftakePage = () => {
-  const { userRole } = useAuth();
+// --- Main Component ---
+
+const FodderFarmersPage = () => {
+  const { user, userRole } = useAuth();
   const { toast } = useToast();
-  const [allFodderOfftake, setAllFodderOfftake] = useState<FodderOfftake[]>([]);
-  const [filteredFodderOfftake, setFilteredFodderOfftake] = useState<FodderOfftake[]>([]);
+  
+  // State
+  const [allFodder, setAllFodder] = useState<FodderFarmer[]>([]);
+  const [filteredFodder, setFilteredFodder] = useState<FodderFarmer[]>([]);
+  const [activeProgram, setActiveProgram] = useState<string>(""); 
+  const [availablePrograms, setAvailablePrograms] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [exportLoading, setExportLoading] = useState(false);
-  const [deleteLoading, setDeleteLoading] = useState(false);
   const [uploadLoading, setUploadLoading] = useState(false);
+  const [deleteLoading, setDeleteLoading] = useState(false);
   const [selectedRecords, setSelectedRecords] = useState<string[]>([]);
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
-  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
-  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
-  const [viewingRecord, setViewingRecord] = useState<FodderOfftake | null>(null);
-  const [editingRecord, setEditingRecord] = useState<FodderOfftake | null>(null);
+  const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
+  const [viewingRecord, setViewingRecord] = useState<FodderFarmer | null>(null);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
-  const [uploadProgress, setUploadProgress] = useState<number>(0);
-  const [saving, setSaving] = useState(false);
   
   const searchTimeoutRef = useRef<NodeJS.Timeout>();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -149,13 +145,13 @@ const FodderOfftakePage = () => {
     endDate: currentMonth.endDate,
     location: "all",
     region: "all",
+    model: "all"
   });
 
   const [stats, setStats] = useState<Stats>({
-    totalRegions: 0,
-    totalRevenue: 0,
     totalFarmers: 0,
-    totalRecords: 0,
+    totalRegions: 0,
+    totalModels: 0
   });
 
   const [pagination, setPagination] = useState<Pagination>({
@@ -166,161 +162,138 @@ const FodderOfftakePage = () => {
     hasPrev: false
   });
 
-  const userIsChiefAdmin = useMemo(() => {
-    return isChiefAdmin(userRole);
-  }, [userRole]);
+  const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
 
-  // Data fetching with improved debugging - FOCUSED ON FOFFTAKE
-  const fetchAllData = useCallback(async () => {
-    try {
-      setLoading(true);
-      console.log("🔄 Starting fodder offtake data fetch...");
-      
-      const data = await fetchData();
-      console.log("📦 Raw fetched data keys:", Object.keys(data));
-      
-      // SPECIFICALLY TARGET THE FOFFTAKE COLLECTION
-      let fodderOfftakeData: any[] = [];
-      
-      // Check for fofftake collection first (as defined in your firebase.ts)
-      if (data.fofftake && Array.isArray(data.fofftake)) {
-        console.log("✅ Found data in 'fofftake' collection");
-        fodderOfftakeData = data.fofftake;
-      } 
-      // If not found, check for other possible names
-      else {
-        const possibleCollectionNames = [
-          'fodderOfftake', 
-          'fodder_offtake',
-          'fodder-offtake',
-          'FodderOfftake',
-          'fodderOfftakeData',
-          'Fofftake'
-        ];
-        
-        let foundCollection = '';
-        for (const collectionName of possibleCollectionNames) {
-          if (data[collectionName] && Array.isArray(data[collectionName])) {
-            console.log(`🔄 Found data in alternative collection: ${collectionName}`);
-            fodderOfftakeData = data[collectionName];
-            foundCollection = collectionName;
-            break;
-          }
-        }
-        
-        if (fodderOfftakeData.length === 0) {
-          console.warn("❌ No fodder offtake data found in any expected collection");
-          // Log all available collections for debugging
-          const allCollections = Object.keys(data);
-          console.log("📊 All available collections:", allCollections);
-          
-          // Look for any collection that might contain fodder data
-          const potentialCollections = allCollections.filter(key => 
-            Array.isArray(data[key]) && 
-            (key.toLowerCase().includes('fodder') || key.toLowerCase().includes('offtake'))
-          );
-          
-          if (potentialCollections.length > 0) {
-            console.log("🔍 Potential fodder collections found:", potentialCollections);
-            // Use the first potential collection
-            fodderOfftakeData = data[potentialCollections[0]];
-            console.log(`🔄 Using potential collection: ${potentialCollections[0]}`);
-          } else {
-            setAllFodderOfftake([]);
-            return;
-          }
-        }
-      }
+  // --- 1. Fetch User Permissions & Determine Available Programmes ---
+  useEffect(() => {
+    if (!userRole) return;
 
-      console.log(`📋 Processing ${fodderOfftakeData.length} records from fodder offtake collection`);
-      console.log("🔍 Sample record:", fodderOfftakeData[0]);
-      
-      const processedData = fodderOfftakeData.map((item: any, index: number) => {
-        // Handle date parsing
-        let dateValue = item.date || item.Date || item.createdAt || item.timestamp || item.transactionDate;
-        
-        // Parse dates if they are Firestore timestamp objects
-        const parseFirestoreDate = (dateValue: any) => {
-          if (dateValue && typeof dateValue === 'object') {
-            if (dateValue.toDate && typeof dateValue.toDate === 'function') {
-              return dateValue.toDate();
-            } else if (dateValue.seconds) {
-              return new Date(dateValue.seconds * 1000);
-            } else if (dateValue._seconds) {
-              return new Date(dateValue._seconds * 1000);
-            }
-          }
-          return dateValue;
-        };
-
-        dateValue = parseFirestoreDate(dateValue);
-
-        // Handle different field name variations for fodder offtake
-        // Prioritize field names that are most likely to be used
-        const processedItem: FodderOfftake = {
-          id: item.id || item.docId || `temp-${index}-${Date.now()}`,
-          date: dateValue,
-          farmer_name: item.farmer_name || item.farmerName || item.farmer || item.Farmer || item.name || '',
-          phone_number: item.phone_number || item.phoneNumber || item.phone || item.Phone || item.mobile || item.contact || item.telephone || '',
-          bale_price: Number(item.bale_price || item.balePrice || item.price || item.Price || item.amount || item.cost || item.bale_cost || 0),
-          location: item.location || item.Location || item.area || item.Area || item.village || item.town || item.sub_location || '',
-          region: item.region || item.Region || item.county || item.County || item.district || item.division || ''
-        };
-
-        // Log field mapping for first record to debug
-        if (index === 0) {
-          console.log("🔧 Field mapping for first record:", {
-            original: item,
-            processed: processedItem
-          });
-        }
-
-        return processedItem;
-      });
-
-      console.log("🎉 Final processed fodder offtake data:", processedData);
-      setAllFodderOfftake(processedData);
-      
-    } catch (error) {
-      console.error("❌ Error fetching fodder offtake data:", error);
-      toast({
-        title: "Error",
-        description: "Failed to load fodder offtake data from database",
-        variant: "destructive",
-      });
-    } finally {
-      setLoading(false);
-    }
-  }, [toast]);
-
-  // Filter application
-  const applyFilters = useCallback(() => {
-    if (allFodderOfftake.length === 0) {
-      console.log("No fodder offtake data to filter");
-      setFilteredFodderOfftake([]);
-      setStats({
-        totalRegions: 0,
-        totalRevenue: 0,
-        totalFarmers: 0,
-        totalRecords: 0,
-      });
+    if (isChiefAdmin(userRole)) {
+      setAvailablePrograms(["RANGE", "KPMD"]);
+      if (!activeProgram) setActiveProgram("RANGE");
       return;
     }
 
-    console.log("Applying filters to", allFodderOfftake.length, "fodder offtake records");
+    const auth = getAuth();
+    const uid = auth.currentUser?.uid;
     
-    let filtered = allFodderOfftake.filter(record => {
-      // Region filter
-      if (filters.region !== "all" && record.region?.toLowerCase() !== filters.region.toLowerCase()) {
-        return false;
+    if (!uid) return;
+
+    const userRef = ref(db, `users/${uid}`);
+    const unsubscribe = onValue(userRef, (snapshot) => {
+      const data = snapshot.val();
+      if (data && data.allowedProgrammes) {
+        const programs = Object.keys(data.allowedProgrammes).filter(
+          key => data.allowedProgrammes[key] === true
+        );
+        setAvailablePrograms(programs);
+        
+        if (programs.length > 0 && !programs.includes(activeProgram)) {
+          setActiveProgram(programs[0]);
+        } else if (programs.length === 0) {
+            setActiveProgram("");
+        }
+      } else {
+        setAvailablePrograms([]);
+      }
+    }, (error) => {
+        console.error("Error fetching user permissions:", error);
+    });
+
+    return () => unsubscribe();
+  }, [userRole, activeProgram]);
+
+  // --- 2. Data Fetching (Realtime with Programme Query) ---
+  useEffect(() => {
+    if (!activeProgram) {
+        setAllFodder([]);
+        setLoading(false);
+        return;
+    }
+
+    setLoading(true);
+    const fodderQuery = query(
+        ref(db, 'fodderFarmers'), 
+        orderByChild('programme'), 
+        equalTo(activeProgram)
+    );
+
+    const unsubscribe = onValue(fodderQuery, (snapshot) => {
+      const data = snapshot.val();
+      
+      if (!data) {
+        setAllFodder([]);
+        setLoading(false);
+        return;
       }
 
-      // Location filter
-      if (filters.location !== "all" && record.location?.toLowerCase() !== filters.location.toLowerCase()) {
-        return false;
-      }
+      const fodderData = Object.keys(data).map((key) => {
+        const item = data[key];
+        
+        // Handle date parsing
+        let dateValue = item.date || item.Date || item.createdAt || item.timestamp;
+        if (dateValue && typeof dateValue === 'object') {
+          if (dateValue.toDate && typeof dateValue.toDate === 'function') {
+            dateValue = dateValue.toDate();
+          } else if (dateValue.seconds) {
+            dateValue = new Date(dateValue.seconds * 1000);
+          } else if (dateValue._seconds) {
+            dateValue = new Date(dateValue._seconds * 1000);
+          }
+        }
 
-      // Date filter
+        // Map farmers array to match interface (idNo, phoneNo)
+        const farmersList: Farmer[] = Array.isArray(item.farmers) 
+          ? item.farmers.map((f: any) => ({
+              idNo: f.idNo || f.id || 'N/A',
+              name: f.name || 'N/A',
+              phoneNo: f.phoneNo || f.phone || 'N/A',
+              gender: f.gender || 'N/A'
+            })) 
+          : [];
+
+        return {
+          id: key,
+          date: dateValue,
+          landSize: Number(item.landSize || item.LandSize || 0),
+          location: item.location || item.Location || item.area || item.Area || '',
+          model: item.model || item.Model || '',
+          // Map 'county' to 'region' for backwards compatibility with filters
+          region: item.county || item.region || item.Region || '',
+          subcounty: item.subcounty || '',
+          username: item.username || '',
+          totalAcresPasture: Number(item.totalAcresPasture || item.TotalAcresPasture || 0),
+          totalBales: Number(item.totalBales || item.TotalBales || 0),
+          yieldPerHarvest: Number(item.yieldPerHarvest || item.YieldPerHarvest || 0),
+          farmers: farmersList,
+          programme: item.programme || activeProgram
+        };
+      });
+
+      setAllFodder(fodderData);
+      setLoading(false);
+    }, (error) => {
+      console.error("Error fetching fodder data:", error);
+      toast({ title: "Error", description: "Failed to load fodder data", variant: "destructive" });
+      setLoading(false);
+    });
+
+    return () => { if(typeof unsubscribe === 'function') unsubscribe(); };
+  }, [activeProgram, toast]);
+
+  // --- Filtering Logic ---
+  const applyFilters = useCallback(() => {
+    if (allFodder.length === 0) {
+      setFilteredFodder([]);
+      setStats({ totalFarmers: 0, totalRegions: 0, totalModels: 0 });
+      return;
+    }
+
+    let filtered = allFodder.filter(record => {
+      if (filters.region !== "all" && record.region?.toLowerCase() !== filters.region.toLowerCase()) return false;
+      if (filters.location !== "all" && record.location?.toLowerCase() !== filters.location.toLowerCase()) return false;
+      if (filters.model !== "all" && record.model?.toLowerCase() !== filters.model.toLowerCase()) return false;
+
       if (filters.startDate || filters.endDate) {
         const recordDate = parseDate(record.date);
         if (recordDate) {
@@ -335,19 +308,14 @@ const FodderOfftakePage = () => {
           if (startDate && recordDateOnly < startDate) return false;
           if (endDate && recordDateOnly > endDate) return false;
         } else if (filters.startDate || filters.endDate) {
-          // If we have date filters but no valid date on record, exclude it
           return false;
         }
       }
 
-      // Search filter
       if (filters.search) {
         const searchTerm = filters.search.toLowerCase();
         const searchMatch = [
-          record.farmer_name, 
-          record.phone_number, 
-          record.location,
-          record.region
+          record.location, record.region, record.model, record.subcounty
         ].some(field => field?.toLowerCase().includes(searchTerm));
         if (!searchMatch) return false;
       }
@@ -355,24 +323,14 @@ const FodderOfftakePage = () => {
       return true;
     });
 
-    console.log("Filtered to", filtered.length, "fodder offtake records");
-    setFilteredFodderOfftake(filtered);
+    setFilteredFodder(filtered);
     
-    // Update stats
-    const totalRevenue = filtered.reduce((sum, record) => sum + (record.bale_price || 0), 0);
-    
-    // Count unique farmers and regions from filtered data
-    const uniqueFarmers = new Set(filtered.map(f => f.farmer_name).filter(Boolean));
+    const totalFarmers = filtered.reduce((sum, record) => sum + (record.farmers?.length || 0), 0);
     const uniqueRegions = new Set(filtered.map(f => f.region).filter(Boolean));
+    const uniqueModels = new Set(filtered.map(f => f.model).filter(Boolean));
 
-    setStats({
-      totalFarmers: uniqueFarmers.size,
-      totalRegions: uniqueRegions.size,
-      totalRevenue,
-      totalRecords: filtered.length
-    });
+    setStats({ totalFarmers, totalRegions: uniqueRegions.size, totalModels: uniqueModels.size });
 
-    // Update pagination
     const totalPages = Math.ceil(filtered.length / pagination.limit);
     setPagination(prev => ({
       ...prev,
@@ -380,363 +338,219 @@ const FodderOfftakePage = () => {
       hasNext: prev.page < totalPages,
       hasPrev: prev.page > 1
     }));
-  }, [allFodderOfftake, filters, pagination.limit]);
-
-  // Effects
-  useEffect(() => {
-    fetchAllData();
-  }, [fetchAllData]);
+  }, [allFodder, filters, pagination.limit, pagination.page]);
 
   useEffect(() => {
     applyFilters();
   }, [applyFilters]);
 
-  // Optimized search handler with debouncing
-  const handleSearch = useCallback((value: string) => {
-    // Clear previous timeout
-    if (searchTimeoutRef.current) {
-      clearTimeout(searchTimeoutRef.current);
-    }
+  // --- Handlers ---
 
-    // Set new timeout
+  const handleProgramChange = (program: string) => {
+    setActiveProgram(program);
+    setFilters(prev => ({ 
+        ...prev, 
+        search: "", 
+        startDate: currentMonth.startDate, 
+        endDate: currentMonth.endDate, 
+        location: "all", 
+        region: "all", 
+        model: "all" 
+    }));
+    setSelectedRecords([]);
+    setPagination(prev => ({ ...prev, page: 1 }));
+  };
+
+  const handleSearch = (value: string) => {
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
     searchTimeoutRef.current = setTimeout(() => {
       setFilters(prev => ({ ...prev, search: value }));
       setPagination(prev => ({ ...prev, page: 1 }));
     }, SEARCH_DEBOUNCE_DELAY);
-  }, []);
+  };
 
-  // Cleanup timeout on unmount
-  useEffect(() => {
-    return () => {
-      if (searchTimeoutRef.current) {
-        clearTimeout(searchTimeoutRef.current);
-      }
-    };
-  }, []);
-
-  // Filter change handler
-  const handleFilterChange = useCallback((key: keyof Filters, value: string) => {
+  const handleFilterChange = (key: keyof Filters, value: string) => {
     setFilters(prev => ({ ...prev, [key]: value }));
     setPagination(prev => ({ ...prev, page: 1 }));
-  }, []);
-
-  // Delete functionality
-  const handleDeleteSelected = async () => {
-    if (selectedRecords.length === 0) {
-      toast({
-        title: "No Records Selected",
-        description: "Please select records to delete",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    try {
-      setDeleteLoading(true);
-      
-      // Simulate deletion - replace with actual Firebase delete operation
-      console.log("Deleting records:", selectedRecords);
-      
-      // In a real implementation, you would call a Firebase delete function here
-      // await deleteFodderOfftakeRecords(selectedRecords);
-      
-      // For now, we'll just filter them out from the local state
-      setAllFodderOfftake(prev => prev.filter(record => !selectedRecords.includes(record.id)));
-      setSelectedRecords([]);
-      
-      toast({
-        title: "Records Deleted",
-        description: `Successfully deleted ${selectedRecords.length} records`,
-      });
-      
-      setIsDeleteDialogOpen(false);
-    } catch (error) {
-      console.error("Error deleting records:", error);
-      toast({
-        title: "Delete Failed",
-        description: "Failed to delete records. Please try again.",
-        variant: "destructive",
-      });
-    } finally {
-      setDeleteLoading(false);
-    }
-  };
-
-  // Upload functionality
-  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      const fileExtension = file.name.split('.').pop()?.toLowerCase();
-      if (fileExtension && ['csv', 'json', 'xlsx', 'xls'].includes(fileExtension)) {
-        setUploadFile(file);
-      } else {
-        toast({
-          title: "Invalid File Format",
-          description: "Please select a CSV, JSON, or Excel file",
-          variant: "destructive",
-        });
-      }
-    }
-  };
-
-  const handleUpload = async () => {
-    if (!uploadFile) {
-      toast({
-        title: "No File Selected",
-        description: "Please select a file to upload",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    try {
-      setUploadLoading(true);
-      setUploadProgress(0);
-      
-      // Simulate upload progress
-      const progressInterval = setInterval(() => {
-        setUploadProgress(prev => {
-          if (prev >= 90) {
-            clearInterval(progressInterval);
-            return prev;
-          }
-          return prev + 10;
-        });
-      }, 200);
-
-      // Use the upload utility - SPECIFICALLY FOR FOFFTAKE
-      const result: UploadResult = await uploadDataWithValidation(uploadFile, "fofftake");
-      
-      clearInterval(progressInterval);
-      setUploadProgress(100);
-
-      if (result.success) {
-        toast({
-          title: "Upload Successful",
-          description: result.message,
-        });
-        
-        // Refresh data
-        await fetchAllData();
-        setIsUploadDialogOpen(false);
-        setUploadFile(null);
-        setUploadProgress(0);
-        
-        // Reset file input
-        if (fileInputRef.current) {
-          fileInputRef.current.value = '';
-        }
-      } else {
-        let errorMessage = result.message;
-        
-        if (result.validationErrors && result.validationErrors.length > 0) {
-          errorMessage += "\n\n" + formatValidationErrors(result.validationErrors);
-        }
-        
-        toast({
-          title: "Upload Failed",
-          description: errorMessage,
-          variant: "destructive",
-        });
-      }
-    } catch (error) {
-      console.error("Error uploading file:", error);
-      toast({
-        title: "Upload Failed",
-        description: "An unexpected error occurred during upload",
-        variant: "destructive",
-      });
-    } finally {
-      setUploadLoading(false);
-      setUploadProgress(0);
-    }
-  };
-
-  const handleExport = async () => {
-    try {
-      setExportLoading(true);
-      
-      if (filteredFodderOfftake.length === 0) {
-        toast({
-          title: "No Data to Export",
-          description: "There are no records matching your current filters",
-          variant: "destructive",
-        });
-        return;
-      }
-
-      const csvData = filteredFodderOfftake.map(record => [
-        formatDate(record.date),
-        record.farmer_name || 'N/A',
-        formatPhoneNumber(record.phone_number || ''),
-        (record.bale_price || 0).toString(),
-        record.location || 'N/A',
-        record.region || 'N/A'
-      ]);
-
-      const headers = ['Date', 'Farmer Name', 'Phone Number', 'Bale Price', 'Location', 'Region'];
-      const csvContent = [headers, ...csvData]
-        .map(row => row.map(field => `"${field}"`).join(','))
-        .join('\n');
-
-      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      
-      let filename = `fodder-offtake-data`;
-      if (filters.startDate || filters.endDate) {
-        filename += `_${filters.startDate || 'start'}_to_${filters.endDate || 'end'}`;
-      }
-      filename += `_${new Date().toISOString().split('T')[0]}.csv`;
-      
-      link.download = filename;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      window.URL.revokeObjectURL(url);
-
-      toast({
-        title: "Export Successful",
-        description: `Exported ${filteredFodderOfftake.length} fodder offtake records`,
-      });
-
-    } catch (error) {
-      console.error("Error exporting data:", error);
-      toast({
-        title: "Export Failed",
-        description: "Failed to export data. Please try again.",
-        variant: "destructive",
-      });
-    } finally {
-      setExportLoading(false);
-    }
   };
 
   const handlePageChange = (newPage: number) => {
     setPagination(prev => ({ ...prev, page: newPage }));
   };
 
-  const getCurrentPageRecords = useCallback(() => {
-    const startIndex = (pagination.page - 1) * pagination.limit;
-    const endIndex = startIndex + pagination.limit;
-    return filteredFodderOfftake.slice(startIndex, endIndex);
-  }, [filteredFodderOfftake, pagination.page, pagination.limit]);
-
   const handleSelectRecord = (recordId: string) => {
-    setSelectedRecords(prev =>
-      prev.includes(recordId)
-        ? prev.filter(id => id !== recordId)
-        : [...prev, recordId]
-    );
+    setSelectedRecords(prev => prev.includes(recordId) ? prev.filter(id => id !== recordId) : [...prev, recordId]);
   };
 
   const handleSelectAll = () => {
     const currentPageIds = getCurrentPageRecords().map(f => f.id);
-    setSelectedRecords(prev =>
-      prev.length === currentPageIds.length ? [] : currentPageIds
-    );
+    setSelectedRecords(prev => prev.length === currentPageIds.length ? [] : currentPageIds);
   };
 
-  const openViewDialog = (record: FodderOfftake) => {
+  const getCurrentPageRecords = () => {
+    const startIndex = (pagination.page - 1) * pagination.limit;
+    const endIndex = startIndex + pagination.limit;
+    return filteredFodder.slice(startIndex, endIndex);
+  };
+
+  const openViewDialog = (record: FodderFarmer) => {
     setViewingRecord(record);
     setIsViewDialogOpen(true);
   };
 
-  const openEditDialog = (record: FodderOfftake) => {
-    setEditingRecord({...record});
-    setIsEditDialogOpen(true);
+  const handleEdit = (record: FodderFarmer) => {
+    console.log("Edit record:", record);
+    toast({ title: "Edit Feature", description: "Edit functionality will be implemented soon" });
   };
 
-  const closeEditDialog = () => {
-    setEditingRecord(null);
-    setIsEditDialogOpen(false);
+  const handleDelete = (record: FodderFarmer) => {
+    console.log("Delete record:", record);
+    toast({ title: "Delete Feature", description: "Delete functionality will be implemented soon", variant: "destructive" });
   };
 
-  const handleEditChange = (field: keyof FodderOfftake, value: any) => {
-    if (editingRecord) {
-      setEditingRecord(prev => prev ? {...prev, [field]: value} : null);
-    }
-  };
-
-  const handleSaveEdit = async () => {
-    if (!editingRecord) return;
-
+  const handleDeleteMultiple = async () => {
+    if (selectedRecords.length === 0) return;
     try {
-      setSaving(true);
-      
-      // Update the record in the database
-      // await updateData('fofftake', editingRecord.id, editingRecord);
-      
-      // Update local state
-      setAllFodderOfftake(prev => 
-        prev.map(record => 
-          record.id === editingRecord.id ? editingRecord : record
-        )
-      );
-
-      toast({
-        title: "Success",
-        description: "Record updated successfully",
-      });
-
-      closeEditDialog();
-      
+      setDeleteLoading(true);
+      const updates: { [key: string]: null } = {};
+      selectedRecords.forEach(id => updates[`fodderFarmers/${id}`] = null);
+      await update(ref(db), updates);
+      toast({ title: "Success", description: `${selectedRecords.length} records deleted` });
+      setSelectedRecords([]);
+      setIsDeleteConfirmOpen(false);
     } catch (error) {
-      console.error("Error updating record:", error);
-      toast({
-        title: "Error",
-        description: "Failed to update record. Please try again.",
-        variant: "destructive",
-      });
-    } finally {
-      setSaving(false);
+      toast({ title: "Error", description: "Bulk delete failed", variant: "destructive" });
+    } finally { setDeleteLoading(false); }
+  };
+
+  const openDeleteConfirm = () => {
+    if (selectedRecords.length === 0) return;
+    setIsDeleteConfirmOpen(true);
+  };
+
+  const handleExport = async () => {
+    try {
+      setExportLoading(true);
+      if (filteredFodder.length === 0) return;
+
+      const csvData = filteredFodder.map(record => [
+        formatDate(record.date),
+        record.location || 'N/A',
+        record.region || 'N/A',
+        record.subcounty || 'N/A',
+        record.model || 'N/A',
+        (record.farmers?.length || 0).toString(),
+        (record.landSize || 0).toString(),
+        (record.totalAcresPasture || 0).toString(),
+        (record.totalBales || 0).toString(),
+        (record.yieldPerHarvest || 0).toString(),
+        record.programme || activeProgram
+      ]);
+
+      const headers = ['Date', 'Location', 'County', 'Subcounty', 'Model', 'Number of Farmers', 'Land Size', 'Total Acres Pasture', 'Total Bales', 'Yield per Harvest', 'Programme'];
+      const csvContent = [headers, ...csvData].map(row => row.map(f => `"${f}"`).join(',')).join('\n');
+      
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `fodder_export_${activeProgram}_${new Date().toISOString().split('T')[0]}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      
+      toast({ title: "Success", description: "Data exported successfully" });
+    } catch (error) {
+      toast({ title: "Error", description: "Export failed", variant: "destructive" });
+    } finally { setExportLoading(false); }
+  };
+
+  const handleFileSelect = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      setUploadFile(file);
     }
   };
 
-  // Memoized values
-  const uniqueRegions = useMemo(() => {
-    const regions = [...new Set(allFodderOfftake.map(f => f.region).filter(Boolean))];
-    return regions.sort();
-  }, [allFodderOfftake]);
+  const handleUpload = async () => {
+    if (!uploadFile) return;
+    setUploadLoading(true);
+    try {
+      const text = await uploadFile.text();
+      const isJSON = uploadFile.name.endsWith('.json');
+      let parsedData: any[] = [];
 
-  const uniqueLocations = useMemo(() => {
-    const locations = [...new Set(allFodderOfftake.map(f => f.location).filter(Boolean))];
-    return locations.sort();
-  }, [allFodderOfftake]);
+      if (isJSON) {
+        parsedData = JSON.parse(text);
+      } else {
+        const lines = text.split('\n').filter(l => l.trim());
+        const headers = lines[0].split(',').map(h => h.trim());
+        for (let i = 1; i < lines.length; i++) {
+          const values = lines[i].split(',').map(v => v.trim());
+          const obj: any = {};
+          headers.forEach((h, idx) => obj[h] = values[idx]);
+          parsedData.push(obj);
+        }
+      }
 
-  const currentPageRecords = useMemo(getCurrentPageRecords, [getCurrentPageRecords]);
+      let count = 0;
+      const collectionRef = ref(db, "fodderFarmers");
+      
+      for (const item of parsedData) {
+        await push(collectionRef, {
+          ...item,
+          programme: activeProgram,
+          createdAt: new Date().toISOString(),
+          rawTimestamp: Date.now()
+        });
+        count++;
+      }
+
+      toast({ title: "Success", description: `Uploaded ${count} records to ${activeProgram}.` });
+      setIsUploadDialogOpen(false);
+      setUploadFile(null);
+    } catch (error) {
+      console.error(error);
+      toast({ title: "Error", description: "Invalid file format", variant: "destructive" });
+    } finally {
+      setUploadLoading(false);
+    }
+  };
 
   const clearAllFilters = () => {
-    // Clear any pending search timeout
-    if (searchTimeoutRef.current) {
-      clearTimeout(searchTimeoutRef.current);
-    }
-    
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
     setFilters({
       search: "",
       startDate: "",
       endDate: "",
       location: "all",
       region: "all",
+      model: "all"
     });
+    setPagination(prev => ({ ...prev, page: 1 }));
   };
 
   const resetToCurrentMonth = () => {
     setFilters(prev => ({ ...prev, ...currentMonth }));
   };
 
-  // Memoized components to prevent re-renders
+  // Derived Lists
+  const uniqueRegions = useMemo(() => [...new Set(allFodder.map(f => f.region).filter(Boolean))], [allFodder]);
+  const uniqueLocations = useMemo(() => [...new Set(allFodder.map(f => f.location).filter(Boolean))], [allFodder]);
+  const uniqueModels = useMemo(() => [...new Set(allFodder.map(f => f.model).filter(Boolean))], [allFodder]);
+  const currentPageRecords = useMemo(getCurrentPageRecords, [filteredFodder, pagination.page, pagination.limit]);
+
+  // Sub-components
   const StatsCard = useCallback(({ title, value, icon: Icon, description }: any) => (
     <Card className="bg-white text-slate-900 shadow-lg border border-gray-200 relative overflow-hidden">
-      <div className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-blue-500 to-purple-600"></div>
-      
+      <div className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-green-500 to-emerald-600"></div>
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 pt-4 pl-6">
         <CardTitle className="text-sm font-medium text-slate-700">{title}</CardTitle>
       </CardHeader>
       <CardContent className="pl-6 pb-4 flex flex-row">
         <div className="mr-2 rounded-full">
-          <Icon className="h-8 w-8 text-blue-600" />
+          <Icon className="h-8 w-8 text-green-600" />
         </div>
         <div>
           <div className="text-2xl font-bold text-slate-900 mb-2">{value}</div>
@@ -751,27 +565,57 @@ const FodderOfftakePage = () => {
   ), []);
 
   const FilterSection = useMemo(() => (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
       <div className="space-y-2">
         <Label htmlFor="search" className="font-semibold text-gray-700">Search</Label>
         <Input
           id="search"
-          placeholder="Search farmers, locations..."
+          placeholder="Search records..."
           onChange={(e) => handleSearch(e.target.value)}
-          className="border-gray-300 focus:border-blue-500 focus:ring-blue-500 bg-white"
+          className="border-gray-300 focus:border-green-500 focus:ring-green-500 bg-white"
         />
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="region" className="font-semibold text-gray-700">Region</Label>
+        <Label htmlFor="region" className="font-semibold text-gray-700">County</Label>
         <Select value={filters.region} onValueChange={(value) => handleFilterChange("region", value)}>
-          <SelectTrigger className="border-gray-300 focus:border-blue-500 focus:ring-blue-500 bg-white">
-            <SelectValue placeholder="Select region" />
+          <SelectTrigger className="border-gray-300 focus:border-green-500 focus:ring-green-500 bg-white">
+            <SelectValue placeholder="Select county" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All Regions</SelectItem>
+            <SelectItem value="all">All Counties</SelectItem>
             {uniqueRegions.slice(0, 20).map(region => (
               <SelectItem key={region} value={region}>{region}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="location" className="font-semibold text-gray-700">Location</Label>
+        <Select value={filters.location} onValueChange={(value) => handleFilterChange("location", value)}>
+          <SelectTrigger className="border-gray-300 focus:border-green-500 focus:ring-green-500 bg-white">
+            <SelectValue placeholder="Select location" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Locations</SelectItem>
+            {uniqueLocations.slice(0, 20).map(location => (
+              <SelectItem key={location} value={location}>{location}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="model" className="font-semibold text-gray-700">Model</Label>
+        <Select value={filters.model} onValueChange={(value) => handleFilterChange("model", value)}>
+          <SelectTrigger className="border-gray-300 focus:border-green-500 focus:ring-green-500 bg-white">
+            <SelectValue placeholder="Select model" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Models</SelectItem>
+            {uniqueModels.slice(0, 20).map(model => (
+              <SelectItem key={model} value={model}>{model}</SelectItem>
             ))}
           </SelectContent>
         </Select>
@@ -784,7 +628,7 @@ const FodderOfftakePage = () => {
           type="date"
           value={filters.startDate}
           onChange={(e) => handleFilterChange("startDate", e.target.value)}
-          className="border-gray-300 focus:border-blue-500 focus:ring-blue-500 bg-white"
+          className="border-gray-300 focus:border-green-500 focus:ring-green-500 bg-white"
         />
       </div>
 
@@ -795,15 +639,17 @@ const FodderOfftakePage = () => {
           type="date"
           value={filters.endDate}
           onChange={(e) => handleFilterChange("endDate", e.target.value)}
-          className="border-gray-300 focus:border-blue-500 focus:ring-blue-500 bg-white"
+          className="border-gray-300 focus:border-green-500 focus:ring-green-500 bg-white"
         />
       </div>
     </div>
-  ), [filters, uniqueRegions, handleSearch, handleFilterChange]);
+  ), [filters, uniqueRegions, uniqueLocations, uniqueModels]);
 
-  const TableRow = useCallback(({ record }: { record: FodderOfftake }) => {
+  const TableRow = useCallback(({ record }: { record: FodderFarmer }) => {
+    const farmerCount = record.farmers?.length || 0;
+    
     return (
-      <tr className="border-b hover:bg-blue-50 transition-colors duration-200 group text-sm">
+      <tr className="border-b hover:bg-green-50 transition-colors duration-200 group text-sm">
         <td className="py-3 px-4">
           <Checkbox
             checked={selectedRecords.includes(record.id)}
@@ -811,62 +657,83 @@ const FodderOfftakePage = () => {
           />
         </td>
         <td className="py-3 px-4">{formatDate(record.date)}</td>
-        <td className="py-3 px-4">{record.farmer_name || 'N/A'}</td>
-        <td className="py-3 px-4">{formatPhoneNumber(record.phone_number || '')}</td>
-        <td className="py-3 px-4">{formatCurrency(record.bale_price || 0)}</td>
         <td className="py-3 px-4">{record.location || 'N/A'}</td>
         <td className="py-3 px-4">{record.region || 'N/A'}</td>
+        <td className="py-3 px-4">
+          <Badge className="bg-blue-100 text-blue-800">
+            {record.model || 'N/A'}
+          </Badge>
+        </td>
+        <td className="py-3 px-4">{record.landSize || 0}</td>
+        <td className="py-3 px-4">{record.totalAcresPasture || 0}</td>
+        <td className="py-3 px-4">{record.totalBales || 0}</td>
+        <td className="py-3 px-4">{record.yieldPerHarvest || 0}</td>
+        <td className="py-3 px-4">
+          <span className="font-bold text-gray-700">{farmerCount}</span>
+        </td>
         <td className="py-3 px-4">
           <div className="flex gap-2">
             <Button
               variant="outline"
               size="sm"
               onClick={() => openViewDialog(record)}
-              className="h-8 w-8 p-0 hover:bg-blue-50 hover:text-blue-600 border-blue-200"
+              className="h-8 w-8 p-0 hover:bg-green-50 hover:text-green-600 border-green-200"
             >
-              <Eye className="h-4 w-4 text-blue-500" />
+              <Eye className="h-4 w-4 text-green-500" />
             </Button>
-            {isChiefAdmin(userRole) &&( 
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => openEditDialog(record)}
-                className="h-8 w-8 p-0 hover:bg-green-50 hover:text-green-600 border-green-200"
-              >
-                <Edit className="h-4 w-4 text-green-500" />
-              </Button>
-            )}
-            {isChiefAdmin(userRole) &&(
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setSelectedRecords([record.id]);
-                  setIsDeleteDialogOpen(true);
-                }}
-                className="h-8 w-8 p-0 hover:bg-red-50 hover:text-red-600 border-red-200"
-              >
-                <Trash2 className="h-4 w-4 text-red-500" />
-              </Button>
+            {userIsChiefAdmin && (
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleEdit(record)}
+                  className="h-8 w-8 p-0 hover:bg-blue-50 hover:text-blue-600 border-blue-200"
+                >
+                  <Edit className="h-4 w-4 text-blue-500" />
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleDelete(record)}
+                  className="h-8 w-8 p-0 hover:bg-red-50 hover:text-red-600 border-red-200"
+                >
+                  <Trash2 className="h-4 w-4 text-red-500" />
+                </Button>
+              </>
             )}
           </div>
         </td>
       </tr>
     );
-  }, [selectedRecords, handleSelectRecord, openViewDialog, openEditDialog, userRole]);
+  }, [selectedRecords, handleSelectRecord, openViewDialog, handleEdit, handleDelete, userIsChiefAdmin]);
 
   return (
     <div className="space-y-6">
       {/* Header with Action Buttons */}
       <div className="flex md:flex-row flex-col justify-between items-start sm:items-center gap-4">
         <div>
-          <h2 className="text-xl font-bold mb-2 bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-            Fodder Offtake Data
+          <h2 className="text-xl font-bold mb-2 bg-gradient-to-r from-green-600 to-emerald-600 bg-clip-text text-transparent">
+            Fodder Farmers
           </h2>
-          <p className="text-muted-foreground">Manage fodder offtake records</p>
+          <div className="flex items-center gap-2 text-sm text-gray-600">
+             {activeProgram && <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 font-bold px-3 py-1">{activeProgram} PROGRAMME</Badge>}
+          </div>
         </div>
 
         <div className="flex flex-wrap gap-2">
+          {selectedRecords.length > 0 && userIsChiefAdmin && (
+            <Button 
+              variant="destructive" 
+              size="sm" 
+              onClick={openDeleteConfirm}
+              disabled={deleteLoading}
+              className="text-xs"
+            >
+              <Trash2 className="h-4 w-4 mr-2" />
+              Delete ({selectedRecords.length})
+            </Button>
+          )}
+          
           <Button 
             variant="outline" 
             size="sm" 
@@ -884,34 +751,41 @@ const FodderOfftakePage = () => {
             This Month
           </Button>
 
-          {isChiefAdmin(userRole) && (
+          {userIsChiefAdmin ? (
+             <div className="flex justify-end">
+               <Select value={activeProgram} onValueChange={handleProgramChange}>
+                  <SelectTrigger className="w-[200px] border-gray-300 focus:border-green-500 bg-white">
+                      <SelectValue placeholder="Select Programme" />
+                  </SelectTrigger>
+                  <SelectContent>
+                      {availablePrograms.map(p => (
+                          <SelectItem key={p} value={p}>{p}</SelectItem>
+                      ))}
+                  </SelectContent>
+              </Select>
+             </div>
+          ) : (
+             <div className="w-[200px]"></div>
+          )}
+
+          {userIsChiefAdmin && (
             <>
               <Button 
+                variant="outline" 
+                size="sm" 
                 onClick={() => setIsUploadDialogOpen(true)}
-                className="bg-green-50 text-green-500 hover:bg-green-100 hover:text-green-600 border border-green-200 shadow-md text-xs"
+                className="text-xs border-green-300 hover:bg-green-50 text-green-700"
               >
                 <Upload className="h-4 w-4 mr-2" />
                 Upload Data
               </Button>
-              
-              {selectedRecords.length > 0 && (
-                <Button 
-                  onClick={() => setIsDeleteDialogOpen(true)}
-                  disabled={deleteLoading}
-                  className="bg-gradient-to-r from-red-600 to-rose-700 hover:from-red-700 hover:to-rose-800 text-white shadow-md text-xs"
-                >
-                  <Trash2 className="h-4 w-4 mr-2" />
-                  {deleteLoading ? "Deleting..." : `Delete (${selectedRecords.length})`}
-                </Button>
-              )}
-              
               <Button 
                 onClick={handleExport} 
-                disabled={exportLoading || filteredFodderOfftake.length === 0}
-                className="bg-gradient-to-r from-blue-600 to-purple-700 hover:from-blue-700 hover:to-purple-800 text-white shadow-md text-xs"
+                disabled={exportLoading || filteredFodder.length === 0}
+                className="bg-gradient-to-r from-green-600 to-emerald-700 hover:from-green-700 hover:to-emerald-800 text-white shadow-md text-xs"
               >
                 <Download className="h-4 w-4 mr-2" />
-                {exportLoading ? "Exporting..." : `Export (${filteredFodderOfftake.length})`}
+                {exportLoading ? "Exporting..." : `Export (${filteredFodder.length})`}
               </Button>
             </>
           )}
@@ -919,33 +793,26 @@ const FodderOfftakePage = () => {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatsCard 
-          title="Total Records" 
-          value={stats.totalRecords} 
-          icon={User}
-          description="Total fodder offtake records"
-        />
-
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <StatsCard 
           title="Total Farmers" 
           value={stats.totalFarmers} 
-          icon={User}
-          description="Unique farmers served"
+          icon={Users}
+          description="Across all records"
         />
 
         <StatsCard 
-          title="Regions" 
+          title="Counties" 
           value={stats.totalRegions} 
           icon={Globe}
-          description="Unique regions covered"
+          description="Unique counties covered"
         />
 
         <StatsCard 
-          title="Total Revenue" 
-          value={formatCurrency(stats.totalRevenue)} 
-          icon={DollarSign}
-          description="Revenue from bale sales"
+          title="Models" 
+          value={stats.totalModels} 
+          icon={LayoutGrid}
+          description="Different farming models"
         />
       </div>
 
@@ -961,32 +828,33 @@ const FodderOfftakePage = () => {
         <CardContent className="p-0">
           {loading ? (
             <div className="text-center py-12">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
-              <p className="text-muted-foreground mt-2">Loading fodder offtake data...</p>
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-600 mx-auto"></div>
+              <p className="text-muted-foreground mt-2">Loading fodder data...</p>
             </div>
           ) : currentPageRecords.length === 0 ? (
-            <div className="text-center py-12 text-muted-foreground">
-              {allFodderOfftake.length === 0 ? "No fodder offtake data found in database" : "No records found matching your criteria"}
-            </div>
+            <div className="text-center py-12 text-muted-foreground">{activeProgram ? "No records found matching your criteria" : "You do not have access to any programme data."}</div>
           ) : (
             <>
               <div className="w-full overflow-x-auto rounded-md">
-                <table className="w-full border-collapse border border-gray-300 text-sm text-left">
+                <table className="w-full border-collapse border border-gray-300 text-sm text-left whitespace-nowrap">
                   <thead className="rounded">
-                    <tr className="bg-blue-100">
-                      <th className="py-3 px-4">
+                    <tr className="bg-green-100 p-1 px-3">
+                      <th className="py-1 px-6">
                         <Checkbox
                           checked={selectedRecords.length === currentPageRecords.length && currentPageRecords.length > 0}
                           onCheckedChange={handleSelectAll}
                         />
                       </th>
-                      <th className="py-3 px-4 font-medium text-gray-600">Date</th>
-                      <th className="py-3 px-4 font-medium text-gray-600">Farmer Name</th>
-                      <th className="py-3 px-4 font-medium text-gray-600">Phone Number</th>
-                      <th className="py-3 px-4 font-medium text-gray-600">Bale Price</th>
-                      <th className="py-3 px-4 font-medium text-gray-600">Location</th>
-                      <th className="py-3 px-4 font-medium text-gray-600">Region</th>
-                      <th className="py-3 px-4 font-medium text-gray-600">Actions</th>
+                      <th className="py-1 px-6 font-medium text-gray-600">Date</th>
+                      <th className="py-1 px-6 font-medium text-gray-600">Location</th>
+                      <th className="py-1 px-6 font-medium text-gray-600">County</th>
+                      <th className="py-1 px-6 font-medium text-gray-600">Model</th>
+                      <th className="py-1 px-6 font-medium text-gray-600">Land Size</th>
+                      <th className="py-1 px-6 font-medium text-gray-600">Pasture Acres</th>
+                      <th className="py-1 px-6 font-medium text-gray-600">Total Bales</th>
+                      <th className="py-1 px-6 font-medium text-gray-600">Yield/Harvest</th>
+                      <th className="py-1 px-6 font-medium text-gray-600">Farmers</th>
+                      <th className="py-1 px-6 font-medium text-gray-600">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1000,7 +868,7 @@ const FodderOfftakePage = () => {
               {/* Pagination */}
               <div className="flex items-center justify-between p-4 border-t bg-gray-50">
                 <div className="text-sm text-muted-foreground">
-                  {filteredFodderOfftake.length} total records • {currentPageRecords.length} on this page
+                  Page {pagination.page} of {pagination.totalPages} • {filteredFodder.length} total records • {currentPageRecords.length} on this page
                 </div>
                 <div className="flex gap-2">
                   <Button
@@ -1028,43 +896,156 @@ const FodderOfftakePage = () => {
         </CardContent>
       </Card>
 
-      {/* View Record Dialog */}
+      {/* Upload Data Dialog */}
+      <Dialog open={isUploadDialogOpen} onOpenChange={setIsUploadDialogOpen}>
+        <DialogContent className="sm:max-w-md bg-white rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-slate-900">
+              <Upload className="h-5 w-5 text-green-600" />
+              Upload Fodder Farmers Data
+            </DialogTitle>
+            <DialogDescription>
+              Upload data from CSV or JSON files. Data will be assigned to the <strong>{activeProgram}</strong> programme.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="file-upload">Select File</Label>
+              <Input
+                id="file-upload"
+                ref={fileInputRef}
+                type="file"
+                accept=".csv,.json"
+                onChange={handleFileSelect}
+                className="bg-white border-slate-300"
+              />
+              <p className="text-xs text-slate-500">
+                Supported formats: CSV, JSON. Maximum file size: 10MB
+              </p>
+            </div>
+            
+            {uploadFile && (
+              <div className="bg-slate-50 rounded-lg p-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="font-medium text-slate-900">{uploadFile.name}</p>
+                    <p className="text-sm text-slate-500">
+                      {(uploadFile.size / 1024 / 1024).toFixed(2)} MB
+                    </p>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setUploadFile(null);
+                      if (fileInputRef.current) {
+                        fileInputRef.current.value = '';
+                      }
+                    }}
+                    className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button 
+              variant="outline" 
+              onClick={() => {
+                setIsUploadDialogOpen(false);
+                setUploadFile(null);
+                if (fileInputRef.current) {
+                  fileInputRef.current.value = '';
+                }
+              }}
+              className="border-slate-300"
+            >
+              Cancel
+            </Button>
+            <Button 
+              onClick={handleUpload} 
+              disabled={!uploadFile || uploadLoading}
+              className="bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white"
+            >
+              {uploadLoading ? (
+                <>
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                  Uploading...
+                </>
+              ) : (
+                <>
+                  <Upload className="h-4 w-4 mr-2" />
+                  Upload Data
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={isDeleteConfirmOpen} onOpenChange={setIsDeleteConfirmOpen}>
+        <DialogContent className="sm:max-w-md bg-white rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-slate-900">
+              <Trash2 className="h-5 w-5 text-red-600" />
+              Confirm Deletion
+            </DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete {selectedRecords.length} selected records? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button 
+              variant="outline" 
+              onClick={() => setIsDeleteConfirmOpen(false)}
+              className="border-slate-300"
+            >
+              Cancel
+            </Button>
+            <Button 
+              variant="destructive"
+              onClick={handleDeleteMultiple}
+              disabled={deleteLoading}
+              className="bg-red-600 hover:bg-red-700 text-white"
+            >
+              {deleteLoading ? (
+                <>
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                  Deleting...
+                </>
+              ) : (
+                <>
+                  <Trash2 className="h-4 w-4 mr-2" />
+                  Delete {selectedRecords.length} Records
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* View Record Dialog - Updated for JSON structure */}
       <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
         <DialogContent className="sm:max-w-2xl bg-white rounded-2xl max-h-[90vh] overflow-hidden">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-slate-900">
-              <Eye className="h-5 w-5 text-blue-600" />
-              Fodder Offtake Details
+              <Eye className="h-5 w-5 text-green-600" />
+              Fodder Farmer Details
             </DialogTitle>
             <DialogDescription>
-              Complete information for this fodder offtake transaction
+              Complete information for this fodder farming record
             </DialogDescription>
           </DialogHeader>
           {viewingRecord && (
             <div className="space-y-6 py-4 overflow-y-auto max-h-[60vh]">
-              {/* Farmer Information */}
+              {/* Basic Information */}
               <div className="bg-slate-50 rounded-xl p-4">
                 <h3 className="font-semibold text-slate-800 mb-3 flex items-center gap-2">
-                  <User className="h-4 w-4" />
-                  Farmer Information
-                </h3>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label className="text-sm font-medium text-slate-600">Farmer Name</Label>
-                    <p className="text-slate-900 font-medium">{viewingRecord.farmer_name || 'N/A'}</p>
-                  </div>
-                  <div>
-                    <Label className="text-sm font-medium text-slate-600">Phone Number</Label>
-                    <p className="text-slate-900 font-medium">{formatPhoneNumber(viewingRecord.phone_number || '')}</p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Transaction Information */}
-              <div className="bg-slate-50 rounded-xl p-4">
-                <h3 className="font-semibold text-slate-800 mb-3 flex items-center gap-2">
-                  <Calendar className="h-4 w-4" />
-                  Transaction Information
+                  <Sprout className="h-4 w-4" />
+                  Basic Information
                 </h3>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
@@ -1072,284 +1053,111 @@ const FodderOfftakePage = () => {
                     <p className="text-slate-900 font-medium">{formatDate(viewingRecord.date)}</p>
                   </div>
                   <div>
-                    <Label className="text-sm font-medium text-slate-600">Bale Price</Label>
-                    <p className="text-slate-900 font-medium text-lg">{formatCurrency(viewingRecord.bale_price || 0)}</p>
+                    <Label className="text-sm font-medium text-slate-600">Programme</Label>
+                    <Badge className="bg-green-100 text-green-800">{viewingRecord.programme || activeProgram}</Badge>
                   </div>
-                </div>
-              </div>
-
-              {/* Location Information */}
-              <div className="bg-slate-50 rounded-xl p-4">
-                <h3 className="font-semibold text-slate-800 mb-3 flex items-center gap-2">
-                  <MapPin className="h-4 w-4" />
-                  Location Information
-                </h3>
-                <div className="grid grid-cols-2 gap-4">
                   <div>
                     <Label className="text-sm font-medium text-slate-600">Location</Label>
                     <p className="text-slate-900 font-medium">{viewingRecord.location || 'N/A'}</p>
                   </div>
                   <div>
-                    <Label className="text-sm font-medium text-slate-600">Region</Label>
+                    <Label className="text-sm font-medium text-slate-600">County</Label>
                     <p className="text-slate-900 font-medium">{viewingRecord.region || 'N/A'}</p>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-medium text-slate-600">Subcounty</Label>
+                    <p className="text-slate-900 font-medium">{viewingRecord.subcounty || 'N/A'}</p>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-medium text-slate-600">Model</Label>
+                    <Badge className="bg-blue-100 text-blue-800">{viewingRecord.model || 'N/A'}</Badge>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-medium text-slate-600">Recorded By</Label>
+                    <p className="text-slate-900 font-medium">{viewingRecord.username || 'N/A'}</p>
                   </div>
                 </div>
               </div>
+
+              {/* Land Information */}
+              <div className="bg-slate-50 rounded-xl p-4">
+                <h3 className="font-semibold text-slate-800 mb-3 flex items-center gap-2">
+                  <MapPin className="h-4 w-4" />
+                  Land Information
+                </h3>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-sm font-medium text-slate-600">Land Size</Label>
+                    <p className="text-slate-900 font-medium">{(viewingRecord.landSize || 0).toLocaleString()} acres</p>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-medium text-slate-600">Total Acres Pasture</Label>
+                    <p className="text-slate-900 font-medium">{(viewingRecord.totalAcresPasture || 0).toLocaleString()} acres</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Production Information */}
+              <div className="bg-slate-50 rounded-xl p-4">
+                <h3 className="font-semibold text-slate-800 mb-3 flex items-center gap-2">
+                  <Calendar className="h-4 w-4" />
+                  Production Information
+                </h3>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-sm font-medium text-slate-600">Total Bales</Label>
+                    <p className="text-slate-900 font-medium text-lg font-bold">
+                      {(viewingRecord.totalBales || 0).toLocaleString()}
+                    </p>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-medium text-slate-600">Yield per Harvest</Label>
+                    <p className="text-slate-900 font-medium">{(viewingRecord.yieldPerHarvest || 0).toLocaleString()}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Farmers List - Updated to show all farmers */}
+              {viewingRecord.farmers && viewingRecord.farmers.length > 0 && (
+                <div className="bg-slate-50 rounded-xl p-4">
+                  <h3 className="font-semibold text-slate-800 mb-3 flex items-center gap-2">
+                    <Users className="h-4 w-4" />
+                    Associated Farmers ({viewingRecord.farmers.length})
+                  </h3>
+                  <div className="space-y-3 max-h-60 overflow-y-auto">
+                    {viewingRecord.farmers.map((farmer, index) => (
+                      <div key={farmer.idNo || index} className="border border-slate-200 rounded-lg p-3 bg-white">
+                        <div className="flex items-center gap-3 mb-2">
+                           <UserCircle className="h-6 w-6 text-gray-400" />
+                           <span className="font-bold text-gray-800">{farmer.name || 'Unknown'}</span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4 text-sm pl-9">
+                          <div>
+                            <Label className="text-xs font-medium text-slate-500">ID No</Label>
+                            <p className="text-slate-800 font-mono">{farmer.idNo || 'N/A'}</p>
+                          </div>
+                          <div>
+                            <Label className="text-xs font-medium text-slate-500">Gender</Label>
+                            <p className="text-slate-800">{farmer.gender || 'N/A'}</p>
+                          </div>
+                          <div className="col-span-2">
+                            <Label className="text-xs font-medium text-slate-500">Phone No</Label>
+                            <p className="text-slate-800">{farmer.phoneNo || 'N/A'}</p>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
           <DialogFooter>
             <Button 
               onClick={() => setIsViewDialogOpen(false)}
-              className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white"
+              className="bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white"
             >
               Close
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Edit Record Dialog */}
-      <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
-        <DialogContent className="sm:max-w-2xl bg-white rounded-2xl max-h-[90vh] overflow-hidden">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-slate-900">
-              <Edit className="h-5 w-5 text-green-600" />
-              Edit Fodder Offtake Record
-            </DialogTitle>
-            <DialogDescription>
-              Update the information for this fodder offtake transaction
-            </DialogDescription>
-          </DialogHeader>
-          {editingRecord && (
-            <div className="space-y-6 py-4 overflow-y-auto max-h-[60vh]">
-              {/* Farmer Information */}
-              <div className="bg-slate-50 rounded-xl p-4">
-                <h3 className="font-semibold text-slate-800 mb-3 flex items-center gap-2">
-                  <User className="h-4 w-4" />
-                  Farmer Information
-                </h3>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="edit-farmer-name" className="text-sm font-medium text-slate-600">Farmer Name</Label>
-                    <Input
-                      id="edit-farmer-name"
-                      value={editingRecord.farmer_name || ''}
-                      onChange={(e) => handleEditChange('farmer_name', e.target.value)}
-                      className="border-gray-300 focus:border-blue-500"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="edit-phone" className="text-sm font-medium text-slate-600">Phone Number</Label>
-                    <Input
-                      id="edit-phone"
-                      value={editingRecord.phone_number || ''}
-                      onChange={(e) => handleEditChange('phone_number', e.target.value)}
-                      className="border-gray-300 focus:border-blue-500"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Transaction Information */}
-              <div className="bg-slate-50 rounded-xl p-4">
-                <h3 className="font-semibold text-slate-800 mb-3 flex items-center gap-2">
-                  <Calendar className="h-4 w-4" />
-                  Transaction Information
-                </h3>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="edit-date" className="text-sm font-medium text-slate-600">Date</Label>
-                    <Input
-                      id="edit-date"
-                      type="date"
-                      value={formatDateForInput(editingRecord.date)}
-                      onChange={(e) => handleEditChange('date', e.target.value)}
-                      className="border-gray-300 focus:border-blue-500"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="edit-bale-price" className="text-sm font-medium text-slate-600">Bale Price (Ksh)</Label>
-                    <Input
-                      id="edit-bale-price"
-                      type="number"
-                      value={editingRecord.bale_price || 0}
-                      onChange={(e) => handleEditChange('bale_price', parseFloat(e.target.value) || 0)}
-                      className="border-gray-300 focus:border-blue-500"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Location Information */}
-              <div className="bg-slate-50 rounded-xl p-4">
-                <h3 className="font-semibold text-slate-800 mb-3 flex items-center gap-2">
-                  <MapPin className="h-4 w-4" />
-                  Location Information
-                </h3>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="edit-location" className="text-sm font-medium text-slate-600">Location</Label>
-                    <Input
-                      id="edit-location"
-                      value={editingRecord.location || ''}
-                      onChange={(e) => handleEditChange('location', e.target.value)}
-                      className="border-gray-300 focus:border-blue-500"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="edit-region" className="text-sm font-medium text-slate-600">Region</Label>
-                    <Input
-                      id="edit-region"
-                      value={editingRecord.region || ''}
-                      onChange={(e) => handleEditChange('region', e.target.value)}
-                      className="border-gray-300 focus:border-blue-500"
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-          <DialogFooter className="flex gap-2">
-            <Button 
-              variant="outline"
-              onClick={closeEditDialog}
-              disabled={saving}
-              className="border-gray-300 hover:bg-gray-50"
-            >
-              <X className="h-4 w-4 mr-2" />
-              Cancel
-            </Button>
-            <Button 
-              onClick={handleSaveEdit}
-              disabled={saving}
-              className="bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white"
-            >
-              <Save className="h-4 w-4 mr-2" />
-              {saving ? "Saving..." : "Save Changes"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Delete Confirmation Dialog */}
-      <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
-        <DialogContent className="sm:max-w-md bg-white rounded-2xl">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-red-600">
-              <Trash2 className="h-5 w-5" />
-              Delete Records
-            </DialogTitle>
-            <DialogDescription>
-              Are you sure you want to delete {selectedRecords.length} selected record{selectedRecords.length > 1 ? 's' : ''}? This action cannot be undone.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="flex gap-2 sm:gap-0">
-            <Button
-              variant="outline"
-              onClick={() => setIsDeleteDialogOpen(false)}
-              disabled={deleteLoading}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={handleDeleteSelected}
-              disabled={deleteLoading}
-            >
-              {deleteLoading ? "Deleting..." : "Delete"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Upload Data Dialog */}
-      <Dialog open={isUploadDialogOpen} onOpenChange={setIsUploadDialogOpen}>
-        <DialogContent className="sm:max-w-md bg-white rounded-2xl">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-green-600">
-              <Upload className="h-5 w-5" />
-              Upload Fodder Offtake Data
-            </DialogTitle>
-            <DialogDescription>
-              Upload CSV, JSON, or Excel files containing fodder offtake data. The data will be validated against the database schema.
-            </DialogDescription>
-          </DialogHeader>
-          
-          <div className="space-y-4">
-            <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center">
-              <input
-                type="file"
-                ref={fileInputRef}
-                onChange={handleFileSelect}
-                accept=".csv,.json,.xlsx,.xls"
-                className="hidden"
-              />
-              
-              {!uploadFile ? (
-                <div 
-                  className="cursor-pointer"
-                  onClick={() => fileInputRef.current?.click()}
-                >
-                  <Upload className="h-8 w-8 text-gray-400 mx-auto mb-2" />
-                  <p className="text-sm text-gray-600">
-                    Click to upload or drag and drop
-                  </p>
-                  <p className="text-xs text-gray-500 mt-1">
-                    CSV, JSON, Excel files only
-                  </p>
-                </div>
-              ) : (
-                <div className="text-center">
-                  <div className="flex items-center justify-center gap-2 mb-2">
-                    <Checkbox checked className="bg-green-500 border-green-500" />
-                    <span className="text-sm font-medium text-green-600">
-                      {uploadFile.name}
-                    </span>
-                  </div>
-                  <p className="text-xs text-gray-500">
-                    {(uploadFile.size / 1024).toFixed(1)} KB
-                  </p>
-                </div>
-              )}
-            </div>
-
-            {uploadProgress > 0 && (
-              <div className="space-y-2">
-                <div className="flex justify-between text-sm">
-                  <span>Uploading...</span>
-                  <span>{uploadProgress}%</span>
-                </div>
-                <div className="w-full bg-gray-200 rounded-full h-2">
-                  <div 
-                    className="bg-green-600 h-2 rounded-full transition-all duration-300"
-                    style={{ width: `${uploadProgress}%` }}
-                  ></div>
-                </div>
-              </div>
-            )}
-          </div>
-
-          <DialogFooter className="flex gap-2 sm:gap-0">
-            <Button
-              variant="outline"
-              onClick={() => {
-                setIsUploadDialogOpen(false);
-                setUploadFile(null);
-                setUploadProgress(0);
-                if (fileInputRef.current) {
-                  fileInputRef.current.value = '';
-                }
-              }}
-              disabled={uploadLoading}
-            >
-              Cancel
-            </Button>
-            <Button
-              onClick={handleUpload}
-              disabled={!uploadFile || uploadLoading}
-              className="bg-gradient-to-r from-green-600 to-emerald-700 hover:from-green-700 hover:to-emerald-800 text-white"
-            >
-              {uploadLoading ? "Uploading..." : "Upload Data"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1358,4 +1166,4 @@ const FodderOfftakePage = () => {
   );
 };
 
-export default FodderOfftakePage;
+export default FodderFarmersPage;

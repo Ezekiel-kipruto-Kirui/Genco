@@ -881,7 +881,7 @@ const HayStoragePage = () => {
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatsCard title="Land Size" value={formatArea(stats.totalLandUnderPasture)} icon={LandPlot} description="Total Land planted" />
+        <StatsCard title="Land Size" value={formatArea(stats.totalLandUnderPasture)} icon={LandPlot} description="Acres Harvested" />
         <StatsCard title="Total Revenue" value={`KSh ${millify(stats.totalRevenue)}`} icon={DollarSign} description="Revenue from hay sales" />
         <StatsCard
           title="Bales Harvested"

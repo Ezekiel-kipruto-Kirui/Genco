@@ -96,6 +96,7 @@ const VACCINE_OPTIONS = [
 ];
 
 const PROGRAMME_OPTIONS = ["KPMD", "RANGE"];
+const FARMERS_PER_PAGE = 20;
 
 const AnimalHealthPage = () => {
   const [activities, setActivities] = useState<AnimalHealthActivity[]>([]);
@@ -107,6 +108,7 @@ const AnimalHealthPage = () => {
   const [selectedActivityFieldOfficers, setSelectedActivityFieldOfficers] = useState<FieldOfficer[]>([]);
   const [viewingActivity, setViewingActivity] = useState<AnimalHealthActivity | null>(null);
   const [editingActivity, setEditingActivity] = useState<AnimalHealthActivity | null>(null);
+  const [viewFarmersPage, setViewFarmersPage] = useState(1);
   
   const [fieldOfficerForm, setFieldOfficerForm] = useState({ name: "", role: "" });
   const [fieldOfficers, setFieldOfficers] = useState<FieldOfficer[]>([]);
@@ -171,6 +173,23 @@ const AnimalHealthPage = () => {
         const activitiesData = Object.keys(data).map((key) => {
           const item = data[key];
           let vaccines: Vaccine[] = [];
+          const rawBeneficiaries = Array.isArray(item.beneficiaries) ? item.beneficiaries : [];
+          const rawFarmers = Array.isArray(item.farmers) ? item.farmers : [];
+          const normalizeFarmers = (records: any[]): Beneficiary[] => records.map((farmer: any, index: number) => {
+            const genderRaw = String(farmer?.gender || "").toLowerCase();
+            const normalizedGender: "Male" | "Female" = genderRaw.startsWith("f") ? "Female" : "Male";
+            return {
+              id: String(farmer?.id || `${key}-farmer-${index}`),
+              name: String(farmer?.name || farmer?.farmerName || "N/A"),
+              gender: normalizedGender,
+              nationalId: String(farmer?.nationalId || farmer?.idNo || farmer?.idNumber || farmer?.ID || "N/A"),
+              goats: Number(farmer?.goats) || 0,
+              sheep: Number(farmer?.sheep) || 0,
+            };
+          });
+          const normalizedBeneficiaries = normalizeFarmers(rawBeneficiaries);
+          const normalizedFarmers = normalizeFarmers(rawFarmers);
+          const beneficiariesForView = normalizedBeneficiaries.length > 0 ? normalizedBeneficiaries : normalizedFarmers;
           
           if (item.vaccines && Array.isArray(item.vaccines)) {
             vaccines = item.vaccines.map((v: any) => ({
@@ -192,7 +211,7 @@ const AnimalHealthPage = () => {
             vaccines,
             fieldofficers: (item.fieldofficers && Array.isArray(item.fieldofficers)) ? item.fieldofficers : [],
             issues: (item.issues && Array.isArray(item.issues)) ? item.issues : [],
-            beneficiaries: (item.beneficiaries && Array.isArray(item.beneficiaries)) ? item.beneficiaries : [],
+            beneficiaries: beneficiariesForView,
             programme: item.programme || 'N/A',
             createdAt: item.createdAt,
             createdBy: item.createdBy || 'unknown',
@@ -350,7 +369,10 @@ const AnimalHealthPage = () => {
     if (fieldOfficers.length === 0) { toast({ title: "Error", description: "Add at least one field officer", variant: "destructive" }); return; }
     if (selectedVaccines.length === 0) { toast({ title: "Error", description: "Select at least one vaccine", variant: "destructive" }); return; }
     if (!totalDoses || parseInt(totalDoses) <= 0) { toast({ title: "Error", description: "Enter valid total doses", variant: "destructive" }); return; }
-    if (!activityForm.date || !activityForm.county || !activityForm.programme) { toast({ title: "Error", description: "Fill Date, County, and Programme", variant: "destructive" }); return; }
+    if (!activityForm.date || !activityForm.county || !activityForm.location || !activityForm.programme) {
+      toast({ title: "Error", description: "Fill Date, County, Location, and Programme", variant: "destructive" });
+      return;
+    }
 
     try {
       const vaccines = getVaccinesFromSelection();
@@ -413,16 +435,29 @@ const AnimalHealthPage = () => {
   const selectAllActivities = () => {
     setSelectedActivities(selectedActivities.length === filteredActivities.length ? [] : filteredActivities.map(a => a.id));
   };
-  const openViewDialog = (activity: AnimalHealthActivity) => { setViewingActivity(activity); setIsViewDialogOpen(true); };
+  const openViewDialog = (activity: AnimalHealthActivity) => {
+    setViewingActivity(activity);
+    setViewFarmersPage(1);
+    setIsViewDialogOpen(true);
+  };
   const openFieldOfficersDialog = (fo: FieldOfficer[] = []) => { setSelectedActivityFieldOfficers(fo); setIsFieldOfficersDialogOpen(true); };
 
   // --- CALCULATIONS FOR STATS ---
   const totalDosesAdministered = useMemo(() => activities.reduce((s, a) => s + getActivityTotalDoses(a), 0), [activities]);
   
   // Beneficiary Calculations
-  const totalMaleBeneficiaries = useMemo(() => activities.reduce((sum, a) => sum + (a.malebeneficiaries || 0), 0), [activities]);
-  const totalFemaleBeneficiaries = useMemo(() => activities.reduce((sum, a) => sum + (a.femalebeneficiaries || 0), 0), [activities]);
-  const totalBeneficiaries = useMemo(() => totalMaleBeneficiaries + totalFemaleBeneficiaries, [totalMaleBeneficiaries, totalFemaleBeneficiaries]);
+  const totalMaleBeneficiaries = useMemo(
+    () => activities.reduce((sum, a) => sum + (a.malebeneficiaries || 0), 0),
+    [activities]
+  );
+  const totalFemaleBeneficiaries = useMemo(
+    () => activities.reduce((sum, a) => sum + (a.femalebeneficiaries || 0), 0),
+    [activities]
+  );
+  const totalBeneficiaries = useMemo(
+    () => totalMaleBeneficiaries + totalFemaleBeneficiaries,
+    [totalMaleBeneficiaries, totalFemaleBeneficiaries]
+  );
 
   const calculateVaccinationRate = () => {
     if (activities.length < 2) return { rate: 0, trend: 'neutral', currentDoses: 0, previousDoses: 0 };
@@ -491,7 +526,28 @@ const AnimalHealthPage = () => {
 
   const formatDate = (d: string) => d ? new Date(d).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : 'No date';
 
-  const isSaveDisabled = fieldOfficers.length === 0 || selectedVaccines.length === 0 || !totalDoses || parseInt(totalDoses) <= 0 || !activityForm.date || !activityForm.county || !activityForm.programme;
+  const isSaveDisabled =
+    fieldOfficers.length === 0 ||
+    selectedVaccines.length === 0 ||
+    !totalDoses ||
+    parseInt(totalDoses) <= 0 ||
+    !activityForm.date ||
+    !activityForm.county ||
+    !activityForm.location ||
+    !activityForm.programme;
+  const handleAddDialogOpenChange = (open: boolean) => {
+    setIsAddDialogOpen(open);
+    if (open) {
+      resetForms();
+    }
+  };
+  const viewingFarmers = viewingActivity?.beneficiaries || [];
+  const totalViewFarmerPages = Math.max(1, Math.ceil(viewingFarmers.length / FARMERS_PER_PAGE));
+  const safeViewFarmersPage = Math.min(viewFarmersPage, totalViewFarmerPages);
+  const paginatedViewingFarmers = viewingFarmers.slice(
+    (safeViewFarmersPage - 1) * FARMERS_PER_PAGE,
+    safeViewFarmersPage * FARMERS_PER_PAGE
+  );
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100/80 p-6">
@@ -499,7 +555,7 @@ const AnimalHealthPage = () => {
         {/* Header */}
         <div className="flex items-center justify-between">
           <h1 className="text-xl font-bold text-slate-900">Animal Health Management</h1>
-          <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
+          <Dialog open={isAddDialogOpen} onOpenChange={handleAddDialogOpenChange}>
             <DialogTrigger asChild>
               {userIsChiefAdmin && (
                 <Button className="bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white">
@@ -580,13 +636,13 @@ const AnimalHealthPage = () => {
                  <div className="space-y-2 border p-4 rounded-xl bg-blue-50/30">
                     <div className="flex justify-between items-center mb-2">
                         <Label className="font-semibold text-blue-900">Farmers ({beneficiaries.length})</Label>
-                        <Button variant="outline" size="sm" className="text-blue-600 border-blue-600" onClick={() => fileInputRef.current?.click()}>
+                        <Button type="button" variant="outline" size="sm" className="text-blue-600 border-blue-600" onClick={() => fileInputRef.current?.click()}>
                             <Upload className="h-3 w-3 mr-1" /> Upload Excel
                         </Button>
                         <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel" />
                     </div>
                     {/* Manual Add Form */}
-                    <div className="grid grid-cols-5 gap-2">
+                    <div className="grid grid-cols-6 gap-2">
                         <Input placeholder="Name" value={beneficiaryForm.name} onChange={e => setBeneficiaryForm({...beneficiaryForm, name: e.target.value})} className="h-8" />
                         <Select value={beneficiaryForm.gender} onValueChange={(v: any) => setBeneficiaryForm({...beneficiaryForm, gender: v})}>
                             <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
@@ -594,7 +650,8 @@ const AnimalHealthPage = () => {
                         </Select>
                         <Input placeholder="ID" value={beneficiaryForm.nationalId} onChange={e => setBeneficiaryForm({...beneficiaryForm, nationalId: e.target.value})} className="h-8" />
                         <Input placeholder="Goats" type="number" value={beneficiaryForm.goats} onChange={e => setBeneficiaryForm({...beneficiaryForm, goats: e.target.value})} className="h-8" />
-                        <Button size="sm" onClick={handleAddBeneficiary} className="h-8 bg-blue-600">Add</Button>
+                        <Input placeholder="Sheep" type="number" value={beneficiaryForm.sheep} onChange={e => setBeneficiaryForm({...beneficiaryForm, sheep: e.target.value})} className="h-8" />
+                        <Button type="button" size="sm" onClick={handleAddBeneficiary} className="h-8 bg-blue-600">Add</Button>
                     </div>
                     {/* List */}
                      <div className="max-h-32 overflow-y-auto mt-2 space-y-1">
@@ -614,7 +671,7 @@ const AnimalHealthPage = () => {
                     <div className="flex gap-2">
                         <Input placeholder="Name" value={fieldOfficerForm.name} onChange={(e) => setFieldOfficerForm({...fieldOfficerForm, name: e.target.value})} />
                         <Input placeholder="Role" value={fieldOfficerForm.role} onChange={(e) => setFieldOfficerForm({...fieldOfficerForm, role: e.target.value})} />
-                        <Button onClick={handleAddFieldOfficer} className="bg-green-600"><Plus className="h-4 w-4" /></Button>
+                        <Button type="button" onClick={handleAddFieldOfficer} className="bg-green-600"><Plus className="h-4 w-4" /></Button>
                     </div>
                     <div className="flex flex-wrap gap-2 mt-2">
                         {fieldOfficers.map((fo, i) => (
@@ -627,14 +684,14 @@ const AnimalHealthPage = () => {
                  <div className="space-y-2">
                      <div className="flex justify-between items-center">
                         <Label>Issues (Optional)</Label>
-                        {!showIssueForm && <Button variant="outline" size="sm" onClick={() => setShowIssueForm(true)}>Add Issue</Button>}
+                        {!showIssueForm && <Button type="button" variant="outline" size="sm" onClick={() => setShowIssueForm(true)}>Add Issue</Button>}
                      </div>
                      {showIssueForm && (
                          <div className="grid grid-cols-2 gap-2 border p-2 rounded bg-slate-50">
                              <Input placeholder="Issue Name" value={issueForm.name} onChange={e => setIssueForm({...issueForm, name: e.target.value})} />
                              <Input placeholder="Raised By" value={issueForm.raisedBy} onChange={e => setIssueForm({...issueForm, raisedBy: e.target.value})} />
                              <Textarea placeholder="Description" className="col-span-2" value={issueForm.description} onChange={e => setIssueForm({...issueForm, description: e.target.value})} />
-                             <Button size="sm" onClick={handleAddIssue} className="bg-orange-500 col-span-2">Save Issue</Button>
+                             <Button type="button" size="sm" onClick={handleAddIssue} className="bg-orange-500 col-span-2">Save Issue</Button>
                          </div>
                      )}
                      {issues.map(iss => (
@@ -676,7 +733,7 @@ const AnimalHealthPage = () => {
           
           <Card className="bg-white shadow-sm border-slate-200">
             <CardHeader className="flex flex-row items-center justify-between pb-2 pt-4 px-4">
-              <CardTitle className="text-sm font-medium text-slate-600">Total Beneficiaries</CardTitle>
+              <CardTitle className="text-sm font-medium text-slate-600">Total Farmers</CardTitle>
               <Users className="h-4 w-4 text-blue-500" />
             </CardHeader>
             <CardContent className="pb-4 px-4">
@@ -962,6 +1019,73 @@ const AnimalHealthPage = () => {
                                         <Badge key={i} className="bg-emerald-100 text-emerald-800">{v.type} ({v.doses})</Badge>
                                     ))}
                                 </div>
+                            </div>
+
+                            <div className="border border-slate-200 rounded-xl overflow-hidden">
+                                <div className="px-4 py-3 bg-slate-50 border-b border-slate-200">
+                                    <Label className="text-xs text-slate-600">Farmers Details ({viewingActivity.beneficiaries?.length || 0})</Label>
+                                </div>
+                                <div className="overflow-x-auto">
+                                    <table className="w-full text-sm">
+                                        <thead>
+                                            <tr className="bg-slate-50 border-b border-slate-200">
+                                                <th className="py-2 px-4 text-left font-semibold text-slate-600">#</th>
+                                                <th className="py-2 px-4 text-left font-semibold text-slate-600">Name</th>
+                                                <th className="py-2 px-4 text-left font-semibold text-slate-600">Gender</th>
+                                                <th className="py-2 px-4 text-left font-semibold text-slate-600">ID</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {(viewingActivity.beneficiaries || []).length > 0 ? (
+                                                paginatedViewingFarmers.map((farmer, index) => (
+                                                    <tr key={farmer.id || `${farmer.nationalId}-${index}`} className="border-b border-slate-100 last:border-b-0">
+                                                        <td className="py-2 px-4 text-slate-600">{(safeViewFarmersPage - 1) * FARMERS_PER_PAGE + index + 1}</td>
+                                                        <td className="py-2 px-4 font-medium text-slate-800">{farmer.name || 'N/A'}</td>
+                                                        <td className="py-2 px-4 text-slate-700">{farmer.gender || 'N/A'}</td>
+                                                        <td className="py-2 px-4 text-slate-700 font-mono">{farmer.nationalId || 'N/A'}</td>
+                                                    </tr>
+                                                ))
+                                            ) : (
+                                                <tr>
+                                                    <td colSpan={4} className="py-4 px-4 text-center text-slate-500">
+                                                        No farmer details recorded.
+                                                    </td>
+                                                </tr>
+                                            )}
+                                        </tbody>
+                                    </table>
+                                </div>
+                                {(viewingActivity.beneficiaries || []).length > FARMERS_PER_PAGE && (
+                                  <div className="flex items-center justify-between px-4 py-3 border-t border-slate-200 bg-white">
+                                      <p className="text-xs text-slate-500">
+                                          Showing {Math.min((safeViewFarmersPage - 1) * FARMERS_PER_PAGE + 1, viewingFarmers.length)}-
+                                          {Math.min(safeViewFarmersPage * FARMERS_PER_PAGE, viewingFarmers.length)} of {viewingFarmers.length}
+                                      </p>
+                                      <div className="flex items-center gap-2">
+                                          <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="sm"
+                                            disabled={safeViewFarmersPage <= 1}
+                                            onClick={() => setViewFarmersPage((prev) => Math.max(1, prev - 1))}
+                                          >
+                                            Previous
+                                          </Button>
+                                          <span className="text-xs text-slate-600">
+                                            Page {safeViewFarmersPage} of {totalViewFarmerPages}
+                                          </span>
+                                          <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="sm"
+                                            disabled={safeViewFarmersPage >= totalViewFarmerPages}
+                                            onClick={() => setViewFarmersPage((prev) => Math.min(totalViewFarmerPages, prev + 1))}
+                                          >
+                                            Next
+                                          </Button>
+                                      </div>
+                                  </div>
+                                )}
                             </div>
 
                             {viewingActivity.comment && (

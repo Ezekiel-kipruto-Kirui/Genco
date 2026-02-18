@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef, ChangeEvent } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import { getAuth } from "firebase/auth"; // Import getAuth to access UID
-import { ref, set, update, remove, push, onValue, query, orderByChild, equalTo } from "firebase/database";
+import { getAuth } from "firebase/auth";
+import { ref, update, push, onValue, query, orderByChild, equalTo } from "firebase/database";
 import { db } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,30 +11,32 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
-import { Download, Users, MapPin, Eye, Calendar, Sprout, Globe, LayoutGrid, Edit, Trash2, Upload } from "lucide-react";
+import { Download, Users, Eye, Globe, LayoutGrid, Edit, Trash2, Upload } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { isChiefAdmin } from "@/contexts/authhelper";
 
 // --- Types ---
+interface Farmer {
+  idNo?: string;
+  name?: string;
+  phoneNo?: string;
+  gender?: string;
+}
+
 interface FodderFarmer {
   id: string;
   date: any;
   landSize?: number;
   location?: string;
   model?: string;
-  region?: string;
+  county?: string;
+  subcounty?: string;
+  username?: string;
   totalAcresPasture?: number;
   totalBales?: number;
   yieldPerHarvest?: number;
   farmers?: Farmer[];
-  programme?: string; // Added Programme
-}
-
-interface Farmer {
-  id: string;
-  name?: string;
-  phone?: string;
-  gender?: string;
+  programme?: string;
 }
 
 interface Filters {
@@ -42,13 +44,13 @@ interface Filters {
   startDate: string;
   endDate: string;
   location: string;
-  region: string;
+  county: string;
   model: string;
 }
 
 interface Stats {
   totalFarmers: number;
-  totalRegions: number;
+  totalCounties: number;
   totalModels: number;
 }
 
@@ -139,13 +141,13 @@ const FodderFarmersPage = () => {
     startDate: currentMonth.startDate,
     endDate: currentMonth.endDate,
     location: "all",
-    region: "all",
+    county: "all",
     model: "all"
   });
 
   const [stats, setStats] = useState<Stats>({
     totalFarmers: 0,
-    totalRegions: 0,
+    totalCounties: 0,
     totalModels: 0
   });
 
@@ -244,17 +246,28 @@ const FodderFarmersPage = () => {
           }
         }
 
+        const farmersList: Farmer[] = Array.isArray(item.farmers)
+          ? item.farmers.map((farmer: any) => ({
+              idNo: farmer.idNo || farmer.id || '',
+              name: farmer.name || '',
+              phoneNo: farmer.phoneNo || farmer.phone || '',
+              gender: farmer.gender || ''
+            }))
+          : [];
+
         return {
           id: key,
           date: dateValue,
           landSize: Number(item.landSize || item.LandSize || 0),
           location: item.location || item.Location || item.area || item.Area || '',
           model: item.model || item.Model || '',
-          region: item.region || item.Region || item.county || item.County || '',
+          county: item.county || item.County || item.region || item.Region || '',
+          subcounty: item.subcounty || item.subCounty || item.Subcounty || item.SubCounty || '',
+          username: item.username || '',
           totalAcresPasture: Number(item.totalAcresPasture || item.TotalAcresPasture || 0),
           totalBales: Number(item.totalBales || item.TotalBales || 0),
           yieldPerHarvest: Number(item.yieldPerHarvest || item.YieldPerHarvest || 0),
-          farmers: Array.isArray(item.farmers) ? item.farmers : [],
+          farmers: farmersList,
           programme: item.programme || activeProgram // Ensure programme is set
         };
       });
@@ -274,13 +287,13 @@ const FodderFarmersPage = () => {
   const applyFilters = useCallback(() => {
     if (allFodder.length === 0) {
       setFilteredFodder([]);
-      setStats({ totalFarmers: 0, totalRegions: 0, totalModels: 0 });
+      setStats({ totalFarmers: 0, totalCounties: 0, totalModels: 0 });
       return;
     }
 
     let filtered = allFodder.filter(record => {
-      // Region filter
-      if (filters.region !== "all" && record.region?.toLowerCase() !== filters.region.toLowerCase()) return false;
+      // County filter
+      if (filters.county !== "all" && record.county?.toLowerCase() !== filters.county.toLowerCase()) return false;
 
       // Location filter
       if (filters.location !== "all" && record.location?.toLowerCase() !== filters.location.toLowerCase()) return false;
@@ -311,7 +324,7 @@ const FodderFarmersPage = () => {
       if (filters.search) {
         const searchTerm = filters.search.toLowerCase();
         const searchMatch = [
-          record.location, record.region, record.model
+          record.location, record.county, record.subcounty, record.model
         ].some(field => field?.toLowerCase().includes(searchTerm));
         if (!searchMatch) return false;
       }
@@ -323,10 +336,10 @@ const FodderFarmersPage = () => {
     
     // Update stats
     const totalFarmers = filtered.reduce((sum, record) => sum + (record.farmers?.length || 0), 0);
-    const uniqueRegions = new Set(filtered.map(f => f.region).filter(Boolean));
+    const uniqueCounties = new Set(filtered.map(f => f.county).filter(Boolean));
     const uniqueModels = new Set(filtered.map(f => f.model).filter(Boolean));
 
-    setStats({ totalFarmers, totalRegions: uniqueRegions.size, totalModels: uniqueModels.size });
+    setStats({ totalFarmers, totalCounties: uniqueCounties.size, totalModels: uniqueModels.size });
 
     // Update pagination
     const totalPages = Math.ceil(filtered.length / pagination.limit);
@@ -353,7 +366,7 @@ const FodderFarmersPage = () => {
         startDate: currentMonth.startDate, 
         endDate: currentMonth.endDate, 
         location: "all", 
-        region: "all", 
+        county: "all", 
         model: "all" 
     }));
     setSelectedRecords([]);
@@ -437,7 +450,8 @@ const FodderFarmersPage = () => {
       const csvData = filteredFodder.map(record => [
         formatDate(record.date),
         record.location || 'N/A',
-        record.region || 'N/A',
+        record.county || 'N/A',
+        record.subcounty || 'N/A',
         record.model || 'N/A',
         (record.farmers?.length || 0).toString(),
         (record.landSize || 0).toString(),
@@ -447,7 +461,7 @@ const FodderFarmersPage = () => {
         record.programme || activeProgram
       ]);
 
-      const headers = ['Date', 'Location', 'Region', 'Model', 'Number of Farmers', 'Land Size', 'Total Acres Pasture', 'Total Bales', 'Yield per Harvest', 'Programme'];
+      const headers = ['Date', 'Location', 'County', 'Subcounty', 'Model', 'Number of Farmers', 'Land Size', 'Total Acres Pasture', 'Total Bales', 'Yield per Harvest', 'Programme'];
       const csvContent = [headers, ...csvData].map(row => row.map(f => `"${f}"`).join(',')).join('\n');
       
       const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -526,7 +540,7 @@ const FodderFarmersPage = () => {
       startDate: "",
       endDate: "",
       location: "all",
-      region: "all",
+      county: "all",
       model: "all"
     });
     setPagination(prev => ({ ...prev, page: 1 }));
@@ -537,7 +551,7 @@ const FodderFarmersPage = () => {
   };
 
   // Derived Lists
-  const uniqueRegions = useMemo(() => [...new Set(allFodder.map(f => f.region).filter(Boolean))], [allFodder]);
+  const uniqueCounties = useMemo(() => [...new Set(allFodder.map(f => f.county).filter(Boolean))], [allFodder]);
   const uniqueLocations = useMemo(() => [...new Set(allFodder.map(f => f.location).filter(Boolean))], [allFodder]);
   const uniqueModels = useMemo(() => [...new Set(allFodder.map(f => f.model).filter(Boolean))], [allFodder]);
   const currentPageRecords = useMemo(getCurrentPageRecords, [filteredFodder, pagination.page, pagination.limit]);
@@ -578,15 +592,15 @@ const FodderFarmersPage = () => {
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="region" className="font-semibold text-gray-700">Region</Label>
-        <Select value={filters.region} onValueChange={(value) => handleFilterChange("region", value)}>
+        <Label htmlFor="county" className="font-semibold text-gray-700">County</Label>
+        <Select value={filters.county} onValueChange={(value) => handleFilterChange("county", value)}>
           <SelectTrigger className="border-gray-300 focus:border-green-500 focus:ring-green-500 bg-white">
-            <SelectValue placeholder="Select region" />
+            <SelectValue placeholder="Select county" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All Regions</SelectItem>
-            {uniqueRegions.slice(0, 20).map(region => (
-              <SelectItem key={region} value={region}>{region}</SelectItem>
+            <SelectItem value="all">All Counties</SelectItem>
+            {uniqueCounties.slice(0, 20).map(county => (
+              <SelectItem key={county} value={county}>{county}</SelectItem>
             ))}
           </SelectContent>
         </Select>
@@ -644,7 +658,7 @@ const FodderFarmersPage = () => {
         />
       </div>
     </div>
-  ), [filters, uniqueRegions, uniqueLocations, uniqueModels]);
+  ), [filters, uniqueCounties, uniqueLocations, uniqueModels]);
 
   const TableRow = useCallback(({ record }: { record: FodderFarmer }) => {
     const farmerCount = record.farmers?.length || 0;
@@ -659,7 +673,7 @@ const FodderFarmersPage = () => {
         </td>
         <td className="py-3 px-4">{formatDate(record.date)}</td>
         <td className="py-3 px-4">{record.location || 'N/A'}</td>
-        <td className="py-3 px-4">{record.region || 'N/A'}</td>
+        <td className="py-3 px-4">{record.county || 'N/A'}</td>
         <td className="py-3 px-4">
           <Badge className="bg-blue-100 text-blue-800">
             {record.model || 'N/A'}
@@ -806,10 +820,10 @@ const FodderFarmersPage = () => {
         />
 
         <StatsCard 
-          title="Regions" 
-          value={stats.totalRegions} 
+          title="Counties" 
+          value={stats.totalCounties} 
           icon={Globe}
-          description="Unique regions covered"
+          description="Unique counties covered"
         />
 
         <StatsCard 
@@ -851,7 +865,7 @@ const FodderFarmersPage = () => {
                       </th>
                       <th className="py-1 px-6 font-medium text-gray-600">Date</th>
                       <th className="py-1 px-6 font-medium text-gray-600">Location</th>
-                      <th className="py-1 px-6 font-medium text-gray-600">Region</th>
+                      <th className="py-1 px-6 font-medium text-gray-600">County</th>
                       <th className="py-1 px-6 font-medium text-gray-600">Model</th>
                       <th className="py-1 px-6 font-medium text-gray-600">Land Size</th>
                       <th className="py-1 px-6 font-medium text-gray-600">Pasture Acres</th>
@@ -1033,7 +1047,7 @@ const FodderFarmersPage = () => {
 
       {/* View Record Dialog */}
       <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
-        <DialogContent className="sm:max-w-2xl bg-white rounded-2xl max-h-[90vh] overflow-hidden">
+        <DialogContent className="sm:max-w-4xl bg-white rounded-2xl max-h-[90vh] overflow-hidden">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-slate-900">
               <Eye className="h-5 w-5 text-green-600" />
@@ -1044,108 +1058,100 @@ const FodderFarmersPage = () => {
             </DialogDescription>
           </DialogHeader>
           {viewingRecord && (
-            <div className="space-y-6 py-4 overflow-y-auto max-h-[60vh]">
-              {/* Basic Information */}
-              <div className="bg-slate-50 rounded-xl p-4">
-                <h3 className="font-semibold text-slate-800 mb-3 flex items-center gap-2">
-                  <Sprout className="h-4 w-4" />
-                  Basic Information
-                </h3>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label className="text-sm font-medium text-slate-600">Date</Label>
-                    <p className="text-slate-900 font-medium">{formatDate(viewingRecord.date)}</p>
-                  </div>
-                  <div>
-                    <Label className="text-sm font-medium text-slate-600">Programme</Label>
-                    <Badge className="bg-green-100 text-green-800">{viewingRecord.programme || activeProgram}</Badge>
-                  </div>
-                  <div>
-                    <Label className="text-sm font-medium text-slate-600">Location</Label>
-                    <p className="text-slate-900 font-medium">{viewingRecord.location || 'N/A'}</p>
-                  </div>
-                  <div>
-                    <Label className="text-sm font-medium text-slate-600">Region</Label>
-                    <p className="text-slate-900 font-medium">{viewingRecord.region || 'N/A'}</p>
-                  </div>
-                  <div>
-                    <Label className="text-sm font-medium text-slate-600">Model</Label>
-                    <Badge className="bg-blue-100 text-blue-800">{viewingRecord.model || 'N/A'}</Badge>
-                  </div>
+            <div className="space-y-6 py-4 overflow-y-auto max-h-[65vh]">
+              <div className="rounded-xl border border-slate-200 overflow-hidden">
+                <div className="bg-slate-50 px-4 py-3 border-b border-slate-200">
+                  <h3 className="font-semibold text-slate-800">Record Details</h3>
+                </div>
+                <div className="w-full overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <tbody>
+                      <tr className="border-b border-slate-200">
+                        <td className="px-4 py-3 font-medium text-slate-600 bg-slate-50 w-1/3">Date</td>
+                        <td className="px-4 py-3 text-slate-900">{formatDate(viewingRecord.date)}</td>
+                      </tr>
+                      <tr className="border-b border-slate-200">
+                        <td className="px-4 py-3 font-medium text-slate-600 bg-slate-50">Programme</td>
+                        <td className="px-4 py-3 text-slate-900">{viewingRecord.programme || activeProgram || "N/A"}</td>
+                      </tr>
+                      <tr className="border-b border-slate-200">
+                        <td className="px-4 py-3 font-medium text-slate-600 bg-slate-50">Model</td>
+                        <td className="px-4 py-3 text-slate-900">{viewingRecord.model || "N/A"}</td>
+                      </tr>
+                      <tr className="border-b border-slate-200">
+                        <td className="px-4 py-3 font-medium text-slate-600 bg-slate-50">County</td>
+                        <td className="px-4 py-3 text-slate-900">{viewingRecord.county || "N/A"}</td>
+                      </tr>
+                      <tr className="border-b border-slate-200">
+                        <td className="px-4 py-3 font-medium text-slate-600 bg-slate-50">Subcounty</td>
+                        <td className="px-4 py-3 text-slate-900">{viewingRecord.subcounty || "N/A"}</td>
+                      </tr>
+                      <tr className="border-b border-slate-200">
+                        <td className="px-4 py-3 font-medium text-slate-600 bg-slate-50">Location</td>
+                        <td className="px-4 py-3 text-slate-900">{viewingRecord.location || "N/A"}</td>
+                      </tr>
+                      <tr className="border-b border-slate-200">
+                        <td className="px-4 py-3 font-medium text-slate-600 bg-slate-50">Land Size</td>
+                        <td className="px-4 py-3 text-slate-900">{(viewingRecord.landSize || 0).toLocaleString()} acres</td>
+                      </tr>
+                      <tr className="border-b border-slate-200">
+                        <td className="px-4 py-3 font-medium text-slate-600 bg-slate-50">Total Acres Pasture</td>
+                        <td className="px-4 py-3 text-slate-900">{(viewingRecord.totalAcresPasture || 0).toLocaleString()} acres</td>
+                      </tr>
+                      <tr className="border-b border-slate-200">
+                        <td className="px-4 py-3 font-medium text-slate-600 bg-slate-50">Total Bales</td>
+                        <td className="px-4 py-3 text-slate-900">{(viewingRecord.totalBales || 0).toLocaleString()}</td>
+                      </tr>
+                      <tr className="border-b border-slate-200">
+                        <td className="px-4 py-3 font-medium text-slate-600 bg-slate-50">Yield per Harvest</td>
+                        <td className="px-4 py-3 text-slate-900">{(viewingRecord.yieldPerHarvest || 0).toLocaleString()}</td>
+                      </tr>
+                      <tr>
+                        <td className="px-4 py-3 font-medium text-slate-600 bg-slate-50">Recorded By</td>
+                        <td className="px-4 py-3 text-slate-900">{viewingRecord.username || "N/A"}</td>
+                      </tr>
+                    </tbody>
+                  </table>
                 </div>
               </div>
 
-              {/* Land Information */}
-              <div className="bg-slate-50 rounded-xl p-4">
-                <h3 className="font-semibold text-slate-800 mb-3 flex items-center gap-2">
-                  <MapPin className="h-4 w-4" />
-                  Land Information
-                </h3>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label className="text-sm font-medium text-slate-600">Land Size</Label>
-                    <p className="text-slate-900 font-medium">{(viewingRecord.landSize || 0).toLocaleString()} acres</p>
-                  </div>
-                  <div>
-                    <Label className="text-sm font-medium text-slate-600">Total Acres Pasture</Label>
-                    <p className="text-slate-900 font-medium">{(viewingRecord.totalAcresPasture || 0).toLocaleString()} acres</p>
-                  </div>
+              <div className="rounded-xl border border-slate-200 overflow-hidden">
+                <div className="bg-slate-50 px-4 py-3 border-b border-slate-200">
+                  <h3 className="font-semibold text-slate-800">Farmers ({viewingRecord.farmers?.length || 0})</h3>
+                </div>
+                <div className="w-full overflow-x-auto">
+                  <table className="w-full border-collapse text-sm text-left whitespace-nowrap">
+                    <thead>
+                      <tr className="bg-slate-100 border-b border-slate-200">
+                        <th className="px-4 py-2 font-medium text-slate-700">#</th>
+                        <th className="px-4 py-2 font-medium text-slate-700">Name</th>
+                        <th className="px-4 py-2 font-medium text-slate-700">ID No</th>
+                        <th className="px-4 py-2 font-medium text-slate-700">Gender</th>
+                        <th className="px-4 py-2 font-medium text-slate-700">Phone No</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {viewingRecord.farmers && viewingRecord.farmers.length > 0 ? (
+                        viewingRecord.farmers.map((farmer, index) => (
+                          <tr key={`${farmer.idNo || "farmer"}-${index}`} className="border-b border-slate-100">
+                            <td className="px-4 py-2 text-slate-700">{index + 1}</td>
+                            <td className="px-4 py-2 text-slate-900">{farmer.name || "N/A"}</td>
+                            <td className="px-4 py-2 text-slate-900 font-mono">{farmer.idNo || "N/A"}</td>
+                            <td className="px-4 py-2 text-slate-900">{farmer.gender || "N/A"}</td>
+                            <td className="px-4 py-2 text-slate-900">{farmer.phoneNo || "N/A"}</td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan={5} className="px-4 py-6 text-center text-slate-500">
+                            No farmers found for this record.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
                 </div>
               </div>
-
-              {/* Production Information */}
-              <div className="bg-slate-50 rounded-xl p-4">
-                <h3 className="font-semibold text-slate-800 mb-3 flex items-center gap-2">
-                  <Calendar className="h-4 w-4" />
-                  Production Information
-                </h3>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label className="text-sm font-medium text-slate-600">Total Bales</Label>
-                    <p className="text-slate-900 font-medium text-lg font-bold">
-                      {(viewingRecord.totalBales || 0).toLocaleString()}
-                    </p>
-                  </div>
-                  <div>
-                    <Label className="text-sm font-medium text-slate-600">Yield per Harvest</Label>
-                    <p className="text-slate-900 font-medium">{(viewingRecord.yieldPerHarvest || 0).toLocaleString()}</p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Farmers List */}
-              {viewingRecord.farmers && viewingRecord.farmers.length > 0 && (
-                <div className="bg-slate-50 rounded-xl p-4">
-                  <h3 className="font-semibold text-slate-800 mb-3 flex items-center gap-2">
-                    <Users className="h-4 w-4" />
-                    Associated Farmers ({viewingRecord.farmers.length})
-                  </h3>
-                  <div className="space-y-3 max-h-40 overflow-y-auto">
-                    {viewingRecord.farmers.map((farmer, index) => (
-                      <div key={farmer.id || index} className="border border-slate-200 rounded-lg p-3 bg-white">
-                        <div className="grid grid-cols-2 gap-4">
-                          <div>
-                            <Label className="text-sm font-medium text-slate-600">Name</Label>
-                            <p className="text-slate-900 font-medium">{farmer.name || 'N/A'}</p>
-                          </div>
-                          <div>
-                            <Label className="text-sm font-medium text-slate-600">Gender</Label>
-                            <p className="text-slate-900 font-medium">{farmer.gender || 'N/A'}</p>
-                          </div>
-                          <div>
-                            <Label className="text-sm font-medium text-slate-600">Phone</Label>
-                            <p className="text-slate-900 font-medium">{farmer.phone || 'N/A'}</p>
-                          </div>
-                          <div>
-                            <Label className="text-sm font-medium text-slate-600">Farmer ID</Label>
-                            <p className="text-slate-900 font-medium font-mono">{farmer.id || 'N/A'}</p>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
             </div>
           )}
           <DialogFooter>
