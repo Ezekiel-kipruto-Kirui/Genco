@@ -14,6 +14,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { Download, Users, MapPin, Eye, Calendar, Sprout, Globe, LayoutGrid, Edit, Trash2, Upload, UserCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { isChiefAdmin } from "@/contexts/authhelper";
+import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
 
 // --- Types ---
 
@@ -163,6 +164,10 @@ const FodderFarmersPage = () => {
   });
 
   const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
+  const fodderCacheKey = useMemo(
+    () => cacheKey("admin-page", "fodder-offtake", activeProgram),
+    [activeProgram]
+  );
 
   // --- 1. Fetch User Permissions & Determine Available Programmes ---
   useEffect(() => {
@@ -211,7 +216,14 @@ const FodderFarmersPage = () => {
         return;
     }
 
-    setLoading(true);
+    const cachedFodder = readCachedValue<FodderFarmer[]>(fodderCacheKey);
+    if (cachedFodder) {
+      setAllFodder(cachedFodder);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
+
     const fodderQuery = query(
         ref(db, 'fodderFarmers'), 
         orderByChild('programme'), 
@@ -223,6 +235,7 @@ const FodderFarmersPage = () => {
       
       if (!data) {
         setAllFodder([]);
+        removeCachedValue(fodderCacheKey);
         setLoading(false);
         return;
       }
@@ -271,6 +284,7 @@ const FodderFarmersPage = () => {
       });
 
       setAllFodder(fodderData);
+      writeCachedValue(fodderCacheKey, fodderData);
       setLoading(false);
     }, (error) => {
       console.error("Error fetching fodder data:", error);
@@ -279,7 +293,7 @@ const FodderFarmersPage = () => {
     });
 
     return () => { if(typeof unsubscribe === 'function') unsubscribe(); };
-  }, [activeProgram, toast]);
+  }, [activeProgram, toast, fodderCacheKey]);
 
   // --- Filtering Logic ---
   const applyFilters = useCallback(() => {
@@ -415,6 +429,7 @@ const FodderFarmersPage = () => {
       const updates: { [key: string]: null } = {};
       selectedRecords.forEach(id => updates[`fodderFarmers/${id}`] = null);
       await update(ref(db), updates);
+      removeCachedValue(fodderCacheKey);
       toast({ title: "Success", description: `${selectedRecords.length} records deleted` });
       setSelectedRecords([]);
       setIsDeleteConfirmOpen(false);
@@ -507,6 +522,7 @@ const FodderFarmersPage = () => {
         count++;
       }
 
+      removeCachedValue(fodderCacheKey);
       toast({ title: "Success", description: `Uploaded ${count} records to ${activeProgram}.` });
       setIsUploadDialogOpen(false);
       setUploadFile(null);

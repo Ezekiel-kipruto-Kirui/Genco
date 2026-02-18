@@ -12,6 +12,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { Download, MapPin, Eye, Droplets, Users, Building, Trash2, Upload, Plus, Edit } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { isChiefAdmin } from "@/contexts/authhelper";
+import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
 
 // REALTIME DATABASE IMPORTS ONLY
 import { 
@@ -68,6 +69,8 @@ interface FirebaseResult {
   error?: string;
   id?: string;
 }
+
+const BOREHOLE_CACHE_KEY = cacheKey("admin-page", "borehole-storage");
 
 // --- CORRECTED REALTIME DATABASE IMPLEMENTATIONS ---
 
@@ -334,7 +337,13 @@ const BoreholePage = () => {
   // Data fetching from Realtime Database
   const fetchAllData = useCallback(async () => {
     try {
-      setLoading(true);
+      const cachedBoreholes = readCachedValue<Borehole[]>(BOREHOLE_CACHE_KEY);
+      if (cachedBoreholes) {
+        setAllBoreholes(cachedBoreholes);
+        setLoading(false);
+      } else {
+        setLoading(true);
+      }
       console.log("Starting borehole data fetch from Realtime Database...");
       
       const boreholeRef = ref(db as Database, 'BoreholeStorage');
@@ -362,9 +371,11 @@ const BoreholePage = () => {
         
         console.log("Final processed borehole data:", boreholeData);
         setAllBoreholes(boreholeData);
+        writeCachedValue(BOREHOLE_CACHE_KEY, boreholeData);
       } else {
         console.warn("No BoreholeStorage data found in Realtime Database");
         setAllBoreholes([]);
+        removeCachedValue(BOREHOLE_CACHE_KEY);
       }
       
     } catch (error) {
@@ -556,6 +567,7 @@ const BoreholePage = () => {
         setIsCreateDialogOpen(false);
 
         // Refresh data
+        removeCachedValue(BOREHOLE_CACHE_KEY);
         await fetchAllData();
       } else {
         throw new Error(result.error || "Failed to create borehole record");
@@ -618,6 +630,7 @@ const BoreholePage = () => {
         setEditingRecord(null);
 
         // Refresh data
+        removeCachedValue(BOREHOLE_CACHE_KEY);
         await fetchAllData();
       } else {
         throw new Error(result.error || "Failed to update borehole record");
@@ -653,6 +666,7 @@ const BoreholePage = () => {
       const result = await deleteData("BoreholeStorage", selectedRecords);
 
       if (result.success) {
+        removeCachedValue(BOREHOLE_CACHE_KEY);
         // Update local state
         setAllBoreholes(prev => prev.filter(record => !selectedRecords.includes(record.id)));
         setSelectedRecords([]);
@@ -730,6 +744,7 @@ const BoreholePage = () => {
           description: result.message,
         });
         
+        removeCachedValue(BOREHOLE_CACHE_KEY);
         await fetchAllData();
         setIsUploadDialogOpen(false);
         setUploadFile(null);

@@ -24,6 +24,7 @@ import { isChiefAdmin } from "@/contexts/authhelper";
 import { uploadDataWithValidation, formatValidationErrors, UploadResult } from "@/lib/uploads-util";
 import { db } from "@/lib/firebase";
 import { millify} from "millify";
+import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
 
 // --- Types ---
 
@@ -111,6 +112,8 @@ const STORAGE_FACILITIES = [
   "Yare Block B",
   "Loosuk"
 ];
+
+const HAY_STORAGE_CACHE_KEY = cacheKey("admin-page", "hay-storage");
 
 // --- Helper Functions ---
 
@@ -457,7 +460,13 @@ const HayStoragePage = () => {
   // --- REALTIME DATABASE FETCH ---
   const fetchAllData = useCallback(async () => {
     try {
-      setLoading(true);
+      const cachedHayStorage = readCachedValue<HayStorage[]>(HAY_STORAGE_CACHE_KEY);
+      if (cachedHayStorage) {
+        setAllHayStorage(cachedHayStorage);
+        setLoading(false);
+      } else {
+        setLoading(true);
+      }
       const hayStorageRef = ref(rtdb, "HayStorage");
       const snapshot = await get(hayStorageRef);
 
@@ -484,8 +493,10 @@ const HayStoragePage = () => {
           };
         });
         setAllHayStorage(hayStorageData);
+        writeCachedValue(HAY_STORAGE_CACHE_KEY, hayStorageData);
       } else {
         setAllHayStorage([]);
+        removeCachedValue(HAY_STORAGE_CACHE_KEY);
       }
 
     } catch (error) {
@@ -618,6 +629,7 @@ const HayStoragePage = () => {
       const listRef = ref(rtdb, "HayStorage");
       const newRef: DatabaseReference = push(listRef);
       await update(newRef, payload);
+      removeCachedValue(HAY_STORAGE_CACHE_KEY);
 
       toast({
         title: "Success",
@@ -707,6 +719,7 @@ const HayStoragePage = () => {
       };
 
       await update(ref(rtdb, "HayStorage/" + editingRecord.id), updateData);
+      removeCachedValue(HAY_STORAGE_CACHE_KEY);
 
       await fetchAllData();
 
@@ -727,6 +740,7 @@ const HayStoragePage = () => {
 
       const deletePromises = selectedRecords.map(id => remove(ref(rtdb, "HayStorage/" + id)));
       await Promise.all(deletePromises);
+      removeCachedValue(HAY_STORAGE_CACHE_KEY);
 
       setAllHayStorage(prev => prev.filter(record => !selectedRecords.includes(record.id)));
       setSelectedRecords([]);
@@ -766,6 +780,7 @@ const HayStoragePage = () => {
 
       if (result.success) {
         toast({ title: "Upload Successful", description: result.message });
+        removeCachedValue(HAY_STORAGE_CACHE_KEY);
         await fetchAllData();
         setIsUploadDialogOpen(false);
         setUploadFile(null);

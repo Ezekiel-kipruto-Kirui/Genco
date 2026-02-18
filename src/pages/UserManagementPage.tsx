@@ -15,6 +15,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Download, Users, User, Edit, Trash2, Mail, Shield, Calendar, Eye, Phone, Plus, AlertTriangle, Briefcase } from "lucide-react"; // Added Briefcase
 import { useToast } from "@/hooks/use-toast";
+import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
 
 // --- Types ---
 interface UserRecord {
@@ -84,6 +85,8 @@ const AVAILABLE_PROGRAMMES = [
   "KPMD", 
   "RANGE"
 ];
+
+const USER_MANAGEMENT_CACHE_KEY = cacheKey("admin-page", "users");
 
 // --- Helper Functions ---
 
@@ -435,7 +438,13 @@ const UserManagementPage = () => {
   // Data fetching
   const fetchAllData = useCallback(async () => {
     try {
-      setLoading(true);
+      const cachedUsers = readCachedValue<UserRecord[]>(USER_MANAGEMENT_CACHE_KEY);
+      if (cachedUsers) {
+        setAllRecords(cachedUsers);
+        setLoading(false);
+      } else {
+        setLoading(true);
+      }
       
       // Only fetch Users
       const recordsData: UserRecord[] = (await fetchCollection("users")) as UserRecord[];
@@ -447,6 +456,11 @@ const UserManagementPage = () => {
       });
 
       setAllRecords(recordsData);
+      if (recordsData.length > 0) {
+        writeCachedValue(USER_MANAGEMENT_CACHE_KEY, recordsData);
+      } else {
+        removeCachedValue(USER_MANAGEMENT_CACHE_KEY);
+      }
       
     } catch (error) {
       console.error("Error fetching data:", error);
@@ -711,6 +725,7 @@ const UserManagementPage = () => {
         description: "User updated successfully",
       });
 
+      removeCachedValue(USER_MANAGEMENT_CACHE_KEY);
       setIsEditDialogOpen(false);
       setEditingRecord(null);
       fetchAllData();
@@ -769,6 +784,7 @@ const UserManagementPage = () => {
         allowedProgrammes: initialProgrammes
       });
 
+      removeCachedValue(USER_MANAGEMENT_CACHE_KEY);
       fetchAllData();
 
     } catch (error: any) {
@@ -806,6 +822,7 @@ const UserManagementPage = () => {
         description: "User deleted successfully",
       });
 
+      removeCachedValue(USER_MANAGEMENT_CACHE_KEY);
       setIsDeleteDialogOpen(false);
       setRecordToDelete(null);
       setSelectedRecords(prev => prev.filter(id => id !== recordToDelete.id));
@@ -837,6 +854,7 @@ const UserManagementPage = () => {
         description: `Deleted ${selectedRecords.length} users successfully`,
       });
 
+      removeCachedValue(USER_MANAGEMENT_CACHE_KEY);
       setIsBulkDeleteDialogOpen(false);
       setSelectedRecords([]);
       fetchAllData();

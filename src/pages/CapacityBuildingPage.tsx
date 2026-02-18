@@ -14,6 +14,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { Download, Users, BookOpen, Edit, Trash2, Calendar, Eye, MapPin, GraduationCap, Upload, User, UserCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { isChiefAdmin } from "@/contexts/authhelper";
+import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
 
 // --- Types ---
 interface TrainingRecord {
@@ -159,6 +160,10 @@ const CapacityBuildingPage = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
+  const trainingCacheKey = useMemo(
+    () => cacheKey("admin-page", "capacity-building", activeProgram),
+    [activeProgram]
+  );
   const currentMonth = useMemo(getCurrentMonthDates, []);
 
   const [searchValue, setSearchValue] = useState("");
@@ -246,7 +251,14 @@ const CapacityBuildingPage = () => {
         return;
     }
 
-    setLoading(true);
+    const cachedRecords = readCachedValue<TrainingRecord[]>(trainingCacheKey);
+    if (cachedRecords) {
+      setAllRecords(cachedRecords);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
+
     const dbQuery = query(
         ref(db, "capacityBuilding"), 
         orderByChild("programme"), 
@@ -258,6 +270,7 @@ const CapacityBuildingPage = () => {
       
       if (!data) {
         setAllRecords([]);
+        removeCachedValue(trainingCacheKey);
         setLoading(false);
         return;
       }
@@ -271,6 +284,7 @@ const CapacityBuildingPage = () => {
       });
 
       setAllRecords(recordsData);
+      writeCachedValue(trainingCacheKey, recordsData);
       setLoading(false);
     }, (error) => {
       console.error("Error fetching data:", error);
@@ -285,7 +299,7 @@ const CapacityBuildingPage = () => {
     return () => {
        if(typeof unsubscribe === 'function') unsubscribe(); 
     };
-  }, [activeProgram, toast]);
+  }, [activeProgram, toast, trainingCacheKey]);
 
   // --- Filtering Logic & Stats Calculation ---
   useEffect(() => {
@@ -453,6 +467,7 @@ const CapacityBuildingPage = () => {
       });
       
       toast({ title: "Success", description: "Record updated." });
+      removeCachedValue(trainingCacheKey);
       setIsEditDialogOpen(false);
       setEditingRecord(null);
     } catch (error) {
@@ -478,6 +493,7 @@ const CapacityBuildingPage = () => {
       await update(ref(db), updates);
       
       toast({ title: "Success", description: `Deleted ${selectedRecords.length} records.` });
+      removeCachedValue(trainingCacheKey);
       setSelectedRecords([]);
       setIsDeleteConfirmOpen(false);
     } catch (error) {
@@ -492,6 +508,7 @@ const CapacityBuildingPage = () => {
     try {
       await remove(ref(db, `capacityBuilding/${id}`));
       toast({ title: "Success", description: "Record deleted." });
+      removeCachedValue(trainingCacheKey);
     } catch (error) {
       console.error(error);
       toast({ title: "Error", description: "Failed to delete.", variant: "destructive" });
@@ -601,6 +618,7 @@ const CapacityBuildingPage = () => {
       }
 
       toast({ title: "Success", description: `Uploaded ${count} records to ${activeProgram}.` });
+      removeCachedValue(trainingCacheKey);
       setIsUploadDialogOpen(false);
       setUploadFile(null);
       if (fileInputRef.current) fileInputRef.current.value = '';

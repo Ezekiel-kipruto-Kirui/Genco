@@ -19,6 +19,7 @@ import { isChiefAdmin } from "@/contexts/authhelper";
 import html2canvas from "html2canvas";
 import { jsPDF } from "jspdf";
 import { millify } from 'millify';
+import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
 
 // --- Types ---
 interface PerdiemItem {
@@ -264,6 +265,10 @@ const RequisitionsPage = () => {
   const canApproveRequisition = userRole === 'admin' || userIsChiefAdmin;
   const canAuthorizeRequisition = userRole === 'hr';
   const canCompleteRequisition = canApproveRequisition || canAuthorizeRequisition;
+  const requisitionCacheKey = useMemo(
+    () => cacheKey("admin-page", "requisitions", userRole, activeProgram || "all"),
+    [userRole, activeProgram]
+  );
 
   // --- 1. Fetch User Permissions (HR SEES ALL) ---
   useEffect(() => {
@@ -311,7 +316,13 @@ const RequisitionsPage = () => {
         setLoading(false);
         return;
     }
-    setLoading(true);
+    const cachedRequisitions = readCachedValue<RequisitionData[]>(requisitionCacheKey);
+    if (cachedRequisitions) {
+      setAllRequisitions(cachedRequisitions);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
 
     let reqQuery;
     if (userRole === 'hr' || activeProgram === "ALL") {
@@ -324,6 +335,7 @@ const RequisitionsPage = () => {
         const data = snapshot.val();
         if (!data) {
             setAllRequisitions([]);
+            removeCachedValue(requisitionCacheKey);
             setLoading(false);
             return;
         }
@@ -351,6 +363,7 @@ const RequisitionsPage = () => {
         });
         records.sort((a, b) => (b.createdAt as number) - (a.createdAt as number));
         setAllRequisitions(records);
+        writeCachedValue(requisitionCacheKey, records);
         setLoading(false);
     }, (error) => {
         console.error("Error fetching requisition data:", error);
@@ -358,7 +371,7 @@ const RequisitionsPage = () => {
         setLoading(false);
     });
     return () => { if(typeof unsubscribe === 'function') unsubscribe(); };
-  }, [activeProgram, userRole, toast]);
+  }, [activeProgram, userRole, toast, requisitionCacheKey]);
 
   // --- 3. Filtering & Stats Logic ---
   useEffect(() => {
@@ -602,6 +615,7 @@ const RequisitionsPage = () => {
         updatePayload.location = editFormData.location;
       }
       await update(ref(db, `requisitions/${editRecord.id}`), updatePayload);
+      removeCachedValue(requisitionCacheKey);
 
       if (statusChanged && nextStatus === 'approved') {
         await logHistory(editRecord.id, "Approved", `Approved by ${actorName}`);
@@ -633,6 +647,7 @@ const RequisitionsPage = () => {
     setDeleteLoading(true);
     try {
       await remove(ref(db, `requisitions/${recordToDelete.id}`));
+      removeCachedValue(requisitionCacheKey);
       toast({ title: "Deleted", description: "Requisition deleted successfully" });
       setIsDeleteConfirmOpen(false);
       setRecordToDelete(null);
@@ -656,6 +671,7 @@ const RequisitionsPage = () => {
             approvedBy: approverName,
             approvedAt: Date.now()
         });
+        removeCachedValue(requisitionCacheKey);
         
         await logHistory(viewingRecord.id, "Approved", `Approved by ${approverName}`);
         
@@ -685,6 +701,7 @@ const RequisitionsPage = () => {
             authorizedBy: actorName,
             authorizedAt: Date.now()
         });
+        removeCachedValue(requisitionCacheKey);
 
         await logHistory(viewingRecord.id, "Authorized", `Authorized by ${actorName}`);
 
@@ -724,6 +741,7 @@ const RequisitionsPage = () => {
         };
 
         await update(ref(db, `requisitions/${viewingRecord.id}`), updatePayload);
+        removeCachedValue(requisitionCacheKey);
 
         await logHistory(viewingRecord.id, "Completed", `Marked complete by ${actorName}`);
 

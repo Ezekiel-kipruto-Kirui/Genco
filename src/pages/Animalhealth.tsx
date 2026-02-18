@@ -37,6 +37,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import * as XLSX from 'xlsx'; 
+import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
 
 interface FieldOfficer {
   name: string;
@@ -89,6 +90,8 @@ interface AnimalHealthActivity {
   createdBy: string;
   status: 'completed';
 }
+
+const ANIMAL_HEALTH_CACHE_KEY = cacheKey("admin-page", "animal-health", "activities");
 
 const VACCINE_OPTIONS = [
   "PPR", "CCPP", "Sheep and Goat Pox", "Enterotoxemia", "Anthrax",
@@ -164,7 +167,14 @@ const AnimalHealthPage = () => {
 
   const fetchActivities = async () => {
     try {
-      setLoading(true);
+      const cachedActivities = readCachedValue<AnimalHealthActivity[]>(ANIMAL_HEALTH_CACHE_KEY);
+      if (cachedActivities) {
+        setActivities(cachedActivities);
+        setLoading(false);
+      } else {
+        setLoading(true);
+      }
+
       const activitiesRef = ref(db, "AnimalHealthActivities");
       const snapshot = await get(activitiesRef);
       
@@ -225,8 +235,10 @@ const AnimalHealthPage = () => {
           return dateB - dateA;
         });
         setActivities(activitiesData);
+        writeCachedValue(ANIMAL_HEALTH_CACHE_KEY, activitiesData);
       } else {
         setActivities([]);
+        removeCachedValue(ANIMAL_HEALTH_CACHE_KEY);
       }
     } catch (error) {
       console.error("Error fetching:", error);
@@ -387,6 +399,7 @@ const AnimalHealthPage = () => {
       toast({ title: "Success", description: "Activity recorded.", className: "bg-green-50 text-green-800" });
       setIsAddDialogOpen(false);
       resetForms();
+      removeCachedValue(ANIMAL_HEALTH_CACHE_KEY);
       fetchActivities();
     } catch (error) {
       console.error(error);
@@ -408,6 +421,7 @@ const AnimalHealthPage = () => {
       toast({ title: "Success", description: "Activity updated.", className: "bg-green-50 text-green-800" });
       setIsEditDialogOpen(false);
       resetForms();
+      removeCachedValue(ANIMAL_HEALTH_CACHE_KEY);
       fetchActivities();
     } catch (error) {
       console.error(error);
@@ -416,7 +430,7 @@ const AnimalHealthPage = () => {
   };
 
   const handleDeleteActivity = async (activityId: string) => {
-    try { await remove(ref(db, "AnimalHealthActivities/" + activityId)); toast({ title: "Success", description: "Deleted." }); fetchActivities(); } 
+    try { await remove(ref(db, "AnimalHealthActivities/" + activityId)); toast({ title: "Success", description: "Deleted." }); removeCachedValue(ANIMAL_HEALTH_CACHE_KEY); fetchActivities(); } 
     catch (error) { toast({ title: "Error", description: "Failed.", variant: "destructive" }); }
   };
 
@@ -425,6 +439,7 @@ const AnimalHealthPage = () => {
     try {
       await Promise.all(selectedActivities.map(id => remove(ref(db, "AnimalHealthActivities/" + id))));
       toast({ title: "Success", description: `${selectedActivities.length} deleted.` });
+      removeCachedValue(ANIMAL_HEALTH_CACHE_KEY);
       setSelectedActivities([]); setIsSelecting(false); fetchActivities();
     } catch (error) { toast({ title: "Error", description: "Failed.", variant: "destructive" }); }
   };

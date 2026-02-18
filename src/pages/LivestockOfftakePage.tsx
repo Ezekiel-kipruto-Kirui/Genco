@@ -15,6 +15,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Download, Users, MapPin, Eye, Calendar, Scale, Phone, CreditCard, Edit, Trash2, Weight, Upload, Loader2 } from "lucide-react";
 import { toast, useToast } from "@/hooks/use-toast";
 import { isChiefAdmin } from "@/contexts/authhelper";
+import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
 
 // Types
 interface OfftakeData {
@@ -344,6 +345,10 @@ const LivestockOfftakePage = () => {
   });
 
   const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
+  const offtakeCacheKey = useMemo(
+    () => cacheKey("admin-page", "livestock-offtake", activeProgram),
+    [activeProgram]
+  );
 
   // --- OPTIMIZATION: Debounce Search Input ---
   useEffect(() => {
@@ -642,7 +647,13 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
   useEffect(() => {
     if (userPermissionsLoading) return;
 
-    setLoading(true);
+    const cachedOfftakes = readCachedValue<OfftakeData[]>(offtakeCacheKey);
+    if (cachedOfftakes) {
+      setAllOfftake(cachedOfftakes);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     
     const dbRef = query(ref(db, 'offtakes'), orderByChild('programme'), equalTo(activeProgram));
 
@@ -651,6 +662,7 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
       
       if (!data) {
         setAllOfftake([]);
+        removeCachedValue(offtakeCacheKey);
         setLoading(false);
         return;
       }
@@ -692,6 +704,7 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
       });
 
       setAllOfftake(offtakeList);
+      writeCachedValue(offtakeCacheKey, offtakeList);
       setLoading(false);
     }, (error) => {
       console.error("Error fetching livestock offtake data:", error);
@@ -706,7 +719,7 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
     return () => {
        if(typeof unsubscribe === 'function') unsubscribe();
     };
-  }, [activeProgram, userPermissionsLoading, toast]);
+  }, [activeProgram, userPermissionsLoading, toast, offtakeCacheKey]);
 
   // Filter application
   useEffect(() => {
@@ -1217,6 +1230,7 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
 
         if (Object.keys(updates).length > 0) {
           await update(ref(db), updates);
+          removeCachedValue(offtakeCacheKey);
           processedCount += batch.length;
           setUploadProgress({ current: processedCount, total: totalRecords });
         }
@@ -1324,6 +1338,7 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
     try {
       setDeleteLoading(true);
       await remove(ref(db, `offtakes/${recordToDelete.id}`));
+      removeCachedValue(offtakeCacheKey);
 
       toast({
         title: "Success",
@@ -1372,6 +1387,7 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
         updates[`offtakes/${recordId}`] = null;
       });
       await update(ref(db), updates);
+      removeCachedValue(offtakeCacheKey);
 
       toast({ title: "Success", description: `Deleted ${selectedRecords.length} records.` });
       setSelectedRecords([]);
@@ -1396,6 +1412,7 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
         county: editForm.region,
         location: editForm.location
       });
+      removeCachedValue(offtakeCacheKey);
 
       toast({ title: "Success", description: "Record updated successfully" });
       setIsEditDialogOpen(false);
@@ -1427,6 +1444,7 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
         totalGoats: newGoatsArray.length,
         totalPrice: newTotalPrice
       });
+      removeCachedValue(offtakeCacheKey);
 
       toast({ title: "Success", description: "Weights and prices updated" });
       setIsWeightEditDialogOpen(false);

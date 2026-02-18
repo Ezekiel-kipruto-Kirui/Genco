@@ -37,6 +37,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import * as XLSX from 'xlsx';
 import { isChiefAdmin } from "@/contexts/authhelper";
+import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
 
 // --- Constants ---
 const COLLECTION_NAME = "Onboarding";
@@ -85,6 +86,18 @@ interface Stats {
   femaleFarmers: number;
   uniqueCounties: number;
 }
+
+const normalizeOnboardingRecord = (record: Partial<OnboardingData>): OnboardingData => ({
+  id: record.id || "",
+  date: record.date ? new Date(record.date) : new Date(),
+  topic: record.topic || "",
+  comment: record.comment || "",
+  staff: Array.isArray(record.staff) ? record.staff : [],
+  farmers: Array.isArray(record.farmers) ? record.farmers : [],
+  programme: record.programme === "RANGE" ? "RANGE" : "KPMD",
+  createdAt: record.createdAt ? new Date(record.createdAt) : undefined,
+  status: record.status === "completed" ? "completed" : "pending",
+});
 
 // --- Utility Functions ---
 
@@ -329,6 +342,10 @@ const OnboardingCard = ({
 const OnboardingPage = () => {
   const { user, userRole } = useAuth();
   const { toast } = useToast();
+  const onboardingCacheKey = useMemo(
+    () => cacheKey("admin-page", "onboarding", user?.uid || "anonymous"),
+    [user?.uid]
+  );
 
   // --- Programme State (Mimicking CapacityBuildingPage) ---
   const [allOnboarding, setAllOnboarding] = useState<OnboardingData[]>([]);
@@ -455,7 +472,13 @@ const OnboardingPage = () => {
 
   const fetchOnboardingData = async () => {
     try {
-      setLoading(true);
+      const cachedOnboarding = readCachedValue<OnboardingData[]>(onboardingCacheKey);
+      if (cachedOnboarding) {
+        setAllOnboarding(cachedOnboarding.map(normalizeOnboardingRecord));
+        setLoading(false);
+      } else {
+        setLoading(true);
+      }
       const dbRef = ref(db, COLLECTION_NAME);
       const snapshot = await get(dbRef);
       
@@ -488,8 +511,12 @@ const OnboardingPage = () => {
       }
       
       setAllOnboarding(data);
+      writeCachedValue(onboardingCacheKey, data);
       // FilteredOnboarding will be updated by the programme filter effect
       setSelectedRecords([]);
+      if (!snapshot.exists()) {
+        removeCachedValue(onboardingCacheKey);
+      }
     } catch (error) {
       console.error("Error fetching onboarding data:", error);
       toast({
@@ -608,6 +635,7 @@ const OnboardingPage = () => {
       const deletePromises = selectedRecords.map(id => remove(ref(db, `${COLLECTION_NAME}/${id}`)));
       
       await Promise.all(deletePromises);
+      removeCachedValue(onboardingCacheKey);
       
       toast({ title: "Success", description: `Successfully deleted ${selectedRecords.length} records` });
       setIsBulkDeleteDialogOpen(false);
@@ -657,6 +685,7 @@ const OnboardingPage = () => {
         toast({ title: "Success", description: "Record added successfully" });
       }
 
+      removeCachedValue(onboardingCacheKey);
       resetForm();
       setIsDialogOpen(false);
       fetchOnboardingData();
@@ -682,6 +711,7 @@ const OnboardingPage = () => {
     try {
       setLoading(true);
       await remove(ref(db, `${COLLECTION_NAME}/${selectedRecord.id}`));
+      removeCachedValue(onboardingCacheKey);
       toast({ title: "Success", description: "Record deleted successfully" });
       setIsDeleteDialogOpen(false);
       setSelectedRecord(null);

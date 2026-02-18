@@ -11,9 +11,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
-import { Download, Users, Eye, Globe, LayoutGrid, Edit, Trash2, Upload } from "lucide-react";
+import { Download, Users, Eye, Globe, LayoutGrid, Edit, Trash2, Upload, FileJson, FileSpreadsheet } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { isChiefAdmin } from "@/contexts/authhelper";
+import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
 
 // --- Types ---
 interface Farmer {
@@ -120,7 +121,7 @@ const FodderFarmersPage = () => {
   const [allFodder, setAllFodder] = useState<FodderFarmer[]>([]);
   const [filteredFodder, setFilteredFodder] = useState<FodderFarmer[]>([]);
   const [activeProgram, setActiveProgram] = useState<string>(""); 
-  const [availablePrograms, setAvailablePrograms] = useState<string[]>([]); // Dynamic list
+  const [availablePrograms, setAvailablePrograms] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [exportLoading, setExportLoading] = useState(false);
   const [uploadLoading, setUploadLoading] = useState(false);
@@ -131,6 +132,8 @@ const FodderFarmersPage = () => {
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   const [viewingRecord, setViewingRecord] = useState<FodderFarmer | null>(null);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
+  // New state for file type selection
+  const [uploadFileType, setUploadFileType] = useState<"csv" | "json">("csv");
   
   const searchTimeoutRef = useRef<NodeJS.Timeout>();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -160,39 +163,36 @@ const FodderFarmersPage = () => {
   });
 
   const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
+  const fodderCacheKey = useMemo(
+    () => cacheKey("admin-page", "fodder-farmers", activeProgram),
+    [activeProgram]
+  );
 
   // --- 1. Fetch User Permissions & Determine Available Programmes ---
   useEffect(() => {
     if (!userRole) return;
 
     if (isChiefAdmin(userRole)) {
-      // Chief Admins see both programmes
       setAvailablePrograms(["RANGE", "KPMD"]);
-      if (!activeProgram) setActiveProgram("RANGE"); // Default to RANGE
+      if (!activeProgram) setActiveProgram("RANGE");
       return;
     }
 
-    // For other roles, fetch specific permissions from DB
     const auth = getAuth();
     const uid = auth.currentUser?.uid;
-    
     if (!uid) return;
 
     const userRef = ref(db, `users/${uid}`);
     const unsubscribe = onValue(userRef, (snapshot) => {
       const data = snapshot.val();
       if (data && data.allowedProgrammes) {
-        // Extract keys where value is true
         const programs = Object.keys(data.allowedProgrammes).filter(
           key => data.allowedProgrammes[key] === true
         );
         setAvailablePrograms(programs);
-        
-        // Auto-select the first available programme if current activeProgram is invalid
         if (programs.length > 0 && !programs.includes(activeProgram)) {
           setActiveProgram(programs[0]);
         } else if (programs.length === 0) {
-            // User has no programmes assigned
             setActiveProgram("");
         }
       } else {
@@ -213,8 +213,14 @@ const FodderFarmersPage = () => {
         return;
     }
 
-    setLoading(true);
-    // Query specifically for the active programme using the index defined in rules
+    const cachedFodder = readCachedValue<FodderFarmer[]>(fodderCacheKey);
+    if (cachedFodder) {
+      setAllFodder(cachedFodder);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
+
     const fodderQuery = query(
         ref(db, 'fodderFarmers'), 
         orderByChild('programme'), 
@@ -223,19 +229,17 @@ const FodderFarmersPage = () => {
 
     const unsubscribe = onValue(fodderQuery, (snapshot) => {
       const data = snapshot.val();
-      
       if (!data) {
         setAllFodder([]);
+        removeCachedValue(fodderCacheKey);
         setLoading(false);
         return;
       }
 
-      // Convert RTDB object to array
       const fodderData = Object.keys(data).map((key) => {
         const item = data[key];
-        
-        // Handle date parsing
         let dateValue = item.date || item.Date || item.createdAt || item.timestamp;
+        
         if (dateValue && typeof dateValue === 'object') {
           if (dateValue.toDate && typeof dateValue.toDate === 'function') {
             dateValue = dateValue.toDate();
@@ -268,11 +272,12 @@ const FodderFarmersPage = () => {
           totalBales: Number(item.totalBales || item.TotalBales || 0),
           yieldPerHarvest: Number(item.yieldPerHarvest || item.YieldPerHarvest || 0),
           farmers: farmersList,
-          programme: item.programme || activeProgram // Ensure programme is set
+          programme: item.programme || activeProgram
         };
       });
 
       setAllFodder(fodderData);
+      writeCachedValue(fodderCacheKey, fodderData);
       setLoading(false);
     }, (error) => {
       console.error("Error fetching fodder data:", error);
@@ -281,7 +286,7 @@ const FodderFarmersPage = () => {
     });
 
     return () => { if(typeof unsubscribe === 'function') unsubscribe(); };
-  }, [activeProgram, toast]);
+  }, [activeProgram, toast, fodderCacheKey]);
 
   // --- Filtering Logic ---
   const applyFilters = useCallback(() => {
@@ -292,27 +297,19 @@ const FodderFarmersPage = () => {
     }
 
     let filtered = allFodder.filter(record => {
-      // County filter
       if (filters.county !== "all" && record.county?.toLowerCase() !== filters.county.toLowerCase()) return false;
-
-      // Location filter
       if (filters.location !== "all" && record.location?.toLowerCase() !== filters.location.toLowerCase()) return false;
-
-      // Model filter
       if (filters.model !== "all" && record.model?.toLowerCase() !== filters.model.toLowerCase()) return false;
 
-      // Date filter
       if (filters.startDate || filters.endDate) {
         const recordDate = parseDate(record.date);
         if (recordDate) {
           const recordDateOnly = new Date(recordDate);
           recordDateOnly.setHours(0, 0, 0, 0);
-
           const startDate = filters.startDate ? new Date(filters.startDate) : null;
           const endDate = filters.endDate ? new Date(filters.endDate) : null;
           if (startDate) startDate.setHours(0, 0, 0, 0);
           if (endDate) endDate.setHours(23, 59, 59, 999);
-
           if (startDate && recordDateOnly < startDate) return false;
           if (endDate && recordDateOnly > endDate) return false;
         } else if (filters.startDate || filters.endDate) {
@@ -320,7 +317,6 @@ const FodderFarmersPage = () => {
         }
       }
 
-      // Search filter
       if (filters.search) {
         const searchTerm = filters.search.toLowerCase();
         const searchMatch = [
@@ -328,20 +324,16 @@ const FodderFarmersPage = () => {
         ].some(field => field?.toLowerCase().includes(searchTerm));
         if (!searchMatch) return false;
       }
-
       return true;
     });
 
     setFilteredFodder(filtered);
     
-    // Update stats
     const totalFarmers = filtered.reduce((sum, record) => sum + (record.farmers?.length || 0), 0);
     const uniqueCounties = new Set(filtered.map(f => f.county).filter(Boolean));
     const uniqueModels = new Set(filtered.map(f => f.model).filter(Boolean));
-
     setStats({ totalFarmers, totalCounties: uniqueCounties.size, totalModels: uniqueModels.size });
 
-    // Update pagination
     const totalPages = Math.ceil(filtered.length / pagination.limit);
     setPagination(prev => ({
       ...prev,
@@ -351,23 +343,14 @@ const FodderFarmersPage = () => {
     }));
   }, [allFodder, filters, pagination.limit, pagination.page]);
 
-  // Run filtering when dependencies change
-  useEffect(() => {
-    applyFilters();
-  }, [applyFilters]);
+  useEffect(() => { applyFilters(); }, [applyFilters]);
 
   // --- Handlers ---
 
   const handleProgramChange = (program: string) => {
     setActiveProgram(program);
     setFilters(prev => ({ 
-        ...prev, 
-        search: "", 
-        startDate: currentMonth.startDate, 
-        endDate: currentMonth.endDate, 
-        location: "all", 
-        county: "all", 
-        model: "all" 
+        ...prev, search: "", startDate: currentMonth.startDate, endDate: currentMonth.endDate, location: "all", county: "all", model: "all" 
     }));
     setSelectedRecords([]);
     setPagination(prev => ({ ...prev, page: 1 }));
@@ -411,13 +394,11 @@ const FodderFarmersPage = () => {
   };
 
   const handleEdit = (record: FodderFarmer) => {
-    // Placeholder
     console.log("Edit record:", record);
     toast({ title: "Edit Feature", description: "Edit functionality will be implemented soon" });
   };
 
   const handleDelete = (record: FodderFarmer) => {
-    // Placeholder
     console.log("Delete record:", record);
     toast({ title: "Delete Feature", description: "Delete functionality will be implemented soon", variant: "destructive" });
   };
@@ -429,6 +410,7 @@ const FodderFarmersPage = () => {
       const updates: { [key: string]: null } = {};
       selectedRecords.forEach(id => updates[`fodderFarmers/${id}`] = null);
       await update(ref(db), updates);
+      removeCachedValue(fodderCacheKey);
       toast({ title: "Success", description: `${selectedRecords.length} records deleted` });
       setSelectedRecords([]);
       setIsDeleteConfirmOpen(false);
@@ -483,7 +465,19 @@ const FodderFarmersPage = () => {
   const handleFileSelect = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
-      setUploadFile(file);
+        // Validate file extension matches selected type
+        const isJson = file.name.toLowerCase().endsWith('.json');
+        const isCsv = file.name.toLowerCase().endsWith('.csv');
+
+        if (uploadFileType === 'json' && !isJson) {
+            toast({ title: "Invalid File", description: "Please select a .json file.", variant: "destructive" });
+            return;
+        }
+        if (uploadFileType === 'csv' && !isCsv) {
+            toast({ title: "Invalid File", description: "Please select a .csv file.", variant: "destructive" });
+            return;
+        }
+        setUploadFile(file);
     }
   };
 
@@ -492,21 +486,40 @@ const FodderFarmersPage = () => {
     setUploadLoading(true);
     try {
       const text = await uploadFile.text();
-      const isJSON = uploadFile.name.endsWith('.json');
       let parsedData: any[] = [];
 
-      if (isJSON) {
-        parsedData = JSON.parse(text);
-      } else {
-        // Simple CSV parser
-        const lines = text.split('\n').filter(l => l.trim());
-        const headers = lines[0].split(',').map(h => h.trim());
-        for (let i = 1; i < lines.length; i++) {
-          const values = lines[i].split(',').map(v => v.trim());
-          const obj: any = {};
-          headers.forEach((h, idx) => obj[h] = values[idx]);
-          parsedData.push(obj);
+      if (uploadFileType === 'json') {
+        // JSON Parsing Logic
+        try {
+            const jsonParsed = JSON.parse(text);
+            if (Array.isArray(jsonParsed)) {
+                parsedData = jsonParsed;
+            } else {
+                throw new Error("JSON format must be an array of objects");
+            }
+        } catch (e) {
+            throw new Error("Invalid JSON file format");
         }
+      } else {
+        // CSV Parsing Logic
+        const lines = text.split('\n').filter(l => l.trim());
+        if (lines.length < 2) throw new Error("CSV file is empty or invalid");
+        
+        const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, '')); // Basic quote stripping
+        for (let i = 1; i < lines.length; i++) {
+            const values = lines[i].split(',').map(v => v.trim().replace(/^"|"$/g, ''));
+            
+            // Ensure row has same number of columns as headers (basic safety)
+            if (values.length === headers.length) {
+                const obj: any = {};
+                headers.forEach((h, idx) => obj[h] = values[idx]);
+                parsedData.push(obj);
+            }
+        }
+      }
+
+      if (parsedData.length === 0) {
+          throw new Error("No valid data found to upload");
       }
 
       let count = 0;
@@ -515,19 +528,20 @@ const FodderFarmersPage = () => {
       for (const item of parsedData) {
         await push(collectionRef, {
           ...item,
-          programme: activeProgram, // Explicitly set programme
+          programme: activeProgram,
           createdAt: new Date().toISOString(),
           rawTimestamp: Date.now()
         });
         count++;
       }
 
+      removeCachedValue(fodderCacheKey);
       toast({ title: "Success", description: `Uploaded ${count} records to ${activeProgram}.` });
       setIsUploadDialogOpen(false);
       setUploadFile(null);
-    } catch (error) {
+    } catch (error: any) {
       console.error(error);
-      toast({ title: "Error", description: "Invalid file format", variant: "destructive" });
+      toast({ title: "Error", description: error.message || "Upload failed", variant: "destructive" });
     } finally {
       setUploadLoading(false);
     }
@@ -590,7 +604,6 @@ const FodderFarmersPage = () => {
           className="border-gray-300 focus:border-green-500 focus:ring-green-500 bg-white"
         />
       </div>
-
       <div className="space-y-2">
         <Label htmlFor="county" className="font-semibold text-gray-700">County</Label>
         <Select value={filters.county} onValueChange={(value) => handleFilterChange("county", value)}>
@@ -605,7 +618,6 @@ const FodderFarmersPage = () => {
           </SelectContent>
         </Select>
       </div>
-
       <div className="space-y-2">
         <Label htmlFor="location" className="font-semibold text-gray-700">Location</Label>
         <Select value={filters.location} onValueChange={(value) => handleFilterChange("location", value)}>
@@ -620,7 +632,6 @@ const FodderFarmersPage = () => {
           </SelectContent>
         </Select>
       </div>
-
       <div className="space-y-2">
         <Label htmlFor="model" className="font-semibold text-gray-700">Model</Label>
         <Select value={filters.model} onValueChange={(value) => handleFilterChange("model", value)}>
@@ -635,7 +646,6 @@ const FodderFarmersPage = () => {
           </SelectContent>
         </Select>
       </div>
-
       <div className="space-y-2">
         <Label htmlFor="startDate" className="font-semibold text-gray-700">From Date</Label>
         <Input
@@ -646,7 +656,6 @@ const FodderFarmersPage = () => {
           className="border-gray-300 focus:border-green-500 focus:ring-green-500 bg-white"
         />
       </div>
-
       <div className="space-y-2">
         <Label htmlFor="endDate" className="font-semibold text-gray-700">To Date</Label>
         <Input
@@ -662,7 +671,6 @@ const FodderFarmersPage = () => {
 
   const TableRow = useCallback(({ record }: { record: FodderFarmer }) => {
     const farmerCount = record.farmers?.length || 0;
-    
     return (
       <tr className="border-b hover:bg-green-50 transition-colors duration-200 group text-sm">
         <td className="py-3 px-4">
@@ -675,45 +683,19 @@ const FodderFarmersPage = () => {
         <td className="py-3 px-4">{record.location || 'N/A'}</td>
         <td className="py-3 px-4">{record.county || 'N/A'}</td>
         <td className="py-3 px-4">
-          <Badge className="bg-blue-100 text-blue-800">
-            {record.model || 'N/A'}
-          </Badge>
+          <Badge className="bg-blue-100 text-blue-800">{record.model || 'N/A'}</Badge>
         </td>
         <td className="py-3 px-4">{record.landSize || 0}</td>
-        <td className="py-3 px-4">{record.totalAcresPasture || 0}</td>
-        <td className="py-3 px-4">{record.totalBales || 0}</td>
-        <td className="py-3 px-4">{record.yieldPerHarvest || 0}</td>
-        <td className="py-3 px-4">
-          <span className="font-bold text-gray-700">{farmerCount}</span>
-        </td>
+        
+        
+        <td className="py-3 px-4"><span className="font-bold text-gray-700">{farmerCount}</span></td>
         <td className="py-3 px-4">
           <div className="flex gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => openViewDialog(record)}
-              className="h-8 w-8 p-0 hover:bg-green-50 hover:text-green-600 border-green-200"
-            >
-              <Eye className="h-4 w-4 text-green-500" />
-            </Button>
+            <Button variant="outline" size="sm" onClick={() => openViewDialog(record)} className="h-8 w-8 p-0 hover:bg-green-50 hover:text-green-600 border-green-200"><Eye className="h-4 w-4 text-green-500" /></Button>
             {userIsChiefAdmin && (
               <>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handleEdit(record)}
-                  className="h-8 w-8 p-0 hover:bg-blue-50 hover:text-blue-600 border-blue-200"
-                >
-                  <Edit className="h-4 w-4 text-blue-500" />
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handleDelete(record)}
-                  className="h-8 w-8 p-0 hover:bg-red-50 hover:text-red-600 border-red-200"
-                >
-                  <Trash2 className="h-4 w-4 text-red-500" />
-                </Button>
+                <Button variant="outline" size="sm" onClick={() => handleEdit(record)} className="h-8 w-8 p-0 hover:bg-blue-50 hover:text-blue-600 border-blue-200"><Edit className="h-4 w-4 text-blue-500" /></Button>
+                <Button variant="outline" size="sm" onClick={() => handleDelete(record)} className="h-8 w-8 p-0 hover:bg-red-50 hover:text-red-600 border-red-200"><Trash2 className="h-4 w-4 text-red-500" /></Button>
               </>
             )}
           </div>
@@ -727,84 +709,35 @@ const FodderFarmersPage = () => {
       {/* Header with Action Buttons */}
       <div className="flex md:flex-row flex-col justify-between items-start sm:items-center gap-4">
         <div>
-          <h2 className="text-xl font-bold mb-2 bg-gradient-to-r from-green-600 to-emerald-600 bg-clip-text text-transparent">
-            Fodder Farmers
-          </h2>
+          <h2 className="text-xl font-bold mb-2 bg-gradient-to-r from-green-600 to-emerald-600 bg-clip-text text-transparent">Fodder Farmers</h2>
           <div className="flex items-center gap-2 text-sm text-gray-600">
              {activeProgram && <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 font-bold px-3 py-1">{activeProgram} PROGRAMME</Badge>}
           </div>
         </div>
 
         <div className="flex flex-wrap gap-2">
-          {/* Bulk Actions */}
           {selectedRecords.length > 0 && userIsChiefAdmin && (
-            <Button 
-              variant="destructive" 
-              size="sm" 
-              onClick={openDeleteConfirm}
-              disabled={deleteLoading}
-              className="text-xs"
-            >
-              <Trash2 className="h-4 w-4 mr-2" />
-              Delete ({selectedRecords.length})
+            <Button variant="destructive" size="sm" onClick={openDeleteConfirm} disabled={deleteLoading} className="text-xs">
+              <Trash2 className="h-4 w-4 mr-2" /> Delete ({selectedRecords.length})
             </Button>
           )}
           
-          <Button 
-            variant="outline" 
-            size="sm" 
-            onClick={clearAllFilters}
-            className="text-xs border-gray-300 hover:bg-gray-50"
-          >
-            Clear All Filters
-          </Button>
-          <Button 
-            variant="outline" 
-            size="sm" 
-            onClick={resetToCurrentMonth}
-            className="text-xs border-gray-300 hover:bg-gray-50"
-          >
-            This Month
-          </Button>
+          <Button variant="outline" size="sm" onClick={clearAllFilters} className="text-xs border-gray-300 hover:bg-gray-50">Clear All Filters</Button>
+          <Button variant="outline" size="sm" onClick={resetToCurrentMonth} className="text-xs border-gray-300 hover:bg-gray-50">This Month</Button>
 
-          {/* Programme Selector - Only for Chief Admin */}
           {userIsChiefAdmin ? (
              <div className="flex justify-end">
                <Select value={activeProgram} onValueChange={handleProgramChange}>
-                  <SelectTrigger className="w-[200px] border-gray-300 focus:border-green-500 bg-white">
-                      <SelectValue placeholder="Select Programme" />
-                  </SelectTrigger>
-                  <SelectContent>
-                      {availablePrograms.map(p => (
-                          <SelectItem key={p} value={p}>{p}</SelectItem>
-                      ))}
-                  </SelectContent>
+                  <SelectTrigger className="w-[200px] border-gray-300 focus:border-green-500 bg-white"><SelectValue placeholder="Select Programme" /></SelectTrigger>
+                  <SelectContent>{availablePrograms.map(p => (<SelectItem key={p} value={p}>{p}</SelectItem>))}</SelectContent>
               </Select>
              </div>
-          ) : (
-             <div className="w-[200px]"></div> // Spacer
-          )}
+          ) : <div className="w-[200px]"></div>}
 
-          {/* Upload and Export buttons - only for chief admin */}
           {userIsChiefAdmin && (
             <>
-              <Button 
-                variant="outline" 
-                size="sm" 
-                onClick={() => setIsUploadDialogOpen(true)}
-                className="text-xs border-green-300 hover:bg-green-50 text-green-700"
-              >
-                <Upload className="h-4 w-4 mr-2" />
-                Upload Data
-              </Button>
-              <Button 
-                onClick={handleExport} 
-                disabled={exportLoading || filteredFodder.length === 0}
-                className="bg-gradient-to-r from-green-600 to-emerald-700 hover:from-green-700 hover:to-emerald-800 text-white shadow-md text-xs"
-              >
-                <Download className="h-4 w-4 mr-2" />
-                {exportLoading ? "Exporting..." : `Export (${filteredFodder.length})`}
-              </Button>
+              <Button variant="outline" size="sm" onClick={() => setIsUploadDialogOpen(true)} className="text-xs border-green-300 hover:bg-green-50 text-green-700"><Upload className="h-4 w-4 mr-2" /> Upload Data</Button>
+              <Button onClick={handleExport} disabled={exportLoading || filteredFodder.length === 0} className="bg-gradient-to-r from-green-600 to-emerald-700 hover:from-green-700 hover:to-emerald-800 text-white shadow-md text-xs"><Download className="h-4 w-4 mr-2" /> {exportLoading ? "Exporting..." : `Export (${filteredFodder.length})`}</Button>
             </>
           )}
         </div>
@@ -812,43 +745,19 @@ const FodderFarmersPage = () => {
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <StatsCard 
-          title="Total Farmers" 
-          value={stats.totalFarmers} 
-          icon={Users}
-          description="Across all records"
-        />
-
-        <StatsCard 
-          title="Counties" 
-          value={stats.totalCounties} 
-          icon={Globe}
-          description="Unique counties covered"
-        />
-
-        <StatsCard 
-          title="Models" 
-          value={stats.totalModels} 
-          icon={LayoutGrid}
-          description="Different farming models"
-        />
+        <StatsCard title="Total Farmers" value={stats.totalFarmers} icon={Users} description="Across all records" />
+        <StatsCard title="Counties" value={stats.totalCounties} icon={Globe} description="Unique counties covered" />
+        <StatsCard title="Total Land size (Accres)" value={stats.totalModels} icon={LayoutGrid} description="Different Pasture Sites" />
       </div>
 
       {/* Filters Section */}
-      <Card className="shadow-lg border-0 bg-white">
-        <CardContent className="space-y-4 pt-6">
-          {FilterSection}
-        </CardContent>
-      </Card>
+      <Card className="shadow-lg border-0 bg-white"><CardContent className="space-y-4 pt-6">{FilterSection}</CardContent></Card>
 
       {/* Data Table */}
       <Card className="shadow-lg border-0 bg-white">
         <CardContent className="p-0">
           {loading ? (
-            <div className="text-center py-12">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-600 mx-auto"></div>
-              <p className="text-muted-foreground mt-2">Loading fodder data...</p>
-            </div>
+            <div className="text-center py-12"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-600 mx-auto"></div><p className="text-muted-foreground mt-2">Loading fodder data...</p></div>
           ) : currentPageRecords.length === 0 ? (
             <div className="text-center py-12 text-muted-foreground">{activeProgram ? "No records found matching your criteria" : "You do not have access to any programme data."}</div>
           ) : (
@@ -857,56 +766,24 @@ const FodderFarmersPage = () => {
                 <table className="w-full border-collapse border border-gray-300 text-sm text-left whitespace-nowrap">
                   <thead className="rounded">
                     <tr className="bg-green-100 p-1 px-3">
-                      <th className="py-1 px-6">
-                        <Checkbox
-                          checked={selectedRecords.length === currentPageRecords.length && currentPageRecords.length > 0}
-                          onCheckedChange={handleSelectAll}
-                        />
-                      </th>
+                      <th className="py-1 px-6"><Checkbox checked={selectedRecords.length === currentPageRecords.length && currentPageRecords.length > 0} onCheckedChange={handleSelectAll} /></th>
                       <th className="py-1 px-6 font-medium text-gray-600">Date</th>
-                      <th className="py-1 px-6 font-medium text-gray-600">Location</th>
+                      <th className="py-1 px-6 font-medium text-gray-600">Pasture site</th>
                       <th className="py-1 px-6 font-medium text-gray-600">County</th>
                       <th className="py-1 px-6 font-medium text-gray-600">Model</th>
                       <th className="py-1 px-6 font-medium text-gray-600">Land Size</th>
-                      <th className="py-1 px-6 font-medium text-gray-600">Pasture Acres</th>
-                      <th className="py-1 px-6 font-medium text-gray-600">Total Bales</th>
-                      <th className="py-1 px-6 font-medium text-gray-600">Yield/Harvest</th>
                       <th className="py-1 px-6 font-medium text-gray-600">Farmers</th>
                       <th className="py-1 px-6 font-medium text-gray-600">Actions</th>
                     </tr>
                   </thead>
-                  <tbody>
-                    {currentPageRecords.map((record) => (
-                      <TableRow key={record.id} record={record} />
-                    ))}
-                  </tbody>
+                  <tbody>{currentPageRecords.map((record) => (<TableRow key={record.id} record={record} />))}</tbody>
                 </table>
               </div>
-
-              {/* Pagination */}
               <div className="flex items-center justify-between p-4 border-t bg-gray-50">
-                <div className="text-sm text-muted-foreground">
-                  Page {pagination.page} of {pagination.totalPages} • {filteredFodder.length} total records • {currentPageRecords.length} on this page
-                </div>
+                <div className="text-sm text-muted-foreground">Page {pagination.page} of {pagination.totalPages} • {filteredFodder.length} total records • {currentPageRecords.length} on this page</div>
                 <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={!pagination.hasPrev}
-                    onClick={() => handlePageChange(pagination.page - 1)}
-                    className="border-gray-300 hover:bg-gray-100"
-                  >
-                    Previous
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={!pagination.hasNext}
-                    onClick={() => handlePageChange(pagination.page + 1)}
-                    className="border-gray-300 hover:bg-gray-100"
-                  >
-                    Next
-                  </Button>
+                  <Button variant="outline" size="sm" disabled={!pagination.hasPrev} onClick={() => handlePageChange(pagination.page - 1)} className="border-gray-300 hover:bg-gray-100">Previous</Button>
+                  <Button variant="outline" size="sm" disabled={!pagination.hasNext} onClick={() => handlePageChange(pagination.page + 1)} className="border-gray-300 hover:bg-gray-100">Next</Button>
                 </div>
               </div>
             </>
@@ -918,27 +795,53 @@ const FodderFarmersPage = () => {
       <Dialog open={isUploadDialogOpen} onOpenChange={setIsUploadDialogOpen}>
         <DialogContent className="sm:max-w-md bg-white rounded-2xl">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-slate-900">
-              <Upload className="h-5 w-5 text-green-600" />
-              Upload Fodder Farmers Data
-            </DialogTitle>
-            <DialogDescription>
-              Upload data from CSV or JSON files. Data will be assigned to the <strong>{activeProgram}</strong> programme.
-            </DialogDescription>
+            <DialogTitle className="flex items-center gap-2 text-slate-900"><Upload className="h-5 w-5 text-green-600" /> Upload Fodder Farmers Data</DialogTitle>
+            <DialogDescription>Upload data to the <strong>{activeProgram}</strong> programme. Choose your file format below.</DialogDescription>
           </DialogHeader>
+          
           <div className="space-y-4 py-4">
+            {/* File Type Selector */}
+            <div className="space-y-2">
+              <Label>File Format</Label>
+              <Select value={uploadFileType} onValueChange={(val: "csv" | "json") => {
+                  setUploadFileType(val);
+                  setUploadFile(null); // Reset file when type changes
+                  if (fileInputRef.current) fileInputRef.current.value = '';
+              }}>
+                <SelectTrigger className="bg-white border-slate-300">
+                  <SelectValue placeholder="Select format" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="csv">
+                    <div className="flex items-center">
+                      <FileSpreadsheet className="mr-2 h-4 w-4" />
+                      CSV File (.csv)
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="json">
+                    <div className="flex items-center">
+                      <FileJson className="mr-2 h-4 w-4" />
+                      JSON File (.json)
+                    </div>
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
             <div className="space-y-2">
               <Label htmlFor="file-upload">Select File</Label>
               <Input
                 id="file-upload"
                 ref={fileInputRef}
                 type="file"
-                accept=".csv,.json"
+                accept={uploadFileType === 'csv' ? '.csv' : '.json'}
                 onChange={handleFileSelect}
                 className="bg-white border-slate-300"
               />
               <p className="text-xs text-slate-500">
-                Supported formats: CSV, JSON. Maximum file size: 10MB
+                {uploadFileType === 'csv' 
+                  ? "Upload a .csv file with headers in the first row." 
+                  : "Upload a .json file containing an array of objects."}
               </p>
             </div>
             
@@ -947,18 +850,14 @@ const FodderFarmersPage = () => {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="font-medium text-slate-900">{uploadFile.name}</p>
-                    <p className="text-sm text-slate-500">
-                      {(uploadFile.size / 1024 / 1024).toFixed(2)} MB
-                    </p>
+                    <p className="text-sm text-slate-500">{(uploadFile.size / 1024 / 1024).toFixed(2)} MB</p>
                   </div>
                   <Button
                     variant="ghost"
                     size="sm"
                     onClick={() => {
                       setUploadFile(null);
-                      if (fileInputRef.current) {
-                        fileInputRef.current.value = '';
-                      }
+                      if (fileInputRef.current) fileInputRef.current.value = '';
                     }}
                     className="text-red-600 hover:text-red-700 hover:bg-red-50"
                   >
@@ -968,34 +867,21 @@ const FodderFarmersPage = () => {
               </div>
             )}
           </div>
+
           <DialogFooter>
-            <Button 
-              variant="outline" 
-              onClick={() => {
+            <Button variant="outline" onClick={() => {
                 setIsUploadDialogOpen(false);
                 setUploadFile(null);
-                if (fileInputRef.current) {
-                  fileInputRef.current.value = '';
-                }
-              }}
-              className="border-slate-300"
-            >
-              Cancel
-            </Button>
-            <Button 
-              onClick={handleUpload} 
-              disabled={!uploadFile || uploadLoading}
-              className="bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white"
-            >
+                if (fileInputRef.current) fileInputRef.current.value = '';
+            }} className="border-slate-300">Cancel</Button>
+            <Button onClick={handleUpload} disabled={!uploadFile || uploadLoading} className="bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white">
               {uploadLoading ? (
                 <>
-                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-                  Uploading...
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div> Uploading...
                 </>
               ) : (
                 <>
-                  <Upload className="h-4 w-4 mr-2" />
-                  Upload Data
+                  <Upload className="h-4 w-4 mr-2" /> Upload Data
                 </>
               )}
             </Button>
@@ -1007,37 +893,19 @@ const FodderFarmersPage = () => {
       <Dialog open={isDeleteConfirmOpen} onOpenChange={setIsDeleteConfirmOpen}>
         <DialogContent className="sm:max-w-md bg-white rounded-2xl">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-slate-900">
-              <Trash2 className="h-5 w-5 text-red-600" />
-              Confirm Deletion
-            </DialogTitle>
-            <DialogDescription>
-              Are you sure you want to delete {selectedRecords.length} selected records? This action cannot be undone.
-            </DialogDescription>
+            <DialogTitle className="flex items-center gap-2 text-slate-900"><Trash2 className="h-5 w-5 text-red-600" /> Confirm Deletion</DialogTitle>
+            <DialogDescription>Are you sure you want to delete {selectedRecords.length} selected records? This action cannot be undone.</DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button 
-              variant="outline" 
-              onClick={() => setIsDeleteConfirmOpen(false)}
-              className="border-slate-300"
-            >
-              Cancel
-            </Button>
-            <Button 
-              variant="destructive"
-              onClick={handleDeleteMultiple}
-              disabled={deleteLoading}
-              className="bg-red-600 hover:bg-red-700 text-white"
-            >
+            <Button variant="outline" onClick={() => setIsDeleteConfirmOpen(false)} className="border-slate-300">Cancel</Button>
+            <Button variant="destructive" onClick={handleDeleteMultiple} disabled={deleteLoading} className="bg-red-600 hover:bg-red-700 text-white">
               {deleteLoading ? (
                 <>
-                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-                  Deleting...
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div> Deleting...
                 </>
               ) : (
                 <>
-                  <Trash2 className="h-4 w-4 mr-2" />
-                  Delete {selectedRecords.length} Records
+                  <Trash2 className="h-4 w-4 mr-2" /> Delete {selectedRecords.length} Records
                 </>
               )}
             </Button>
@@ -1049,87 +917,36 @@ const FodderFarmersPage = () => {
       <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
         <DialogContent className="sm:max-w-4xl bg-white rounded-2xl max-h-[90vh] overflow-hidden">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-slate-900">
-              <Eye className="h-5 w-5 text-green-600" />
-              Fodder Farmer Details
-            </DialogTitle>
-            <DialogDescription>
-              Complete information for this fodder farming record
-            </DialogDescription>
+            <DialogTitle className="flex items-center gap-2 text-slate-900"><Eye className="h-5 w-5 text-green-600" /> Fodder Farmer Details</DialogTitle>
+            <DialogDescription>Complete information for this fodder farming record</DialogDescription>
           </DialogHeader>
           {viewingRecord && (
             <div className="space-y-6 py-4 overflow-y-auto max-h-[65vh]">
               <div className="rounded-xl border border-slate-200 overflow-hidden">
-                <div className="bg-slate-50 px-4 py-3 border-b border-slate-200">
-                  <h3 className="font-semibold text-slate-800">Record Details</h3>
-                </div>
+                <div className="bg-slate-50 px-4 py-3 border-b border-slate-200"><h3 className="font-semibold text-slate-800">Record Details</h3></div>
                 <div className="w-full overflow-x-auto">
                   <table className="w-full text-sm">
                     <tbody>
-                      <tr className="border-b border-slate-200">
-                        <td className="px-4 py-3 font-medium text-slate-600 bg-slate-50 w-1/3">Date</td>
-                        <td className="px-4 py-3 text-slate-900">{formatDate(viewingRecord.date)}</td>
-                      </tr>
-                      <tr className="border-b border-slate-200">
-                        <td className="px-4 py-3 font-medium text-slate-600 bg-slate-50">Programme</td>
-                        <td className="px-4 py-3 text-slate-900">{viewingRecord.programme || activeProgram || "N/A"}</td>
-                      </tr>
-                      <tr className="border-b border-slate-200">
-                        <td className="px-4 py-3 font-medium text-slate-600 bg-slate-50">Model</td>
-                        <td className="px-4 py-3 text-slate-900">{viewingRecord.model || "N/A"}</td>
-                      </tr>
-                      <tr className="border-b border-slate-200">
-                        <td className="px-4 py-3 font-medium text-slate-600 bg-slate-50">County</td>
-                        <td className="px-4 py-3 text-slate-900">{viewingRecord.county || "N/A"}</td>
-                      </tr>
-                      <tr className="border-b border-slate-200">
-                        <td className="px-4 py-3 font-medium text-slate-600 bg-slate-50">Subcounty</td>
-                        <td className="px-4 py-3 text-slate-900">{viewingRecord.subcounty || "N/A"}</td>
-                      </tr>
-                      <tr className="border-b border-slate-200">
-                        <td className="px-4 py-3 font-medium text-slate-600 bg-slate-50">Location</td>
-                        <td className="px-4 py-3 text-slate-900">{viewingRecord.location || "N/A"}</td>
-                      </tr>
-                      <tr className="border-b border-slate-200">
-                        <td className="px-4 py-3 font-medium text-slate-600 bg-slate-50">Land Size</td>
-                        <td className="px-4 py-3 text-slate-900">{(viewingRecord.landSize || 0).toLocaleString()} acres</td>
-                      </tr>
-                      <tr className="border-b border-slate-200">
-                        <td className="px-4 py-3 font-medium text-slate-600 bg-slate-50">Total Acres Pasture</td>
-                        <td className="px-4 py-3 text-slate-900">{(viewingRecord.totalAcresPasture || 0).toLocaleString()} acres</td>
-                      </tr>
-                      <tr className="border-b border-slate-200">
-                        <td className="px-4 py-3 font-medium text-slate-600 bg-slate-50">Total Bales</td>
-                        <td className="px-4 py-3 text-slate-900">{(viewingRecord.totalBales || 0).toLocaleString()}</td>
-                      </tr>
-                      <tr className="border-b border-slate-200">
-                        <td className="px-4 py-3 font-medium text-slate-600 bg-slate-50">Yield per Harvest</td>
-                        <td className="px-4 py-3 text-slate-900">{(viewingRecord.yieldPerHarvest || 0).toLocaleString()}</td>
-                      </tr>
-                      <tr>
-                        <td className="px-4 py-3 font-medium text-slate-600 bg-slate-50">Recorded By</td>
-                        <td className="px-4 py-3 text-slate-900">{viewingRecord.username || "N/A"}</td>
-                      </tr>
+                      <tr className="border-b border-slate-200"><td className="px-4 py-3 font-medium text-slate-600 bg-slate-50 w-1/3">Date</td><td className="px-4 py-3 text-slate-900">{formatDate(viewingRecord.date)}</td></tr>
+                      <tr className="border-b border-slate-200"><td className="px-4 py-3 font-medium text-slate-600 bg-slate-50">Programme</td><td className="px-4 py-3 text-slate-900">{viewingRecord.programme || activeProgram || "N/A"}</td></tr>
+                      <tr className="border-b border-slate-200"><td className="px-4 py-3 font-medium text-slate-600 bg-slate-50">Model</td><td className="px-4 py-3 text-slate-900">{viewingRecord.model || "N/A"}</td></tr>
+                      <tr className="border-b border-slate-200"><td className="px-4 py-3 font-medium text-slate-600 bg-slate-50">County</td><td className="px-4 py-3 text-slate-900">{viewingRecord.county || "N/A"}</td></tr>
+                      <tr className="border-b border-slate-200"><td className="px-4 py-3 font-medium text-slate-600 bg-slate-50">Subcounty</td><td className="px-4 py-3 text-slate-900">{viewingRecord.subcounty || "N/A"}</td></tr>
+                      <tr className="border-b border-slate-200"><td className="px-4 py-3 font-medium text-slate-600 bg-slate-50">Location</td><td className="px-4 py-3 text-slate-900">{viewingRecord.location || "N/A"}</td></tr>
+                      <tr className="border-b border-slate-200"><td className="px-4 py-3 font-medium text-slate-600 bg-slate-50">Land Size</td><td className="px-4 py-3 text-slate-900">{(viewingRecord.landSize || 0).toLocaleString()} acres</td></tr>
+                      <tr className="border-b border-slate-200"><td className="px-4 py-3 font-medium text-slate-600 bg-slate-50">Total Acres Pasture</td><td className="px-4 py-3 text-slate-900">{(viewingRecord.totalAcresPasture || 0).toLocaleString()} acres</td></tr>
+                      <tr className="border-b border-slate-200"><td className="px-4 py-3 font-medium text-slate-600 bg-slate-50">Total Bales</td><td className="px-4 py-3 text-slate-900">{(viewingRecord.totalBales || 0).toLocaleString()}</td></tr>
+                      <tr className="border-b border-slate-200"><td className="px-4 py-3 font-medium text-slate-600 bg-slate-50">Yield per Harvest</td><td className="px-4 py-3 text-slate-900">{(viewingRecord.yieldPerHarvest || 0).toLocaleString()}</td></tr>
+                      <tr><td className="px-4 py-3 font-medium text-slate-600 bg-slate-50">Recorded By</td><td className="px-4 py-3 text-slate-900">{viewingRecord.username || "N/A"}</td></tr>
                     </tbody>
                   </table>
                 </div>
               </div>
-
               <div className="rounded-xl border border-slate-200 overflow-hidden">
-                <div className="bg-slate-50 px-4 py-3 border-b border-slate-200">
-                  <h3 className="font-semibold text-slate-800">Farmers ({viewingRecord.farmers?.length || 0})</h3>
-                </div>
+                <div className="bg-slate-50 px-4 py-3 border-b border-slate-200"><h3 className="font-semibold text-slate-800">Farmers ({viewingRecord.farmers?.length || 0})</h3></div>
                 <div className="w-full overflow-x-auto">
                   <table className="w-full border-collapse text-sm text-left whitespace-nowrap">
-                    <thead>
-                      <tr className="bg-slate-100 border-b border-slate-200">
-                        <th className="px-4 py-2 font-medium text-slate-700">#</th>
-                        <th className="px-4 py-2 font-medium text-slate-700">Name</th>
-                        <th className="px-4 py-2 font-medium text-slate-700">ID No</th>
-                        <th className="px-4 py-2 font-medium text-slate-700">Gender</th>
-                        <th className="px-4 py-2 font-medium text-slate-700">Phone No</th>
-                      </tr>
-                    </thead>
+                    <thead><tr className="bg-slate-100 border-b border-slate-200"><th className="px-4 py-2 font-medium text-slate-700">#</th><th className="px-4 py-2 font-medium text-slate-700">Name</th><th className="px-4 py-2 font-medium text-slate-700">ID No</th><th className="px-4 py-2 font-medium text-slate-700">Gender</th><th className="px-4 py-2 font-medium text-slate-700">Phone No</th></tr></thead>
                     <tbody>
                       {viewingRecord.farmers && viewingRecord.farmers.length > 0 ? (
                         viewingRecord.farmers.map((farmer, index) => (
@@ -1141,13 +958,7 @@ const FodderFarmersPage = () => {
                             <td className="px-4 py-2 text-slate-900">{farmer.phoneNo || "N/A"}</td>
                           </tr>
                         ))
-                      ) : (
-                        <tr>
-                          <td colSpan={5} className="px-4 py-6 text-center text-slate-500">
-                            No farmers found for this record.
-                          </td>
-                        </tr>
-                      )}
+                      ) : (<tr><td colSpan={5} className="px-4 py-6 text-center text-slate-500">No farmers found for this record.</td></tr>)}
                     </tbody>
                   </table>
                 </div>
@@ -1155,12 +966,7 @@ const FodderFarmersPage = () => {
             </div>
           )}
           <DialogFooter>
-            <Button 
-              onClick={() => setIsViewDialogOpen(false)}
-              className="bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white"
-            >
-              Close
-            </Button>
+            <Button onClick={() => setIsViewDialogOpen(false)} className="bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white">Close</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

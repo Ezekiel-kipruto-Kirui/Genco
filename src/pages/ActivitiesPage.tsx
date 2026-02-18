@@ -30,6 +30,7 @@ import { Link } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
 
 interface Participant {
   name: string;
@@ -49,6 +50,8 @@ interface Activity {
   status: 'pending' | 'completed';
   createdBy: string;
 }
+
+const ACTIVITIES_CACHE_KEY = cacheKey("admin-page", "activities", "recent");
 
 const ActivitiesPage = () => {
   const [activities, setActivities] = useState<Activity[]>([]);
@@ -86,7 +89,14 @@ const ActivitiesPage = () => {
   // --- REALTIME DATABASE FETCH ---
   const fetchActivities = async () => {
     try {
-      setLoading(true);
+      const cachedActivities = readCachedValue<Activity[]>(ACTIVITIES_CACHE_KEY);
+      if (cachedActivities) {
+        setActivities(cachedActivities);
+        setLoading(false);
+      } else {
+        setLoading(true);
+      }
+
       const activitiesRef = ref(db, "Recent Activities");
       const snapshot = await get(activitiesRef);
 
@@ -106,8 +116,10 @@ const ActivitiesPage = () => {
         });
 
         setActivities(activitiesData);
+        writeCachedValue(ACTIVITIES_CACHE_KEY, activitiesData);
       } else {
         setActivities([]);
+        removeCachedValue(ACTIVITIES_CACHE_KEY);
       }
     } catch (error) {
       console.error("Error fetching activities:", error);
@@ -168,6 +180,7 @@ const ActivitiesPage = () => {
       });
       setParticipants([]);
       setIsAddDialogOpen(false);
+      removeCachedValue(ACTIVITIES_CACHE_KEY);
       fetchActivities();
     } catch (error) {
       console.error("Error adding activity:", error);
@@ -205,6 +218,7 @@ const ActivitiesPage = () => {
         location: "",
       });
       setParticipants([]);
+      removeCachedValue(ACTIVITIES_CACHE_KEY);
       fetchActivities();
     } catch (error) {
       console.error("Error updating activity:", error);
@@ -225,6 +239,7 @@ const ActivitiesPage = () => {
         description: "Activity deleted successfully.",
         className: "bg-white text-slate-900 border border-slate-200"
       });
+      removeCachedValue(ACTIVITIES_CACHE_KEY);
       fetchActivities();
     } catch (error) {
       console.error("Error deleting activity:", error);
@@ -246,6 +261,7 @@ const ActivitiesPage = () => {
         description: `Activity marked as ${newStatus}`,
         className: "bg-white text-slate-900 border border-slate-200"
       });
+      removeCachedValue(ACTIVITIES_CACHE_KEY);
       fetchActivities();
     } catch (error) {
       console.error("Error updating activity status:", error);
