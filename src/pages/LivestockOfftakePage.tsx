@@ -1672,7 +1672,7 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
         />
         <StatsCard title="TOTAL ANIMALS" value={stats.totalAnimals.toLocaleString()} icon={Scale} description={`Avg Live: ${stats.averageLiveWeight.toFixed(1)}kg | Avg Carcass: ${stats.averageCarcassWeight.toFixed(1)}kg`} />
         <StatsCard 
-          title="TOTAL REVENUE" 
+          title="TOTAL COST" 
           value={safeTruncate(formatCurrency(stats.totalRevenue))} 
           icon={CreditCard} 
           description={`Avg Price per Goat: ${formatCurrency(stats.averageRevenue)} | Avg per Kg: ${formatCurrency(stats.avgPricePerCarcassKg)}`} 

@@ -214,7 +214,7 @@ const OnboardingCard = ({
               <CardTitle className="text-md font-bold text-gray-800">{record.topic}</CardTitle>
             </div>
             <div className="flex items-center justify-between mt-2">
-               <Badge variant="outline" className="mr-2 text-[10px]">{record.programme}</Badge>
+            
               <div className="flex items-center gap-2 text-sm text-gray-600">
                 <Calendar className="h-4 w-4" />
                 <span>{record.date.toLocaleDateString()}</span>
