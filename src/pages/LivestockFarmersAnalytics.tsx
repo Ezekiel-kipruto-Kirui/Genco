@@ -10,7 +10,6 @@ import {
 import { Users, GraduationCap, Beef, Map, UserCheck, AlertCircle, Activity } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { isChiefAdmin } from "@/contexts/authhelper";
@@ -23,6 +22,13 @@ const COLORS = {
   yellow: "#f59e0b"
 };
 const BAR_COLORS = [COLORS.navy, COLORS.orange, COLORS.yellow];
+
+// Target Constants
+const TARGETS = {
+  weekly: 30,
+  monthly: 117,
+  yearly: 1404
+};
 
 // --- Interfaces ---
 interface FarmerData {
@@ -51,12 +57,11 @@ interface UserProgress {
   name: string;
   region: string;
   farmersRegistered: number;
-  monthlyTarget: number;
+  target: number; // Dynamic target
   progressPercentage: number;
   status: 'achieved' | 'on-track' | 'behind' | 'needs-attention';
 }
 
-// Explicit interfaces for chart data to fix TS errors
 interface PieDataItem {
   name: string;
   value: number;
@@ -96,6 +101,19 @@ const parseDate = (date: any): Date | null => {
   return null;
 };
 
+const formatDateToLocal = (date: Date): string =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+
+const getCurrentMonthDates = () => {
+  const now = new Date();
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+  return {
+    startDate: formatDateToLocal(startOfMonth),
+    endDate: formatDateToLocal(endOfMonth),
+  };
+};
+
 const getGoatTotal = (goats: any): number => {
   if (typeof goats === 'number') return goats;
   if (typeof goats === 'object' && goats !== null && typeof goats.total === 'number') return goats.total;
@@ -110,11 +128,14 @@ const LivestockFarmersAnalytics = () => {
   const [filteredData, setFilteredData] = useState<FarmerData[]>([]);
   const [activeProgram, setActiveProgram] = useState<string>(""); 
   const [availablePrograms, setAvailablePrograms] = useState<string[]>([]);
+  
+  // State for dynamic target based on selection (Week/Month/Year)
+  const [activeTarget, setActiveTarget] = useState<number>(TARGETS.monthly);
 
   // Chart Data States
   const [genderData, setGenderData] = useState<PieDataItem[]>([]);
-  const [animalCensusData, setAnimalCensusData] = useState<PieDataItem[]>([]); // Goats vs Sheep
-  const [weeklyPerformanceData, setWeeklyPerformanceData] = useState<TimeSeriesItem[]>([]); // Week 1-4
+  const [animalCensusData, setAnimalCensusData] = useState<PieDataItem[]>([]); 
+  const [weeklyPerformanceData, setWeeklyPerformanceData] = useState<TimeSeriesItem[]>([]); 
   const [subcountyPerformanceData, setSubcountyPerformanceData] = useState<any[]>([]);
   
   const [stats, setStats] = useState({ 
@@ -127,10 +148,7 @@ const LivestockFarmersAnalytics = () => {
     totalTrainedFromCapacity: 0
   });
 
-  const [dateRange, setDateRange] = useState({
-    startDate: "",
-    endDate: ""
-  });
+  const [dateRange, setDateRange] = useState(getCurrentMonthDates);
 
   // --- 1. Fetch User Permissions ---
   useEffect(() => {
@@ -294,22 +312,22 @@ const LivestockFarmersAnalytics = () => {
     const maleCount = data.filter(f => String(f.gender).toLowerCase() === 'male').length;
     const femaleCount = data.filter(f => String(f.gender).toLowerCase() === 'female').length;
 
-    // Training count
+    // Training Stats
     const totalTrainedFromCapacity = trainingRecords.reduce((sum, t) => sum + (Number(t.totalFarmers) || 0), 0);
+    
+    // Realistic Percentage: trained vs total registered farmers in filter
+    // Note: If totalTrainedFromCapacity exceeds data.length (due to repeat attendees or data mismatch), 
+    // we cap visual representation or show >100%. Here we calculate raw ratio.
     const trainingRate = data.length > 0 ? (totalTrainedFromCapacity / data.length) * 100 : 0;
 
-    // Animal Census Stats (Goats vs Sheep)
+    // Animal Census
     let totalGoats = 0;
     let totalSheep = 0;
-    let totalMaleGoats = 0;
-    let totalFemaleGoats = 0;
     
     data.forEach(farmer => {
       const g = getGoatTotal(farmer.goats);
       totalGoats += g;
       totalSheep += Number(farmer.sheep || 0);
-
-     
     });
 
     const totalAnimals = totalGoats + totalSheep;
@@ -325,21 +343,21 @@ const LivestockFarmersAnalytics = () => {
       totalTrainedFromCapacity
     });
 
-    // 1. Gender Data (Fixing TS errors by explicit typing)
+    // 1. Gender Data
     const genderChartData: PieDataItem[] = [
       { name: "Male", value: Number(maleCount), color: COLORS.navy },
       { name: "Female", value: Number(femaleCount), color: COLORS.orange },
     ];
     setGenderData(genderChartData);
 
-    // 2. Animal Census Data (Goats vs Sheep) - Replaces Training Status
+    // 2. Animal Census Data
     const animalChartData: PieDataItem[] = [
       { name: "Goats", value: Number(totalGoats), color: COLORS.navy },
       { name: "Sheep", value: Number(totalSheep), color: COLORS.yellow },
     ];
     setAnimalCensusData(animalChartData);
 
-    // 3. Weekly Performance (Farmers vs Livestock) - Week 1, 2, 3, 4
+    // 3. Weekly Performance (Farmers vs Livestock)
     const weeks: Record<number, { farmers: number; animals: number }> = {
       1: { farmers: 0, animals: 0 },
       2: { farmers: 0, animals: 0 },
@@ -350,7 +368,7 @@ const LivestockFarmersAnalytics = () => {
     data.forEach(farmer => {
       const date = new Date(farmer.createdAt);
       const day = date.getDate();
-      const weekNum = Math.ceil(day / 7); // Determine week of the month
+      const weekNum = Math.ceil(day / 7); 
       if (weekNum >= 1 && weekNum <= 4) {
         weeks[weekNum].farmers++;
         weeks[weekNum].animals += getGoatTotal(farmer.goats) + Number(farmer.sheep || 0);
@@ -365,7 +383,7 @@ const LivestockFarmersAnalytics = () => {
     ];
     setWeeklyPerformanceData(weeklyChartData);
 
-    // 4. Subcounty Performance (Bar Chart)
+    // 4. Subcounty Performance
     const subcountyStats: Record<string, number> = {};
     data.forEach(farmer => {
       const sc = farmer.subcounty || "Unknown";
@@ -378,7 +396,7 @@ const LivestockFarmersAnalytics = () => {
     setSubcountyPerformanceData(scData);
   };
 
-  // User Progress
+  // User Progress with Dynamic Targets
   const userProgressData = useMemo(() => {
     const userStats: Record<string, { count: number; counties: Set<string> }> = {};
     filteredData.forEach(farmer => {
@@ -394,8 +412,8 @@ const LivestockFarmersAnalytics = () => {
     });
 
     return Object.entries(userStats).map(([username, data]) => {
-      const monthlyTarget = 117;
-      const progressPercentage = (data.count / monthlyTarget) * 100;
+      const target = activeTarget; // Use the state-controlled target
+      const progressPercentage = (data.count / target) * 100;
       
       let status: UserProgress['status'] = 'needs-attention';
       if (progressPercentage >= 100) status = 'achieved';
@@ -407,17 +425,19 @@ const LivestockFarmersAnalytics = () => {
         name: username,
         region: Array.from(data.counties).slice(0, 3).join(', ') + (data.counties.size > 3 ? '...' : ''),
         farmersRegistered: data.count,
-        monthlyTarget,
+        target: target,
         progressPercentage,
         status
       };
     }).sort((a, b) => b.farmersRegistered - a.farmersRegistered);
-  }, [filteredData]);
+  }, [filteredData, activeTarget]);
 
   const handleDateRangeChange = (key: string, value: string) => {
     setDateRange(prev => ({ ...prev, [key]: value }));
+    setActiveTarget(TARGETS.monthly); // Reset to default if manually typing dates
   };
 
+  // Filter Buttons
   const setWeekFilter = () => {
     const now = new Date();
     const startOfWeek = new Date(now);
@@ -425,9 +445,10 @@ const LivestockFarmersAnalytics = () => {
     const endOfWeek = new Date(now);
     endOfWeek.setDate(now.getDate() + (6 - now.getDay()));
     setDateRange({
-      startDate: startOfWeek.toISOString().split('T')[0],
-      endDate: endOfWeek.toISOString().split('T')[0]
+      startDate: formatDateToLocal(startOfWeek),
+      endDate: formatDateToLocal(endOfWeek)
     });
+    setActiveTarget(TARGETS.weekly);
   };
 
   const setMonthFilter = () => {
@@ -435,13 +456,26 @@ const LivestockFarmersAnalytics = () => {
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
     setDateRange({
-      startDate: startOfMonth.toISOString().split('T')[0],
-      endDate: endOfMonth.toISOString().split('T')[0]
+      startDate: formatDateToLocal(startOfMonth),
+      endDate: formatDateToLocal(endOfMonth)
     });
+    setActiveTarget(TARGETS.monthly);
+  };
+
+  const setYearFilter = () => {
+    const now = new Date();
+    const startOfYear = new Date(now.getFullYear(), 0, 1);
+    const endOfYear = new Date(now.getFullYear(), 11, 31);
+    setDateRange({
+      startDate: formatDateToLocal(startOfYear),
+      endDate: formatDateToLocal(endOfYear)
+    });
+    setActiveTarget(TARGETS.yearly);
   };
 
   const clearFilters = () => {
     setDateRange({ startDate: "", endDate: "" });
+    setActiveTarget(TARGETS.monthly); // Reset to default
   };
 
   const renderCustomizedLabel = useCallback(({
@@ -530,72 +564,65 @@ const LivestockFarmersAnalytics = () => {
 
   return (
     <div className="space-y-6 p-1">
-      <div className="flex flex-col md:flex-row justify-between items-start lg:tems-center md:items-center">
-         <h1 className="text-sm text-gray-900">Livestock Farmers</h1>
-        <div 
-            className="
-            flex flex-col md:flex-row justify-between items-start md:items-center w-full gap-4">
-           
-            <Card className="w-full lg:w-auto border-0 shadow-lg bg-white">
-          <CardContent className="p-1">
-            <div className="flex flex-col lg:flex-row gap-4 items-end">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                 
-                  <Input
-                    id="startDate"
-                    type="date"
-                    value={dateRange.startDate}
-                    onChange={(e) => handleDateRangeChange("startDate", e.target.value)}
-                    className="border-gray-200 focus:border-blue-500 text-sm"
-                  />
-                </div>
-                <div className="space-y-2">
-                  
-                  <Input
-                    id="endDate"
-                    type="date"
-                    value={dateRange.endDate}
-                    onChange={(e) => handleDateRangeChange("endDate", e.target.value)}
-                    className="border-gray-200 focus:border-blue-500 text-sm"
-                  />
-                </div>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <Button variant="outline" onClick={setWeekFilter} className="text-xs">
-                  This Week
-                </Button>
-                <Button variant="outline" onClick={setMonthFilter} className="text-xs">
-                  This Month
-                </Button>
-                <Button onClick={clearFilters} variant="outline" className="text-xs">
-                  Clear
-                </Button>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-            
-           
-        </div>
-        <div>
-           {availablePrograms.length > 0 && (
-                <div className="w-full md:w-auto">
-                    <Select value={activeProgram} onValueChange={setActiveProgram}>
-                        <SelectTrigger className="w-full md:w-[180px]">
-                            <SelectValue placeholder="Select Programme" />
-                        </SelectTrigger>
-                        <SelectContent>
-                            {availablePrograms.map(p => (
-                                <SelectItem key={p} value={p}>{p}</SelectItem>
-                            ))}
-                        </SelectContent>
-                    </Select>
-                </div>
-            )}
-        </div>
-
+      <div className="flex flex-col md:flex-row justify-between items-start lg:items-center md:items-center gap-4">
+        <h1 className="text-lg font-semibold text-gray-900">Livestock Farmers Dashboard</h1>
         
+        <div className="flex flex-col lg:flex-row gap-4 items-end w-full lg:w-auto">
+          <Card className="w-full lg:w-auto border-0 shadow-lg bg-white">
+            <CardContent className="p-3">
+              <div className="flex flex-col lg:flex-row gap-4 items-center">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                  
+                    <Input
+                      type="date"
+                      value={dateRange.startDate}
+                      onChange={(e) => handleDateRangeChange("startDate", e.target.value)}
+                      className="border-gray-200 focus:border-blue-500 text-sm h-9"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    
+                    <Input
+                      type="date"
+                      value={dateRange.endDate}
+                      onChange={(e) => handleDateRangeChange("endDate", e.target.value)}
+                      className="border-gray-200 focus:border-blue-500 text-sm h-9"
+                    />
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="outline" size="sm" onClick={setWeekFilter} className="text-xs h-9">
+                    This Week
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={setMonthFilter} className="text-xs h-9">
+                    This Month
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={setYearFilter} className="text-xs h-9 bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100">
+                    This Year
+                  </Button>
+                  <Button size="sm" onClick={clearFilters} variant="secondary" className="text-xs h-9">
+                    Clear
+                  </Button>
+                </div>
+                 {availablePrograms.length > 0 && (
+            <Select value={activeProgram} onValueChange={setActiveProgram}>
+              <SelectTrigger className="w-full lg:w-[180px] h-10">
+                <SelectValue placeholder="Select Programme" />
+              </SelectTrigger>
+              <SelectContent>
+                {availablePrograms.map(p => (
+                  <SelectItem key={p} value={p}>{p}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+              </div>
+            </CardContent>
+          </Card>
+
+         
+        </div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-3">
@@ -603,7 +630,7 @@ const LivestockFarmersAnalytics = () => {
           title="Total Farmers" 
           value={stats.total.toLocaleString()} 
           icon={Users}
-          description={`${stats.maleFarmers} male  ${stats.maleFarmers > 0 ? ((stats.maleFarmers / stats.total) * 100).toFixed(1) + '%' : '0% male'},    |    ${stats.femaleFarmers} female ${stats.femaleFarmers > 0 ? ((stats.femaleFarmers / stats.total) * 100).toFixed(1) + '%' : '0% female'}`}
+          description={`${stats.maleFarmers} Male (${stats.maleFarmers > 0 ? ((stats.maleFarmers / stats.total) * 100).toFixed(1) : 0}%) | ${stats.femaleFarmers} Female`}
           color="navy"
         />
         <StatsCard 
@@ -624,61 +651,67 @@ const LivestockFarmersAnalytics = () => {
 
       <Card className="border-0 shadow-lg bg-white">
         <CardHeader>
-          <div className="flex justify-between items-center">
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-2">
             <CardTitle className="text-md flex items-center gap-2 text-gray-800">
               <UserCheck className="h-5 w-5 text-blue-600" />
-              Field Officers Performance (Target: 117 farmers)
+              Field Officers Performance
             </CardTitle>
+            <Badge variant="outline" className="text-xs font-normal border-blue-200 text-blue-700">
+              Active Target: {activeTarget.toLocaleString()} Farmers
+            </Badge>
           </div>
         </CardHeader>
         <CardContent>
           <div className="w-full overflow-x-auto rounded-md">
             <table className="w-full border-collapse border border-gray-300 text-sm text-left whitespace-nowrap">
               <thead className="rounded">
-                <tr className="bg-blue-100 p-1 px-3">
-                  <th className="py-2 px-4 text-sm text-blue-500">Created By (Username)</th>
-                  <th className="py-2 px-4 text-sm text-blue-500">Counties Active</th>
-                  <th className="py-2 px-4 text-sm text-blue-500">Farmers Registered</th>
-                  <th className="py-2 px-4 text-sm text-blue-500">Monthly Target</th>
-                  <th className="py-2 px-4 text-sm text-blue-500">Progress</th>
-                  <th className="py-2 px-4 text-sm text-blue-500">Status</th>
+                <tr className="bg-blue-50 p-1 px-3">
+                  <th className="py-2 px-4 text-sm text-blue-800 font-semibold">Created By (Username)</th>
+                  <th className="py-2 px-4 text-sm text-blue-800 font-semibold">Counties Active</th>
+                  <th className="py-2 px-4 text-sm text-blue-800 font-semibold">Farmers Registered</th>
+                  <th className="py-2 px-4 text-sm text-blue-800 font-semibold">Target</th>
+                  <th className="py-2 px-4 text-sm text-blue-800 font-semibold">Progress</th>
+                  <th className="py-2 px-4 text-sm text-blue-800 font-semibold">Status</th>
                 </tr>
               </thead>
               <tbody>
                 {userProgressData.map((user) => (
-                  <tr key={user.id} className="border-b hover:bg-blue-50 transition-all duration-200 group text-sm">
-                    <td className="py-1 px-4 text-sm text-gray-500 font-medium">{user.name}</td>
-                    <td className="py-1 px-4">
-                      <Badge variant="outline" className="bg-blue-50 text-blue-700">
+                  <tr key={user.id} className="border-b hover:bg-blue-50/50 transition-all duration-200 group text-sm">
+                    <td className="py-3 px-4 text-gray-700 font-medium">{user.name}</td>
+                    <td className="py-3 px-4">
+                      <Badge variant="outline" className="bg-gray-50 text-gray-600 border-gray-200">
                         {user.region || "N/A"}
                       </Badge>
                     </td>
-                    <td className="py-1 px-4 text-sm text-gray-500 font-semibold">{user.farmersRegistered}</td>
-                    <td className="py-1 px-4 text-sm text-gray-500">{user.monthlyTarget}</td>
-                    <td className="py-1 px-4 text-sm text-gray-500">
-                      <div className="flex items-center gap-2">
-                        <div className="w-20 bg-gray-200 rounded-full h-2">
+                    <td className="py-3 px-4 text-gray-900 font-semibold">{user.farmersRegistered}</td>
+                    <td className="py-3 px-4 text-gray-600">{user.target}</td>
+                    <td className="py-3 px-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-24 bg-gray-100 rounded-full h-2">
                           <div 
-                            className={`h-2 rounded-full ${
+                            className={`h-2 rounded-full transition-all duration-500 ${
                               user.status === 'achieved' ? 'bg-green-500' :
                               user.status === 'on-track' ? 'bg-blue-500' :
                               user.status === 'behind' ? 'bg-yellow-500' :
-                              'bg-red-500'
+                              'bg-red-400'
                             }`}
                             style={{ width: `${Math.min(user.progressPercentage, 100)}%` }}
                           />
                         </div>
-                        <span className="text-sm text-gray-600">{user.progressPercentage.toFixed(1)}%</span>
+                        <span className="text-xs font-medium text-gray-600 w-12 text-right">
+                          {user.progressPercentage.toFixed(0)}%
+                        </span>
                       </div>
                     </td>
-                    <td className="py-1 px-4">
+                    <td className="py-3 px-4">
                       <Badge 
                         className={
-                          user.status === 'achieved' ? 'bg-green-100 text-green-800' :
-                          user.status === 'on-track' ? 'bg-blue-100 text-blue-800' :
-                          user.status === 'behind' ? 'bg-yellow-100 text-yellow-800' :
-                          'bg-red-100 text-red-800'
+                          user.status === 'achieved' ? 'bg-green-50 text-green-700 border-green-200' :
+                          user.status === 'on-track' ? 'bg-blue-50 text-blue-700 border-blue-200' :
+                          user.status === 'behind' ? 'bg-yellow-50 text-yellow-700 border-yellow-200' :
+                          'bg-red-50 text-red-700 border-red-200'
                         }
+                        variant="outline"
                       >
                         {user.status === 'achieved' ? 'Target Achieved' :
                          user.status === 'on-track' ? 'On Track' :
@@ -690,7 +723,7 @@ const LivestockFarmersAnalytics = () => {
                 ))}
                 {userProgressData.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="text-center py-8 text-gray-500">
+                    <td colSpan={6} className="text-center py-8 text-gray-500 bg-gray-50">
                       No farmer data available for the selected filters.
                     </td>
                   </tr>
@@ -703,7 +736,7 @@ const LivestockFarmersAnalytics = () => {
 
       <div className="grid gap-6 md:grid-cols-2">
         <Card className="border-0 shadow-lg bg-white">
-          <CardHeader className="pb-4">
+          <CardHeader className="pb-2">
             <CardTitle className="text-md flex items-center gap-2 text-gray-800">
               <Users className="h-5 w-5 text-blue-900" />
               Farmers by Gender
@@ -734,9 +767,8 @@ const LivestockFarmersAnalytics = () => {
           </CardContent>
         </Card>
 
-        {/* NEW: Animal Census (Goats vs Sheep) - Replaces Training Status */}
         <Card className="border-0 shadow-lg bg-white">
-          <CardHeader className="pb-4">
+          <CardHeader className="pb-2">
             <CardTitle className="text-md flex items-center gap-2 text-gray-800">
               <Beef className="h-5 w-5 text-orange-600" />
               Animal Census (Goats vs Sheep)
@@ -772,9 +804,8 @@ const LivestockFarmersAnalytics = () => {
           </CardContent>
         </Card>
 
-        {/* NEW: Farmers vs Livestock (Curves) - Showing Per Week */}
         <Card className="border-0 shadow-lg bg-white">
-          <CardHeader className="pb-4">
+          <CardHeader className="pb-2">
             <CardTitle className="text-md flex items-center gap-2 text-gray-800">
               <Activity className="h-5 w-5 text-orange-600" />
               Farmers vs Livestock (Weekly Trend)
@@ -837,9 +868,8 @@ const LivestockFarmersAnalytics = () => {
           </CardContent>
         </Card>
 
-        {/* Subcounty Performance (Bar Chart) */}
         <Card className="border-0 shadow-lg bg-white">
-          <CardHeader className="pb-4">
+          <CardHeader className="pb-2">
             <CardTitle className="text-md flex items-center gap-2 text-gray-800">
               <Map className="h-5 w-5 text-blue-900" />
               Subcounty Performance

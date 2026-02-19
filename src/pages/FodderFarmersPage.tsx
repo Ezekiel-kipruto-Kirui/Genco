@@ -52,7 +52,7 @@ interface Filters {
 interface Stats {
   totalFarmers: number;
   totalCounties: number;
-  totalModels: number;
+  totalAcres: number;
 }
 
 interface Pagination {
@@ -105,9 +105,11 @@ const getCurrentMonthDates = () => {
   const now = new Date();
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
   const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+  const formatLocalDate = (date: Date) =>
+    `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
   return {
-    startDate: startOfMonth.toISOString().split('T')[0],
-    endDate: endOfMonth.toISOString().split('T')[0]
+    startDate: formatLocalDate(startOfMonth),
+    endDate: formatLocalDate(endOfMonth)
   };
 };
 
@@ -151,7 +153,7 @@ const FodderFarmersPage = () => {
   const [stats, setStats] = useState<Stats>({
     totalFarmers: 0,
     totalCounties: 0,
-    totalModels: 0
+    totalAcres: 0
   });
 
   const [pagination, setPagination] = useState<Pagination>({
@@ -163,6 +165,15 @@ const FodderFarmersPage = () => {
   });
 
   const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
+  const requireChiefAdmin = () => {
+    if (userIsChiefAdmin) return true;
+    toast({
+      title: "Access denied",
+      description: "Only chief admin can create, edit, or delete records on this page.",
+      variant: "destructive",
+    });
+    return false;
+  };
   const fodderCacheKey = useMemo(
     () => cacheKey("admin-page", "fodder-farmers", activeProgram),
     [activeProgram]
@@ -292,7 +303,7 @@ const FodderFarmersPage = () => {
   const applyFilters = useCallback(() => {
     if (allFodder.length === 0) {
       setFilteredFodder([]);
-      setStats({ totalFarmers: 0, totalCounties: 0, totalModels: 0 });
+      setStats({ totalFarmers: 0, totalCounties: 0, totalAcres: 0 });
       return;
     }
 
@@ -331,8 +342,11 @@ const FodderFarmersPage = () => {
     
     const totalFarmers = filtered.reduce((sum, record) => sum + (record.farmers?.length || 0), 0);
     const uniqueCounties = new Set(filtered.map(f => f.county).filter(Boolean));
-    const uniqueModels = new Set(filtered.map(f => f.model).filter(Boolean));
-    setStats({ totalFarmers, totalCounties: uniqueCounties.size, totalModels: uniqueModels.size });
+    const totalAcres = filtered.reduce(
+      (sum, record) => sum + (Number(record.landSize) || Number(record.totalAcresPasture) || 0),
+      0
+    );
+    setStats({ totalFarmers, totalCounties: uniqueCounties.size, totalAcres });
 
     const totalPages = Math.ceil(filtered.length / pagination.limit);
     setPagination(prev => ({
@@ -394,16 +408,19 @@ const FodderFarmersPage = () => {
   };
 
   const handleEdit = (record: FodderFarmer) => {
+    if (!requireChiefAdmin()) return;
     console.log("Edit record:", record);
     toast({ title: "Edit Feature", description: "Edit functionality will be implemented soon" });
   };
 
   const handleDelete = (record: FodderFarmer) => {
+    if (!requireChiefAdmin()) return;
     console.log("Delete record:", record);
     toast({ title: "Delete Feature", description: "Delete functionality will be implemented soon", variant: "destructive" });
   };
 
   const handleDeleteMultiple = async () => {
+    if (!requireChiefAdmin()) return;
     if (selectedRecords.length === 0) return;
     try {
       setDeleteLoading(true);
@@ -420,6 +437,7 @@ const FodderFarmersPage = () => {
   };
 
   const openDeleteConfirm = () => {
+    if (!requireChiefAdmin()) return;
     if (selectedRecords.length === 0) return;
     setIsDeleteConfirmOpen(true);
   };
@@ -482,6 +500,7 @@ const FodderFarmersPage = () => {
   };
 
   const handleUpload = async () => {
+    if (!requireChiefAdmin()) return;
     if (!uploadFile) return;
     setUploadLoading(true);
     try {
@@ -747,7 +766,7 @@ const FodderFarmersPage = () => {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <StatsCard title="Total Farmers" value={stats.totalFarmers} icon={Users} description="Across all records" />
         <StatsCard title="Counties" value={stats.totalCounties} icon={Globe} description="Unique counties covered" />
-        <StatsCard title="Total Land size (Accres)" value={stats.totalModels} icon={LayoutGrid} description="Different Pasture Sites" />
+        <StatsCard title="Total Land size (Accres)" value={stats.totalAcres} icon={LayoutGrid} description="Total acreage covered" />
       </div>
 
       {/* Filters Section */}

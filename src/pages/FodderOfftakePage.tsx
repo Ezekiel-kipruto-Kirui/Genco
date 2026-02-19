@@ -108,9 +108,11 @@ const getCurrentMonthDates = () => {
   const now = new Date();
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
   const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+  const formatLocalDate = (date: Date) =>
+    `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
   return {
-    startDate: startOfMonth.toISOString().split('T')[0],
-    endDate: endOfMonth.toISOString().split('T')[0]
+    startDate: formatLocalDate(startOfMonth),
+    endDate: formatLocalDate(endOfMonth)
   };
 };
 
@@ -164,6 +166,15 @@ const FodderFarmersPage = () => {
   });
 
   const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
+  const requireChiefAdmin = () => {
+    if (userIsChiefAdmin) return true;
+    toast({
+      title: "Access denied",
+      description: "Only chief admin can create, edit, or delete records on this page.",
+      variant: "destructive",
+    });
+    return false;
+  };
   const fodderCacheKey = useMemo(
     () => cacheKey("admin-page", "fodder-offtake", activeProgram),
     [activeProgram]
@@ -413,16 +424,19 @@ const FodderFarmersPage = () => {
   };
 
   const handleEdit = (record: FodderFarmer) => {
+    if (!requireChiefAdmin()) return;
     console.log("Edit record:", record);
     toast({ title: "Edit Feature", description: "Edit functionality will be implemented soon" });
   };
 
   const handleDelete = (record: FodderFarmer) => {
+    if (!requireChiefAdmin()) return;
     console.log("Delete record:", record);
     toast({ title: "Delete Feature", description: "Delete functionality will be implemented soon", variant: "destructive" });
   };
 
   const handleDeleteMultiple = async () => {
+    if (!requireChiefAdmin()) return;
     if (selectedRecords.length === 0) return;
     try {
       setDeleteLoading(true);
@@ -439,6 +453,7 @@ const FodderFarmersPage = () => {
   };
 
   const openDeleteConfirm = () => {
+    if (!requireChiefAdmin()) return;
     if (selectedRecords.length === 0) return;
     setIsDeleteConfirmOpen(true);
   };
@@ -489,6 +504,7 @@ const FodderFarmersPage = () => {
   };
 
   const handleUpload = async () => {
+    if (!requireChiefAdmin()) return;
     if (!uploadFile) return;
     setUploadLoading(true);
     try {

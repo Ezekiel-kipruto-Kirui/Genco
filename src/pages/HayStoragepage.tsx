@@ -145,7 +145,9 @@ const formatDate = (date: any): string => {
 
 const formatDateForInput = (date: any): string => {
   const parsedDate = parseDate(date);
-  return parsedDate ? parsedDate.toISOString().split('T')[0] : '';
+  return parsedDate
+    ? `${parsedDate.getFullYear()}-${String(parsedDate.getMonth() + 1).padStart(2, "0")}-${String(parsedDate.getDate()).padStart(2, "0")}`
+    : '';
 };
 
 const formatCurrency = (amount: number): string => {
@@ -163,9 +165,11 @@ const getCurrentMonthDates = () => {
   const now = new Date();
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
   const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+  const formatLocalDate = (date: Date) =>
+    `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
   return {
-    startDate: startOfMonth.toISOString().split('T')[0],
-    endDate: endOfMonth.toISOString().split('T')[0]
+    startDate: formatLocalDate(startOfMonth),
+    endDate: formatLocalDate(endOfMonth)
   };
 };
 
@@ -394,6 +398,15 @@ const HayStoragePage = () => {
   }, [allHayStorage]);
 
   const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
+  const requireChiefAdmin = () => {
+    if (userIsChiefAdmin) return true;
+    toast({
+      title: "Access denied",
+      description: "Only chief admin can create, edit, or delete records on this page.",
+      variant: "destructive",
+    });
+    return false;
+  };
 
   // Handlers
   const handleSearch = useCallback((value: string) => {
@@ -441,12 +454,13 @@ const HayStoragePage = () => {
   }, []);
 
   const openEditDialog = useCallback((record: HayStorage) => {
+    if (!userIsChiefAdmin) return;
     setEditingRecord({
       ...record,
       pasture_stages: [...record.pasture_stages]
     });
     setIsEditDialogOpen(true);
-  }, []);
+  }, [userIsChiefAdmin]);
 
   const closeEditDialog = useCallback(() => {
     setEditingRecord(null);
@@ -591,6 +605,7 @@ const HayStoragePage = () => {
 
   // --- REALTIME DATABASE ADD FUNCTION (NO TOP UP LOGIC) ---
   const handleAddRecord = async () => {
+    if (!requireChiefAdmin()) return;
     if (!addingRecord.date_planted || !addingRecord.location || !addingRecord.county || !addingRecord.subcounty || !addingRecord.land_ownership) {
       toast({
         title: "Validation Error",
@@ -707,6 +722,7 @@ const HayStoragePage = () => {
   };
 
   const handleSaveEdit = async () => {
+    if (!requireChiefAdmin()) return;
     if (!editingRecord) return;
     try {
       setSaving(true);
@@ -734,6 +750,7 @@ const HayStoragePage = () => {
   };
 
   const handleDeleteSelected = async () => {
+    if (!requireChiefAdmin()) return;
     if (selectedRecords.length === 0) return;
     try {
       setDeleteLoading(true);
@@ -767,6 +784,7 @@ const HayStoragePage = () => {
   };
 
   const handleUpload = async () => {
+    if (!requireChiefAdmin()) return;
     if (!uploadFile) return;
     try {
       setUploadLoading(true);

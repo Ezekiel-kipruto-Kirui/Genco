@@ -115,9 +115,11 @@ const getCurrentMonthDates = () => {
   const now = new Date();
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(),1);
   const endOfMonth = new Date(now.getFullYear(), now.getMonth() +1, 0);
+  const formatLocalDate = (date: Date) =>
+    `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
   return {
-    startDate: startOfMonth.toISOString().split('T')[0],
-    endDate: endOfMonth.toISOString().split('T')[0]
+    startDate: formatLocalDate(startOfMonth),
+    endDate: formatLocalDate(endOfMonth)
   };
 };
 
@@ -160,6 +162,15 @@ const CapacityBuildingPage = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
+  const requireChiefAdmin = () => {
+    if (userIsChiefAdmin) return true;
+    toast({
+      title: "Access denied",
+      description: "Only chief admin can create, edit, or delete records on this page.",
+      variant: "destructive",
+    });
+    return false;
+  };
   const trainingCacheKey = useMemo(
     () => cacheKey("admin-page", "capacity-building", activeProgram),
     [activeProgram]
@@ -434,6 +445,7 @@ const CapacityBuildingPage = () => {
   };
 
   const openEditDialog = (record: TrainingRecord) => {
+    if (!userIsChiefAdmin) return;
     setEditingRecord(record);
     setEditForm({
       Name: record.username || record.Name || "",
@@ -451,6 +463,7 @@ const CapacityBuildingPage = () => {
   };
 
   const handleEditSubmit = async () => {
+    if (!requireChiefAdmin()) return;
     if (!editingRecord) return;
     try {
       await update(ref(db, `capacityBuilding/${editingRecord.id}`), {
@@ -477,6 +490,7 @@ const CapacityBuildingPage = () => {
   };
 
   const openDeleteConfirm = () => {
+    if (!requireChiefAdmin()) return;
     if (selectedRecords.length === 0) {
       toast({ title: "Warning", description: "No records selected", variant: "destructive" });
       return;
@@ -485,6 +499,7 @@ const CapacityBuildingPage = () => {
   };
 
   const handleDeleteMultiple = async () => {
+    if (!requireChiefAdmin()) return;
     try {
       setDeleteLoading(true);
       const updates: { [key: string]: null } = {};
@@ -505,6 +520,7 @@ const CapacityBuildingPage = () => {
   };
 
   const handleDeleteSingle = async (id: string) => {
+    if (!requireChiefAdmin()) return;
     try {
       await remove(ref(db, `capacityBuilding/${id}`));
       toast({ title: "Success", description: "Record deleted." });
@@ -544,6 +560,7 @@ const CapacityBuildingPage = () => {
   };
 
   const handleUpload = async () => {
+    if (!requireChiefAdmin()) return;
     if (!uploadFile) return;
     setUploadLoading(true);
     try {

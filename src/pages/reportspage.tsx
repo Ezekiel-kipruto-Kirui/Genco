@@ -181,7 +181,7 @@ const useProcessedData = (
   dateRange: { startDate: string; endDate: string }, 
   timeFrame: 'weekly' | 'monthly' | 'yearly',
   selectedProgramme: string | null,
-  selectedYear: number 
+  selectedYear: number | null
 ) => {
   return useMemo(() => {
     if (allFarmers.length === 0 && trainingRecords.length === 0) {
@@ -325,16 +325,21 @@ const useProcessedData = (
       } else if (timeFrame === 'monthly') {
         const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
         months.forEach((m, idx) => {
-           const monthStart = new Date(selectedYear, idx, 1);
-           const monthEnd = new Date(selectedYear, idx + 1, 0);
            const count = filteredFarmers.filter(farmer => {
              const d = parseDate(farmer.createdAt || farmer.registrationDate);
-             return d && d >= monthStart && d <= monthEnd;
+             if (!d) return false;
+             if (selectedYear === null) {
+               return d.getMonth() === idx;
+             }
+             const monthStart = new Date(selectedYear, idx, 1);
+             const monthEnd = new Date(selectedYear, idx + 1, 0);
+             return d >= monthStart && d <= monthEnd;
            }).length;
            trendData.push({ name: m, registrations: count });
         });
       } else {
-        for (let y = selectedYear - 4; y <= selectedYear; y++) {
+        const baseYear = selectedYear ?? new Date().getFullYear();
+        for (let y = baseYear - 4; y <= baseYear; y++) {
            const yearStart = new Date(y, 0, 1);
            const yearEnd = new Date(y, 11, 31);
            const count = filteredFarmers.filter(farmer => {
@@ -532,6 +537,7 @@ const PerformanceReport = () => {
   
   const currentYear = new Date().getFullYear();
   const [selectedYear, setSelectedYear] = useState<string>(String(currentYear));
+  const [selectedQuarter, setSelectedQuarter] = useState<string>("");
   
   const availableYears = useMemo(() => {
     const years: string[] = [];
@@ -546,7 +552,10 @@ const PerformanceReport = () => {
   const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
   const showProgrammeFilter = userIsChiefAdmin;
   
-  const selectedYearNum = parseInt(selectedYear, 10);
+  const selectedYearNum = useMemo(() => {
+    const parsed = parseInt(selectedYear, 10);
+    return Number.isNaN(parsed) ? null : parsed;
+  }, [selectedYear]);
   
   const data = useProcessedData(allFarmers, trainingRecords, dateRange, timeFrame, activeProgram || null, selectedYearNum);
 
@@ -665,6 +674,7 @@ const PerformanceReport = () => {
   const handleYearChange = useCallback((year: string) => {
     const yearNum = parseInt(year, 10);
     setSelectedYear(year);
+    setSelectedQuarter("");
     setDateRange({ 
       startDate: `${yearNum}-01-01`, 
       endDate: `${yearNum}-12-31` 
@@ -674,7 +684,12 @@ const PerformanceReport = () => {
 
   // --- New Handler for Quarter Dropdown ---
   const handleQuarterChange = useCallback((value: string) => {
-    const yearNum = parseInt(selectedYear, 10);
+    setSelectedQuarter(value);
+    const parsedYear = parseInt(selectedYear, 10);
+    const yearNum = Number.isNaN(parsedYear) ? new Date().getFullYear() : parsedYear;
+    if (Number.isNaN(parsedYear)) {
+      setSelectedYear(String(yearNum));
+    }
     if (value === 'q1') {
       setDateRange(getQ1Dates(yearNum));
       setTimeFrame('monthly');
@@ -692,15 +707,14 @@ const PerformanceReport = () => {
 
   // --- Updated Clear Filters ---
   const clearFilters = useCallback(() => {
-    // Reset Year to current year
-    const currentY = String(new Date().getFullYear());
-    setSelectedYear(currentY);
+    // Remove all filters except programme
+    setSelectedYear("");
+    setSelectedQuarter("");
     
-    // Reset Date Range to current month
-    const dates = getCurrentMonthDates();
-    setDateRange({ startDate: dates.startDate, endDate: dates.endDate });
+    // Clear Date Range
+    setDateRange({ startDate: "", endDate: "" });
     
-    // Reset TimeFrame
+    // Reset TimeFrame to default
     setTimeFrame('monthly');
     
     // Note: activeProgram is NOT reset as per requirements
@@ -710,12 +724,14 @@ const PerformanceReport = () => {
     const dates = getCurrentWeekDates();
     setDateRange(dates);
     setTimeFrame('weekly');
+    setSelectedQuarter("");
   }, []);
 
   const setMonthFilter = useCallback(() => {
     const dates = getCurrentMonthDates();
     setDateRange(dates);
     setTimeFrame('monthly');
+    setSelectedQuarter("");
   }, []);
 
   const renderCustomizedLabel = useCallback(({ cx, cy, midAngle, innerRadius, outerRadius, percent }: any) => {
@@ -763,7 +779,7 @@ const PerformanceReport = () => {
               {/* Year Selector */}
               <div className="w-full md:w-40 space-y-1">
                 <Label className="text-xs text-gray-500 font-semibold">Fiscal Year</Label>
-                <Select value={selectedYear} onValueChange={handleYearChange}>
+                <Select value={selectedYear || undefined} onValueChange={handleYearChange}>
                   <SelectTrigger className="h-9">
                     <div className="flex items-center gap-2">
                         <Calendar className="h-4 w-4 text-gray-500" />
@@ -797,7 +813,7 @@ const PerformanceReport = () => {
               {/* Quarter Selector (Replaces Q1-Q4 Buttons) */}
               <div className="w-full md:w-40 space-y-1">
                 <Label className="text-xs text-gray-500 font-semibold">Quarter</Label>
-                <Select onValueChange={handleQuarterChange}>
+                <Select value={selectedQuarter || undefined} onValueChange={handleQuarterChange}>
                   <SelectTrigger className="h-9">
                     <SelectValue placeholder="Select Quarter" />
                   </SelectTrigger>

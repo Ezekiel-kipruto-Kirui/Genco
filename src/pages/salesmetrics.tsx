@@ -24,6 +24,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"; 
 import { useToast } from "@/hooks/use-toast";
+import { millify} from "millify";
 
 // --- Constants ---
 const COLORS = {
@@ -553,11 +554,14 @@ const salesReport = () => {
   const clearFilters = useCallback(() => {
     const currentY = String(new Date().getFullYear());
     setSelectedYear(currentY);
-    // Reset all date filters so the selected programme shows all its data.
-    setDateRange({ startDate: "", endDate: "" });
+    // Reset all filters to default state while preserving selected programme.
+    setDateRange({
+      startDate: currentMonthDates.startDate,
+      endDate: currentMonthDates.endDate,
+    });
     setTimeFrame('monthly');
     setSelectedProgramme(activeProgram || null);
-  }, [activeProgram]);
+  }, [activeProgram, currentMonthDates.startDate, currentMonthDates.endDate]);
 
   const formatCurrency = (val: number) => `KES ${val.toLocaleString(undefined, {maximumFractionDigits: 0})}`;
   const handleProgramChange = (program: string) => { setActiveProgram(program); setSelectedProgramme(program); };
@@ -583,7 +587,7 @@ const salesReport = () => {
         <div className="flex flex-col gap-4 md:gap-6">
           <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
             <div>
-              <h1 className="text-2xl md:text-3xl font-bold text-gray-900 tracking-tight">Offtake Dashboard</h1>
+              <h1 className="text-xl md:text-xl font-bold text-gray-900 tracking-tight">Offtake Dashboard</h1>
               <p className="text-sm text-gray-500 mt-1 flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-blue-600"></span>
                 Viewing Data: <span className="font-semibold text-blue-700">{activeProgram || "All Programmes"}</span>
@@ -690,21 +694,21 @@ const salesReport = () => {
           <div className="grid gap-4 md:grid-cols-3">
             <StatsCard 
               title="Total Animals" 
-              value={stats.totalAnimals.toLocaleString()} 
+              value={millify(stats.totalAnimals)} 
               icon={Package} 
               subText={`Goats: ${stats.totalGoats} (${goatPct}%) • Sheep: ${stats.totalSheep} (${sheepPct}%)`} 
               color="blue" 
             />
             <StatsCard 
               title="Total COST" 
-              value={formatCurrency(stats.totalRevenue)} 
+              value={millify(stats.totalRevenue)} 
               icon={DollarSign} 
               subText={`Cost/Goat: ${formatCurrency(stats.costPerGoat)} • Avg/Kg: ${formatCurrency(stats.avgCostPerKgCarcass)}`} 
               color="green" 
             />
             <StatsCard 
               title="Live Weight" 
-              value={`${stats.totalLiveWeight.toLocaleString()} kg`} 
+              value={`${millify(stats.totalLiveWeight)} kg`} 
               icon={TrendingUp} 
               subText={`Avg: ${stats.avgLiveWeight.toFixed(1)}kg`} 
               color="purple" 
@@ -850,9 +854,9 @@ const salesReport = () => {
           </div>
 
           <div className="grid gap-4 md:grid-cols-3">
-            <StatsCard title="Total Cost" value={formatCurrency(stats.totalRevenue)} icon={DollarSign} subText="Total cost for animal purchased " color="green" />
-            <StatsCard title="Total Revenue" value={formatCurrency(stats.totalRevenue - stats.expenses)} icon={TrendingUp} subText="Total revenue from animal sales" color="red" />
-            <StatsCard title="Net Profit" value={formatCurrency(stats.netProfit)} icon={Star} subText={stats.netProfit >= 0 ? "Positive" : "Negative"} color={stats.netProfit >= 0 ? "blue" : "red"} />
+            <StatsCard title="Total Cost" value={millify(stats.totalRevenue)} icon={DollarSign} subText="Total cost for animal purchased " color="green" />
+            <StatsCard title="Total Revenue" value={millify(stats.totalRevenue - stats.expenses)} icon={TrendingUp} subText="Total revenue from animal sales" color="red" />
+            <StatsCard title="Net Profit" value={millify(stats.netProfit)} icon={Star} subText={stats.netProfit >= 0 ? "Positive" : "Negative"} color={stats.netProfit >= 0 ? "blue" : "red"} />
           </div>
 
           <Card className="border-0 shadow-sm bg-white rounded-2xl">

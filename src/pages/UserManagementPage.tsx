@@ -110,10 +110,12 @@ const getCurrentMonthDates = () => {
   const now = new Date();
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
   const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+  const formatLocalDate = (date: Date) =>
+    `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
   
   return {
-    startDate: startOfMonth.toISOString().split('T')[0],
-    endDate: endOfMonth.toISOString().split('T')[0]
+    startDate: formatLocalDate(startOfMonth),
+    endDate: formatLocalDate(endOfMonth)
   };
 };
 
@@ -367,6 +369,16 @@ const TableRow = ({ record, selectedRecords, onSelectRecord, onView, onEdit, onD
 const UserManagementPage = () => {
   const { userRole } = useAuth();
   const { toast } = useToast();
+  const userIsChiefAdmin = userRole === "chief-admin";
+  const requireChiefAdmin = useCallback(() => {
+    if (userIsChiefAdmin) return true;
+    toast({
+      title: "Access denied",
+      description: "Only chief admin can create, edit, or delete records on this page.",
+      variant: "destructive",
+    });
+    return false;
+  }, [userIsChiefAdmin, toast]);
   
   // State
   const [allRecords, setAllRecords] = useState<UserRecord[]>([]);
@@ -662,6 +674,7 @@ const UserManagementPage = () => {
   }, [getCurrentPageRecords]);
 
   const openEditDialog = useCallback((record: UserRecord) => {
+    if (!userIsChiefAdmin) return;
     setEditingRecord(record);
     
     const existingProgs = record.allowedProgrammes || {};
@@ -678,7 +691,7 @@ const UserManagementPage = () => {
       allowedProgrammes: mergedProgs
     });
     setIsEditDialogOpen(true);
-  }, []);
+  }, [userIsChiefAdmin]);
 
   const openViewDialog = useCallback((record: UserRecord) => {
     setViewingRecord(record);
@@ -686,6 +699,7 @@ const UserManagementPage = () => {
   }, []);
 
   const openAddDialog = useCallback(() => {
+    if (!userIsChiefAdmin) return;
     setAddForm({
       name: "",
       email: "",
@@ -695,19 +709,22 @@ const UserManagementPage = () => {
       allowedProgrammes: initialProgrammes
     });
     setIsAddDialogOpen(true);
-  }, [initialProgrammes]);
+  }, [initialProgrammes, userIsChiefAdmin]);
 
   const openDeleteDialog = useCallback((record: UserRecord) => {
+    if (!userIsChiefAdmin) return;
     setRecordToDelete(record);
     setIsDeleteDialogOpen(true);
-  }, []);
+  }, [userIsChiefAdmin]);
 
   const openBulkDeleteDialog = useCallback(() => {
+    if (!userIsChiefAdmin) return;
     if (selectedRecords.length === 0) return;
     setIsBulkDeleteDialogOpen(true);
-  }, [selectedRecords]);
+  }, [selectedRecords, userIsChiefAdmin]);
 
   const handleEditSubmit = useCallback(async () => {
+    if (!requireChiefAdmin()) return;
     if (!editingRecord) return;
 
     try {
@@ -737,9 +754,10 @@ const UserManagementPage = () => {
         variant: "destructive",
       });
     }
-  }, [editingRecord, editForm, fetchAllData, toast]);
+  }, [editingRecord, editForm, fetchAllData, toast, requireChiefAdmin]);
 
   const handleAddUser = useCallback(async () => {
+    if (!requireChiefAdmin()) return;
     if (!addForm.name || !addForm.email || !addForm.password) {
       toast({ title: "Error", description: "Please fill in all required fields", variant: "destructive" });
       return;
@@ -799,9 +817,10 @@ const UserManagementPage = () => {
     } finally {
       setAddLoading(false);
     }
-  }, [addForm, toast, fetchAllData, initialProgrammes]);
+  }, [addForm, toast, fetchAllData, initialProgrammes, requireChiefAdmin]);
 
   const handleDeleteSingle = useCallback(async () => {
+    if (!requireChiefAdmin()) return;
     if (!recordToDelete) return;
 
     try {
@@ -837,9 +856,10 @@ const UserManagementPage = () => {
     } finally {
       setDeleteLoading(false);
     }
-  }, [recordToDelete, fetchAllData, toast]);
+  }, [recordToDelete, fetchAllData, toast, requireChiefAdmin]);
 
   const handleDeleteSelected = useCallback(async () => {
+    if (!requireChiefAdmin()) return;
     if (selectedRecords.length === 0) return;
 
     try {
@@ -868,7 +888,7 @@ const UserManagementPage = () => {
     } finally {
       setDeleteLoading(false);
     }
-  }, [selectedRecords, fetchAllData, toast]);
+  }, [selectedRecords, fetchAllData, toast, requireChiefAdmin]);
 
   const uniqueRoles = useMemo(() =>
     ["chief-admin", "admin", "user", "mobile", "hr"], // Added "hr" to lowercase

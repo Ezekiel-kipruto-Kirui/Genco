@@ -1,9 +1,7 @@
 import {
-  Wheat,
   Building2,
   GraduationCap,
   TrendingUp,
-  Users,
   BarChart3,
   Database,
   ChevronRight,
@@ -13,31 +11,32 @@ import {
   UserPlus,
   LineChart,
   HeartPulse,
-  Icon
+  Settings,
+  LogOut,
 } from "lucide-react";
 
 import { NavLink } from "@/components/NavLink";
 import {
   Sidebar,
   SidebarContent,
+  SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
   SidebarGroupLabel,
+  SidebarHeader,
   SidebarMenu,
-  SidebarMenuItem,
   SidebarMenuButton,
+  SidebarMenuItem,
   SidebarMenuSub,
-  SidebarMenuSubItem,
   SidebarMenuSubButton,
+  SidebarMenuSubItem,
+  SidebarSeparator,
   useSidebar,
 } from "@/components/ui/sidebar";
-
-import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { useAuth } from "@/contexts/AuthContext";
-// ✅ FIXED: Import from the new helper file instead of the page
 import { isChiefAdmin } from "@/contexts/authhelper";
 
-// Base menu items without User Management
 const baseMenuItems = [
   {
     title: "Farmers Data",
@@ -46,90 +45,75 @@ const baseMenuItems = [
       { title: "Dashboard", url: "/dashboard/livestock/analytics", icon: BarChart3 },
       { title: "Livestock Farmer", url: "/dashboard/livestock", icon: Database },
       { title: "Fodder Farmer", url: "/dashboard/fodder", icon: Database },
-      { title: "Capacity Building",url: "/dashboard/capacity",icon: GraduationCap},
-    ]
+      { title: "Capacity Building", url: "/dashboard/capacity", icon: GraduationCap },
+    ],
   },
-  
   {
     title: "Infrastructure",
     icon: Building2,
     subItems: [
       { title: "Hay Storage", url: "/dashboard/hay-storage", icon: Database },
       { title: "Borehole", url: "/dashboard/borehole", icon: Database },
-    ]
+    ],
   },
-  
   {
-    title:"Offtake",
+    title: "Offtake",
     icon: TrendingUp,
-    subItems:[
-       { title: "Livestock", url: "/dashboard/livestock-offtake", icon: TrendingUp },
-      { title: "Fodder", url: "/dashboard/fodder-offtake", icon: Wheat },
-    ] // Placeholder icon, replace with an appropriate one
+    subItems: [{ title: "Livestock", url: "/dashboard/livestock-offtake", icon: TrendingUp }],
   },
-  
-  { 
+  {
     title: "Schedule Activity",
     icon: Activity,
-    url: "/dashboard/activities"
+    url: "/dashboard/activities",
   },
-  { 
+  {
     title: "Onboarding",
     icon: UserPlus,
-    url: "/dashboard/onboarding"
+    url: "/dashboard/onboarding",
   },
-   { 
+  {
     title: "Animal Health",
     icon: HeartPulse,
-    url: "/dashboard/animalhealth"
+    url: "/dashboard/animalhealth",
   },
-  { 
+  {
     title: "Requisition",
     icon: Upload,
-    url: "/dashboard/requisition"
+    url: "/dashboard/requisition",
   },
+];
+
+const reportItems = [
+  { title: "Performance Report", url: "/dashboard/reports", icon: LineChart },
+  { title: "Sales Metrics", url: "/dashboard/salesreport", icon: BarChart3 },
 ];
 
 export function DashboardSidebar() {
   const { state } = useSidebar();
-  const { userRole } = useAuth();
+  const { signOutUser, userRole } = useAuth();
   const collapsed = state === "collapsed";
-  
   const userIsChiefAdmin = isChiefAdmin(userRole);
 
-  // Build menu items dynamically based on user role
-  const menuItems = [
-    ...baseMenuItems,
-    // Conditionally add User Management for chief admin only
-     ...(userIsChiefAdmin ? 
-    [
-    {
-      title: "User Management",
-      icon: Users,
-      url: "/dashboard/users"
-    }] : [])
-  ];
-
   return (
-    // Updated: bg-green-700 for the sidebar background, text-white for readability
     <Sidebar className={`${collapsed ? "w-14" : "w-64"} bg-green-700 text-white`} collapsible="icon">
-      <SidebarContent className="bg-green-700">
-        
-        {/* Branding Section */}
-        <SidebarGroup>
-          <SidebarGroupLabel>
-            <div className="flex items-center gap-2 p-2">
-              <div className="w-8 h-8 rounded-full bg-white/20 backdrop-blur shadow flex items-center justify-center">
-                <img src="/img/logo.png" className="w-8 h-8 rounded-full object-cover" alt="GenCo Logo" />
-              </div>
-
-              {!collapsed && (
-                <div className="truncate">
-                  <h1 className="text-base font-bold text-white">GENCO L.Export ltd</h1>
-                </div>
-              )}
+      <SidebarHeader className="bg-green-700 pb-0">
+        <div className="flex items-center gap-2 p-2">
+          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-white/20 shadow backdrop-blur">
+            <img src="/img/logo.png" className="h-8 w-8 rounded-full object-cover" alt="GenCo Logo" />
+          </div>
+          {!collapsed && (
+            <div className="truncate">
+              <h1 className="text-base font-bold text-white">GENCO L.Export ltd</h1>
             </div>
-          </SidebarGroupLabel>
+          )}
+        </div>
+      </SidebarHeader>
+
+      <SidebarSeparator className="bg-white/20" />
+
+      <SidebarContent className="bg-green-700">
+        <SidebarGroup>
+          <SidebarGroupLabel className="font-semibold text-green-100/80">{!collapsed && "Dashboard"}</SidebarGroupLabel>
 
           <SidebarGroupContent>
             <SidebarMenu>
@@ -138,76 +122,71 @@ export function DashboardSidebar() {
                   <NavLink
                     to="/dashboard"
                     end
-                    // Updated: Green theme hover and active states
-                    className="hover:bg-green-600 text-green-50 mt-4 transition-colors"
-                    activeClassName="bg-white text-green-700 font-bold shadow-sm"
+                    className="text-green-50 transition-colors hover:bg-green-600"
+                    activeClassName="bg-white font-bold text-green-700 shadow-sm"
                   >
                     <TrendingUp className="h-4 w-4" />
-                    {!collapsed && <span>Dashboard</span>}
+                    {!collapsed && <span>Dashboard Overview</span>}
                   </NavLink>
                 </SidebarMenuButton>
               </SidebarMenuItem>
+
+              <Collapsible defaultOpen className="group/collapsible">
+                <SidebarMenuItem>
+                  <CollapsibleTrigger asChild>
+                    <SidebarMenuButton className="text-green-50 transition-colors hover:bg-green-600">
+                      <LineChart className="h-4 w-4" />
+                      {!collapsed && (
+                        <>
+                          <span>Reports</span>
+                          <ChevronRight className="ml-auto h-4 w-4 transition-transform group-data-[state=open]/collapsible:rotate-90" />
+                        </>
+                      )}
+                    </SidebarMenuButton>
+                  </CollapsibleTrigger>
+
+                  {!collapsed && (
+                    <CollapsibleContent>
+                      <SidebarMenuSub>
+                        {reportItems.map((sub) => (
+                          <SidebarMenuSubItem key={sub.title}>
+                            <SidebarMenuSubButton asChild>
+                              <NavLink
+                                to={sub.url}
+                                className="text-green-100/70 transition-colors hover:bg-green-600"
+                                activeClassName="bg-white font-bold text-green-700"
+                              >
+                                <sub.icon className="h-3.5 w-3.5" />
+                                <span>{sub.title}</span>
+                              </NavLink>
+                            </SidebarMenuSubButton>
+                          </SidebarMenuSubItem>
+                        ))}
+                      </SidebarMenuSub>
+                    </CollapsibleContent>
+                  )}
+                </SidebarMenuItem>
+              </Collapsible>
             </SidebarMenu>
           </SidebarGroupContent>
-           <SidebarGroupContent>
-            <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild>
-                  <NavLink
-                    to="/dashboard/reports"
-                    end
-                    // Updated: Green theme hover and active states
-                    className="hover:bg-green-600 text-green-50 transition-colors"
-                    activeClassName="bg-white text-green-700 font-bold shadow-sm"
-                  >
-                    <LineChart className="h-4 w-4" />
-                    {!collapsed && <span>Perfomance Report</span>}
-                  </NavLink>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            </SidebarMenu>
-          </SidebarGroupContent>
-         <SidebarGroupContent>
-            <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild>
-                  <NavLink
-                    to="/dashboard/salesreport"
-                    end
-                    // Updated: Green theme hover and active states
-                    className="hover:bg-green-600 text-green-50 transition-colors"
-                    activeClassName="bg-white text-green-700 font-bold shadow-sm"
-                  >
-                    <LineChart className="h-4 w-4" />
-                    {!collapsed && <span>Sales Metrics</span>}
-                  </NavLink>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            </SidebarMenu>
-          </SidebarGroupContent>
-        
         </SidebarGroup>
 
-        {/* Main Menu */}
+        <SidebarSeparator className="bg-white/20" />
+
         <SidebarGroup>
-          <SidebarGroupLabel className="text-green-100/80 font-semibold">
-            {!collapsed && "Data Management"}
-          </SidebarGroupLabel>
+          <SidebarGroupLabel className="font-semibold text-green-100/80">{!collapsed && "Data Management"}</SidebarGroupLabel>
 
           <SidebarGroupContent>
             <SidebarMenu>
-
-              {menuItems.map((item) => {
-                // Render simple link (no subItems)
+              {baseMenuItems.map((item) => {
                 if (!item.subItems) {
                   return (
                     <SidebarMenuItem key={item.title}>
                       <SidebarMenuButton asChild>
                         <NavLink
                           to={item.url}
-                          // Updated: Green theme hover and active states
-                          className="hover:bg-green-600 text-green-50 transition-colors"
-                          activeClassName="bg-white text-green-700 font-bold shadow-sm"
+                          className="text-green-50 transition-colors hover:bg-green-600"
+                          activeClassName="bg-white font-bold text-green-700 shadow-sm"
                         >
                           <item.icon className="h-4 w-4" />
                           {!collapsed && <span>{item.title}</span>}
@@ -217,12 +196,11 @@ export function DashboardSidebar() {
                   );
                 }
 
-                // Render collapsible group
                 return (
                   <Collapsible key={item.title} defaultOpen className="group/collapsible">
                     <SidebarMenuItem>
                       <CollapsibleTrigger asChild>
-                        <SidebarMenuButton className="hover:bg-green-600 text-green-50 transition-colors">
+                        <SidebarMenuButton className="text-green-50 transition-colors hover:bg-green-600">
                           <item.icon className="h-4 w-4" />
                           {!collapsed && (
                             <>
@@ -241,9 +219,8 @@ export function DashboardSidebar() {
                                 <SidebarMenuSubButton asChild>
                                   <NavLink
                                     to={sub.url}
-                                    // Updated: Green theme hover and active states
-                                    className="hover:bg-green-600 text-green-100/70 transition-colors"
-                                    activeClassName="bg-white text-green-700 font-bold"
+                                    className="text-green-100/70 transition-colors hover:bg-green-600"
+                                    activeClassName="bg-white font-bold text-green-700"
                                   >
                                     <sub.icon className="h-3.5 w-3.5" />
                                     <span>{sub.title}</span>
@@ -258,12 +235,38 @@ export function DashboardSidebar() {
                   </Collapsible>
                 );
               })}
-
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
-
       </SidebarContent>
+
+      <SidebarSeparator className="bg-white/20" />
+
+      <SidebarFooter className="bg-green-700 pt-0">
+        <SidebarMenu>
+          {userIsChiefAdmin && (
+            <SidebarMenuItem>
+              <SidebarMenuButton asChild>
+                <NavLink
+                  to="/dashboard/users"
+                  className="text-green-50 transition-colors hover:bg-green-600"
+                  activeClassName="bg-white font-bold text-green-700 shadow-sm"
+                >
+                  <Settings className="h-4 w-4" />
+                  {!collapsed && <span>Site Management</span>}
+                </NavLink>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          )}
+
+          <SidebarMenuItem>
+            <SidebarMenuButton onClick={signOutUser} className="text-green-50 transition-colors hover:bg-green-600">
+              <LogOut className="h-4 w-4" />
+              {!collapsed && <span>Logout</span>}
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarFooter>
     </Sidebar>
   );
 }

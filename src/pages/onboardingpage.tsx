@@ -1,12 +1,10 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { getAuth } from "firebase/auth";
 import { 
   ref, 
   get, 
   push, 
   update, 
   remove, 
-  onValue, // Using onValue for permission watching like reference, or get for fetch
   set
 } from "firebase/database";
 import { db } from "@/lib/firebase";
@@ -340,7 +338,7 @@ const OnboardingCard = ({
 // --- Main Page Component ---
 
 const OnboardingPage = () => {
-  const { user, userRole } = useAuth();
+  const { user, userRole, allowedProgrammes } = useAuth();
   const { toast } = useToast();
   const onboardingCacheKey = useMemo(
     () => cacheKey("admin-page", "onboarding", user?.uid || "anonymous"),
@@ -382,6 +380,15 @@ const OnboardingPage = () => {
   const [currentPage, setCurrentPage] = useState(1);
 
   const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
+  const requireChiefAdmin = () => {
+    if (userIsChiefAdmin) return true;
+    toast({
+      title: "Access denied",
+      description: "Only chief admin can create, edit, or delete records on this page.",
+      variant: "destructive",
+    });
+    return false;
+  };
 
   const [filters, setFilters] = useState<Filters>({
     startDate: "",
@@ -403,9 +410,11 @@ const OnboardingPage = () => {
     const now = new Date();
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    const formatLocalDate = (date: Date) =>
+      `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
     return {
-      startDate: startOfMonth.toISOString().split('T')[0],
-      endDate: endOfMonth.toISOString().split('T')[0]
+      startDate: formatLocalDate(startOfMonth),
+      endDate: formatLocalDate(endOfMonth)
     };
   };
 
@@ -433,7 +442,11 @@ const OnboardingPage = () => {
 
   // --- Permission Logic (Mimicking Reference) ---
   useEffect(() => {
-    if (!userRole) return;
+    if (!userRole) {
+      setAvailablePrograms([]);
+      setActiveProgram("");
+      return;
+    }
 
     if (isChiefAdmin(userRole)) {
       setAvailablePrograms(["RANGE", "KPMD"]);
@@ -441,34 +454,17 @@ const OnboardingPage = () => {
       return;
     }
 
-    const auth = getAuth();
-    const uid = auth.currentUser?.uid;
-    
-    if (!uid) return;
+    const programs = Object.keys(allowedProgrammes || {}).filter(
+      (key) => allowedProgrammes?.[key] === true
+    );
+    setAvailablePrograms(programs);
 
-    const userRef = ref(db, `users/${uid}`);
-    const unsubscribe = onValue(userRef, (snapshot) => {
-      const data = snapshot.val();
-      if (data && data.allowedProgrammes) {
-        const programs = Object.keys(data.allowedProgrammes).filter(
-          key => data.allowedProgrammes[key] === true
-        );
-        setAvailablePrograms(programs);
-        
-        if (programs.length > 0 && !programs.includes(activeProgram)) {
-          setActiveProgram(programs[0]);
-        } else if (programs.length === 0) {
-            setActiveProgram("");
-        }
-      } else {
-        setAvailablePrograms([]);
-      }
-    }, (error) => {
-        console.error("Error fetching user permissions:", error);
-    });
-
-    return () => unsubscribe();
-  }, [userRole, activeProgram]);
+    if (programs.length > 0 && !programs.includes(activeProgram)) {
+      setActiveProgram(programs[0]);
+    } else if (programs.length === 0) {
+      setActiveProgram("");
+    }
+  }, [userRole, allowedProgrammes, activeProgram]);
 
   const fetchOnboardingData = async () => {
     try {
@@ -530,9 +526,25 @@ const OnboardingPage = () => {
   };
 
   useEffect(() => {
+    if (!userRole) {
+      setAllOnboarding([]);
+      setFilteredOnboarding([]);
+      setDisplayedOnboarding([]);
+      setLoading(false);
+      return;
+    }
+
+    if (!userIsChiefAdmin && availablePrograms.length === 0) {
+      setAllOnboarding([]);
+      setFilteredOnboarding([]);
+      setDisplayedOnboarding([]);
+      setLoading(false);
+      return;
+    }
+
     fetchOnboardingData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userRole]); // Re-fetch if user changes
+  }, [userRole, userIsChiefAdmin, availablePrograms]); // Re-fetch when access scope is resolved
 
   // --- Filtering Logic including Programme Switcher ---
   const filterAndProcessData = useCallback((data: OnboardingData[], filterParams: Filters, program: string) => {
@@ -629,6 +641,7 @@ const OnboardingPage = () => {
   };
 
   const handleBulkDelete = async () => {
+    if (!requireChiefAdmin()) return;
     if (selectedRecords.length === 0) return;
     try {
       setLoading(true);
@@ -650,6 +663,7 @@ const OnboardingPage = () => {
   };
 
   const handleAddOnboarding = async () => {
+    if (!requireChiefAdmin()) return;
     try {
       if (!onboardingForm.topic || !onboardingForm.date || !onboardingForm.programme) {
         toast({ title: "Validation Error", description: "Please fill required fields including programme", variant: "destructive" });
@@ -707,6 +721,7 @@ const OnboardingPage = () => {
   };
 
   const handleDeleteConfirm = async () => {
+    if (!requireChiefAdmin()) return;
     if (!selectedRecord?.id) return;
     try {
       setLoading(true);
@@ -955,11 +970,13 @@ const OnboardingPage = () => {
                   onSelectRecord={handleSelectRecord}
                   onView={handleViewDetails} 
                   onEdit={() => { 
+                      if (!userIsChiefAdmin) return;
+                      const localDate = `${record.date.getFullYear()}-${String(record.date.getMonth() + 1).padStart(2, "0")}-${String(record.date.getDate()).padStart(2, "0")}`;
                       setOnboardingForm({
                         id: record.id || "",
                         topic: record.topic,
                         comment: record.comment || "",
-                        date: record.date.toISOString().split('T')[0],
+                        date: localDate,
                         status: record.status,
                         programme: record.programme
                       });
@@ -967,7 +984,11 @@ const OnboardingPage = () => {
                       setFarmers(record.farmers.length > 0 ? record.farmers : [{ name: "", idNo: "", phoneNo: "", subcounty: "", location: "", gender: "", county: "" }]);
                       setIsDialogOpen(true);
                   }}
-                  onDeleteClick={() => { setSelectedRecord(record); setIsDeleteDialogOpen(true); }}
+                  onDeleteClick={() => {
+                    if (!userIsChiefAdmin) return;
+                    setSelectedRecord(record);
+                    setIsDeleteDialogOpen(true);
+                  }}
                 />
               ))}
             </div>

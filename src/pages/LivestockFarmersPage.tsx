@@ -27,6 +27,7 @@ interface GoatsData {
   female?: number;
   male?: number;
   total: number;
+
   idNumber?: string;
 }
 
@@ -58,6 +59,7 @@ interface FarmerData {
   dewormed?: boolean;
   dewormingDate?: string;
   vaccinationDate?: string;
+  acres?: number;
 }
 
 interface TrainingData {
@@ -91,6 +93,7 @@ interface Stats {
   totalGoats: number;
   totalSheep: number;
   totalCattle: number;
+  totalAcres: number;
   vaccinatedCount: number;
   maleFarmers: number;
   femaleFarmers: number;
@@ -167,6 +170,23 @@ const getGoatTotal = (goats: any): number => {
   return 0;
 };
 
+const getAcreTotal = (item: Record<string, any>): number => {
+  const rawAcreValue =
+    item.acres ??
+    item.totalAcres ??
+    item.totalAcresPasture ??
+    item.landSize ??
+    item.land_under_pasture ??
+    item.landUnderPasture;
+
+  if (typeof rawAcreValue === "number") return Number.isFinite(rawAcreValue) ? rawAcreValue : 0;
+  if (typeof rawAcreValue === "string") {
+    const parsed = Number(rawAcreValue.replace(/,/g, "").trim());
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+};
+
 const LivestockFarmersPage = () => {
   const { user, userRole, userName } = useAuth();
   const { toast } = useToast();
@@ -209,6 +229,7 @@ const LivestockFarmersPage = () => {
     totalGoats: 0,
     totalSheep: 0,
     totalCattle: 0,
+    totalAcres: 0,
     vaccinatedCount: 0,
     maleFarmers: 0,
     femaleFarmers: 0,
@@ -240,6 +261,15 @@ const LivestockFarmersPage = () => {
   });
 
   const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
+  const requireChiefAdmin = () => {
+    if (userIsChiefAdmin) return true;
+    toast({
+      title: "Access denied",
+      description: "Only chief admin can create, edit, or delete records on this page.",
+      variant: "destructive",
+    });
+    return false;
+  };
 
   const getCachedData = (key: string) => {
     try {
@@ -343,7 +373,8 @@ const LivestockFarmersPage = () => {
           maleBreeds: item.maleBreeds || '0',
           dewormed: !!item.dewormed,
           dewormingDate: item.dewormingDate || null,
-          vaccinationDate: item.vaccinationDate || null
+          vaccinationDate: item.vaccinationDate || null,
+          acres: getAcreTotal(item)
         };
       });
 
@@ -400,7 +431,7 @@ const LivestockFarmersPage = () => {
   useEffect(() => {
     if (allFarmers.length === 0) {
       setFilteredFarmers([]);
-      setStats({ totalFarmers: 0, totalGoats: 0, totalSheep: 0, totalCattle: 0, vaccinatedCount: 0, maleFarmers: 0, femaleFarmers: 0, totalTrainedFarmers: 0 });
+      setStats({ totalFarmers: 0, totalGoats: 0, totalSheep: 0, totalCattle: 0, totalAcres: 0, vaccinatedCount: 0, maleFarmers: 0, femaleFarmers: 0, totalTrainedFarmers: 0 });
       return;
     }
 
@@ -455,12 +486,13 @@ const LivestockFarmersPage = () => {
     const totalGoats = filteredFarmersList.reduce((sum, f) => sum + getGoatTotal(f.goats), 0);
     const totalSheep = filteredFarmersList.reduce((sum, f) => sum + (Number(f.sheep) || 0), 0);
     const totalCattle = filteredFarmersList.reduce((sum, f) => sum + (Number(f.cattle) || 0), 0);
+    const totalAcres = filteredFarmersList.reduce((sum, f) => sum + (Number(f.acres) || 0), 0);
     const vaccinatedCount = filteredFarmersList.filter(f => f.vaccinated).length;
     const maleFarmers = filteredFarmersList.filter(f => f.gender?.toLowerCase() === 'male').length;
     const femaleFarmers = filteredFarmersList.filter(f => f.gender?.toLowerCase() === 'female').length;
     const totalTrainedFarmers = filteredTraining.reduce((sum, t) => sum + (Number(t.totalFarmers) || 0), 0);
 
-    setStats({ totalFarmers, totalGoats, totalSheep, totalCattle, vaccinatedCount, maleFarmers, femaleFarmers, totalTrainedFarmers });
+    setStats({ totalFarmers, totalGoats, totalSheep, totalCattle, totalAcres, vaccinatedCount, maleFarmers, femaleFarmers, totalTrainedFarmers });
 
     const totalPages = Math.ceil(filteredFarmersList.length / pagination.limit);
     const currentPage = Math.min(pagination.page, Math.max(1, totalPages));
@@ -524,6 +556,7 @@ const LivestockFarmersPage = () => {
   const openViewDialog = useCallback((record: FarmerData) => { setViewingRecord(record); setIsViewDialogOpen(true); }, []);
   
   const openEditDialog = useCallback((record: FarmerData) => {
+    if (!userIsChiefAdmin) return;
     setEditingRecord(record);
     const cattleVal = typeof record.cattle === 'number' ? record.cattle : parseInt(record.cattle as string) || 0;
     const sheepVal = typeof record.sheep === 'number' ? record.sheep : parseInt(record.sheep as string) || 0;
@@ -545,12 +578,20 @@ const LivestockFarmersPage = () => {
       programme: record.programme
     });
     setIsEditDialogOpen(true);
-  }, []);
+  }, [userIsChiefAdmin]);
   
-  const openSingleDeleteConfirm = useCallback((record: FarmerData) => { setRecordToDelete(record); setIsSingleDeleteDialogOpen(true); }, []);
-  const openBulkDeleteConfirm = useCallback(() => { setIsDeleteConfirmOpen(true); }, []);
+  const openSingleDeleteConfirm = useCallback((record: FarmerData) => {
+    if (!userIsChiefAdmin) return;
+    setRecordToDelete(record);
+    setIsSingleDeleteDialogOpen(true);
+  }, [userIsChiefAdmin]);
+  const openBulkDeleteConfirm = useCallback(() => {
+    if (!userIsChiefAdmin) return;
+    setIsDeleteConfirmOpen(true);
+  }, [userIsChiefAdmin]);
 
   const handleEditSubmit = async () => {
+    if (!requireChiefAdmin()) return;
     if (!editingRecord) return;
     try {
       await update(ref(db, `farmers/${editingRecord.id}`), {
@@ -577,6 +618,7 @@ const LivestockFarmersPage = () => {
   };
 
   const handleSingleDelete = async () => {
+    if (!requireChiefAdmin()) return;
     if (!recordToDelete) return;
     try {
       setDeleteLoading(true);
@@ -591,6 +633,7 @@ const LivestockFarmersPage = () => {
   };
 
   const handleDeleteMultiple = async () => {
+    if (!requireChiefAdmin()) return;
     if (selectedRecords.length === 0) return;
     try {
       setDeleteLoading(true);
@@ -635,6 +678,7 @@ const LivestockFarmersPage = () => {
   };
 
   const handleUpload = async () => {
+    if (!requireChiefAdmin()) return;
     if (!uploadFile) return;
     setUploadLoading(true);
     try {
@@ -949,7 +993,7 @@ const LivestockFarmersPage = () => {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatsCard 
             title="FARMERS REGISTERED" 
             value={stats.totalFarmers.toLocaleString()} 
@@ -986,12 +1030,19 @@ const LivestockFarmersPage = () => {
                  </div>
             </div>
         </StatsCard>
-             <StatsCard 
+        <StatsCard 
             title="TRAINED FARMERS" 
             value={stats.totalTrainedFarmers.toLocaleString()} 
             icon={GraduationCap} 
             color="blue"
             description="Participants in training sessions"
+        />
+        <StatsCard
+            title="TOTAL ACRES"
+            value={stats.totalAcres.toLocaleString()}
+            icon={MapPin}
+            color="blue"
+            description="Land coverage from farmer records"
         />
       </div>
 

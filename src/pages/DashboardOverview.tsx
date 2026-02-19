@@ -163,6 +163,7 @@ const DashboardOverview = () => {
   const { user, userRole, allowedProgrammes, loading } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const userIsChiefAdmin = userRole === "chief-admin";
 
   // Dashboard View State
   const [selectedProgramme, setSelectedProgramme] = useState<string>("");
@@ -373,6 +374,15 @@ const DashboardOverview = () => {
   };
 
   const handleAddActivity = async () => {
+    if (!userIsChiefAdmin) {
+      toast({
+        title: "Access denied",
+        description: "Only chief admin can create, edit, or delete records on this page.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     if (participants.length === 0) {
       toast({ title: "Error", description: "Please add at least one participant", variant: "destructive" });
       return;
@@ -553,9 +563,10 @@ const DashboardOverview = () => {
                       <ActivityTable activities={recentActivities} />
                       <div className="flex justify-between items-center pt-6 mt-6 border-t border-slate-200">
                         <Link to="/dashboard/activities"><Button variant="outline" className="border-slate-300 text-slate-700 hover:bg-slate-50 font-medium px-4 py-2 rounded-xl transition-all duration-200 shadow-sm"><Eye className="h-4 w-4 mr-2" /> View All Activities</Button></Link>
-                        <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
-                          <DialogTrigger asChild><Button className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white font-semibold px-4 py-2 rounded-xl shadow-lg hover:shadow-xl transition-all duration-200"><Plus className="h-4 w-4 mr-2" /> Schedule Activity</Button></DialogTrigger>
-                          <DialogContent className="sm:max-w-[700px] bg-white rounded-2xl border-0 shadow-2xl max-h-[90vh] overflow-y-auto">
+                        {userIsChiefAdmin && (
+                          <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
+                            <DialogTrigger asChild><Button className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white font-semibold px-4 py-2 rounded-xl shadow-lg hover:shadow-xl transition-all duration-200"><Plus className="h-4 w-4 mr-2" /> Schedule Activity</Button></DialogTrigger>
+                            <DialogContent className="sm:max-w-[700px] bg-white rounded-2xl border-0 shadow-2xl max-h-[90vh] overflow-y-auto">
                             <DialogHeader><DialogTitle className="text-xl font-semibold text-slate-900">Schedule New Activity</DialogTitle></DialogHeader>
                             <div className="grid gap-6 py-4">
                               {userRole !== 'chief-admin' && programmeOptions.length > 1 && (
@@ -600,8 +611,9 @@ const DashboardOverview = () => {
                               <Button variant="outline" onClick={() => { setIsAddDialogOpen(false); setParticipants([]); setActivityForm({ activityName: "", date: "", county: "", subcounty: "", location: "" }); }}>Cancel</Button>
                               <Button onClick={handleAddActivity} disabled={participants.length === 0} className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 rounded-xl text-white font-semibold shadow-lg hover:shadow-xl transition-all disabled:opacity-50"><Calendar className="h-4 w-4 mr-2" /> Schedule Activity</Button>
                             </div>
-                          </DialogContent>
-                        </Dialog>
+                            </DialogContent>
+                          </Dialog>
+                        )}
                       </div>
                     </>
                   ) : (
@@ -610,9 +622,11 @@ const DashboardOverview = () => {
                       <h4 className="text-xl font-bold text-slate-800 mb-2">No activities yet</h4>
                       <p className="text-slate-600 mb-4">Start scheduling your field activities and events to see them displayed here.</p>
                       <div className="flex justify-center">
-                        <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
-                          <DialogTrigger asChild><Button className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white font-semibold px-4 py-2 rounded-xl shadow-lg hover:shadow-xl transition-all duration-200"><Plus className="h-4 w-4 mr-2" /> Schedule Your First Activity</Button></DialogTrigger>
-                        </Dialog>
+                        {userIsChiefAdmin && (
+                          <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
+                            <DialogTrigger asChild><Button className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white font-semibold px-4 py-2 rounded-xl shadow-lg hover:shadow-xl transition-all duration-200"><Plus className="h-4 w-4 mr-2" /> Schedule Your First Activity</Button></DialogTrigger>
+                          </Dialog>
+                        )}
                       </div>
                     </div>
                   )}

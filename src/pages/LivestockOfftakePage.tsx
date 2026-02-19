@@ -345,6 +345,15 @@ const LivestockOfftakePage = () => {
   });
 
   const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
+  const requireChiefAdmin = () => {
+    if (userIsChiefAdmin) return true;
+    toast({
+      title: "Access denied",
+      description: "Only chief admin can create, edit, or delete records on this page.",
+      variant: "destructive",
+    });
+    return false;
+  };
   const offtakeCacheKey = useMemo(
     () => cacheKey("admin-page", "livestock-offtake", activeProgram),
     [activeProgram]
@@ -1167,6 +1176,7 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
 
   // --- OPTIMIZED BULK UPLOAD HANDLER (Non-blocking) ---
   const handleUpload = async () => {
+    if (!requireChiefAdmin()) return;
     if (uploadPreview.length === 0) {
       toast({ title: "Error", description: "No data to upload", variant: "destructive" });
       return;
@@ -1294,6 +1304,7 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
   }, []);
 
   const openEditDialog = useCallback((record: OfftakeData) => {
+    if (!userIsChiefAdmin) return;
     setEditingRecord(record);
     setEditForm({
       date: formatDateForInput(record.date),
@@ -1305,9 +1316,10 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
       location: record.location || ""
     });
     setIsEditDialogOpen(true);
-  }, []);
+  }, [userIsChiefAdmin]);
 
   const openWeightEditDialog = useCallback((record: OfftakeData) => {
+    if (!userIsChiefAdmin) return;
     setEditingRecord(record);
     
     const liveWeights = Array.isArray(record.liveWeight) ? record.liveWeight : [record.liveWeight || 0];
@@ -1331,9 +1343,10 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
     });
     
     setIsWeightEditDialogOpen(true);
-  }, []);
+  }, [userIsChiefAdmin]);
 
   const handleSingleDelete = async () => {
+    if (!requireChiefAdmin()) return;
     if (!recordToDelete) return;
     try {
       setDeleteLoading(true);
@@ -1362,11 +1375,13 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
   };
 
   const openSingleDeleteConfirm = useCallback((record: OfftakeData) => {
+    if (!userIsChiefAdmin) return;
     setRecordToDelete(record);
     setIsSingleDeleteDialogOpen(true);
-  }, []);
+  }, [userIsChiefAdmin]);
 
   const openBulkDeleteConfirm = () => {
+    if (!requireChiefAdmin()) return;
     if (selectedRecords.length === 0) {
       toast({
         title: "No Records Selected",
@@ -1379,6 +1394,7 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
   };
 
   const handleDeleteMultiple = async () => {
+    if (!requireChiefAdmin()) return;
     if (selectedRecords.length === 0) return;
     try {
       setDeleteLoading(true);
@@ -1400,6 +1416,7 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
   };
 
   const handleEditSubmit = async () => {
+    if (!requireChiefAdmin()) return;
     if (!editingRecord) return;
 
     try {
@@ -1424,6 +1441,7 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
   };
 
   const handleWeightEditSubmit = async () => {
+    if (!requireChiefAdmin()) return;
     if (!editingRecord) return;
 
     try {

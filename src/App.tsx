@@ -100,7 +100,14 @@ const App = () => (
                 <Route path="animalhealth" element={<AnimalHealthPage />} />
 
                 {/* Admin Only Routes */}
-                <Route path="users" element={<UserManagementPage />} />
+                <Route
+                  path="users"
+                  element={
+                    <ProtectedRoute allowedRoles={["chief-admin"]}>
+                      <UserManagementPage />
+                    </ProtectedRoute>
+                  }
+                />
                 
                 {/* Note: Admins can still access requisition inside the dashboard via sidebar if needed, 
                     or we can remove this if requisition is strictly HR-only. */}

@@ -148,7 +148,7 @@ const formatDateTime = (date: any): string => {
 const toInputDate = (date: any): string => {
   const d = parseDate(date);
   if (!d) return "";
-  return d.toISOString().split('T')[0];
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 };
 
 const getOfficerName = (record: RequisitionData | null | undefined): string => {

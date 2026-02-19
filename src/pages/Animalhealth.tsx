@@ -152,6 +152,15 @@ const AnimalHealthPage = () => {
   const [isSelecting, setIsSelecting] = useState(false);
   const { toast } = useToast();
   const { user } = useAuth();
+  const requireChiefAdmin = () => {
+    if (userIsChiefAdmin) return true;
+    toast({
+      title: "Access denied",
+      description: "Only chief admin can create, edit, or delete records on this page.",
+      variant: "destructive",
+    });
+    return false;
+  };
 
   useEffect(() => {
     const maleCount = beneficiaries.filter(b => b.gender === 'Male').length;
@@ -378,6 +387,7 @@ const AnimalHealthPage = () => {
   };
 
   const handleAddActivity = async () => {
+    if (!requireChiefAdmin()) return;
     if (fieldOfficers.length === 0) { toast({ title: "Error", description: "Add at least one field officer", variant: "destructive" }); return; }
     if (selectedVaccines.length === 0) { toast({ title: "Error", description: "Select at least one vaccine", variant: "destructive" }); return; }
     if (!totalDoses || parseInt(totalDoses) <= 0) { toast({ title: "Error", description: "Enter valid total doses", variant: "destructive" }); return; }
@@ -408,6 +418,7 @@ const AnimalHealthPage = () => {
   };
 
   const handleEditActivity = async () => {
+    if (!requireChiefAdmin()) return;
     if (!editingActivity) return;
     try {
       const vaccines = getVaccinesFromSelection();
@@ -430,11 +441,13 @@ const AnimalHealthPage = () => {
   };
 
   const handleDeleteActivity = async (activityId: string) => {
+    if (!requireChiefAdmin()) return;
     try { await remove(ref(db, "AnimalHealthActivities/" + activityId)); toast({ title: "Success", description: "Deleted." }); removeCachedValue(ANIMAL_HEALTH_CACHE_KEY); fetchActivities(); } 
     catch (error) { toast({ title: "Error", description: "Failed.", variant: "destructive" }); }
   };
 
   const handleDeleteMultipleActivities = async () => {
+    if (!requireChiefAdmin()) return;
     if (selectedActivities.length === 0) return;
     try {
       await Promise.all(selectedActivities.map(id => remove(ref(db, "AnimalHealthActivities/" + id))));
@@ -498,6 +511,7 @@ const AnimalHealthPage = () => {
   }), [activities, searchTerm, startDate, endDate]);
 
   const openEditDialog = (activity: AnimalHealthActivity) => {
+    if (!userIsChiefAdmin) return;
     setEditingActivity(activity);
     setActivityForm({
       date: activity.date || '', county: activity.county || '', subcounty: activity.subcounty || '', location: activity.location || '',

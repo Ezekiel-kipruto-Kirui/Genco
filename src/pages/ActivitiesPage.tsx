@@ -72,15 +72,21 @@ const ActivitiesPage = () => {
     location: "",
   });
   const { userRole } = useAuth();
-     const userIsChiefAdmin = useMemo(() => {
-      
-
-        return isChiefAdmin(userRole);
-    }, [userRole]);
+  const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [searchTerm, setSearchTerm] = useState("");
   const { toast } = useToast();
   const { user } = useAuth();
+
+  const requireChiefAdmin = () => {
+    if (userIsChiefAdmin) return true;
+    toast({
+      title: "Access denied",
+      description: "Only chief admin can create, edit, or delete records on this page.",
+      variant: "destructive",
+    });
+    return false;
+  };
 
   useEffect(() => {
     fetchActivities();
@@ -147,6 +153,8 @@ const ActivitiesPage = () => {
 
   // --- REALTIME DATABASE ADD FUNCTION ---
   const handleAddActivity = async () => {
+    if (!requireChiefAdmin()) return;
+
     if (participants.length === 0) {
       toast({
         title: "Error",
@@ -194,6 +202,7 @@ const ActivitiesPage = () => {
 
   // --- REALTIME DATABASE UPDATE FUNCTION ---
   const handleEditActivity = async () => {
+    if (!requireChiefAdmin()) return;
     if (!editingActivity) return;
 
     try {
@@ -232,6 +241,7 @@ const ActivitiesPage = () => {
 
   // --- REALTIME DATABASE DELETE FUNCTION ---
   const handleDeleteActivity = async (activityId: string) => {
+    if (!requireChiefAdmin()) return;
     try {
       await remove(ref(db, "Recent Activities/" + activityId));
       toast({
@@ -252,6 +262,7 @@ const ActivitiesPage = () => {
   };
 
   const handleStatusChange = async (activityId: string, newStatus: Activity['status']) => {
+    if (!requireChiefAdmin()) return;
     try {
       await update(ref(db, "Recent Activities/" + activityId), {
         status: newStatus
@@ -274,6 +285,7 @@ const ActivitiesPage = () => {
   };
 
   const openEditDialog = (activity: Activity) => {
+    if (!userIsChiefAdmin) return;
     setEditingActivity(activity);
     setActivityForm({
       activityName: activity.activityName,
@@ -341,10 +353,10 @@ const ActivitiesPage = () => {
           </div>
           <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
             <DialogTrigger asChild>
-              {isChiefAdmin(userRole) &&(<Button className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white">
+              {userIsChiefAdmin ? (<Button className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white">
                 <Plus className="h-4 w-4 mr-2" />
                 Schedule Activity
-              </Button>)}
+              </Button>) : <span className="hidden" />}
               
             </DialogTrigger>
             <DialogContent className="sm:max-w-[700px] bg-white rounded-2xl border-0 shadow-2xl max-h-[90vh] overflow-y-auto">
@@ -629,7 +641,7 @@ const ActivitiesPage = () => {
                           {getStatusBadge(activity.status)}
                         </td>
                         <td className="p-4">
-                           {isChiefAdmin(userRole) && (<div className="flex gap-2">
+                           {userIsChiefAdmin && (<div className="flex gap-2">
                            
                             <Button
                               size="sm"
@@ -697,10 +709,10 @@ const ActivitiesPage = () => {
                 ) : (
                   <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
                     <DialogTrigger asChild>
-                      <Button className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white">
+                      {userIsChiefAdmin ? <Button className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white">
                         <Plus className="h-4 w-4 mr-2" />
                         Schedule Your First Activity
-                      </Button>
+                      </Button> : <span className="hidden" />}
                     </DialogTrigger>
                   </Dialog>
                 )}
