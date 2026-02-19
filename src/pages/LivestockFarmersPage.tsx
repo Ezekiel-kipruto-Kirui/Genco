@@ -1037,13 +1037,6 @@ const LivestockFarmersPage = () => {
             color="blue"
             description="Participants in training sessions"
         />
-        <StatsCard
-            title="TOTAL ACRES"
-            value={stats.totalAcres.toLocaleString()}
-            icon={MapPin}
-            color="blue"
-            description="Land coverage from farmer records"
-        />
       </div>
 
       <Card className="shadow-lg border-0 bg-white">
