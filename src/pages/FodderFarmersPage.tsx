@@ -947,16 +947,13 @@ const FodderFarmersPage = () => {
                   <table className="w-full text-sm">
                     <tbody>
                       <tr className="border-b border-slate-200"><td className="px-4 py-3 font-medium text-slate-600 bg-slate-50 w-1/3">Date</td><td className="px-4 py-3 text-slate-900">{formatDate(viewingRecord.date)}</td></tr>
-                      <tr className="border-b border-slate-200"><td className="px-4 py-3 font-medium text-slate-600 bg-slate-50">Programme</td><td className="px-4 py-3 text-slate-900">{viewingRecord.programme || activeProgram || "N/A"}</td></tr>
+                      <tr className="border-b border-slate-200"><td className="px-4 py-3 font-medium text-slate-600 bg-slate-50">Project</td><td className="px-4 py-3 text-slate-900">{viewingRecord.programme || activeProgram || "N/A"}</td></tr>
                       <tr className="border-b border-slate-200"><td className="px-4 py-3 font-medium text-slate-600 bg-slate-50">Model</td><td className="px-4 py-3 text-slate-900">{viewingRecord.model || "N/A"}</td></tr>
                       <tr className="border-b border-slate-200"><td className="px-4 py-3 font-medium text-slate-600 bg-slate-50">County</td><td className="px-4 py-3 text-slate-900">{viewingRecord.county || "N/A"}</td></tr>
                       <tr className="border-b border-slate-200"><td className="px-4 py-3 font-medium text-slate-600 bg-slate-50">Subcounty</td><td className="px-4 py-3 text-slate-900">{viewingRecord.subcounty || "N/A"}</td></tr>
                       <tr className="border-b border-slate-200"><td className="px-4 py-3 font-medium text-slate-600 bg-slate-50">Location</td><td className="px-4 py-3 text-slate-900">{viewingRecord.location || "N/A"}</td></tr>
                       <tr className="border-b border-slate-200"><td className="px-4 py-3 font-medium text-slate-600 bg-slate-50">Land Size</td><td className="px-4 py-3 text-slate-900">{(viewingRecord.landSize || 0).toLocaleString()} acres</td></tr>
-                      <tr className="border-b border-slate-200"><td className="px-4 py-3 font-medium text-slate-600 bg-slate-50">Total Acres Pasture</td><td className="px-4 py-3 text-slate-900">{(viewingRecord.totalAcresPasture || 0).toLocaleString()} acres</td></tr>
-                      <tr className="border-b border-slate-200"><td className="px-4 py-3 font-medium text-slate-600 bg-slate-50">Total Bales</td><td className="px-4 py-3 text-slate-900">{(viewingRecord.totalBales || 0).toLocaleString()}</td></tr>
-                      <tr className="border-b border-slate-200"><td className="px-4 py-3 font-medium text-slate-600 bg-slate-50">Yield per Harvest</td><td className="px-4 py-3 text-slate-900">{(viewingRecord.yieldPerHarvest || 0).toLocaleString()}</td></tr>
-                      <tr><td className="px-4 py-3 font-medium text-slate-600 bg-slate-50">Recorded By</td><td className="px-4 py-3 text-slate-900">{viewingRecord.username || "N/A"}</td></tr>
+                      
                     </tbody>
                   </table>
                 </div>

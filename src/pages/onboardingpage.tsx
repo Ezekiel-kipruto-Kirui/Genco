@@ -846,7 +846,7 @@ const OnboardingPage = () => {
           <h1 className="text-xl font-bold">Additional Training</h1>
           <div className="flex items-center gap-2">
              <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 font-bold px-3 py-1 w-fit">
-                {activeProgram || "No Access"} PROGRAMME
+                {activeProgram || "No Access"} PROJECT
              </Badge>
           </div>
         </div>
@@ -1016,7 +1016,7 @@ const OnboardingPage = () => {
                   <TabsContent value="details" className="space-y-4">
                     <div className="grid grid-cols-1 gap-4">
                       <div className="space-y-2">
-                        <Label>Programme *</Label>
+                        <Label>PROJECT *</Label>
                         <Select 
                           value={onboardingForm.programme} 
                           onValueChange={(val: 'KPMD' | 'RANGE') => setOnboardingForm(p => ({ ...p, programme: val }))}
@@ -1158,7 +1158,7 @@ const OnboardingPage = () => {
                     <span className="font-medium">{selectedRecord.topic}</span>
                   </div>
                    <div>
-                    <span className="text-xs text-muted-foreground block">Programme</span>
+                    <span className="text-xs text-muted-foreground block">PROJECT</span>
                     <span className="font-medium">{selectedRecord.programme}</span>
                   </div>
                   <div>

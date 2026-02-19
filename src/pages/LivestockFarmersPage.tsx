@@ -921,7 +921,7 @@ const LivestockFarmersPage = () => {
           </h2>
           <div className="flex items-center gap-2">
                        <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 font-bold px-3 py-1 w-fit">
-                          {activeProgram || "No Access"} PROGRAMME
+                          {activeProgram || "No Access"} PROJECT
                        </Badge>
                     </div>
         </div>
@@ -1126,7 +1126,7 @@ const LivestockFarmersPage = () => {
                       <th className="py-3 px-3 font-semibold text-gray-700">Goats</th>
                       <th className="py-3 px-3 font-semibold text-gray-700">Sheep</th>
                       <th className="py-3 px-3 font-semibold text-gray-700">Vaccinated</th>
-                      <th className="py-3 px-3 font-semibold text-gray-700">Programme</th>
+                      <th className="py-3 px-3 font-semibold text-gray-700">PROJECT</th>
                       <th className="py-3 px-3 font-semibold text-gray-700 hidden sm:table-cell">Field Officer</th>
                       <th className="py-3 px-3 font-semibold text-gray-700">Actions</th>
                     </tr>
@@ -1331,10 +1331,10 @@ const LivestockFarmersPage = () => {
                 <Input type="number" value={editForm.sheep} onChange={e => setEditForm({...editForm, sheep: parseInt(e.target.value) || 0})} />
             </div>
             <div className="col-span-1 sm:col-span-2 my-2 border-t pt-2">
-                <h4 className="text-sm font-semibold text-gray-500 uppercase">Status & Programme</h4>
+                <h4 className="text-sm font-semibold text-gray-500 uppercase">Status & PROJECT</h4>
             </div>
             <div className="space-y-2">
-                <Label>Programme</Label>
+                <Label>PROJECT</Label>
                 <Select value={editForm.programme} onValueChange={(val) => setEditForm({...editForm, programme: val})}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
@@ -1359,7 +1359,7 @@ const LivestockFarmersPage = () => {
           <DialogHeader>
             <DialogTitle>Upload Farmers Data</DialogTitle>
             <DialogDescription>
-              Upload CSV or JSON file. Data will be assigned to <strong>{activeProgram}</strong> programme.
+              Upload CSV or JSON file. Data will be assigned to <strong>{activeProgram}</strong> PROJECT.
             </DialogDescription>
           </DialogHeader>
           <div className="py-4">

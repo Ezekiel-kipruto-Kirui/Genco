@@ -748,7 +748,7 @@ const FodderFarmersPage = () => {
             Fodder Farmers
           </h2>
           <div className="flex items-center gap-2 text-sm text-gray-600">
-             {activeProgram && <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 font-bold px-3 py-1">{activeProgram} PROGRAMME</Badge>}
+             {activeProgram && <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 font-bold px-3 py-1">{activeProgram} PROJECT</Badge>}
           </div>
         </div>
 
@@ -937,7 +937,7 @@ const FodderFarmersPage = () => {
               Upload Fodder Farmers Data
             </DialogTitle>
             <DialogDescription>
-              Upload data from CSV or JSON files. Data will be assigned to the <strong>{activeProgram}</strong> programme.
+              Upload data from CSV or JSON files. Data will be assigned to the <strong>{activeProgram}</strong> Project.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
@@ -1085,7 +1085,7 @@ const FodderFarmersPage = () => {
                     <p className="text-slate-900 font-medium">{formatDate(viewingRecord.date)}</p>
                   </div>
                   <div>
-                    <Label className="text-sm font-medium text-slate-600">Programme</Label>
+                    <Label className="text-sm font-medium text-slate-600">Project</Label>
                     <Badge className="bg-green-100 text-green-800">{viewingRecord.programme || activeProgram}</Badge>
                   </div>
                   <div>

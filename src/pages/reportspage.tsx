@@ -797,7 +797,7 @@ const PerformanceReport = () => {
               {/* Programme Selector */}
               {showProgrammeFilter && (
                 <div className="w-full md:w-48 space-y-1">
-                  <Label className="text-xs text-gray-500 font-semibold">Programme</Label>
+                  <Label className="text-xs text-gray-500 font-semibold">PROJECT</Label>
                   <Select value={activeProgram} onValueChange={setActiveProgram}>
                     <SelectTrigger className="h-9">
                       <SelectValue placeholder="Select Programme" />

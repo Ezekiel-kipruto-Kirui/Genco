@@ -908,7 +908,7 @@ const AnimalHealthPage = () => {
                 {/* Same Form Structure as Add Dialog */}
                 <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2"><Label>Date</Label><Input type="date" value={activityForm.date} onChange={(e) => setActivityForm({...activityForm, date: e.target.value})} /></div>
-                    <div className="space-y-2"><Label>Programme</Label>
+                    <div className="space-y-2"><Label>Project</Label>
                         <Select value={activityForm.programme} onValueChange={(v) => setActivityForm({...activityForm, programme: v})}>
                             <SelectTrigger><SelectValue /></SelectTrigger>
                             <SelectContent>{PROGRAMME_OPTIONS.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}</SelectContent>

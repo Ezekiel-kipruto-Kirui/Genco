@@ -1798,7 +1798,7 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
                 </h3>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div className="bg-white border border-slate-200 rounded-lg p-4 text-center">
-                    <Label className="text-sm font-medium text-slate-600 block mb-2">Programme</Label>
+                    <Label className="text-sm font-medium text-slate-600 block mb-2">PROJECT</Label>
                     <p className="text-slate-900 font-bold text-xl text-blue-600">{viewingRecord.programme || 'N/A'}</p>
                   </div>
                   <div className="bg-white border border-slate-200 rounded-lg p-4 text-center">
