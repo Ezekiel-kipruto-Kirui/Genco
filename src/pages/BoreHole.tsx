@@ -13,6 +13,7 @@ import { Download, MapPin, Eye, Droplets, Users, Building, Trash2, Upload, Plus,
 import { useToast } from "@/hooks/use-toast";
 import { isChiefAdmin } from "@/contexts/authhelper";
 import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
+import {millify} from "millify";
 
 // REALTIME DATABASE IMPORTS ONLY
 import { 
@@ -305,7 +306,7 @@ const getRecordStatus = (record: Borehole): { label: string; className: string }
     return { label: "Drilled", className: "bg-green-100 text-green-800" };
   }
   if (record.rehabilitated) {
-    return { label: "Maintained", className: "bg-orange-100 text-orange-800" };
+    return { label: "Rehabilitated", className: "bg-orange-100 text-orange-800" };
   }
   if (record.equipped) {
     return { label: "Equipped", className: "bg-blue-100 text-blue-800" };
@@ -1195,14 +1196,14 @@ const BoreholePage = () => {
 
         <StatsCard 
           title="Household Served" 
-          value={stats.totalPeople.toLocaleString()} 
+          value={millify(stats.totalPeople)} 
           icon={Users}
           description="Total households using boreholes"
         />
 
         <StatsCard 
           title="Water Used" 
-          value={`${stats.totalWaterUsed.toLocaleString()}L`} 
+          value={`${millify(stats.totalWaterUsed)}L`} 
           icon={Droplets}
           description="Total water consumption"
         />

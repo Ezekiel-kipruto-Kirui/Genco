@@ -96,7 +96,7 @@ export function DashboardSidebar() {
 
   return (
     <Sidebar className={`${collapsed ? "w-14" : "w-64"} bg-green-700 text-white`} collapsible="icon">
-      <SidebarHeader className="bg-green-700 pb-0">
+      <SidebarHeader className="bg-green-700 pb-4">
         <div className="flex items-center gap-2 p-2">
           <div className="flex h-8 w-8 items-center justify-center rounded-full bg-white/20 shadow backdrop-blur">
             <img src="/img/logo.png" className="h-8 w-8 rounded-full object-cover" alt="GenCo Logo" />
@@ -242,7 +242,7 @@ export function DashboardSidebar() {
 
       <SidebarSeparator className="bg-white/20" />
 
-      <SidebarFooter className="bg-green-700 pt-0">
+      <SidebarFooter className="bg-green-700 pt-2">
         <SidebarMenu>
           {userIsChiefAdmin && (
             <SidebarMenuItem>
