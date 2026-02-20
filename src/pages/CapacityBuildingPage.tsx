@@ -578,7 +578,7 @@ const CapacityBuildingPage = () => {
         const headers = rawHeaders.map(h => h.trim());
         const cleanHeaders = headers.map(h =>
           h
-            .replace(/^﻿/, '')
+            .replace(/^\uFEFF/, '')
             .trim()
             .toLowerCase()
             .replace(/\(.*?\)/g, '')
@@ -749,7 +749,7 @@ const CapacityBuildingPage = () => {
                {/* Programme Selector - ONLY Visible to Chief Admin */}
                <div className="flex justify-end">
                   <Select value={activeProgram} onValueChange={handleProgramChange}>
-                      <SelectTrigger className="w-[200px] border-gray-300 focus:border-blue-500 bg-white">
+                      <SelectTrigger className="w-full sm:w-[200px] border-gray-300 focus:border-blue-500 bg-white">
                           <SelectValue placeholder="Select Programme" />
                       </SelectTrigger>
                       <SelectContent>
@@ -778,7 +778,7 @@ const CapacityBuildingPage = () => {
 
       <Card className="shadow-lg bg-white">
         <CardContent className="pt-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             <div className="space-y-2">
               <Label>Search</Label>
               <Input placeholder="Topic, region, officer..." value={searchValue} onChange={(e) => handleSearch(e.target.value)} />
@@ -790,13 +790,13 @@ const CapacityBuildingPage = () => {
                 <SelectContent><SelectItem value="all">All Counties</SelectItem>{uniqueRegions.slice(0, 20).map(r => <SelectItem key={r} value={r}>{r}</SelectItem>)}</SelectContent>
               </Select>
             </div>
-            <div className="space-y-2">
+            {/* <div className="space-y-2">
               <Label>Module/Topic</Label>
               <Select value={filters.modules} onValueChange={(v) => handleFilterChange("modules", v)}>
                 <SelectTrigger><SelectValue placeholder="Select Module" /></SelectTrigger>
                 <SelectContent><SelectItem value="all">All Modules</SelectItem>{uniqueModules.slice(0, 20).map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent>
               </Select>
-            </div>
+            </div> */}
             <div className="space-y-2">
               <Label>Date Range</Label>
               <div className="flex gap-2">
@@ -875,9 +875,9 @@ const CapacityBuildingPage = () => {
           <DialogHeader><DialogTitle>Session Details</DialogTitle></DialogHeader>
           {viewingRecord && (
             <div className="space-y-4 py-4">
-              <div className="grid grid-cols-2 gap-4"><div><Label>Topic</Label><p>{viewingRecord.topicTrained || viewingRecord.Modules}</p></div><div><Label>Date</Label><p>{formatDate(viewingRecord.createdAt)}</p></div></div>
-              <div className="grid grid-cols-2 gap-4"><div><Label>Region</Label><p>{viewingRecord.county}</p></div><div><Label>Location</Label><p>{viewingRecord.subcounty}</p></div></div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4"><div><Label>Topic</Label><p>{viewingRecord.topicTrained || viewingRecord.Modules}</p></div><div><Label>Date</Label><p>{formatDate(viewingRecord.createdAt)}</p></div></div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4"><div><Label>Region</Label><p>{viewingRecord.county}</p></div><div><Label>Location</Label><p>{viewingRecord.subcounty}</p></div></div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                  <div><Label>Farmers Trained</Label><p>{viewingRecord.totalFarmers}</p></div>
                  <div><Label>Officer</Label><p>{viewingRecord.fieldOfficer}</p></div>
               </div>
@@ -891,15 +891,15 @@ const CapacityBuildingPage = () => {
         <DialogContent>
           <DialogHeader><DialogTitle>Edit Session</DialogTitle></DialogHeader>
           <div className="grid gap-4 py-4">
-             <div className="grid grid-cols-2 gap-4">
+             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div><Label>Officer Name</Label><Input value={editForm.Name} onChange={e => setEditForm({...editForm, Name: e.target.value})} /></div>
                 <div><Label>Topic</Label><Input value={editForm.topicTrained} onChange={e => setEditForm({...editForm, topicTrained: e.target.value})} /></div>
              </div>
-             <div className="grid grid-cols-2 gap-4">
+             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div><Label>Region (County)</Label><Input value={editForm.county} onChange={e => setEditForm({...editForm, county: e.target.value})} /></div>
                 <div><Label>Location (Subcounty)</Label><Input value={editForm.subcounty} onChange={e => setEditForm({...editForm, subcounty: e.target.value})} /></div>
              </div>
-             <div className="grid grid-cols-2 gap-4">
+             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div><Label>Start Date</Label><Input type="date" value={editForm.startDate} onChange={e => setEditForm({...editForm, startDate: e.target.value})} /></div>
                 <div><Label>End Date</Label><Input type="date" value={editForm.endDate} onChange={e => setEditForm({...editForm, endDate: e.target.value})} /></div>
              </div>
@@ -950,3 +950,4 @@ const CapacityBuildingPage = () => {
   );
 };
 export default CapacityBuildingPage;
+

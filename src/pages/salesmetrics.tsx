@@ -551,17 +551,22 @@ const salesReport = () => {
     setTimeFrame('monthly'); 
   }, [selectedYear]);
 
+  // Updated to reset to Current Year instead of Current Month
   const clearFilters = useCallback(() => {
-    const currentY = String(new Date().getFullYear());
-    setSelectedYear(currentY);
-    // Reset all filters to default state while preserving selected programme.
-    setDateRange({
-      startDate: currentMonthDates.startDate,
-      endDate: currentMonthDates.endDate,
+    const resetYear = String(new Date().getFullYear());
+
+    setSelectedYear(resetYear);
+    setDateRange({ 
+      startDate: `${resetYear}-01-01`, 
+      endDate: `${resetYear}-12-31` 
     });
-    setTimeFrame('monthly');
-    setSelectedProgramme(activeProgram || null);
-  }, [activeProgram, currentMonthDates.startDate, currentMonthDates.endDate]);
+    setTimeFrame('yearly'); // Set timeframe to yearly
+    
+    // Keep the programme selected, just sync the filter state
+    if (activeProgram) {
+      setSelectedProgramme(activeProgram);
+    }
+  }, [activeProgram]);
 
   const formatCurrency = (val: number) => `KES ${val.toLocaleString(undefined, {maximumFractionDigits: 0})}`;
   const handleProgramChange = (program: string) => { setActiveProgram(program); setSelectedProgramme(program); };
@@ -597,12 +602,11 @@ const salesReport = () => {
           </div>
 
           {/* Modern Responsive Filter Control Panel */}
-          <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-200/60">
-            <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
+          <div className="w-full lg:w-auto border-0 shadow-lg bg-white p-2"> 
+            <div className="flex flex-col lg:flex-row gap-2 items-center ">
               
-              {/* Fiscal Year (Col 1) */}
-              <div className="md:col-span-2 space-y-1.5">
-                <Label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Fiscal Year</Label>
+              
+             
                 <Select value={selectedYear} onValueChange={handleYearChange}>
                   <SelectTrigger className="h-10 w-full rounded-lg border-gray-300 focus:ring-blue-500 focus:border-blue-500 bg-gray-50/50">
                     <Calendar className="h-4 w-4 text-gray-500 mr-2" />
@@ -612,12 +616,11 @@ const salesReport = () => {
                      {availableYears.map(year => <SelectItem key={year} value={year}>{year}</SelectItem>)}
                   </SelectContent>
                 </Select>
-              </div>
+             
 
-              {/* Programme (Col 2) - Admin Only */}
+          
               {showProgrammeFilter && (
-                <div className="md:col-span-2 space-y-1.5">
-                  <Label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Programme</Label>
+                <div className="sm:col-span-1 xl:col-span-2 space-y-1.5">
                   <Select value={activeProgram} onValueChange={handleProgramChange}>
                     <SelectTrigger className="h-10 w-full rounded-lg border-gray-300 focus:ring-blue-500 focus:border-blue-500 bg-gray-50/50">
                       <SelectValue placeholder="Select" />
@@ -630,37 +633,26 @@ const salesReport = () => {
                 </div>
               )}
 
-              {/* Date Range (Col 3-4) */}
-              <div className="md:col-span-3 grid grid-cols-2 gap-2">
-                <div className="space-y-1.5">
-                  <Label className="text-[10px] font-semibold text-gray-500 uppercase">From</Label>
+            
+              
                   <Input
                     id="startDate"
                     type="date"
                     value={dateRange.startDate}
                     onChange={(e) => handleDateRangeChange("startDate", e.target.value)}
-                    className="h-10 text-sm rounded-lg border-gray-300 focus:ring-blue-500 focus:border-blue-500 bg-gray-50/50 pr-12"
+                    className="h-10 w-full min-w-0 text-sm rounded-lg border-gray-300 focus:ring-blue-500 focus:border-blue-500 bg-gray-50/50 pr-2"
                   />
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="text-[10px] font-semibold text-gray-500 uppercase">To</Label>
+                
+                  
                   <Input
                     id="endDate"
                     type="date"
                     value={dateRange.endDate}
                     onChange={(e) => handleDateRangeChange("endDate", e.target.value)}
-                    className="h-10 text-sm rounded-lg border-gray-300 focus:ring-blue-500 focus:border-blue-500 bg-gray-50/50 pr-12"
+                    className="h-10 w-full min-w-0 text-sm rounded-lg border-gray-300 focus:ring-blue-500 focus:border-blue-500 bg-gray-50/50 pr-2"
                   />
-                </div>
-              </div>
-
-              {/* Quick Filters (Col 5) - Dropdown for Quarters */}
-              <div className="md:col-span-5 flex flex-wrap gap-2 items-end justify-end w-full">
-                <div className="flex flex-wrap gap-1.5 w-full md:w-auto">
                   <Button variant="outline" onClick={setWeekFilter} size="sm" className="rounded-lg text-xs h-9 px-3">Week</Button>
                   <Button variant="outline" onClick={setMonthFilter} size="sm" className="rounded-lg text-xs h-9 px-3">Month</Button>
-                  
-                  {/* Quarter Dropdown */}
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button variant="outline" size="sm" className="rounded-lg text-xs h-9 px-3 gap-1">
@@ -673,13 +665,20 @@ const salesReport = () => {
                       <DropdownMenuItem onClick={() => setQFilter(3)}>Q3 (Jul-Sep)</DropdownMenuItem>
                       <DropdownMenuItem onClick={() => setQFilter(4)}>Q4 (Oct-Dec)</DropdownMenuItem>
                     </DropdownMenuContent>
-                  </DropdownMenu>
-
-                  <div className="w-px h-6 bg-gray-300 mx-1 self-center hidden sm:block"></div>
+                  </DropdownMenu>                  
                   
-                  <Button onClick={clearFilters} variant="ghost" size="sm" className="rounded-lg text-xs h-9 px-3 text-red-500 hover:bg-red-50 hover:text-red-600 ml-auto">Reset</Button>
-                </div>
-              </div>
+                  {/* Added type="button" to prevent form submission issues */}
+                  <Button 
+                    type="button"
+                    onClick={clearFilters} 
+                    variant="ghost" 
+                    size="sm" 
+                    className="rounded-lg text-xs h-9 px-3 text-red-500 hover:bg-red-50 hover:text-red-600"
+                  >
+                    Reset
+                  </Button>
+                
+            
             </div>
           </div>
         </div>

@@ -564,24 +564,24 @@ const LivestockFarmersAnalytics = () => {
 
   return (
     <div className="space-y-6 p-1">
-      <div className="flex flex-col md:flex-row justify-between items-start lg:items-center md:items-center gap-4">
-        <h1 className="text-lg font-semibold text-gray-900">Livestock Farmers Dashboard</h1>
+      <div className="flex flex-row md:flex-col lg:flex-col items-start  ">
+        <h1 className="text-md text-gray-900">Livestock Farmers Dashboard</h1>
         
-        <div className="flex flex-col lg:flex-row gap-4 items-end w-full lg:w-auto">
+        
           <Card className="w-full lg:w-auto border-0 shadow-lg bg-white">
+            
             <CardContent className="p-3">
-              <div className="flex flex-col lg:flex-row gap-4 items-center">
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1">
+              <div className="flex flex-col lg:flex-row gap-2 items-center">
+                
+                  
                   
                     <Input
                       type="date"
                       value={dateRange.startDate}
                       onChange={(e) => handleDateRangeChange("startDate", e.target.value)}
-                      className="border-gray-200 focus:border-blue-500 text-sm h-9"
+                      className="border-gray-200 focus:border-blue-500 text-sm h-9 px-8"
                     />
-                  </div>
-                  <div className="space-y-1">
+               
                     
                     <Input
                       type="date"
@@ -589,9 +589,8 @@ const LivestockFarmersAnalytics = () => {
                       onChange={(e) => handleDateRangeChange("endDate", e.target.value)}
                       className="border-gray-200 focus:border-blue-500 text-sm h-9"
                     />
-                  </div>
-                </div>
-                <div className="flex flex-wrap gap-2">
+                  
+          
                   <Button variant="outline" size="sm" onClick={setWeekFilter} className="text-xs h-9">
                     This Week
                   </Button>
@@ -604,7 +603,7 @@ const LivestockFarmersAnalytics = () => {
                   <Button size="sm" onClick={clearFilters} variant="secondary" className="text-xs h-9">
                     Clear
                   </Button>
-                </div>
+                
                  {availablePrograms.length > 0 && (
             <Select value={activeProgram} onValueChange={setActiveProgram}>
               <SelectTrigger className="w-full lg:w-[180px] h-10">
@@ -622,7 +621,7 @@ const LivestockFarmersAnalytics = () => {
           </Card>
 
          
-        </div>
+        
       </div>
 
       <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-3">

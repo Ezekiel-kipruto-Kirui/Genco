@@ -451,7 +451,7 @@ const DashboardOverview = () => {
 
   if (loading) {
     return (
-       <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100/80 p-6 flex items-center justify-center">
+       <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100/80 p-4 sm:p-6 flex items-center justify-center">
          <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
        </div>
     );
@@ -459,17 +459,17 @@ const DashboardOverview = () => {
 
   if (userRole !== 'chief-admin' && programmeOptions.length === 0) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100/80 p-6">
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100/80 p-4 sm:p-6">
         <Card className="max-w-md mx-auto mt-20"><CardHeader><CardTitle>No Access</CardTitle></CardHeader><CardContent><p>You are not assigned to any programmes.</p></CardContent></Card>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100/80 p-6">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100/80 p-4 sm:p-6">
       <div className="max-w-7xl mx-auto space-y-8">
         {/* Header */}
-        <div className="flex justify-between items-center">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-md font-bold text-slate-900">Dashboard Overview</h1>
             {userRole !== 'chief-admin' && (
@@ -547,7 +547,7 @@ const DashboardOverview = () => {
             <div className="space-y-6">
               <div className="bg-white/95 backdrop-blur-sm rounded-2xl shadow-xl overflow-hidden">
                 <div className="px-6 py-4 bg-gradient-to-r from-slate-50 to-slate-100/80 shadow-sm">
-                  <div className="flex items-center justify-between">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div className="flex items-center">
                       <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-500 rounded-lg flex items-center justify-center shadow-lg mr-3"><Activity className="w-4 h-4 text-white" /></div>
                       <h3 className="text-lg font-semibold text-slate-900">Recent Activities</h3>
@@ -561,7 +561,7 @@ const DashboardOverview = () => {
                   {recentActivities.length > 0 ? (
                     <>
                       <ActivityTable activities={recentActivities} />
-                      <div className="flex justify-between items-center pt-6 mt-6 border-t border-slate-200">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between pt-6 mt-6 border-t border-slate-200">
                         <Link to="/dashboard/activities"><Button variant="outline" className="border-slate-300 text-slate-700 hover:bg-slate-50 font-medium px-4 py-2 rounded-xl transition-all duration-200 shadow-sm"><Eye className="h-4 w-4 mr-2" /> View All Activities</Button></Link>
                         {userIsChiefAdmin && (
                           <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
@@ -577,18 +577,18 @@ const DashboardOverview = () => {
                                   </select>
                                 </div>
                               )}
-                              <div className="grid grid-cols-2 gap-4">
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                 <div className="space-y-2"><Label htmlFor="activityName">Activity Name</Label><Input id="activityName" value={activityForm.activityName} onChange={(e) => setActivityForm({...activityForm, activityName: e.target.value})} placeholder="Enter activity name" /></div>
                                 <div className="space-y-2"><Label htmlFor="date">Date</Label><Input id="date" type="date" value={activityForm.date} onChange={(e) => setActivityForm({...activityForm, date: e.target.value})} /></div>
                               </div>
-                              <div className="grid grid-cols-2 gap-4">
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                 <div className="space-y-2"><Label htmlFor="county">County</Label><Input id="county" value={activityForm.county} onChange={(e) => setActivityForm({...activityForm, county: e.target.value})} placeholder="Enter county" /></div>
                                 <div className="space-y-2"><Label htmlFor="subcounty">Subcounty</Label><Input id="subcounty" value={activityForm.subcounty} onChange={(e) => setActivityForm({...activityForm, subcounty: e.target.value})} placeholder="Enter subcounty" /></div>
                               </div>
                               <div className="space-y-2"><Label htmlFor="location">Location</Label><Input id="location" value={activityForm.location} onChange={(e) => setActivityForm({...activityForm, location: e.target.value})} placeholder="Enter location" /></div>
                               <div className="space-y-4 border-t pt-4">
                                 <div className="flex items-center justify-between"><Label>Participants ({participants.length})</Label><span className="text-xs text-slate-500">Add participants with their roles</span></div>
-                                <div className="grid grid-cols-2 gap-3">
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                   <Input placeholder="Participant Name" value={participantForm.name} onChange={(e) => setParticipantForm({...participantForm, name: e.target.value})} />
                                   <div className="flex gap-2">
                                     <Input placeholder="Role" value={participantForm.role} onChange={(e) => setParticipantForm({...participantForm, role: e.target.value})} />
@@ -641,3 +641,4 @@ const DashboardOverview = () => {
 };
 
 export default DashboardOverview;
+

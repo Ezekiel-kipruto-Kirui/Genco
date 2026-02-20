@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+﻿import { useState, useEffect, useCallback, useMemo } from "react";
 import { 
   ref, 
   get, 
@@ -839,19 +839,20 @@ const OnboardingPage = () => {
   const femalePercent = totalGendered > 0 ? Math.round((stats.femaleFarmers / totalGendered) * 100) : 0;
 
   return (
-    <div className="container mx-auto p-6 space-y-6">
+    <div className="w-full p-4 sm:p-6 space-y-6">
       {/* --- Header with Programme Switcher --- */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-xl font-bold">Additional Training</h1>
-          <div className="flex items-center gap-2">
-             <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 font-bold px-3 py-1 w-fit">
+      <div className="grid grid-cols-1 justify-between items-start md:items-center gap-1">
+        <div className="flex flex-row gap-1 items-center">
+          
+          <h2 className="text-xs ">Additional Training</h2>
+             <p className="bg-blue-50 text-[10px] text-blue-700 border-blue-200 font-bold w-fit">
                 {activeProgram || "No Access"} PROJECT
-             </Badge>
-          </div>
+             </p>
+         
         </div>
 
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-col md:flex-row lg:flex-row">
+          <div className="flex flex-row justify-between p-1 gap-8">
           {userIsChiefAdmin && selectedRecords.length > 0 && (
             <Button variant="destructive" onClick={() => setIsBulkDeleteDialogOpen(true)}>
               <Trash2 className="w-4 h-4 mr-2" /> Delete Selected ({selectedRecords.length})
@@ -863,7 +864,7 @@ const OnboardingPage = () => {
           {(userIsChiefAdmin || availablePrograms.length > 1) && (
              <div className="flex justify-end">
                 <Select value={activeProgram} onValueChange={handleProgramChange}>
-                    <SelectTrigger className="w-[200px] border-gray-300 focus:border-blue-500 bg-white">
+                    <SelectTrigger className="w-full sm:w-[200px] border-gray-300 focus:border-blue-500 bg-white">
                         <SelectValue placeholder="Select Programme" />
                     </SelectTrigger>
                     <SelectContent>
@@ -874,7 +875,8 @@ const OnboardingPage = () => {
                 </Select>
              </div>
           )}
-
+          </div>
+<div className="flex flex-row justify-between p-1 gap-8">
           {userIsChiefAdmin && (
              <Button onClick={handleExport} disabled={exportLoading || filteredOnboarding.length === 0}>
               <Download className="w-4 h-4 mr-2" />
@@ -888,17 +890,18 @@ const OnboardingPage = () => {
               <Plus className="w-4 h-4 mr-2" /> Add Training
             </Button>
           )}
-        </div>
+          </div>
+       </div>
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <StatsCard 
           title="TOTAL FARMERS" 
           value={totalGendered} 
           icon={Users} 
           description={
-           <div className="flex items-center gap-1 whitespace-nowrap text-[4px] md:text-xs">
+           <div className="flex items-center gap-1 whitespace-nowrap text-xs">
               <User className="h-3 w-3" />
               <span>Male {stats.maleFarmers} ({malePercent}%)</span>
               <span>|</span>
@@ -907,7 +910,7 @@ const OnboardingPage = () => {
           } 
         />
         <StatsCard title="TRAINING SESSIONS" value={stats.totalOnboarding} icon={GraduationCap} description={`${stats.completedSessions} completed, ${stats.pendingSessions} pending`} />
-        <StatsCard title="SUBCOUNTIES COVERED" value={stats.uniqueSubcounties} icon={MapPin} description="Unique subcounties reached" />
+        {/* <StatsCard title="SUBCOUNTIES COVERED" value={stats.uniqueSubcounties} icon={MapPin} description="Unique subcounties reached" /> */}
         <StatsCard title="COUNTIES COVERED" value={stats.uniqueCounties} icon={Map} description="Unique counties reached" />
       </div>
 
@@ -934,7 +937,7 @@ const OnboardingPage = () => {
 
       {/* Main Content Card */}
       <Card className="shadow-lg border-0 bg-white">
-        <CardHeader className="flex flex-row items-center justify-between">
+        <CardHeader className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div className="flex items-center gap-4">
             <CardTitle>Additional Training Records</CardTitle>
             {userIsChiefAdmin && displayedOnboarding.length > 0 && (
@@ -1240,3 +1243,4 @@ const OnboardingPage = () => {
 };
 
 export default OnboardingPage;
+

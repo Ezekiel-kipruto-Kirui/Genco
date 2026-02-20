@@ -933,14 +933,14 @@ const UserManagementPage = () => {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex md:flex-row flex-col justify-between items-start sm:items-center gap-4">
+      <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4">
         <div>
           <h2 className="text-md font-bold mb-2 bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
             User Management
           </h2>
         </div>
 
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2 w-full xl:w-auto">
           <Button variant="outline" size="sm" onClick={clearAllFilters} className="text-xs border-gray-300 hover:bg-gray-50">
             Clear All Filters
           </Button>
@@ -1080,7 +1080,7 @@ const UserManagementPage = () => {
                 <h3 className="font-semibold text-slate-800 mb-3 flex items-center gap-2">
                   <User className="h-4 w-4" /> Personal Information
                 </h3>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <Label className="text-sm font-medium text-slate-600">Name</Label>
                     <p className="text-slate-900 font-medium">{viewingRecord.name || 'N/A'}</p>
@@ -1133,7 +1133,7 @@ const UserManagementPage = () => {
                 <h3 className="font-semibold text-slate-800 mb-3 flex items-center gap-2">
                   <Calendar className="h-4 w-4" /> Account Information
                 </h3>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <Label className="text-sm font-medium text-slate-600">Created At</Label>
                     <p className="text-slate-900 font-medium">{formatDateTime(viewingRecord.createdAt)}</p>
@@ -1166,7 +1166,7 @@ const UserManagementPage = () => {
               </DialogTitle>
             </DialogHeader>
             <div className="grid gap-4 py-4 max-h-[70vh] overflow-y-auto">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="add-name" className="text-sm font-medium text-slate-700">Name *</Label>
                   <Input id="add-name" value={addForm.name} onChange={(e) => setAddForm(prev => ({ ...prev, name: e.target.value }))} className="bg-white border-slate-300" placeholder="Enter full name" />
@@ -1176,7 +1176,7 @@ const UserManagementPage = () => {
                   <Input id="add-email" type="email" value={addForm.email} onChange={(e) => setAddForm(prev => ({ ...prev, email: e.target.value }))} className="bg-white border-slate-300" placeholder="Enter email address" />
                 </div>
               </div>              
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="add-role" className="text-sm font-medium text-slate-700">Role *</Label>
                   <Select value={addForm.role} onValueChange={(value) => setAddForm(prev => ({ ...prev, role: value }))}>
@@ -1192,7 +1192,7 @@ const UserManagementPage = () => {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="add-password" className="text-sm font-medium text-slate-700">Password *</Label>
                   <Input id="add-password" type="password" value={addForm.password} onChange={(e) => setAddForm(prev => ({ ...prev, password: e.target.value }))} className="bg-white border-slate-300" placeholder="Enter password" />
@@ -1245,7 +1245,7 @@ const UserManagementPage = () => {
               </DialogTitle>
             </DialogHeader>
             <div className="grid gap-4 py-4 max-h-[70vh] overflow-y-auto">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="edit-name" className="text-sm font-medium text-slate-700">Name</Label>
                   <Input id="edit-name" value={editForm.name} onChange={(e) => setEditForm(prev => ({ ...prev, name: e.target.value }))} className="bg-white border-slate-300" />
@@ -1255,7 +1255,7 @@ const UserManagementPage = () => {
                   <Input id="edit-email" value={editForm.email} onChange={(e) => setEditForm(prev => ({ ...prev, email: e.target.value }))} className="bg-white border-slate-300" />
                 </div>
               </div>              
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="edit-role" className="text-sm font-medium text-slate-700">Role</Label>
                   <Select value={editForm.role} onValueChange={(value) => setEditForm(prev => ({ ...prev, role: value }))}>
@@ -1360,3 +1360,4 @@ const UserManagementPage = () => {
 };
 
 export default UserManagementPage;
+

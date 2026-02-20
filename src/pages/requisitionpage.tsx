@@ -960,17 +960,17 @@ const RequisitionsPage = () => {
 
     <div className="space-y-6 px-2 sm:px-4 md:px-0 items-center">
       {/* Header Section */}
-       {!userRole || userRole !== 'hr' && ( <div className="flex justify-between items-center text-sm">
-             <div className="flex flex-row md:flex-row justify-between items-start gap-4 md:items-center">
-       <div className="w-full md:w-auto flex flex-row items-center gap-4">
+       {!userRole || userRole !== 'hr' && ( <div className="flex flex-col gap-4 text-sm">
+             <div className="flex flex-col xl:flex-row xl:justify-between xl:items-end gap-4 w-full">
+       <div className="w-full xl:w-auto flex flex-wrap items-center gap-3">
           <h2 className="text-md font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
             Requisitions
           </h2>
         </div>
          
-         <div className="flex lg:flex-row md:flex-row flex-col gap-4 w-full md:w-auto">
+         <div className="flex flex-col xl:flex-row gap-4 w-full xl:w-auto">
           
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full md:w-auto relative z-50">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full xl:w-auto relative z-50">
               
                 <div className="">
                     <Label className="sr-only">Start Date</Label>
@@ -983,7 +983,7 @@ const RequisitionsPage = () => {
             </div>
             
             {userIsChiefAdmin && userRole !== 'hr' && (
-                <div className="space-y-2 w-full md:w-[180px]">
+                <div className="space-y-2 w-full lg:w-[180px]">
                     <Select value={activeProgram} onValueChange={handleProgramChange} disabled={availablePrograms.length === 0}>
                         <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white h-9 font-bold w-full">
                             <SelectValue placeholder="Select Programme" />
@@ -995,13 +995,13 @@ const RequisitionsPage = () => {
                 </div>
             )}
 
-            <div className="w-full md:w-auto flex justify-end">
-                <Button variant="outline" size="sm" onClick={() => setFilters({ ...filters, search: "", startDate: "", endDate: "", type: "all", status: "all" })} className="h-9 px-6 w-full md:w-auto">
+            <div className="w-full xl:w-auto flex justify-end">
+                <Button variant="outline" size="sm" onClick={() => setFilters({ ...filters, search: "", startDate: "", endDate: "", type: "all", status: "all" })} className="h-9 px-6 w-full xl:w-auto">
                     Clear Filters
                 </Button>
             </div>
           
-        <div className="flex flex-wrap gap-2 w-full md:w-auto mt-2 md:mt-0 justify-end">
+        <div className="flex flex-wrap gap-2 w-full xl:w-auto mt-2 xl:mt-0 justify-end">
           {userRole !== 'hr' && selectedRecords.length > 0 && (
             <Button variant="destructive" size="sm" onClick={() => {}} className="text-xs">
                Delete ({selectedRecords.length})
@@ -1009,12 +1009,12 @@ const RequisitionsPage = () => {
           )}
            
            {userRole === 'hr' && (
-             <Button onClick={handleLogout} variant="outline" size="sm" className="h-9 px-6 w-full md:w-auto text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700">
+             <Button onClick={handleLogout} variant="outline" size="sm" className="h-9 px-6 w-full xl:w-auto text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700">
                <LogOut className="h-4 w-4 mr-2" /> Logout
              </Button>
            )}
            { userRole !== 'hr' && userRole !== 'admin' && (
-             <Button onClick={() => {}} disabled={exportLoading} className="bg-gradient-to-r from-blue-800 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white shadow-md text-xs h-9 px-6 w-full md:w-auto">
+             <Button onClick={() => {}} disabled={exportLoading} className="bg-gradient-to-r from-blue-800 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white shadow-md text-xs h-9 px-6 w-full xl:w-auto">
                 <Download className="h-4 w-4 mr-2" /> Export ({filteredRequisitions.length})
               </Button>
            )}
@@ -1024,16 +1024,16 @@ const RequisitionsPage = () => {
 
               
             </div> )}
-      {userRole === 'hr' && ( <div className="flex justify-between items-center text-sm">
+      {userRole === 'hr' && ( <div className="flex flex-col gap-4 text-sm">
     
-      <div className="flex flex-row md:flex-row justify-between items-center gap-4 md:items-center">
+      <div className="flex flex-col xl:flex-row xl:justify-between xl:items-end gap-4 w-full">
         
-         <div className="w-full md:w-auto flex flex-row items-center gap-4">
+         <div className="w-full xl:w-auto flex flex-wrap items-center gap-3">
           
           <div className="flex flex-row gap-4">
             
-          <div className="flex flex-row gp-4 items-center justify-center">
-            <div className="w-10 rounded-full shaddow-full">
+          <div className="flex flex-row gap-4 items-center justify-center">
+            <div className="w-10 rounded-full shadow-full">
                <img src="/img/logo copy.png" alt="" className="w-full rounded-full" />
             </div>
            
@@ -1050,9 +1050,9 @@ const RequisitionsPage = () => {
           
         </div>
          
-         <div className="flex lg:flex-row md:flex-row flex-col gap-4 w-full md:w-auto">
+         <div className="flex flex-col xl:flex-row gap-4 w-full xl:w-auto">
           
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full md:w-auto relative z-50">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full xl:w-auto relative z-50">
               
                 <div className="">
                     <Label className="sr-only">Start Date</Label>
@@ -1065,7 +1065,7 @@ const RequisitionsPage = () => {
             </div>
             
             {userIsChiefAdmin && userRole !== 'hr' && (
-                <div className="space-y-2 w-full md:w-[180px]">
+                <div className="space-y-2 w-full lg:w-[180px]">
                     <Select value={activeProgram} onValueChange={handleProgramChange} disabled={availablePrograms.length === 0}>
                         <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white h-9 font-bold w-full">
                             <SelectValue placeholder="Select Programme" />
@@ -1077,13 +1077,13 @@ const RequisitionsPage = () => {
                 </div>
             )}
 
-            <div className="w-full md:w-auto flex justify-end">
-                <Button variant="outline" size="sm" onClick={() => setFilters({ ...filters, search: "", startDate: "", endDate: "", type: "all", status: "all" })} className="h-9 px-6 w-full md:w-auto">
+            <div className="w-full xl:w-auto flex justify-end">
+                <Button variant="outline" size="sm" onClick={() => setFilters({ ...filters, search: "", startDate: "", endDate: "", type: "all", status: "all" })} className="h-9 px-6 w-full xl:w-auto">
                     Clear Filters
                 </Button>
             </div>
           
-        <div className="flex flex-wrap gap-2 w-full md:w-auto mt-2 md:mt-0 justify-end">
+        <div className="flex flex-wrap gap-2 w-full xl:w-auto mt-2 xl:mt-0 justify-end">
           {(
             <Button variant="destructive" size="sm" onClick={() => {}} className="text-xs">
                Delete ({selectedRecords.length})
@@ -1091,12 +1091,12 @@ const RequisitionsPage = () => {
           )}
            
            {userRole === 'hr' && (
-             <Button onClick={handleLogout} variant="outline" size="sm" className="h-9 px-6 w-full md:w-auto text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700">
+             <Button onClick={handleLogout} variant="outline" size="sm" className="h-9 px-6 w-full xl:w-auto text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700">
                <LogOut className="h-4 w-4 mr-2" /> Logout
              </Button>
            )}
            { userRole !== 'hr' && (
-             <Button onClick={() => {}} disabled={exportLoading} className="bg-gradient-to-r from-blue-800 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white shadow-md text-xs h-9 px-6 w-full md:w-auto">
+             <Button onClick={() => {}} disabled={exportLoading} className="bg-gradient-to-r from-blue-800 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white shadow-md text-xs h-9 px-6 w-full xl:w-auto">
                 <Download className="h-4 w-4 mr-2" /> Export ({filteredRequisitions.length})
               </Button>
            )}

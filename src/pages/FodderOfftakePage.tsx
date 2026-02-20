@@ -742,7 +742,7 @@ const FodderFarmersPage = () => {
   return (
     <div className="space-y-6">
       {/* Header with Action Buttons */}
-      <div className="flex md:flex-row flex-col justify-between items-start sm:items-center gap-4">
+      <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4">
         <div>
           <h2 className="text-xl font-bold mb-2 bg-gradient-to-r from-green-600 to-emerald-600 bg-clip-text text-transparent">
             Fodder Farmers
@@ -752,7 +752,7 @@ const FodderFarmersPage = () => {
           </div>
         </div>
 
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2 w-full xl:w-auto">
           {selectedRecords.length > 0 && userIsChiefAdmin && (
             <Button 
               variant="destructive" 
@@ -784,9 +784,9 @@ const FodderFarmersPage = () => {
           </Button>
 
           {userIsChiefAdmin ? (
-             <div className="flex justify-end">
+             <div className="flex justify-end w-full sm:w-auto">
                <Select value={activeProgram} onValueChange={handleProgramChange}>
-                  <SelectTrigger className="w-[200px] border-gray-300 focus:border-green-500 bg-white">
+                  <SelectTrigger className="w-full sm:w-[200px] border-gray-300 focus:border-green-500 bg-white">
                       <SelectValue placeholder="Select Programme" />
                   </SelectTrigger>
                   <SelectContent>
@@ -797,7 +797,7 @@ const FodderFarmersPage = () => {
               </Select>
              </div>
           ) : (
-             <div className="w-[200px]"></div>
+             <div className="hidden sm:block sm:w-[200px]"></div>
           )}
 
           {userIsChiefAdmin && (
@@ -1079,7 +1079,7 @@ const FodderFarmersPage = () => {
                   <Sprout className="h-4 w-4" />
                   Basic Information
                 </h3>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <Label className="text-sm font-medium text-slate-600">Date</Label>
                     <p className="text-slate-900 font-medium">{formatDate(viewingRecord.date)}</p>
@@ -1117,7 +1117,7 @@ const FodderFarmersPage = () => {
                   <MapPin className="h-4 w-4" />
                   Land Information
                 </h3>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <Label className="text-sm font-medium text-slate-600">Land Size</Label>
                     <p className="text-slate-900 font-medium">{(viewingRecord.landSize || 0).toLocaleString()} acres</p>
@@ -1135,7 +1135,7 @@ const FodderFarmersPage = () => {
                   <Calendar className="h-4 w-4" />
                   Production Information
                 </h3>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <Label className="text-sm font-medium text-slate-600">Total Bales</Label>
                     <p className="text-slate-900 font-medium text-lg font-bold">
@@ -1163,7 +1163,7 @@ const FodderFarmersPage = () => {
                            <UserCircle className="h-6 w-6 text-gray-400" />
                            <span className="font-bold text-gray-800">{farmer.name || 'Unknown'}</span>
                         </div>
-                        <div className="grid grid-cols-2 gap-4 text-sm pl-9">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm pl-9">
                           <div>
                             <Label className="text-xs font-medium text-slate-500">ID No</Label>
                             <p className="text-slate-800 font-mono">{farmer.idNo || 'N/A'}</p>
@@ -1199,3 +1199,4 @@ const FodderFarmersPage = () => {
 };
 
 export default FodderFarmersPage;
+

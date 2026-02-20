@@ -1593,7 +1593,7 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
 
   return (
     <div className="space-y-6">
-      <div className="flex md:flex-row flex-col justify-between items-start sm:items-center gap-4">
+      <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4">
         <div className="flex flex-col gap-1">
             <h2 className="text-md font-bold mb-2 bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
                 Livestock Offtake Data
@@ -1605,11 +1605,11 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
             </div>
         </div>
         
-        <div className="flex flex-wrap gap-2 items-center">
+        <div className="flex flex-wrap gap-2 items-center w-full xl:w-auto">
             {availableProgramsForSelect.length > 0 && (
                 <div className="mr-4">
                     <Select value={activeProgram} onValueChange={handleProgramChange} disabled={userPermissionsLoading || (!userIsChiefAdmin && availableProgramsForSelect.length === 1)}>
-                        <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white w-[140px]">
+                        <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white w-full sm:w-[140px]">
                             {userPermissionsLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <SelectValue />}
                         </SelectTrigger>
                         <SelectContent>
@@ -1870,7 +1870,7 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
             </DialogTitle>
           </DialogHeader>
           <div className="grid gap-4 py-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="edit-date">Date</Label>
                 <Input id="edit-date" type="date" value={editForm.date} onChange={(e) => setEditForm(prev => ({ ...prev, date: e.target.value }))} className="bg-white border-slate-300" />
@@ -1880,7 +1880,7 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
                 <Input id="edit-farmerName" value={editForm.farmerName} onChange={(e) => setEditForm(prev => ({ ...prev, farmerName: e.target.value }))} className="bg-white border-slate-300" />
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="edit-gender">Gender</Label>
                 <Select value={editForm.gender} onValueChange={(value) => setEditForm(prev => ({ ...prev, gender: value }))}>
@@ -1893,7 +1893,7 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
                 <Input id="edit-idNumber" value={editForm.idNumber} onChange={(e) => setEditForm(prev => ({ ...prev, idNumber: e.target.value }))} className="bg-white border-slate-300" />
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                <div className="space-y-2">
                 <Label htmlFor="edit-phoneNumber">Phone Number</Label>
                 <Input id="edit-phoneNumber" value={editForm.phoneNumber} onChange={(e) => setEditForm(prev => ({ ...prev, phoneNumber: e.target.value }))} className="bg-white border-slate-300" />
@@ -2079,3 +2079,4 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
   );
 };
 export default LivestockOfftakePage;
+

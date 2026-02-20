@@ -883,12 +883,12 @@ const HayStoragePage = () => {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex md:flex-row flex-col justify-between items-start sm:items-center gap-4">
+      <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4">
         <div>
           <h2 className="text-xl font-bold mb-2 bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">Hay Storage Management</h2>
          
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2 w-full xl:w-auto">
           <Button variant="outline" size="sm" onClick={clearAllFilters} className="text-xs border-gray-300 hover:bg-gray-50">Clear All Filters</Button>
           <Button variant="outline" size="sm" onClick={resetToCurrentMonth} className="text-xs border-gray-300 hover:bg-gray-50">This Month</Button>
           <Button onClick={() => setIsAddDialogOpen(true)} className="bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white shadow-md text-xs">
@@ -1011,7 +1011,7 @@ const HayStoragePage = () => {
           <div className="space-y-6 py-4 overflow-y-auto max-h-[60vh]">
             <div className="bg-slate-50 rounded-xl p-4">
               <h3 className="font-semibold text-slate-800 mb-3 flex items-center gap-2"><Building className="h-4 w-4" /> Basic Information *</h3>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2"><Label htmlFor="add-date-planted" className="text-sm font-medium text-slate-600">Date Planted *</Label><Input id="add-date-planted" type="date" value={addingRecord.date_planted as string} onChange={(e) => setAddingRecord(prev => ({ ...prev, date_planted: e.target.value }))} className="border-gray-300 focus:border-blue-500" required /></div>
                 <div className="space-y-2"><Label htmlFor="add-location" className="text-sm font-medium text-slate-600">Location *</Label><Input id="add-location" value={addingRecord.location || ''} onChange={(e) => setAddingRecord(prev => ({ ...prev, location: e.target.value }))} className="border-gray-300 focus:border-blue-500" placeholder="Enter location" required /></div>
                 <div className="space-y-2"><Label htmlFor="add-county" className="text-sm font-medium text-slate-600">County *</Label><Input id="add-county" value={addingRecord.county || ''} onChange={(e) => setAddingRecord(prev => ({ ...prev, county: e.target.value }))} className="border-gray-300 focus:border-blue-500" placeholder="Enter county" required /></div>
@@ -1039,7 +1039,7 @@ const HayStoragePage = () => {
                 <Button type="button" variant="outline" size="sm" onClick={addPastureStage} className="text-xs"><Plus className="h-3 w-3 mr-1" /> Add Stage</Button>
               </div>
               {(addingRecord.pasture_stages || []).map((stage, index) => (
-                <div key={index} className="grid grid-cols-2 gap-4 mb-3 p-3 bg-white rounded-lg border">
+                <div key={index} className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-3 p-3 bg-white rounded-lg border">
                   <div className="space-y-2">
                     <Label htmlFor={`stage-${index}`} className="text-sm font-medium text-slate-600">Stage</Label>
                     <Select value={stage.stage} onValueChange={(value) => updatePastureStage(index, 'stage', value)}>
@@ -1059,7 +1059,7 @@ const HayStoragePage = () => {
             </div>
             <div className="bg-slate-50 rounded-xl p-4">
               <h3 className="font-semibold text-slate-800 mb-3 flex items-center gap-2"><Warehouse className="h-4 w-4" /> Optional Information</h3>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2 col-span-2">
                   <Label htmlFor="add-storage-facility" className="text-sm font-medium text-slate-600">Storage Facility</Label>
                   <Select value={addingRecord.storage_facility} onValueChange={(value) => setAddingRecord(prev => ({ ...prev, storage_facility: value }))}>
@@ -1099,7 +1099,7 @@ const HayStoragePage = () => {
             <div className="space-y-6 py-4 overflow-y-auto max-h-[60vh]">
               <div className="bg-slate-50 rounded-xl p-4">
                 <h3 className="font-semibold text-slate-800 mb-3 flex items-center gap-2"><Building className="h-4 w-4" /> Basic Information</h3>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div><Label className="text-sm font-medium text-slate-600">Date Planted</Label><p className="text-slate-900 font-medium">{formatDate(viewingRecord.date_planted)}</p></div>
                   <div><Label className="text-sm font-medium text-slate-600">Location</Label><p className="text-slate-900 font-medium">{viewingRecord.location || 'N/A'}</p></div>
                   <div><Label className="text-sm font-medium text-slate-600">County</Label><p className="text-slate-900 font-medium">{viewingRecord.county || 'N/A'}</p></div>
@@ -1122,7 +1122,7 @@ const HayStoragePage = () => {
               </div>
               <div className="bg-slate-50 rounded-xl p-4">
                 <h3 className="font-semibold text-slate-800 mb-3 flex items-center gap-2"><Warehouse className="h-4 w-4" /> Storage & Sales Information</h3>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div><Label className="text-sm font-medium text-slate-600">Storage Facility</Label><p className="text-slate-900 font-medium">{viewingRecord.storage_facility || 'N/A'}</p></div>
                   <div><Label className="text-sm font-medium text-slate-600">Bales Harvested & Stored</Label><p className="text-slate-900 font-medium">{viewingRecord.bales_harvested_stored || 0}</p></div>
                   <div><Label className="text-sm font-medium text-slate-600">Bales Sold</Label><p className="text-slate-900 font-medium">{viewingRecord.bales_sold || 0}</p></div>
@@ -1150,7 +1150,7 @@ const HayStoragePage = () => {
             <div className="space-y-6 py-4 overflow-y-auto max-h-[60vh]">
               <div className="bg-slate-50 rounded-xl p-4">
                 <h3 className="font-semibold text-slate-800 mb-3 flex items-center gap-2"><Building className="h-4 w-4" /> Basic Information</h3>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="space-y-2"><Label htmlFor="edit-date-planted" className="text-sm font-medium text-slate-600">Date Planted</Label><Input id="edit-date-planted" type="date" value={formatDateForInput(editingRecord.date_planted)} onChange={(e) => handleEditChange('date_planted', e.target.value)} className="border-gray-300 focus:border-blue-500" /></div>
                   <div className="space-y-2"><Label htmlFor="edit-location" className="text-sm font-medium text-slate-600">Location</Label><Input id="edit-location" value={editingRecord.location || ''} onChange={(e) => handleEditChange('location', e.target.value)} className="border-gray-300 focus:border-blue-500" /></div>
                   <div className="space-y-2"><Label htmlFor="edit-county" className="text-sm font-medium text-slate-600">County</Label><Input id="edit-county" value={editingRecord.county || ''} onChange={(e) => handleEditChange('county', e.target.value)} className="border-gray-300 focus:border-blue-500" /></div>
@@ -1177,7 +1177,7 @@ const HayStoragePage = () => {
                   <Button type="button" variant="outline" size="sm" onClick={addEditPastureStage} className="text-xs"><Plus className="h-3 w-3 mr-1" /> Add New Stage</Button>
                 </div>
                 {editingRecord.pasture_stages.map((stage, index) => (
-                  <div key={index} className="grid grid-cols-2 gap-4 mb-3 p-3 bg-white rounded-lg border">
+                  <div key={index} className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-3 p-3 bg-white rounded-lg border">
                     <div className="space-y-2">
                       <Label htmlFor={`edit-stage-${index}`} className="text-sm font-medium text-slate-600">Stage</Label>
                       <Select value={stage.stage} onValueChange={(value) => updateEditPastureStage(index, 'stage', value)}>
@@ -1197,7 +1197,7 @@ const HayStoragePage = () => {
               </div>
               <div className="bg-slate-50 rounded-xl p-4">
                 <h3 className="font-semibold text-slate-800 mb-3 flex items-center gap-2"><Warehouse className="h-4 w-4" /> Storage & Sales Information</h3>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2 col-span-2">
                     <Label htmlFor="edit-storage-facility" className="text-sm font-medium text-slate-600">Storage Facility</Label>
                     <Select value={editingRecord.storage_facility} onValueChange={(value) => handleEditChange('storage_facility', value)}>
@@ -1284,3 +1284,4 @@ const HayStoragePage = () => {
 };
 
 export default HayStoragePage;
+

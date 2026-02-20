@@ -914,46 +914,44 @@ const LivestockFarmersPage = () => {
 
   return (
     <div className="space-y-6 px-2 sm:px-4 md:px-0">
-      <div className="flex flex-col md:flex-row justify-between items-start gap-4 md:items-center">
+      <div className="flex flex-col justify-between items-start gap-4">
         <div className="w-full md:w-auto">
-          <h2 className="text-md font-bold mb-2 bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+          <h2 className="text-md font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
             Livestock Farmers
           </h2>
           <div className="flex items-center gap-2">
-                       <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 font-bold px-3 py-1 w-fit">
+                       <div className="bg-blue-50 text-blue-700 border-blue-200 text-xs w-fit">
                           {activeProgram || "No Access"} PROJECT
-                       </Badge>
+                       </div>
                     </div>
         </div>
          
-         <div className="flex flex-col md:flex-row md:flex-wrap gap-4 w-full items-end md:justify-end">
+         <div className="flex flex-col md:flex-row lg:flex-row lg:flex-wrap gap-2 w-full ">
             {/* UPDATED DATE INPUTS SECTION */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full md:w-auto md:min-w-[22rem] shrink-0 items-center">
-                <div className="w-full">
-                    <Label className="sr-only">Start Date</Label>
+            <div className="flex flex-col md:flex-row lg:flex-row gap-2 items-center">
+               
+                  
                     <Input 
                         id="startDate" 
                         type="date" 
                         value={filters.startDate} 
                         onChange={(e) => handleFilterChange("startDate", e.target.value)} 
-                        className="border-gray-300 focus:border-blue-500 bg-white h-10 w-full text-sm pr-10 cursor-pointer appearance-auto md:min-w-[170px]" 
+                        className="border-gray-300 focus:border-blue-500 bg-white h-10 w-full text-sm pr-10 cursor-pointer appearance-auto lg:min-w-[170px]" 
                     />
-                </div>
-                <div className="w-full">
-                    <Label className="sr-only">End Date</Label>
+                
+                    
                     <Input 
                         id="endDate" 
                         type="date" 
                         value={filters.endDate} 
                         onChange={(e) => handleFilterChange("endDate", e.target.value)} 
-                        className="border-gray-300 focus:border-blue-500 bg-white h-10 w-full text-sm pr-10 cursor-pointer appearance-auto md:min-w-[170px]" 
+                        className="border-gray-300 focus:border-blue-500 bg-white h-10 w-full text-sm pr-10 cursor-pointer appearance-auto lg:min-w-[170px]" 
                     />
-                </div>
-            </div>
+                
+            
             
             {userIsChiefAdmin ? (
-                <div className="space-y-2 w-full md:w-[180px]">
-                    <Label className="sr-only">Programme</Label>
+                <div className="space-y-2 w-full lg:w-[180px]">
                     <Select value={activeProgram} onValueChange={handleProgramChange} disabled={availablePrograms.length === 0}>
                         <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white h-10 font-bold w-full">
                             <SelectValue placeholder="Select Programme" />
@@ -966,14 +964,14 @@ const LivestockFarmersPage = () => {
                     </Select>
                 </div>
             ) : (
-                <div className="hidden md:block w-[180px]"></div>
+                <div className="hidden lg:block w-[180px]"></div>
             )}
-
-            <div className="w-full md:w-auto flex justify-end">
-                <Button variant="outline" size="sm" onClick={() => setFilters({ ...filters, search: "", startDate: "", endDate: "", county: "all", subcounty: "all", gender: "all", location: "all" })} className="h-10 px-6 w-full md:w-auto">
+</div>
+            <div className="flex flex-row xl:flex-row gap-2 items-center">
+                <Button variant="outline" size="sm" onClick={() => setFilters({ ...filters, search: "", startDate: "", endDate: "", county: "all", subcounty: "all", gender: "all", location: "all" })} className="h-10 px-6 w-full xl:w-auto">
                     Clear Filters
                 </Button>
-            </div>
+            
           
             {selectedRecords.length > 0 && (
             <Button variant="destructive" size="sm" onClick={openBulkDeleteConfirm} disabled={deleteLoading} className="text-xs h-10">
@@ -990,6 +988,7 @@ const LivestockFarmersPage = () => {
                 </Button>
              </>
           )}
+        </div>
         </div>
       </div>
 

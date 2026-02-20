@@ -826,7 +826,7 @@ const PerformanceReport = () => {
                 </Select>
               </div>
 
-              <div className="grid grid-cols-2 gap-4 w-full md:w-auto">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full md:w-auto">
                 <div className="space-y-1">
                   <Label className="text-xs text-gray-500 font-semibold">From</Label>
                   <Input
@@ -834,7 +834,7 @@ const PerformanceReport = () => {
                     type="date"
                     value={dateRange.startDate}
                     onChange={(e) => handleDateRangeChange("startDate", e.target.value)}
-                    className="border-gray-200 text-[5px] focus:border-blue-500 h-9  pr-20"
+                    className="border-gray-200 text-xs focus:border-blue-500 h-9 pr-2"
                   />
                 </div>
                 <div className="space-y-1">
@@ -844,7 +844,7 @@ const PerformanceReport = () => {
                     type="date"
                     value={dateRange.endDate}
                     onChange={(e) => handleDateRangeChange("endDate", e.target.value)}
-                    className="border-gray-200 text-xs focus:border-blue-500 h-9  pr-20"
+                    className="border-gray-200 text-xs focus:border-blue-500 h-9 pr-2"
                   />
                 </div>
               </div>
@@ -1146,3 +1146,4 @@ const PerformanceReport = () => {
 };
 
 export default PerformanceReport;
+

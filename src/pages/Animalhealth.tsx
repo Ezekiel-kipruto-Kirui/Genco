@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+﻿import { useState, useEffect, useMemo, useRef } from "react";
 // REALTIME DATABASE IMPORTS
 import { ref, get, push, remove, update } from "firebase/database";
 import { db } from "@/lib/firebase";
@@ -101,6 +101,66 @@ const VACCINE_OPTIONS = [
 const PROGRAMME_OPTIONS = ["KPMD", "RANGE"];
 const FARMERS_PER_PAGE = 20;
 
+const toFarmerArray = (records: unknown): Record<string, unknown>[] => {
+  if (Array.isArray(records)) {
+    return records.filter((record): record is Record<string, unknown> => Boolean(record) && typeof record === "object");
+  }
+  if (records && typeof records === "object") {
+    return Object.values(records as Record<string, unknown>).filter(
+      (record): record is Record<string, unknown> => Boolean(record) && typeof record === "object"
+    );
+  }
+  return [];
+};
+
+const normalizeFarmers = (
+  records: Record<string, unknown>[],
+  activityId: string,
+  source: "beneficiaries" | "farmers"
+): Beneficiary[] =>
+  records.map((farmer, index) => {
+    const genderRaw = String(farmer.gender || "").toLowerCase();
+    const normalizedGender: "Male" | "Female" = genderRaw.startsWith("f") ? "Female" : "Male";
+    const fallbackId = `${activityId}-${source}-${index}`;
+    const nationalId =
+      farmer.nationalId ||
+      farmer.idNo ||
+      farmer.idNumber ||
+      farmer.ID ||
+      farmer.identifier ||
+      "N/A";
+    const goats = farmer.goats ?? farmer.goat ?? farmer.noOfGoats ?? 0;
+    const sheep = farmer.sheep ?? farmer.sheeps ?? farmer.noOfSheep ?? 0;
+
+    return {
+      id: String(farmer.id || farmer.farmerId || farmer.farmer_id || fallbackId),
+      name: String(farmer.name || farmer.farmerName || farmer.fullName || "N/A"),
+      gender: normalizedGender,
+      nationalId: String(nationalId),
+      goats: Number(goats) || 0,
+      sheep: Number(sheep) || 0,
+    };
+  });
+
+const mergeFarmerRecords = (
+  rawBeneficiaries: Record<string, unknown>[],
+  rawFarmers: Record<string, unknown>[],
+  activityId: string
+): Beneficiary[] => {
+  const merged = [
+    ...normalizeFarmers(rawBeneficiaries, activityId, "beneficiaries"),
+    ...normalizeFarmers(rawFarmers, activityId, "farmers"),
+  ];
+
+  const seen = new Set<string>();
+  return merged.filter((farmer) => {
+    const key = `${farmer.id}|${farmer.nationalId}|${farmer.name}`.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+};
+
 const AnimalHealthPage = () => {
   const [activities, setActivities] = useState<AnimalHealthActivity[]>([]);
   const [loading, setLoading] = useState(true);
@@ -192,23 +252,9 @@ const AnimalHealthPage = () => {
         const activitiesData = Object.keys(data).map((key) => {
           const item = data[key];
           let vaccines: Vaccine[] = [];
-          const rawBeneficiaries = Array.isArray(item.beneficiaries) ? item.beneficiaries : [];
-          const rawFarmers = Array.isArray(item.farmers) ? item.farmers : [];
-          const normalizeFarmers = (records: any[]): Beneficiary[] => records.map((farmer: any, index: number) => {
-            const genderRaw = String(farmer?.gender || "").toLowerCase();
-            const normalizedGender: "Male" | "Female" = genderRaw.startsWith("f") ? "Female" : "Male";
-            return {
-              id: String(farmer?.id || `${key}-farmer-${index}`),
-              name: String(farmer?.name || farmer?.farmerName || "N/A"),
-              gender: normalizedGender,
-              nationalId: String(farmer?.nationalId || farmer?.idNo || farmer?.idNumber || farmer?.ID || "N/A"),
-              goats: Number(farmer?.goats) || 0,
-              sheep: Number(farmer?.sheep) || 0,
-            };
-          });
-          const normalizedBeneficiaries = normalizeFarmers(rawBeneficiaries);
-          const normalizedFarmers = normalizeFarmers(rawFarmers);
-          const beneficiariesForView = normalizedBeneficiaries.length > 0 ? normalizedBeneficiaries : normalizedFarmers;
+          const rawBeneficiaries = toFarmerArray(item.beneficiaries);
+          const rawFarmers = toFarmerArray(item.farmers);
+          const beneficiariesForView = mergeFarmerRecords(rawBeneficiaries, rawFarmers, key);
           
           if (item.vaccines && Array.isArray(item.vaccines)) {
             vaccines = item.vaccines.map((v: any) => ({
@@ -579,10 +625,10 @@ const AnimalHealthPage = () => {
   );
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100/80 p-6">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100/80 p-4 sm:p-6">
       <div className="max-w-7xl mx-auto space-y-6">
         {/* Header */}
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <h1 className="text-xl font-bold text-slate-900">Animal Health Management</h1>
           <Dialog open={isAddDialogOpen} onOpenChange={handleAddDialogOpenChange}>
             <DialogTrigger asChild>
@@ -597,7 +643,7 @@ const AnimalHealthPage = () => {
               {/* ADD FORM CONTENT */}
               <div className="grid gap-6 py-4">
                  {/* Basic Info */}
-                 <div className="grid grid-cols-2 gap-4">
+                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="space-y-2">
                         <Label>Date <span className="text-red-500">*</span></Label>
                         <Input type="date" value={activityForm.date} onChange={(e) => setActivityForm({...activityForm, date: e.target.value})} />
@@ -612,7 +658,7 @@ const AnimalHealthPage = () => {
                         </Select>
                     </div>
                  </div>
-                 <div className="grid grid-cols-3 gap-4">
+                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                     <div className="space-y-2">
                         <Label>County <span className="text-red-500">*</span></Label>
                         <Input value={activityForm.county} onChange={(e) => setActivityForm({...activityForm, county: e.target.value})} />
@@ -628,7 +674,7 @@ const AnimalHealthPage = () => {
                  </div>
                  
                  {/* Beneficiaries Counts - EDITED TO ALLOW INPUT */}
-                 <div className="grid grid-cols-2 gap-4">
+                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="space-y-2">
                         <Label>Male Beneficiaries</Label>
                         <Input 
@@ -650,7 +696,7 @@ const AnimalHealthPage = () => {
                  {/* Vaccines */}
                  <div className="space-y-2">
                     <Label>Vaccines <span className="text-red-500">*</span></Label>
-                    <div className="grid grid-cols-4 gap-2">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
                         {VACCINE_OPTIONS.map((vaccine) => (
                         <div key={vaccine} className="flex items-center space-x-2">
                             <Checkbox id={`vaccine-${vaccine}`} checked={selectedVaccines.includes(vaccine)} onCheckedChange={() => handleVaccineSelection(vaccine)} />
@@ -671,7 +717,7 @@ const AnimalHealthPage = () => {
                         <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel" />
                     </div>
                     {/* Manual Add Form */}
-                    <div className="grid grid-cols-6 gap-2">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
                         <Input placeholder="Name" value={beneficiaryForm.name} onChange={e => setBeneficiaryForm({...beneficiaryForm, name: e.target.value})} className="h-8" />
                         <Select value={beneficiaryForm.gender} onValueChange={(v: any) => setBeneficiaryForm({...beneficiaryForm, gender: v})}>
                             <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
@@ -716,7 +762,7 @@ const AnimalHealthPage = () => {
                         {!showIssueForm && <Button type="button" variant="outline" size="sm" onClick={() => setShowIssueForm(true)}>Add Issue</Button>}
                      </div>
                      {showIssueForm && (
-                         <div className="grid grid-cols-2 gap-2 border p-2 rounded bg-slate-50">
+                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 border p-2 rounded bg-slate-50">
                              <Input placeholder="Issue Name" value={issueForm.name} onChange={e => setIssueForm({...issueForm, name: e.target.value})} />
                              <Input placeholder="Raised By" value={issueForm.raisedBy} onChange={e => setIssueForm({...issueForm, raisedBy: e.target.value})} />
                              <Textarea placeholder="Description" className="col-span-2" value={issueForm.description} onChange={e => setIssueForm({...issueForm, description: e.target.value})} />
@@ -797,17 +843,17 @@ const AnimalHealthPage = () => {
         </div>
 
         {/* Action Buttons & Search */}
-        <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex flex-col md:flex-row justify-between items-center gap-4">
-            <div className="flex items-center gap-2 w-full md:w-auto flex-1">
-                <div className="relative flex-1">
+        <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex flex-col lg:flex-row justify-between items-stretch lg:items-center gap-4">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full lg:w-auto flex-1">
+                <div className="relative flex-1 min-w-0">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-                    <Input placeholder="Search..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="pl-9 max-w-sm" />
+                    <Input placeholder="Search..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="pl-9 w-full sm:max-w-sm" />
                 </div>
-                <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="max-w-[160px]" />
-                <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="max-w-[160px]" />
+                <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="w-full sm:max-w-[160px]" />
+                <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="w-full sm:max-w-[160px]" />
             </div>
             
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
                 {isSelecting && selectedActivities.length > 0 && (
                     <Button variant="destructive" size="sm" onClick={handleDeleteMultipleActivities}>
                         <Trash2 className="h-4 w-4 mr-1" /> Delete Selected ({selectedActivities.length})
@@ -906,7 +952,7 @@ const AnimalHealthPage = () => {
              <DialogHeader><DialogTitle className="text-xl font-semibold text-slate-900">Edit Vaccination Activity</DialogTitle></DialogHeader>
              <div className="grid gap-6 py-4">
                 {/* Same Form Structure as Add Dialog */}
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="space-y-2"><Label>Date</Label><Input type="date" value={activityForm.date} onChange={(e) => setActivityForm({...activityForm, date: e.target.value})} /></div>
                     <div className="space-y-2"><Label>Project</Label>
                         <Select value={activityForm.programme} onValueChange={(v) => setActivityForm({...activityForm, programme: v})}>
@@ -915,14 +961,14 @@ const AnimalHealthPage = () => {
                         </Select>
                     </div>
                 </div>
-                <div className="grid grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                     <div className="space-y-2"><Label>County</Label><Input value={activityForm.county} onChange={(e) => setActivityForm({...activityForm, county: e.target.value})} /></div>
                     <div className="space-y-2"><Label>Subcounty</Label><Input value={activityForm.subcounty} onChange={(e) => setActivityForm({...activityForm, subcounty: e.target.value})} /></div>
                     <div className="space-y-2"><Label>Location</Label><Input value={activityForm.location} onChange={(e) => setActivityForm({...activityForm, location: e.target.value})} /></div>
                 </div>
                 
                 {/* Beneficiaries Counts in Edit - ADDED TO ALLOW MANUAL INPUT */}
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="space-y-2">
                         <Label>Male Beneficiaries</Label>
                         <Input 
@@ -944,7 +990,7 @@ const AnimalHealthPage = () => {
                 {/* Beneficiaries in Edit */}
                 <div className="border p-4 rounded-xl bg-blue-50/30 space-y-2">
                      <Label className="font-semibold text-blue-900">Farmers ({beneficiaries.length})</Label>
-                     <div className="grid grid-cols-5 gap-2">
+                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2">
                         <Input placeholder="Name" value={beneficiaryForm.name} onChange={e => setBeneficiaryForm({...beneficiaryForm, name: e.target.value})} className="h-8" />
                         <Select value={beneficiaryForm.gender} onValueChange={(v: any) => setBeneficiaryForm({...beneficiaryForm, gender: v})}>
                             <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
@@ -1007,7 +1053,7 @@ const AnimalHealthPage = () => {
                             </DialogTitle>
                         </DialogHeader>
                         <div className="grid gap-4 py-4">
-                            <div className="grid grid-cols-2 gap-4 border p-4 rounded-xl bg-slate-50">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 border p-4 rounded-xl bg-slate-50">
                                 <div>
                                     <Label className="text-xs text-slate-500">Date</Label>
                                     <p className="font-semibold">{formatDate(viewingActivity.date)}</p>
@@ -1026,7 +1072,7 @@ const AnimalHealthPage = () => {
                                 </div>
                             </div>
 
-                            <div className="grid grid-cols-3 gap-4 border p-4 rounded-xl bg-green-50">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 border p-4 rounded-xl bg-green-50">
                                 <div className="text-center">
                                     <p className="text-2xl font-bold text-green-700">{getActivityTotalDoses(viewingActivity)}</p>
                                     <p className="text-xs text-green-900">Total Doses</p>
@@ -1045,7 +1091,7 @@ const AnimalHealthPage = () => {
                                 <Label className="text-xs text-slate-500 mb-2 block">Vaccines</Label>
                                 <div className="flex flex-wrap gap-2">
                                     {getActivityVaccines(viewingActivity).map((v, i) => (
-                                        <Badge key={i} className="bg-emerald-100 text-emerald-800">{v.type} ({v.doses})</Badge>
+                                        <Badge key={i} className="bg-emerald-100 text-emerald-800">{v.type}</Badge>
                                     ))}
                                 </div>
                             </div>
@@ -1059,9 +1105,12 @@ const AnimalHealthPage = () => {
                                         <thead>
                                             <tr className="bg-slate-50 border-b border-slate-200">
                                                 <th className="py-2 px-4 text-left font-semibold text-slate-600">#</th>
+                                                
                                                 <th className="py-2 px-4 text-left font-semibold text-slate-600">Name</th>
                                                 <th className="py-2 px-4 text-left font-semibold text-slate-600">Gender</th>
-                                                <th className="py-2 px-4 text-left font-semibold text-slate-600">ID</th>
+                                                <th className="py-2 px-4 text-left font-semibold text-slate-600">National ID</th>
+                                                <th className="py-2 px-4 text-left font-semibold text-slate-600">Goats</th>
+                                                <th className="py-2 px-4 text-left font-semibold text-slate-600">Sheep</th>
                                             </tr>
                                         </thead>
                                         <tbody>
@@ -1069,14 +1118,17 @@ const AnimalHealthPage = () => {
                                                 paginatedViewingFarmers.map((farmer, index) => (
                                                     <tr key={farmer.id || `${farmer.nationalId}-${index}`} className="border-b border-slate-100 last:border-b-0">
                                                         <td className="py-2 px-4 text-slate-600">{(safeViewFarmersPage - 1) * FARMERS_PER_PAGE + index + 1}</td>
+                                                       
                                                         <td className="py-2 px-4 font-medium text-slate-800">{farmer.name || 'N/A'}</td>
                                                         <td className="py-2 px-4 text-slate-700">{farmer.gender || 'N/A'}</td>
                                                         <td className="py-2 px-4 text-slate-700 font-mono">{farmer.nationalId || 'N/A'}</td>
+                                                        <td className="py-2 px-4 text-slate-700">{farmer.goats ?? 0}</td>
+                                                        <td className="py-2 px-4 text-slate-700">{farmer.sheep ?? 0}</td>
                                                     </tr>
                                                 ))
                                             ) : (
                                                 <tr>
-                                                    <td colSpan={4} className="py-4 px-4 text-center text-slate-500">
+                                                    <td colSpan={7} className="py-4 px-4 text-center text-slate-500">
                                                         No farmer details recorded.
                                                     </td>
                                                 </tr>
@@ -1157,3 +1209,4 @@ const AnimalHealthPage = () => {
 };
 
 export default AnimalHealthPage;
+

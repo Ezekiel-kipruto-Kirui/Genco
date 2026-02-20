@@ -726,7 +726,7 @@ const FodderFarmersPage = () => {
   return (
     <div className="space-y-6">
       {/* Header with Action Buttons */}
-      <div className="flex md:flex-row flex-col justify-between items-start sm:items-center gap-4">
+      <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4">
         <div>
           <h2 className="text-xl font-bold mb-2 bg-gradient-to-r from-green-600 to-emerald-600 bg-clip-text text-transparent">Fodder Farmers</h2>
           <div className="flex items-center gap-2 text-sm text-gray-600">
@@ -734,7 +734,7 @@ const FodderFarmersPage = () => {
           </div>
         </div>
 
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2 w-full xl:w-auto">
           {selectedRecords.length > 0 && userIsChiefAdmin && (
             <Button variant="destructive" size="sm" onClick={openDeleteConfirm} disabled={deleteLoading} className="text-xs">
               <Trash2 className="h-4 w-4 mr-2" /> Delete ({selectedRecords.length})
@@ -745,13 +745,13 @@ const FodderFarmersPage = () => {
           <Button variant="outline" size="sm" onClick={resetToCurrentMonth} className="text-xs border-gray-300 hover:bg-gray-50">This Month</Button>
 
           {userIsChiefAdmin ? (
-             <div className="flex justify-end">
+             <div className="flex justify-end w-full sm:w-auto">
                <Select value={activeProgram} onValueChange={handleProgramChange}>
-                  <SelectTrigger className="w-[200px] border-gray-300 focus:border-green-500 bg-white"><SelectValue placeholder="Select Programme" /></SelectTrigger>
+                  <SelectTrigger className="w-full sm:w-[200px] border-gray-300 focus:border-green-500 bg-white"><SelectValue placeholder="Select Programme" /></SelectTrigger>
                   <SelectContent>{availablePrograms.map(p => (<SelectItem key={p} value={p}>{p}</SelectItem>))}</SelectContent>
               </Select>
              </div>
-          ) : <div className="w-[200px]"></div>}
+          ) : <div className="hidden sm:block sm:w-[200px]"></div>}
 
           {userIsChiefAdmin && (
             <>
@@ -991,3 +991,4 @@ const FodderFarmersPage = () => {
 };
 
 export default FodderFarmersPage;
+

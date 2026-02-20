@@ -1309,7 +1309,7 @@ const BoreholePage = () => {
                   <MapPin className="h-4 w-4" />
                   Location Information
                 </h3>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <Label className="text-sm font-medium text-slate-600">Date Recorded</Label>
                     <p className="text-slate-900 font-medium">{formatDate(viewingRecord.date)}</p>
@@ -1335,7 +1335,7 @@ const BoreholePage = () => {
                   <Users className="h-4 w-4" />
                   Usage Information
                 </h3>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <Label className="text-sm font-medium text-slate-600">People Using Water</Label>
                     <p className="text-slate-900 font-medium text-lg font-bold text-blue-700">
@@ -1434,7 +1434,7 @@ const BoreholePage = () => {
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="create-county" className="font-semibold text-gray-700">County</Label>
                 <Input
@@ -1458,7 +1458,7 @@ const BoreholePage = () => {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="create-people" className="font-semibold text-gray-700">People Using Water</Label>
                 <Input
@@ -1604,7 +1604,7 @@ const BoreholePage = () => {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="edit-county" className="font-semibold text-gray-700">County</Label>
                   <Input
@@ -1628,7 +1628,7 @@ const BoreholePage = () => {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="edit-people" className="font-semibold text-gray-700">People Using Water</Label>
                   <Input
@@ -1869,3 +1869,4 @@ const BoreholePage = () => {
 };
 
 export default BoreholePage;
+
