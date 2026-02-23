@@ -62,7 +62,7 @@ const baseMenuItems = [
     subItems: [{ title: "Livestock", url: "/dashboard/livestock-offtake", icon: TrendingUp }],
   },
   {
-    title: "Schedule Activity",
+    title: "Activity Overview",
     icon: Activity,
     url: "/dashboard/activities",
   },

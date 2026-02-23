@@ -774,7 +774,7 @@ const PerformanceReport = () => {
 
         <Card className="w-full md:w-auto border-0 shadow-lg bg-white">
           <CardContent className="p-4">
-            <div className="flex flex-col xl:flex-row gap-4 items-end">
+            <div className="flex flex-colmd:flex-row lg:flex-row xl:flex-row gap-4 items-end">
               
               {/* Year Selector */}
               <div className="w-full md:w-40 space-y-1">
@@ -811,6 +811,7 @@ const PerformanceReport = () => {
               )}
 
               {/* Quarter Selector (Replaces Q1-Q4 Buttons) */}
+              
               <div className="w-full md:w-40 space-y-1">
                 <Label className="text-xs text-gray-500 font-semibold">Quarter</Label>
                 <Select value={selectedQuarter || undefined} onValueChange={handleQuarterChange}>
@@ -825,8 +826,8 @@ const PerformanceReport = () => {
                   </SelectContent>
                 </Select>
               </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full md:w-auto">
+               <Button onClick={clearFilters} variant="ghost" size="sm" className="text-red-500 hover:text-red-600">Reset Filters</Button>
+              <div className="flex flex- gap-2 w-full md:w-auto">
                 <div className="space-y-1">
                   <Label className="text-xs text-gray-500 font-semibold">From</Label>
                   <Input
@@ -847,12 +848,12 @@ const PerformanceReport = () => {
                     className="border-gray-200 text-xs focus:border-blue-500 h-9 pr-2"
                   />
                 </div>
-              </div>
+              
 
-              <div className="flex gap-2 w-full md:w-auto">
+            
                 <Button variant="outline" onClick={setWeekFilter} size="sm">This Week</Button>
                 <Button variant="outline" onClick={setMonthFilter} size="sm">This Month</Button>
-                <Button onClick={clearFilters} variant="ghost" size="sm" className="text-red-500 hover:text-red-600">Reset Filters</Button>
+               
               </div>
             </div>
           </CardContent>

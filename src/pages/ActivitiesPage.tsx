@@ -12,7 +12,6 @@ import { isChiefAdmin } from "@/contexts/authhelper";
 
 import { 
   Users, 
-  MapPin, 
   Plus, 
   Calendar, 
   Eye,
@@ -581,101 +580,82 @@ const ActivitiesPage = () => {
                 ))}
               </div>
             ) : filteredActivities.length > 0 ? (
-              <div className="overflow-x-auto">
-                <table className="w-full">
+              <div className="w-full overflow-x-auto rounded-md">
+                <table className="w-full border-collapse border border-gray-300 text-sm text-left whitespace-nowrap">
                   <thead>
-                    <tr className="bg-gradient-to-r from-slate-50 to-slate-100/80 border-b border-slate-200">
-                      <th className="p-4 text-left font-semibold text-slate-700 text-sm">Activity Name</th>
-                      <th className="p-4 text-left font-semibold text-slate-700 text-sm">Date</th>
-                      <th className="p-4 text-left font-semibold text-slate-700 text-sm">Location</th>
-                      <th className="p-4 text-left font-semibold text-slate-700 text-sm">County</th>
-                      <th className="p-4 text-left font-semibold text-slate-700 text-sm">Participants</th>
-                      <th className="p-4 text-left font-semibold text-slate-700 text-sm">Status</th>
-
-                      <th className="p-4 text-left font-semibold text-slate-700 text-sm">Actions</th>
+                    <tr className="bg-blue-50 text-xs">
+                      <th className="py-3 px-3 font-semibold text-gray-700">Activity Name</th>
+                      <th className="py-3 px-3 font-semibold text-gray-700">Date</th>
+                      <th className="py-3 px-3 font-semibold text-gray-700">Location</th>
+                      <th className="py-3 px-3 font-semibold text-gray-700">County</th>
+                      <th className="py-3 px-3 font-semibold text-gray-700">Participants</th>
+                      <th className="py-3 px-3 font-semibold text-gray-700">Status</th>
+                      <th className="py-3 px-3 font-semibold text-gray-700">Actions</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-100">
+                  <tbody>
                     {filteredActivities.map((activity) => (
-                      <tr 
-                        key={activity.id} 
-                        className="hover:bg-slate-50/50 transition-colors duration-200 group"
+                      <tr
+                        key={activity.id}
+                        className="border-b hover:bg-blue-50 transition-colors group"
                       >
-                        <td className="p-4">
-                          <div className="flex items-center gap-3">
-                            <div className="w-2 h-2 bg-gradient-to-r from-blue-500 to-purple-500 rounded-full"></div>
-                            <span className="font-medium text-slate-900 group-hover:text-blue-600 transition-colors">
-                              {activity.activityName}
-                            </span>
-                          </div>
-                        </td>
-                        <td className="p-4">
-                          <Badge className="bg-blue-100 text-blue-700 border-0 shadow-sm">
-                            {formatDate(activity.date)}
-                          </Badge>
-                        </td>
-                        <td className="p-4">
+                        <td className="py-2 px-3 font-medium text-sm">{activity.activityName}</td>
+                        <td className="py-2 px-3 text-xs text-gray-500">{formatDate(activity.date)}</td>
+                        <td className="py-2 px-3 text-xs">{activity.location}</td>
+                        <td className="py-2 px-3 text-xs">{activity.county}</td>
+                        <td className="py-2 px-3">
                           <div className="flex items-center gap-2">
-                            <MapPin className="h-4 w-4 text-slate-500" />
-                            <span className="text-slate-700">{activity.location}</span>
-                          </div>
-                        </td>
-                        <td className="p-4">
-                          <span className="text-slate-700">{activity.county}</span>
-                        </td>
-                        <td className="p-4">
-                          <div className="flex items-center gap-2">
-                            <Users className="h-4 w-4 text-slate-500" />
-                            <span className="font-semibold text-slate-900 mr-2">{activity.numberOfPersons}</span>
+                            <span className="text-xs font-semibold text-blue-700">{activity.numberOfPersons}</span>
                             <Button
                               variant="ghost"
                               size="sm"
                               onClick={() => openParticipantsDialog(activity.participants || [])}
-                              className="text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded-lg text-xs"
+                              className="h-7 text-xs text-blue-600 hover:bg-blue-50"
                             >
                               View
                             </Button>
                           </div>
                         </td>
-                        <td className="p-4">
-                          {getStatusBadge(activity.status)}
-                        </td>
-                        <td className="p-4">
-                           {userIsChiefAdmin && (<div className="flex gap-2">
-                           
-                            <Button
-                              size="sm"
-                              onClick={() => openEditDialog(activity)}
-                              className="bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white rounded-lg transition-all shadow-sm"
-                            >
-                              <Edit className="h-4 w-4" />
-                            </Button>
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <Button variant="outline" size="sm">
-                                  <MoreVertical className="h-4 w-4" />
-                                </Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end">
-                                <DropdownMenuItem onClick={() => handleStatusChange(activity.id, 'completed')}>
-                                  <Badge className="bg-green-100 text-green-800 mr-2">C</Badge>
-                                  Mark Completed
-                                </DropdownMenuItem>
-                                <DropdownMenuItem onClick={() => handleStatusChange(activity.id, 'pending')}>
-                                  <Badge className="bg-yellow-100 text-yellow-800 mr-2">P</Badge>
-                                  Mark Pending
-                                </DropdownMenuItem>
-                                <DropdownMenuItem 
-                                  onClick={() => handleDeleteActivity(activity.id)}
-                                  className="text-red-600"
-                                >
-                                  <Trash2 className="h-4 w-4 mr-2" />
-                                  Delete
-                                </DropdownMenuItem>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          </div>)}
-                          
+                        <td className="py-2 px-3">{getStatusBadge(activity.status)}</td>
+                        <td className="py-2 px-3">
+                          {userIsChiefAdmin ? (
+                            <div className="flex gap-1">
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                onClick={() => openEditDialog(activity)}
+                                className="h-7 w-7 text-blue-600 hover:bg-blue-50"
+                              >
+                                <Edit className="h-3.5 w-3.5" />
+                              </Button>
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button variant="ghost" size="icon" className="h-7 w-7 text-slate-700 hover:bg-slate-100">
+                                    <MoreVertical className="h-3.5 w-3.5" />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end">
+                                  <DropdownMenuItem onClick={() => handleStatusChange(activity.id, 'completed')}>
+                                    <Badge className="bg-green-100 text-green-800 mr-2">C</Badge>
+                                    Mark Completed
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem onClick={() => handleStatusChange(activity.id, 'pending')}>
+                                    <Badge className="bg-yellow-100 text-yellow-800 mr-2">P</Badge>
+                                    Mark Pending
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    onClick={() => handleDeleteActivity(activity.id)}
+                                    className="text-red-600"
+                                  >
+                                    <Trash2 className="h-4 w-4 mr-2" />
+                                    Delete
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            </div>
+                          ) : (
+                            <span className="text-xs text-gray-400">-</span>
+                          )}
                         </td>
                       </tr>
                     ))}

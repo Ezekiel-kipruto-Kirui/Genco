@@ -187,6 +187,21 @@ const formatDate = (date: any): string => {
   }) : 'N/A';
 };
 
+const formatDateForExcel = (date: any): string => {
+  const parsedDate = parseDate(date);
+  if (!parsedDate) return "";
+
+  const month = String(parsedDate.getMonth() + 1).padStart(2, "0");
+  const day = String(parsedDate.getDate()).padStart(2, "0");
+  const year = parsedDate.getFullYear();
+  return `${month}/${day}/${year}`;
+};
+
+const escapeCsvCell = (value: unknown): string => {
+  const stringValue = value === null || value === undefined ? "" : String(value);
+  return `"${stringValue.replace(/"/g, '""')}"`;
+};
+
 const formatDateToLocal = (date: Date): string =>
   `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 
@@ -289,29 +304,27 @@ const toBoolean = (value: unknown): boolean => {
 };
 
 const normalizeStatusFlags = (record: Pick<Borehole, "drilled" | "equipped" | "rehabilitated">) => {
-  if (record.drilled) {
-    return { drilled: true, rehabilitated: false, equipped: false };
-  }
-  if (record.rehabilitated) {
-    return { drilled: false, rehabilitated: true, equipped: false };
-  }
-  if (record.equipped) {
-    return { drilled: false, rehabilitated: false, equipped: true };
-  }
-  return { drilled: false, rehabilitated: false, equipped: false };
+  return {
+    drilled: Boolean(record.drilled),
+    equipped: Boolean(record.equipped),
+    rehabilitated: Boolean(record.rehabilitated),
+  };
 };
 
-const getRecordStatus = (record: Borehole): { label: string; className: string } => {
+const getRecordStatuses = (record: Borehole): Array<{ key: string; label: string; className: string }> => {
+  const statuses: Array<{ key: string; label: string; className: string }> = [];
+
   if (record.drilled) {
-    return { label: "Drilled", className: "bg-green-100 text-green-800" };
-  }
-  if (record.rehabilitated) {
-    return { label: "Rehabilitated", className: "bg-orange-100 text-orange-800" };
+    statuses.push({ key: "drilled", label: "Drilled", className: "bg-green-100 text-green-800" });
   }
   if (record.equipped) {
-    return { label: "Equipped", className: "bg-blue-100 text-blue-800" };
+    statuses.push({ key: "equipped", label: "Equipped", className: "bg-blue-100 text-blue-800" });
   }
-  return { label: "N/A", className: "bg-gray-100 text-gray-800" };
+  if (record.rehabilitated) {
+    statuses.push({ key: "rehabilitated", label: "Rehabilitated", className: "bg-orange-100 text-orange-800" });
+  }
+
+  return statuses;
 };
 
 const displayPeopleValue = (people: string | number | undefined): string => {
@@ -874,22 +887,31 @@ const BoreholePage = () => {
         return;
       }
 
-      const csvData = filteredBoreholes.map(record => [
-        formatDate(record.date),
-        record.location || 'N/A',
-        record.county || 'N/A',       // Added County
-        record.subcounty || 'N/A',    // Added Sub-County
-        displayPeopleValue(record.people),
-        safeWaterToInteger(record.waterUsed).toString(),
-        getRecordStatus(record).label
-      ]);
+      const csvData = filteredBoreholes.map(record => {
+        const statusLabels = getRecordStatuses(record).map(status => status.label).join(', ') || "N/A";
+
+        return [
+          formatDateForExcel(record.date),
+          record.location || 'N/A',
+          record.county || 'N/A',       // Added County
+          record.subcounty || 'N/A',    // Added Sub-County
+          displayPeopleValue(record.people),
+          safeWaterToInteger(record.waterUsed).toString(),
+          statusLabels
+        ];
+      });
 
       const headers = ['Date', 'Borehole Location', 'County', 'Sub-County', 'People Using Water', 'Water Used', 'Status'];
-      const csvContent = [headers, ...csvData]
-        .map(row => row.map(field => `"${field}"`).join(','))
-        .join('\n');
+      const csvContent = [
+        headers.map(escapeCsvCell).join(','),
+        ...csvData.map(row =>
+          row
+            .map((field, index) => (index === 0 ? String(field ?? "") : escapeCsvCell(field)))
+            .join(',')
+        )
+      ].join('\n');
 
-      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const blob = new Blob([`\uFEFF${csvContent}`], { type: 'text/csv;charset=utf-8;' });
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
@@ -958,6 +980,11 @@ const BoreholePage = () => {
     setEditingRecord(record);
     setIsEditDialogOpen(true);
   };
+
+  const viewingRecordStatuses = useMemo(
+    () => (viewingRecord ? getRecordStatuses(viewingRecord) : []),
+    [viewingRecord]
+  );
 
   // Memoized values
   const currentPageRecords = useMemo(getCurrentPageRecords, [getCurrentPageRecords]);
@@ -1045,61 +1072,71 @@ const BoreholePage = () => {
   ), [filters, handleSearch, handleFilterChange]);
 
   const TableRow = useCallback(({ record }: { record: Borehole }) => {
-    const status = getRecordStatus(record);
+    const statuses = getRecordStatuses(record);
 
     return (
-      <tr className="border-b hover:bg-blue-50 transition-colors duration-200 group text-sm">
-        <td className="py-3 px-4">
+      <tr className="border-b hover:bg-blue-50 transition-colors group">
+        <td className="py-2 px-3">
           <Checkbox
             checked={selectedRecords.includes(record.id)}
             onCheckedChange={() => handleSelectRecord(record.id)}
           />
         </td>
-        <td className="py-3 px-4">{formatDate(record.date)}</td>
-        <td className="py-3 px-4 font-medium">{record.location || 'N/A'}</td>
-        <td className="py-3 px-4 text-gray-600">{record.county || '-'}</td> {/* Added County */}
-        <td className="py-3 px-4 text-gray-600">{record.subcounty || '-'}</td> {/* Added Sub-County */}
-        <td className="py-3 px-4">
-          <span className="font-bold text-blue-700">{displayPeopleValue(record.people)}</span>
+        <td className="py-2 px-3 text-xs text-gray-500">{formatDate(record.date)}</td>
+        <td className="py-2 px-3 font-medium text-sm">{record.location || 'N/A'}</td>
+        <td className="py-2 px-3 text-xs">{record.county || '-'}</td> {/* Added County */}
+        <td className="py-2 px-3 text-xs">{record.subcounty || '-'}</td> {/* Added Sub-County */}
+        <td className="py-2 px-3">
+          <span className="text-xs font-semibold text-blue-700">{displayPeopleValue(record.people)}</span>
         </td>
-        <td className="py-3 px-4">
-          <span className="font-bold text-cyan-700">{safeWaterToInteger(record.waterUsed)} L</span>
+        <td className="py-2 px-3">
+          <span className="text-xs font-semibold text-cyan-700">{safeWaterToInteger(record.waterUsed)} L</span>
         </td>
-        <td className="py-3 px-4">
-          <Badge variant="secondary" className={`${status.className} w-fit`}>
-            {status.label}
-          </Badge>
+        <td className="py-2 px-3">
+          <div className="flex flex-wrap gap-1">
+            {statuses.length > 0 ? (
+              statuses.map(status => (
+                <Badge key={status.key} variant="secondary" className={`${status.className} w-fit text-[10px]`}>
+                  {status.label}
+                </Badge>
+              ))
+            ) : (
+              <Badge variant="secondary" className="bg-gray-100 text-gray-800 w-fit text-[10px]">
+                N/A
+              </Badge>
+            )}
+          </div>
         </td>
-        <td className="py-3 px-4">
-          <div className="flex gap-2">
+        <td className="py-2 px-3">
+          <div className="flex gap-1">
             <Button
-              variant="outline"
-              size="sm"
+              variant="ghost"
+              size="icon"
               onClick={() => openViewDialog(record)}
-              className="h-8 w-8 p-0 hover:bg-blue-50 hover:text-blue-600 border-blue-200"
+              className="h-7 w-7 text-green-600 hover:bg-green-50"
             >
-              <Eye className="h-4 w-4 text-blue-500" />
+              <Eye className="h-3.5 w-3.5" />
             </Button>
             {userIsChiefAdmin && (
               <>
                 <Button
-                  variant="outline"
-                  size="sm"
+                  variant="ghost"
+                  size="icon"
                   onClick={() => openEditDialog(record)}
-                  className="h-8 w-8 p-0 hover:bg-green-50 hover:text-green-600 border-green-200"
+                  className="h-7 w-7 text-blue-600 hover:bg-blue-50"
                 >
-                  <Edit className="h-4 w-4 text-green-500" />
+                  <Edit className="h-3.5 w-3.5" />
                 </Button>
                 <Button
-                  variant="outline"
-                  size="sm"
+                  variant="ghost"
+                  size="icon"
                   onClick={() => {
                     setSelectedRecords([record.id]);
                     setIsDeleteDialogOpen(true);
                   }}
-                  className="h-8 w-8 p-0 hover:bg-red-50 hover:text-red-600 border-red-200"
+                  className="h-7 w-7 text-red-600 hover:bg-red-50"
                 >
-                  <Trash2 className="h-4 w-4 text-red-500" />
+                  <Trash2 className="h-3.5 w-3.5" />
                 </Button>
               </>
             )}
@@ -1231,23 +1268,23 @@ const BoreholePage = () => {
           ) : (
             <>
               <div className="w-full overflow-x-auto rounded-md">
-                <table className="w-full border-collapse border border-gray-300 text-sm text-left">
-                  <thead className="rounded">
-                    <tr className="bg-blue-100">
-                      <th className="py-3 px-4">
+                <table className="w-full border-collapse border border-gray-300 text-sm text-left whitespace-nowrap">
+                  <thead>
+                    <tr className="bg-blue-50 text-xs">
+                      <th className="py-3 px-3">
                         <Checkbox
                           checked={selectedRecords.length === currentPageRecords.length && currentPageRecords.length > 0}
                           onCheckedChange={handleSelectAll}
                         />
                       </th>
-                      <th className="py-3 px-4 font-medium text-gray-600">Date</th>
-                      <th className="py-3 px-4 font-medium text-gray-600">Borehole Location</th>
-                      <th className="py-3 px-4 font-medium text-gray-600">County</th> {/* Added Header */}
-                      <th className="py-3 px-4 font-medium text-gray-600">Sub-County</th> {/* Added Header */}
-                      <th className="py-3 px-4 font-medium text-gray-600">People</th>
-                      <th className="py-3 px-4 font-medium text-gray-600">Water Used</th>
-                      <th className="py-3 px-4 font-medium text-gray-600">Status</th>
-                      <th className="py-3 px-4 font-medium text-gray-600">Actions</th>
+                      <th className="py-3 px-3 font-semibold text-gray-700">Date</th>
+                      <th className="py-3 px-3 font-semibold text-gray-700">Borehole Location</th>
+                      <th className="py-3 px-3 font-semibold text-gray-700">County</th> {/* Added Header */}
+                      <th className="py-3 px-3 font-semibold text-gray-700">Sub-County</th> {/* Added Header */}
+                      <th className="py-3 px-3 font-semibold text-gray-700">People</th>
+                      <th className="py-3 px-3 font-semibold text-gray-700">Water Used</th>
+                      <th className="py-3 px-3 font-semibold text-gray-700">Status</th>
+                      <th className="py-3 px-3 font-semibold text-gray-700">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1259,9 +1296,9 @@ const BoreholePage = () => {
               </div>
 
               {/* Pagination */}
-              <div className="flex items-center justify-between p-4 border-t bg-gray-50">
+              <div className="flex flex-col sm:flex-row items-center justify-between p-4 border-t bg-gray-50 gap-4">
                 <div className="text-sm text-muted-foreground">
-                  {filteredBoreholes.length} total records • {currentPageRecords.length} on this page
+                  {filteredBoreholes.length} total records • Page {pagination.page} of {pagination.totalPages}
                 </div>
                 <div className="flex gap-2">
                   <Button
@@ -1360,9 +1397,19 @@ const BoreholePage = () => {
                 <div className="grid grid-cols-1 gap-4">
                   <div>
                     <Label className="text-sm font-medium text-slate-600 mb-1 block">Status</Label>
-                    <Badge variant="secondary" className={getRecordStatus(viewingRecord).className}>
-                      {getRecordStatus(viewingRecord).label}
-                    </Badge>
+                    <div className="flex flex-wrap gap-2">
+                      {viewingRecordStatuses.length > 0 ? (
+                        viewingRecordStatuses.map(status => (
+                          <Badge key={status.key} variant="secondary" className={status.className}>
+                            {status.label}
+                          </Badge>
+                        ))
+                      ) : (
+                        <Badge variant="secondary" className="bg-gray-100 text-gray-800">
+                          N/A
+                        </Badge>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1492,9 +1539,7 @@ const BoreholePage = () => {
                   onCheckedChange={(checked) =>
                     setNewBorehole(prev => ({
                       ...prev,
-                      drilled: checked as boolean,
-                      equipped: checked ? false : prev.equipped,
-                      rehabilitated: checked ? false : prev.rehabilitated
+                      drilled: checked === true
                     }))
                   }
                 />
@@ -1508,9 +1553,7 @@ const BoreholePage = () => {
                   onCheckedChange={(checked) =>
                     setNewBorehole(prev => ({
                       ...prev,
-                      equipped: checked as boolean,
-                      drilled: checked ? false : prev.drilled,
-                      rehabilitated: checked ? false : prev.rehabilitated
+                      equipped: checked === true
                     }))
                   }
                 />
@@ -1524,13 +1567,11 @@ const BoreholePage = () => {
                   onCheckedChange={(checked) =>
                     setNewBorehole(prev => ({
                       ...prev,
-                      rehabilitated: checked as boolean,
-                      drilled: checked ? false : prev.drilled,
-                      equipped: checked ? false : prev.equipped
+                      rehabilitated: checked === true
                     }))
                   }
                 />
-                <Label htmlFor="create-rehabilitated" className="font-semibold text-gray-700">Maintained</Label>
+                <Label htmlFor="create-rehabilitated" className="font-semibold text-gray-700">Rehabilitated</Label>
               </div>
             </div>
           </div>
@@ -1664,9 +1705,7 @@ const BoreholePage = () => {
                         prev
                           ? {
                               ...prev,
-                              drilled: checked as boolean,
-                              equipped: checked ? false : prev.equipped,
-                              rehabilitated: checked ? false : prev.rehabilitated
+                              drilled: checked === true
                             }
                           : null
                       )
@@ -1684,9 +1723,7 @@ const BoreholePage = () => {
                         prev
                           ? {
                               ...prev,
-                              equipped: checked as boolean,
-                              drilled: checked ? false : prev.drilled,
-                              rehabilitated: checked ? false : prev.rehabilitated
+                              equipped: checked === true
                             }
                           : null
                       )
@@ -1704,15 +1741,13 @@ const BoreholePage = () => {
                         prev
                           ? {
                               ...prev,
-                              rehabilitated: checked as boolean,
-                              drilled: checked ? false : prev.drilled,
-                              equipped: checked ? false : prev.equipped
+                              rehabilitated: checked === true
                             }
                           : null
                       )
                     }
                   />
-                  <Label htmlFor="edit-rehabilitated" className="font-semibold text-gray-700">Maintained</Label>
+                  <Label htmlFor="edit-rehabilitated" className="font-semibold text-gray-700">Rehabilitated</Label>
                 </div>
               </div>
             </div>

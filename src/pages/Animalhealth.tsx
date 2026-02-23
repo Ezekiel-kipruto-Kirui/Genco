@@ -1105,7 +1105,7 @@ const AnimalHealthPage = () => {
                                         <thead>
                                             <tr className="bg-slate-50 border-b border-slate-200">
                                                 <th className="py-2 px-4 text-left font-semibold text-slate-600">#</th>
-                                                
+                                                <th className="py-2 px-4 text-left font-semibold text-slate-600">Farmer ID</th>
                                                 <th className="py-2 px-4 text-left font-semibold text-slate-600">Name</th>
                                                 <th className="py-2 px-4 text-left font-semibold text-slate-600">Gender</th>
                                                 <th className="py-2 px-4 text-left font-semibold text-slate-600">National ID</th>
@@ -1118,7 +1118,7 @@ const AnimalHealthPage = () => {
                                                 paginatedViewingFarmers.map((farmer, index) => (
                                                     <tr key={farmer.id || `${farmer.nationalId}-${index}`} className="border-b border-slate-100 last:border-b-0">
                                                         <td className="py-2 px-4 text-slate-600">{(safeViewFarmersPage - 1) * FARMERS_PER_PAGE + index + 1}</td>
-                                                       
+                                                        <td className="py-2 px-4 text-slate-700 font-mono">{farmer.id || 'N/A'}</td>
                                                         <td className="py-2 px-4 font-medium text-slate-800">{farmer.name || 'N/A'}</td>
                                                         <td className="py-2 px-4 text-slate-700">{farmer.gender || 'N/A'}</td>
                                                         <td className="py-2 px-4 text-slate-700 font-mono">{farmer.nationalId || 'N/A'}</td>

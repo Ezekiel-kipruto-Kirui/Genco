@@ -150,6 +150,21 @@ const formatDate = (date: any): string => {
   }) : 'N/A';
 };
 
+const formatDateForExcel = (date: any): string => {
+  const parsedDate = parseDate(date);
+  if (!parsedDate) return "";
+
+  const month = String(parsedDate.getMonth() + 1).padStart(2, "0");
+  const day = String(parsedDate.getDate()).padStart(2, "0");
+  const year = parsedDate.getFullYear();
+  return `${month}/${day}/${year}`;
+};
+
+const escapeCsvCell = (value: unknown): string => {
+  const stringValue = value === null || value === undefined ? "" : String(value);
+  return `"${stringValue.replace(/"/g, '""')}"`;
+};
+
 const getCurrentMonthDates = () => {
   const now = new Date();
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -843,10 +858,10 @@ const LivestockFarmersPage = () => {
         f.vaccines.join('; '), 
         f.programme, 
         f.username, f.username, 
-        formatDate(f.createdAt),
+        formatDateForExcel(f.createdAt),
         f.dewormed ? 'Yes' : 'No',
-        f.dewormingDate || '',
-        f.vaccinationDate || '',
+        formatDateForExcel(f.dewormingDate),
+        formatDateForExcel(f.vaccinationDate),
         f.aggregationGroup || '',
         f.bucksServed || '',
         f.femaleBreeds || '',
@@ -856,8 +871,16 @@ const LivestockFarmersPage = () => {
         f.ageDistribution?.['8+'] || ''
       ]);
 
-      const csvContent = [headers, ...csvData].map(row => row.map(cell => `"${cell}"`).join(',')).join('\n');
-      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const dateColumns = new Set([19, 21, 22]);
+      const csvContent = [
+        headers.map(escapeCsvCell).join(','),
+        ...csvData.map(row =>
+          row
+            .map((cell, index) => (dateColumns.has(index) ? String(cell ?? "") : escapeCsvCell(cell)))
+            .join(',')
+        )
+      ].join('\n');
+      const blob = new Blob([`\uFEFF${csvContent}`], { type: 'text/csv;charset=utf-8;' });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
@@ -926,7 +949,7 @@ const LivestockFarmersPage = () => {
                     </div>
         </div>
          
-         <div className="flex flex-col md:flex-row lg:flex-row lg:flex-wrap gap-2 w-full ">
+         <div className="flex flex-col md:flex-row xl:flex-row lg:flex-row gap-2 w-full ">
             {/* UPDATED DATE INPUTS SECTION */}
             <div className="flex flex-col md:flex-row lg:flex-row gap-2 items-center">
                
@@ -936,7 +959,7 @@ const LivestockFarmersPage = () => {
                         type="date" 
                         value={filters.startDate} 
                         onChange={(e) => handleFilterChange("startDate", e.target.value)} 
-                        className="border-gray-300 focus:border-blue-500 bg-white h-10 w-full text-sm pr-10 cursor-pointer appearance-auto lg:min-w-[170px]" 
+                        className="border-gray-300 focus:border-blue-500 bg-white w-full text-sm pr-6 cursor-pointer appearance-auto" 
                     />
                 
                     
@@ -945,7 +968,7 @@ const LivestockFarmersPage = () => {
                         type="date" 
                         value={filters.endDate} 
                         onChange={(e) => handleFilterChange("endDate", e.target.value)} 
-                        className="border-gray-300 focus:border-blue-500 bg-white h-10 w-full text-sm pr-10 cursor-pointer appearance-auto lg:min-w-[170px]" 
+                        className="border-gray-300 focus:border-blue-500 bg-white w-full text-sm pr-6 cursor-pointer appearance-auto " 
                     />
                 
             

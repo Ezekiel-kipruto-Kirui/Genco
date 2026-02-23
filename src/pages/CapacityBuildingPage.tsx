@@ -111,6 +111,21 @@ const formatDate = (date: any): string => {
   }) : 'N/A';
 };
 
+const formatDateForExcel = (date: any): string => {
+  const parsedDate = parseDate(date);
+  if (!parsedDate) return "";
+
+  const month = String(parsedDate.getMonth() + 1).padStart(2, "0");
+  const day = String(parsedDate.getDate()).padStart(2, "0");
+  const year = parsedDate.getFullYear();
+  return `${month}/${day}/${year}`;
+};
+
+const escapeCsvCell = (value: unknown): string => {
+  const stringValue = value === null || value === undefined ? "" : String(value);
+  return `"${stringValue.replace(/"/g, '""')}"`;
+};
+
 const getCurrentMonthDates = () => {
   const now = new Date();
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(),1);
@@ -653,12 +668,12 @@ const CapacityBuildingPage = () => {
       if (filteredRecords.length === 0) return;
 
       const csvData = filteredRecords.map(r => [
-        formatDate(r.createdAt || r.rawTimestamp),
+        formatDateForExcel(r.createdAt || r.rawTimestamp),
         r.topicTrained || r.Modules || 'N/A',
         r.county || r.region || 'N/A',
         r.subcounty || r.location || 'N/A',
-        r.startDate || 'N/A',
-        r.endDate || 'N/A',
+        formatDateForExcel(r.startDate),
+        formatDateForExcel(r.endDate),
         r.totalFarmers || 0,
         r.fieldOfficer || r.username || 'N/A', // Exporting Officer name instead of count
         r.subcounty || 'N/A', // Exporting Subcounty name instead of count
@@ -666,11 +681,17 @@ const CapacityBuildingPage = () => {
         r.programme || activeProgram
       ]);
 
-      const csvContent = [EXPORT_HEADERS, ...csvData]
-        .map(row => row.map(f => `"${f}"`).join(','))
-        .join('\n');
+      const dateColumns = new Set([0, 4, 5]);
+      const csvContent = [
+        EXPORT_HEADERS.map(escapeCsvCell).join(','),
+        ...csvData.map(row =>
+          row
+            .map((field, index) => (dateColumns.has(index) ? String(field ?? "") : escapeCsvCell(field)))
+            .join(',')
+        ),
+      ].join('\n');
 
-      const blob = new Blob([csvContent], { type: 'text/csv' });
+      const blob = new Blob([`\uFEFF${csvContent}`], { type: 'text/csv;charset=utf-8;' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -816,39 +837,69 @@ const CapacityBuildingPage = () => {
             <div className="text-center py-12 text-muted-foreground">{activeProgram ? "No records found" : "You do not have access to any programme data."}</div>
           ) : (
             <>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm text-left border-collapse">
-                  <thead className="bg-blue-100">
-                    <tr>
-                      <th className="p-4"><Checkbox checked={selectedRecords.length === currentPageRecords.length} onCheckedChange={handleSelectAll} /></th>
-                      <th className="p-4">Date</th>
-                      <th className="p-4">Topic/Module</th>
-                      <th className="p-4">County</th>
-                      <th className="p-4">Sub County</th>
-                      <th className="p-4">Village</th>
-                      <th className="p-4">Farmers</th>
-                      <th className="p-4">Officer</th>
-                      <th className="p-4">Actions</th>
+              <div className="w-full overflow-x-auto rounded-md">
+                <table className="w-full border-collapse border border-gray-300 text-sm text-left whitespace-nowrap">
+                  <thead>
+                    <tr className="bg-blue-50 text-xs">
+                      <th className="py-3 px-3">
+                        <Checkbox
+                          checked={selectedRecords.length === currentPageRecords.length && currentPageRecords.length > 0}
+                          onCheckedChange={handleSelectAll}
+                        />
+                      </th>
+                      <th className="py-3 px-3 font-semibold text-gray-700">Date</th>
+                      <th className="py-3 px-3 font-semibold text-gray-700">Topic/Module</th>
+                      <th className="py-3 px-3 font-semibold text-gray-700">County</th>
+                      <th className="py-3 px-3 font-semibold text-gray-700">Sub County</th>
+                      <th className="py-3 px-3 font-semibold text-gray-700">Village</th>
+                      <th className="py-3 px-3 font-semibold text-gray-700">Farmers</th>
+                      <th className="py-3 px-3 font-semibold text-gray-700">Officer</th>
+                      <th className="py-3 px-3 font-semibold text-gray-700">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
                     {currentPageRecords.map((record) => (
-                      <tr key={record.id} className="border-b hover:bg-blue-50">
-                        <td className="p-4"><Checkbox checked={selectedRecords.includes(record.id)} onCheckedChange={() => handleSelectRecord(record.id)} /></td>
-                        <td className="p-4">{formatDate(record.createdAt || record.rawTimestamp)}</td>
-                        <td className="p-4 font-medium">{record.topicTrained || record.Modules || 'N/A'}</td>
-                        <td className="p-4">{record.county || 'N/A'}</td>
-                        <td className="p-4">{record.subcounty || 'N/A'}</td>
-                        <td className="p-4">{ record.location || 'N/A'}</td>
-                        <td className="p-4"><Badge variant="outline">{record.totalFarmers || 0}</Badge></td>
-                        <td className="p-4 text-gray-600">{record.fieldOfficer || record.username || 'N/A'}</td>
-                        <td className="p-4">
-                          <div className="flex gap-2">
-                            <Button size="sm" variant="outline" className="h-8 w-8 p-0" onClick={() => { setViewingRecord(record); setIsViewDialogOpen(true); }}><Eye className="h-4 w-4" /></Button>
+                      <tr key={record.id} className="border-b hover:bg-blue-50 transition-colors group">
+                        <td className="py-2 px-3">
+                          <Checkbox checked={selectedRecords.includes(record.id)} onCheckedChange={() => handleSelectRecord(record.id)} />
+                        </td>
+                        <td className="py-2 px-3 text-xs text-gray-500">{formatDate(record.createdAt || record.rawTimestamp)}</td>
+                        <td className="py-2 px-3 font-medium text-sm">{record.topicTrained || record.Modules || 'N/A'}</td>
+                        <td className="py-2 px-3 text-xs">{record.county || 'N/A'}</td>
+                        <td className="py-2 px-3 text-xs">{record.subcounty || 'N/A'}</td>
+                        <td className="py-2 px-3 text-xs">{record.location || 'N/A'}</td>
+                        <td className="py-2 px-3">
+                          <Badge variant="outline" className="text-[10px]">{record.totalFarmers || 0}</Badge>
+                        </td>
+                        <td className="py-2 px-3 text-xs text-gray-600">{record.fieldOfficer || record.username || 'N/A'}</td>
+                        <td className="py-2 px-3">
+                          <div className="flex gap-1">
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-7 w-7 text-green-600 hover:bg-green-50"
+                              onClick={() => { setViewingRecord(record); setIsViewDialogOpen(true); }}
+                            >
+                              <Eye className="h-3.5 w-3.5" />
+                            </Button>
                             {userIsChiefAdmin && (
                               <>
-                                <Button size="sm" variant="outline" className="h-8 w-8 p-0" onClick={() => openEditDialog(record)}><Edit className="h-4 w-4" /></Button>
-                                <Button size="sm" variant="outline" className="h-8 w-8 p-0 text-red-500 hover:text-red-600" onClick={() => handleDeleteSingle(record.id)}><Trash2 className="h-4 w-4" /></Button>
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  className="h-7 w-7 text-blue-600 hover:bg-blue-50"
+                                  onClick={() => openEditDialog(record)}
+                                >
+                                  <Edit className="h-3.5 w-3.5" />
+                                </Button>
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  className="h-7 w-7 text-red-600 hover:bg-red-50"
+                                  onClick={() => handleDeleteSingle(record.id)}
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </Button>
                               </>
                             )}
                           </div>
@@ -858,8 +909,8 @@ const CapacityBuildingPage = () => {
                   </tbody>
                 </table>
               </div>
-              <div className="p-4 border-t flex justify-between items-center bg-gray-50">
-                <span className="text-sm text-gray-600">Showing {currentPageRecords.length} of {filteredRecords.length} records</span>
+              <div className="flex flex-col sm:flex-row items-center justify-between p-4 border-t bg-gray-50 gap-4">
+                <span className="text-sm text-muted-foreground">{filteredRecords.length} total records • Page {pagination.page} of {pagination.totalPages}</span>
                 <div className="flex gap-2">
                   <Button size="sm" variant="outline" disabled={!pagination.hasPrev} onClick={() => handlePageChange(pagination.page - 1)}>Previous</Button>
                   <Button size="sm" variant="outline" disabled={!pagination.hasNext} onClick={() => handlePageChange(pagination.page + 1)}>Next</Button>
