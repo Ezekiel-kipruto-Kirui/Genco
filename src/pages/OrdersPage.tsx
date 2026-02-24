@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import { ref, onValue, query, orderByChild, equalTo } from "firebase/database";
+import { onValue, orderByChild, equalTo, query, ref, update } from "firebase/database";
 import { db } from "@/lib/firebase";
 import { canViewAllProgrammes } from "@/contexts/authhelper";
+import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { ShoppingCart } from "lucide-react";
+import { ChevronDown, ChevronUp, Pencil, Save, ShoppingCart, Trash2, X } from "lucide-react";
 
 interface OrderItem {
   id?: string;
@@ -34,11 +35,17 @@ interface OrderRecord {
   username?: string;
 }
 
-interface FlattenedOrderRow {
-  rowId: string;
-  parentOrderId: string;
-  orderDate: string | number;
+interface NormalizedOrderItem {
+  id: string;
+  date: string | number;
   goats: number;
+}
+
+interface BatchOrderRow {
+  batchId: string;
+  batchDate: string | number;
+  totalGoats: number;
+  goatsBought: number;
   status: string;
   county: string;
   subcounty: string;
@@ -46,6 +53,7 @@ interface FlattenedOrderRow {
   programme: string;
   username: string;
   sortTimestamp: number;
+  items: NormalizedOrderItem[];
 }
 
 interface Filters {
@@ -104,13 +112,56 @@ const getCurrentMonthDates = () => {
   return { startDate: toInput(startOfMonth), endDate: toInput(endOfMonth) };
 };
 
+const toInputDate = (value: unknown): string => {
+  const date = parseDate(value);
+  if (!date) return "";
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+};
+
+const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
+
+const getBatchTotalGoats = (record: OrderRecord, itemsTotal: number): number => {
+  const storedTotal = Number(record.totalGoats || 0);
+  const bought = Number(record.goatsBought || 0);
+  const remaining = Number(record.remainingGoats || 0);
+  return Math.max(itemsTotal, storedTotal, bought + remaining, 0);
+};
+
+const getNormalizedItems = (record: OrderRecord): NormalizedOrderItem[] => {
+  if (Array.isArray(record.orders) && record.orders.length > 0) {
+    return record.orders.map((item, index) => ({
+      id: item.id || `${record.id}-${index + 1}`,
+      date: item.date || record.completedAt || record.createdAt || "",
+      goats: Number(item.goats || 0),
+    }));
+  }
+
+  const fallbackGoats = Number(record.totalGoats || record.goatsBought || 0);
+  return [
+    {
+      id: `${record.id}-1`,
+      date: record.completedAt || record.createdAt || "",
+      goats: fallbackGoats,
+    },
+  ];
+};
+
 const OrdersPage = () => {
   const { userRole, userAttribute, allowedProgrammes } = useAuth();
+  const { toast } = useToast();
 
   const [allRecords, setAllRecords] = useState<OrderRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeProgram, setActiveProgram] = useState<string>("");
   const [availablePrograms, setAvailablePrograms] = useState<string[]>([]);
+  const [expandedBatchIds, setExpandedBatchIds] = useState<string[]>([]);
+
+  const [editingBatchId, setEditingBatchId] = useState<string | null>(null);
+  const [goatsBoughtDraft, setGoatsBoughtDraft] = useState<string>("");
+
+  const [editingOrderKey, setEditingOrderKey] = useState<string | null>(null);
+  const [orderGoatsDraft, setOrderGoatsDraft] = useState<string>("");
+  const [orderDateDraft, setOrderDateDraft] = useState<string>("");
 
   const monthDates = useMemo(getCurrentMonthDates, []);
   const [filters, setFilters] = useState<Filters>({
@@ -157,7 +208,6 @@ const OrdersPage = () => {
     }
 
     setLoading(true);
-
     const ordersRef = query(ref(db, "orders"), orderByChild("programme"), equalTo(activeProgram));
 
     const unsubscribe = onValue(
@@ -190,49 +240,38 @@ const OrdersPage = () => {
     return () => unsubscribe();
   }, [activeProgram]);
 
-  const flattenedRows = useMemo(() => {
-    const rows: FlattenedOrderRow[] = [];
+  const batchRows = useMemo(() => {
+    return allRecords.map((record) => {
+      const items = getNormalizedItems(record);
+      const itemsTotal = items.reduce((sum, item) => sum + Number(item.goats || 0), 0);
+      const totalGoats = getBatchTotalGoats(record, itemsTotal);
+      const goatsBought = clamp(Number(record.goatsBought || 0), 0, Math.max(totalGoats, 0));
+      const batchDate = record.completedAt || record.createdAt || items[0]?.date || "";
 
-    allRecords.forEach((record) => {
-      const items =
-        Array.isArray(record.orders) && record.orders.length > 0
-          ? record.orders
-          : [
-              {
-                id: record.id,
-                date: record.completedAt || record.createdAt,
-                goats: Number(record.goatsBought || 0),
-              },
-            ];
-
-      items.forEach((item, index) => {
-        const rowDate = item.date || record.completedAt || record.createdAt || "";
-        rows.push({
-          rowId: item.id || `${record.id}-${index + 1}`,
-          parentOrderId: record.id,
-          orderDate: rowDate,
-          goats: Number(item.goats || 0),
-          status: normalizeStatus(record.status),
-          county: record.county || "N/A",
-          subcounty: record.subcounty || "N/A",
-          location: record.location || "N/A",
-          programme: record.programme || activeProgram || "N/A",
-          username: record.username || "N/A",
-          sortTimestamp: parseDate(rowDate)?.getTime() || 0,
-        });
-      });
+      return {
+        batchId: record.id,
+        batchDate,
+        totalGoats,
+        goatsBought,
+        status: normalizeStatus(record.status),
+        county: record.county || "N/A",
+        subcounty: record.subcounty || "N/A",
+        location: record.location || "N/A",
+        programme: record.programme || activeProgram || "N/A",
+        username: record.username || "N/A",
+        sortTimestamp: parseDate(batchDate)?.getTime() || 0,
+        items,
+      };
     });
-
-    return rows;
   }, [allRecords, activeProgram]);
 
-  const filteredRows = useMemo(() => {
+  const filteredBatchRows = useMemo(() => {
     const searchTerm = filters.search.toLowerCase().trim();
 
-    const rows = flattenedRows.filter((row) => {
+    const rows = batchRows.filter((row) => {
       if (filters.status !== "all" && row.status !== filters.status) return false;
 
-      const rowDate = parseDate(row.orderDate);
+      const rowDate = parseDate(row.batchDate);
       if (filters.startDate || filters.endDate) {
         if (!rowDate) return false;
         const start = filters.startDate ? new Date(filters.startDate) : null;
@@ -246,14 +285,14 @@ const OrdersPage = () => {
       if (!searchTerm) return true;
 
       return [
-        row.rowId,
-        row.parentOrderId,
+        row.batchId,
         row.county,
         row.subcounty,
         row.location,
         row.username,
         row.status,
         row.programme,
+        row.totalGoats.toString(),
       ]
         .join(" ")
         .toLowerCase()
@@ -262,16 +301,21 @@ const OrdersPage = () => {
 
     rows.sort((a, b) => b.sortTimestamp - a.sortTimestamp);
     return rows;
-  }, [flattenedRows, filters]);
+  }, [batchRows, filters]);
 
   const totalGoats = useMemo(
-    () => filteredRows.reduce((sum, row) => sum + row.goats, 0),
-    [filteredRows]
+    () => filteredBatchRows.reduce((sum, row) => sum + row.totalGoats, 0),
+    [filteredBatchRows]
+  );
+
+  const totalOrdersInBatches = useMemo(
+    () => filteredBatchRows.reduce((sum, row) => sum + row.items.length, 0),
+    [filteredBatchRows]
   );
 
   useEffect(() => {
     setPagination((prev) => {
-      const totalPages = Math.max(1, Math.ceil(filteredRows.length / prev.limit));
+      const totalPages = Math.max(1, Math.ceil(filteredBatchRows.length / prev.limit));
       const page = Math.min(prev.page, totalPages);
       return {
         ...prev,
@@ -281,18 +325,18 @@ const OrdersPage = () => {
         hasPrev: page > 1,
       };
     });
-  }, [filteredRows.length]);
+  }, [filteredBatchRows.length]);
 
   const pageRows = useMemo(() => {
     const start = (pagination.page - 1) * pagination.limit;
-    return filteredRows.slice(start, start + pagination.limit);
-  }, [filteredRows, pagination.page, pagination.limit]);
+    return filteredBatchRows.slice(start, start + pagination.limit);
+  }, [filteredBatchRows, pagination.page, pagination.limit]);
 
   const availableStatuses = useMemo(() => {
     const set = new Set<string>();
-    flattenedRows.forEach((row) => set.add(row.status));
+    batchRows.forEach((row) => set.add(row.status));
     return Array.from(set).sort();
-  }, [flattenedRows]);
+  }, [batchRows]);
 
   const handleFilterChange = (key: keyof Filters, value: string) => {
     setFilters((prev) => ({ ...prev, [key]: value }));
@@ -309,6 +353,131 @@ const OrdersPage = () => {
     setPagination((prev) => ({ ...prev, page: 1 }));
   };
 
+  const toggleBatchExpansion = (batchId: string) => {
+    setExpandedBatchIds((prev) =>
+      prev.includes(batchId) ? prev.filter((id) => id !== batchId) : [...prev, batchId]
+    );
+  };
+
+  const updateBatchOrders = async (
+    row: BatchOrderRow,
+    nextItems: NormalizedOrderItem[],
+    nextGoatsBought?: number
+  ) => {
+    const sanitizedItems = nextItems.map((item, index) => ({
+      id: item.id || `${row.batchId}-${index + 1}`,
+      goats: Math.max(0, Number(item.goats || 0)),
+      date: item.date || row.batchDate || "",
+    }));
+
+    const total = sanitizedItems.reduce((sum, item) => sum + item.goats, 0);
+    const goatsBought = clamp(
+      typeof nextGoatsBought === "number" ? nextGoatsBought : Number(row.goatsBought || 0),
+      0,
+      Math.max(total, 0)
+    );
+
+    await update(ref(db, `orders/${row.batchId}`), {
+      orders: sanitizedItems,
+      totalGoats: total,
+      goatsBought,
+      remainingGoats: Math.max(total - goatsBought, 0),
+    });
+  };
+
+  const startGoatsBoughtEdit = (row: BatchOrderRow) => {
+    setEditingBatchId(row.batchId);
+    setGoatsBoughtDraft(String(row.goatsBought || 0));
+  };
+
+  const cancelGoatsBoughtEdit = () => {
+    setEditingBatchId(null);
+    setGoatsBoughtDraft("");
+  };
+
+  const saveGoatsBoughtEdit = async (row: BatchOrderRow) => {
+    const nextValue = Number(goatsBoughtDraft);
+    if (!Number.isFinite(nextValue) || nextValue < 0) {
+      toast({ title: "Invalid value", description: "Goats bought must be a number 0 or greater.", variant: "destructive" });
+      return;
+    }
+    if (nextValue > row.totalGoats) {
+      toast({
+        title: "Invalid value",
+        description: "Goats bought cannot be greater than total goats in the batch.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      await update(ref(db, `orders/${row.batchId}`), {
+        goatsBought: nextValue,
+        remainingGoats: Math.max(row.totalGoats - nextValue, 0),
+      });
+      toast({ title: "Updated", description: "Goats bought updated successfully." });
+      cancelGoatsBoughtEdit();
+    } catch {
+      toast({ title: "Error", description: "Failed to update goats bought.", variant: "destructive" });
+    }
+  };
+
+  const startOrderEdit = (row: BatchOrderRow, item: NormalizedOrderItem, index: number) => {
+    setEditingOrderKey(`${row.batchId}:${index}`);
+    setOrderGoatsDraft(String(item.goats || 0));
+    setOrderDateDraft(toInputDate(item.date));
+  };
+
+  const cancelOrderEdit = () => {
+    setEditingOrderKey(null);
+    setOrderGoatsDraft("");
+    setOrderDateDraft("");
+  };
+
+  const saveOrderEdit = async (row: BatchOrderRow, index: number) => {
+    const nextGoats = Number(orderGoatsDraft);
+    if (!Number.isFinite(nextGoats) || nextGoats < 0) {
+      toast({ title: "Invalid value", description: "Order goats must be a number 0 or greater.", variant: "destructive" });
+      return;
+    }
+    if (!orderDateDraft) {
+      toast({ title: "Date required", description: "Please provide an order date.", variant: "destructive" });
+      return;
+    }
+
+    const nextItems = row.items.map((item, itemIndex) =>
+      itemIndex === index
+        ? {
+            ...item,
+            goats: nextGoats,
+            date: orderDateDraft,
+          }
+        : item
+    );
+
+    try {
+      await updateBatchOrders(row, nextItems);
+      toast({ title: "Updated", description: "Order item updated successfully." });
+      cancelOrderEdit();
+    } catch {
+      toast({ title: "Error", description: "Failed to update order item.", variant: "destructive" });
+    }
+  };
+
+  const deleteOrderItem = async (row: BatchOrderRow, index: number) => {
+    const confirmed = window.confirm("Delete this order item from the batch?");
+    if (!confirmed) return;
+
+    const nextItems = row.items.filter((_, itemIndex) => itemIndex !== index);
+
+    try {
+      await updateBatchOrders(row, nextItems);
+      toast({ title: "Deleted", description: "Order item deleted successfully." });
+    } catch {
+      toast({ title: "Error", description: "Failed to delete order item.", variant: "destructive" });
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4">
@@ -318,7 +487,7 @@ const OrdersPage = () => {
           </div>
           <div>
             <h1 className="text-2xl font-bold text-slate-900">Orders</h1>
-            <p className="text-sm text-slate-500">All submitted orders in tabular format.</p>
+            <p className="text-sm text-slate-500">Grouped order batches with totals and per-order breakdown.</p>
           </div>
         </div>
 
@@ -328,15 +497,15 @@ const OrdersPage = () => {
               <CardTitle className="text-sm text-slate-500">Order Batches</CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-2xl font-bold">{allRecords.length}</p>
+              <p className="text-2xl font-bold">{filteredBatchRows.length}</p>
             </CardContent>
           </Card>
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm text-slate-500">Order Rows</CardTitle>
+              <CardTitle className="text-sm text-slate-500">Orders In Batches</CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-2xl font-bold">{filteredRows.length}</p>
+              <p className="text-2xl font-bold">{totalOrdersInBatches.toLocaleString()}</p>
             </CardContent>
           </Card>
           <Card>
@@ -359,7 +528,7 @@ const OrdersPage = () => {
               </Label>
               <Input
                 id="search"
-                placeholder="Search order id, county, user..."
+                placeholder="Search batch id, county, user..."
                 value={filters.search}
                 onChange={(e) => handleFilterChange("search", e.target.value)}
                 className="border-gray-300 focus:border-blue-500 bg-white"
@@ -444,38 +613,166 @@ const OrdersPage = () => {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Order ID</TableHead>
+                    <TableHead>Batch ID</TableHead>
                     <TableHead>Date</TableHead>
-                    <TableHead className="text-right">Goats</TableHead>
-                    <TableHead>Status</TableHead>
                     <TableHead>County</TableHead>
                     <TableHead>Subcounty</TableHead>
                     <TableHead>Location</TableHead>
-                    <TableHead>Officer</TableHead>
+                    <TableHead className="text-right">Total Goats</TableHead>
+                    <TableHead className="text-right">Goats Bought</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="text-right">Orders</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {pageRows.map((row) => (
-                    <TableRow key={`${row.parentOrderId}-${row.rowId}`}>
-                      <TableCell className="font-medium">{row.rowId}</TableCell>
-                      <TableCell>{formatDate(row.orderDate)}</TableCell>
-                      <TableCell className="text-right font-semibold">{row.goats.toLocaleString()}</TableCell>
-                      <TableCell>
-                        <Badge className={getStatusBadgeClass(row.status)}>{row.status}</Badge>
-                      </TableCell>
-                      <TableCell>{row.county}</TableCell>
-                      <TableCell>{row.subcounty}</TableCell>
-                      <TableCell>{row.location}</TableCell>
-                      <TableCell>{row.username}</TableCell>
-                    </TableRow>
-                  ))}
+                  {pageRows.map((row) => {
+                    const isExpanded = expandedBatchIds.includes(row.batchId);
+                    return (
+                      <Fragment key={row.batchId}>
+                        <TableRow key={row.batchId}>
+                          <TableCell className="font-medium">{row.batchId}</TableCell>
+                          <TableCell>{formatDate(row.batchDate)}</TableCell>
+                          <TableCell>{row.county}</TableCell>
+                          <TableCell>{row.subcounty}</TableCell>
+                          <TableCell>{row.location}</TableCell>
+                          <TableCell className="text-right font-semibold">{row.totalGoats.toLocaleString()}</TableCell>
+                          <TableCell className="text-right">
+                            {editingBatchId === row.batchId ? (
+                              <div className="ml-auto flex w-44 items-center justify-end gap-2">
+                                <Input
+                                  type="number"
+                                  min={0}
+                                  max={row.totalGoats}
+                                  value={goatsBoughtDraft}
+                                  onChange={(e) => setGoatsBoughtDraft(e.target.value)}
+                                  className="h-8 text-right"
+                                />
+                                <Button size="icon" variant="outline" onClick={() => saveGoatsBoughtEdit(row)}>
+                                  <Save className="h-4 w-4" />
+                                </Button>
+                                <Button size="icon" variant="outline" onClick={cancelGoatsBoughtEdit}>
+                                  <X className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            ) : (
+                              <div className="ml-auto flex items-center justify-end gap-2">
+                                <span className="font-semibold">{row.goatsBought.toLocaleString()}</span>
+                                <Button size="icon" variant="ghost" onClick={() => startGoatsBoughtEdit(row)}>
+                                  <Pencil className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            <Badge className={getStatusBadgeClass(row.status)}>{row.status}</Badge>
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="gap-2"
+                              onClick={() => toggleBatchExpansion(row.batchId)}
+                            >
+                              {row.items.length} Orders
+                              {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+
+                        {isExpanded && (
+                          <TableRow key={`${row.batchId}-expanded`}>
+                            <TableCell colSpan={9} className="bg-slate-50">
+                              <div className="rounded-md border bg-white p-3">
+                                <div className="mb-2 text-sm font-semibold text-slate-700">Batch Orders</div>
+                                <Table>
+                                  <TableHeader>
+                                    <TableRow>
+                                      <TableHead>Order ID</TableHead>
+                                      <TableHead>Date</TableHead>
+                                      <TableHead className="text-right">Goats</TableHead>
+                                      <TableHead className="text-right">Actions</TableHead>
+                                    </TableRow>
+                                  </TableHeader>
+                                  <TableBody>
+                                    {row.items.map((item, index) => {
+                                      const orderKey = `${row.batchId}:${index}`;
+                                      const isEditingOrder = editingOrderKey === orderKey;
+                                      return (
+                                        <TableRow key={orderKey}>
+                                          <TableCell>{item.id}</TableCell>
+                                          <TableCell>
+                                            {isEditingOrder ? (
+                                              <Input
+                                                type="date"
+                                                value={orderDateDraft}
+                                                onChange={(e) => setOrderDateDraft(e.target.value)}
+                                                className="h-8 max-w-40"
+                                              />
+                                            ) : (
+                                              formatDate(item.date)
+                                            )}
+                                          </TableCell>
+                                          <TableCell className="text-right">
+                                            {isEditingOrder ? (
+                                              <Input
+                                                type="number"
+                                                min={0}
+                                                value={orderGoatsDraft}
+                                                onChange={(e) => setOrderGoatsDraft(e.target.value)}
+                                                className="ml-auto h-8 max-w-28 text-right"
+                                              />
+                                            ) : (
+                                              <span className="font-semibold">{item.goats.toLocaleString()}</span>
+                                            )}
+                                          </TableCell>
+                                          <TableCell className="text-right">
+                                            {isEditingOrder ? (
+                                              <div className="flex justify-end gap-2">
+                                                <Button size="sm" variant="outline" onClick={() => saveOrderEdit(row, index)}>
+                                                  <Save className="mr-1 h-4 w-4" />
+                                                  Save
+                                                </Button>
+                                                <Button size="sm" variant="outline" onClick={cancelOrderEdit}>
+                                                  <X className="mr-1 h-4 w-4" />
+                                                  Cancel
+                                                </Button>
+                                              </div>
+                                            ) : (
+                                              <div className="flex justify-end gap-2">
+                                                <Button size="sm" variant="outline" onClick={() => startOrderEdit(row, item, index)}>
+                                                  <Pencil className="mr-1 h-4 w-4" />
+                                                  Edit
+                                                </Button>
+                                                <Button
+                                                  size="sm"
+                                                  variant="destructive"
+                                                  onClick={() => deleteOrderItem(row, index)}
+                                                >
+                                                  <Trash2 className="mr-1 h-4 w-4" />
+                                                  Delete
+                                                </Button>
+                                              </div>
+                                            )}
+                                          </TableCell>
+                                        </TableRow>
+                                      );
+                                    })}
+                                  </TableBody>
+                                </Table>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        )}
+                      </Fragment>
+                    );
+                  })}
                 </TableBody>
               </Table>
 
               <div className="mt-4 flex items-center justify-between text-sm text-slate-600">
                 <span>
                   Showing {(pagination.page - 1) * pagination.limit + 1}-
-                  {Math.min(pagination.page * pagination.limit, filteredRows.length)} of {filteredRows.length}
+                  {Math.min(pagination.page * pagination.limit, filteredBatchRows.length)} of {filteredBatchRows.length}
                 </span>
                 <div className="flex gap-2">
                   <Button

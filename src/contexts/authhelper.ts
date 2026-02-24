@@ -13,7 +13,10 @@ const FINANCE_IDENTIFIERS = new Set(["finance"]);
 const OFFTAKE_IDENTIFIERS = new Set(["offtake officer"]);
 const FULL_ACCESS_ATTRIBUTE_IDENTIFIERS = new Set([
   "ceo",
+  "chief operations manager",
   "chief operational manager",
+  "chief operatons manger",
+  "m&e officer",
   "mne officer",
 ]);
 

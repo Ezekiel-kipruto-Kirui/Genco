@@ -102,9 +102,9 @@ const AVAILABLE_PROGRAMMES = [
 const USER_ATTRIBUTE_OPTIONS = [
   "CEO",
   "Project Manager",
-  "Chief Operational Manager",
-  "Humman Resource Manger",
-  "MNE Officer",
+  "Chief Operations Manager",
+  "Human Resource Manager",
+  "M&E Officer",
   "Finance",
   "Offtake Officer",
 ] as const;

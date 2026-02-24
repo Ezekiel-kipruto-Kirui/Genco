@@ -1018,7 +1018,7 @@ const RequisitionsPage = () => {
             </Button>
           )}
            
-           {(userIsHummanResourceManager || userHasFinanceRights) && (
+           {userHasFinanceRights && (
              <Button onClick={handleLogout} variant="outline" size="sm" className="h-9 px-6 w-full xl:w-auto text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700">
                <LogOut className="h-4 w-4 mr-2" /> Logout
              </Button>
@@ -1100,7 +1100,7 @@ const RequisitionsPage = () => {
             </Button>
           )}
            
-           {userIsHummanResourceManager && (
+           {userHasFinanceRights && (
              <Button onClick={handleLogout} variant="outline" size="sm" className="h-9 px-6 w-full xl:w-auto text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700">
                <LogOut className="h-4 w-4 mr-2" /> Logout
              </Button>
