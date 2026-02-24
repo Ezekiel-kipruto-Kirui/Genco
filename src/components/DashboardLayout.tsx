@@ -9,9 +9,10 @@ import { Link } from "react-router-dom";
 // CHANGED: Import Realtime Database functions
 import { ref, get, query, orderByChild, equalTo } from "firebase/database";
 import { db } from "@/lib/firebase";
+import { getRoleDisplayName } from "@/contexts/authhelper";
 
 const DashboardLayout = () => {
-  const { user, userRole, userName, signOutUser } = useAuth();
+  const { user, userRole, userAttribute, userName, signOutUser } = useAuth();
   const [pendingActivitiesCount, setPendingActivitiesCount] = useState(0);
 
   useEffect(() => {
@@ -66,7 +67,7 @@ const DashboardLayout = () => {
                 </Link>
 
                 <span className="text-xs sm:text-sm px-2 sm:px-3 py-1 rounded-full bg-primary/10 text-primary font-medium whitespace-nowrap flex-shrink-0">
-                  {userRole === "chief-admin" ? "Chief Admin" : "Admin"}
+                  {getRoleDisplayName(userRole, userAttribute)}
                 </span>
 
                 {/* Desktop signout */}

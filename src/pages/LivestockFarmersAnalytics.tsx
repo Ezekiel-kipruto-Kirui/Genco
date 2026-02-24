@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { isChiefAdmin } from "@/contexts/authhelper";
+import { canViewAllProgrammes } from "@/contexts/authhelper";
 import { getAuth } from "firebase/auth";
 
 // --- Constants ---
@@ -121,7 +121,7 @@ const getGoatTotal = (goats: any): number => {
 };
 
 const LivestockFarmersAnalytics = () => {
-  const { user, userRole } = useAuth();
+  const { user, userRole, userAttribute } = useAuth();
   const [loading, setLoading] = useState(true);
   const [allFarmers, setAllFarmers] = useState<FarmerData[]>([]);
   const [trainingRecords, setTrainingRecords] = useState<TrainingData[]>([]);
@@ -149,10 +149,14 @@ const LivestockFarmersAnalytics = () => {
   });
 
   const [dateRange, setDateRange] = useState(getCurrentMonthDates);
+  const userCanViewAllProgrammeData = useMemo(
+    () => canViewAllProgrammes(userRole, userAttribute),
+    [userRole, userAttribute]
+  );
 
   // --- 1. Fetch User Permissions ---
   useEffect(() => {
-    if (isChiefAdmin(userRole)) {
+    if (userCanViewAllProgrammeData) {
       setAvailablePrograms(["RANGE", "KPMD"]);
       if (!activeProgram) setActiveProgram("RANGE");
       return;
@@ -182,7 +186,7 @@ const LivestockFarmersAnalytics = () => {
         console.error("Error fetching user permissions:", error);
     });
     return () => unsubscribe();
-  }, [userRole, activeProgram]);
+  }, [userRole, activeProgram, userCanViewAllProgrammeData]);
 
   // --- 2. Data Fetching (Farmers) ---
   useEffect(() => {

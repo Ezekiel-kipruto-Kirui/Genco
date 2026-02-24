@@ -17,6 +17,7 @@ import { Link } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { useQuery, useQueryClient } from "@tanstack/react-query"; // Import React Query
 import { Calendar } from "@/components/ui/calendar";
+import { canViewAllProgrammes } from "@/contexts/authhelper";
 
 const PROGRAMME_OPTIONS = ["KPMD", "RANGE"];
 
@@ -160,10 +161,14 @@ const ActivityTable = ({ activities }: { activities: Activity[] }) => {
 // --- Main Page ---
 
 const DashboardOverview = () => {
-  const { user, userRole, allowedProgrammes, loading } = useAuth();
+  const { user, userRole, userAttribute, allowedProgrammes, loading } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const userIsChiefAdmin = userRole === "chief-admin";
+  const userCanViewAllProgrammeData = useMemo(
+    () => canViewAllProgrammes(userRole, userAttribute),
+    [userRole, userAttribute]
+  );
 
   // Dashboard View State
   const [selectedProgramme, setSelectedProgramme] = useState<string>("");
@@ -179,10 +184,10 @@ const DashboardOverview = () => {
   });
 
   const programmeOptions = useMemo(() => {
-    if (userRole === "chief-admin") return PROGRAMME_OPTIONS;
+    if (userCanViewAllProgrammeData) return PROGRAMME_OPTIONS;
     if (!allowedProgrammes) return [];
     return Object.keys(allowedProgrammes).filter((programme) => allowedProgrammes[programme] === true);
-  }, [userRole, allowedProgrammes]);
+  }, [userCanViewAllProgrammeData, allowedProgrammes]);
 
   // --- Optimized Data Fetching with React Query ---
 
@@ -206,9 +211,9 @@ const DashboardOverview = () => {
 
   // 1. Fetch only data needed for the selected programme to avoid heavy startup work.
   const fetchSecureCollection = async (nodePath: string, programmeFilter: string): Promise<any[]> => {
-    if (!user?.uid || !userRole) return [];
+    if (!user?.uid || !(userRole || userAttribute)) return [];
 
-    if (userRole === "chief-admin") {
+    if (userCanViewAllProgrammeData) {
       if (!programmeFilter || programmeFilter === "All") {
         const snapshot = await get(ref(db, nodePath));
         return toArray(snapshot);
@@ -229,10 +234,10 @@ const DashboardOverview = () => {
 
   // 2. React Query Hooks
   const programmeKey = programmeOptions.join("|");
-  const canLoadCollections = !!userRole && !loading && !!selectedProgramme;
+  const canLoadCollections = !!(userRole || userAttribute) && !loading && !!selectedProgramme;
 
   const { data: rawFarmers = [], isLoading: isLoadingFarmers } = useQuery({
-    queryKey: ["farmers", userRole, programmeKey, selectedProgramme],
+    queryKey: ["farmers", userRole, userAttribute, programmeKey, selectedProgramme],
     queryFn: () => fetchSecureCollection("farmers", selectedProgramme || "All"),
     enabled: canLoadCollections,
     staleTime: 5 * 60 * 1000, // 5 minutes
@@ -240,14 +245,14 @@ const DashboardOverview = () => {
   });
 
   const { data: rawActivities = [], isLoading: isLoadingActivities } = useQuery({
-    queryKey: ["activities", userRole, programmeKey, selectedProgramme],
+    queryKey: ["activities", userRole, userAttribute, programmeKey, selectedProgramme],
     queryFn: () => fetchSecureCollection("Recent Activities", selectedProgramme || "All"),
     enabled: canLoadCollections,
     staleTime: 2 * 60 * 1000, // 2 minutes
   });
 
   const { data: rawCapacityData = [], isLoading: isLoadingCapacity } = useQuery({
-    queryKey: ["capacityBuilding", userRole, programmeKey, selectedProgramme],
+    queryKey: ["capacityBuilding", userRole, userAttribute, programmeKey, selectedProgramme],
     queryFn: () => fetchSecureCollection("capacityBuilding", selectedProgramme || "All"),
     enabled: canLoadCollections,
     staleTime: 10 * 60 * 1000, // 10 minutes
@@ -349,7 +354,7 @@ const DashboardOverview = () => {
       return;
     }
 
-    if (userRole === "chief-admin") {
+    if (userCanViewAllProgrammeData) {
       setSelectedProgramme((prev) => (prev ? prev : PROGRAMME_OPTIONS[0]));
       return;
     }
@@ -360,7 +365,7 @@ const DashboardOverview = () => {
     }
 
     setSelectedProgramme((prev) => (prev && programmeOptions.includes(prev) ? prev : programmeOptions[0]));
-  }, [userRole, programmeOptions]);
+  }, [userRole, programmeOptions, userCanViewAllProgrammeData]);
 
   const handleAddParticipant = () => {
     if (participantForm.name.trim() && participantForm.role.trim()) {

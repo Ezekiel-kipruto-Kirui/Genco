@@ -27,8 +27,23 @@ const SalesReport = lazy(() => import("./pages/salesmetrics"));
 const UserManagementPage = lazy(() => import("./pages/UserManagementPage"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 const RequsitionPage = lazy(() => import("./pages/requisitionpage"));
+const OrdersPage = lazy(() => import("./pages/OrdersPage"));
 
 const queryClient = new QueryClient();
+const FULL_ACCESS_IDENTITIES = ["admin", "chief-admin", "ceo", "chief operational manager", "mne officer"];
+const DASHBOARD_ALLOWED_IDENTITIES = [
+  ...FULL_ACCESS_IDENTITIES,
+  "project manager",
+  "humman resource manager",
+  "humman resource manger",
+  "human resource manager",
+  "human resource manger",
+  "hr",
+];
+const REPORT_ALLOWED_IDENTITIES = [...FULL_ACCESS_IDENTITIES];
+const SITE_MANAGEMENT_ALLOWED_IDENTITIES = [...FULL_ACCESS_IDENTITIES];
+const REQUISITION_ONLY_IDENTITIES = ["finance"];
+const ORDERS_ONLY_IDENTITIES = ["offtake officer"];
 
 const PageLoader = () => (
   <div className="flex h-screen w-screen items-center justify-center">
@@ -54,9 +69,19 @@ const App = () => (
               <Route
                 path="/requisition"
                 element={
-                  <ProtectedRoute allowedRoles={["hr"]}>
+                  <ProtectedRoute allowedRoles={REQUISITION_ONLY_IDENTITIES}>
                     <div className="min-h-screen bg-slate-50/80 p-4 md:p-6 lg:p-8 pb-20">
                       <RequsitionPage />
+                    </div>
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/orders"
+                element={
+                  <ProtectedRoute allowedRoles={ORDERS_ONLY_IDENTITIES}>
+                    <div className="min-h-screen bg-slate-50/80 p-4 md:p-6 lg:p-8 pb-20">
+                      <OrdersPage />
                     </div>
                   </ProtectedRoute>
                 }
@@ -67,7 +92,7 @@ const App = () => (
               <Route
                 path="/dashboard"
                 element={
-                  <ProtectedRoute allowedRoles={["admin", "chief-admin"]}>
+                  <ProtectedRoute allowedRoles={DASHBOARD_ALLOWED_IDENTITIES}>
                     <DashboardLayout />
                   </ProtectedRoute>
                 }
@@ -75,8 +100,22 @@ const App = () => (
                 {/* Nested routes under DashboardLayout */}
                 <Route index element={<DashboardOverview />} />
                 
-                <Route path="reports" element={<PerformanceReport />} />
-                <Route path="salesreport" element={<SalesReport />} />
+                <Route
+                  path="reports"
+                  element={
+                    <ProtectedRoute allowedRoles={REPORT_ALLOWED_IDENTITIES}>
+                      <PerformanceReport />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="salesreport"
+                  element={
+                    <ProtectedRoute allowedRoles={REPORT_ALLOWED_IDENTITIES}>
+                      <SalesReport />
+                    </ProtectedRoute>
+                  }
+                />
                 
                 <Route path="livestock">
                   <Route index element={<LivestockFarmersPage />} />
@@ -103,7 +142,7 @@ const App = () => (
                 <Route
                   path="users"
                   element={
-                    <ProtectedRoute allowedRoles={["chief-admin"]}>
+                    <ProtectedRoute allowedRoles={SITE_MANAGEMENT_ALLOWED_IDENTITIES}>
                       <UserManagementPage />
                     </ProtectedRoute>
                   }
@@ -112,6 +151,7 @@ const App = () => (
                 {/* Note: Admins can still access requisition inside the dashboard via sidebar if needed, 
                     or we can remove this if requisition is strictly HR-only. */}
                 <Route path="requisition" element={<RequsitionPage />} />
+                <Route path="orders" element={<OrdersPage />} />
                 
               </Route>
 

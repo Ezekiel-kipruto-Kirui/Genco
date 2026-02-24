@@ -1,7 +1,7 @@
 import * as React from "react";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import { isChiefAdmin } from "@/contexts/authhelper";
+import { canViewAllProgrammes } from "@/contexts/authhelper";
 import { getAuth } from "firebase/auth";
 import { ref, onValue, get } from "firebase/database";
 import { db } from "@/lib/firebase";
@@ -514,7 +514,7 @@ const SectionHeader = React.memo(({ title }: { title: string }) => (
 // --- Main Component ---
 
 const PerformanceReport = () => {
-  const { userRole } = useAuth();
+  const { userRole, userAttribute } = useAuth();
   const auth = getAuth();
   const currentMonthDates = useMemo(() => getCurrentMonthDates(), []);
   
@@ -549,8 +549,11 @@ const PerformanceReport = () => {
 
   const [allowedProgrammes, setAllowedProgrammes] = useState<string[]>([]);
   const [activeProgram, setActiveProgram] = useState<string>(""); 
-  const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
-  const showProgrammeFilter = userIsChiefAdmin;
+  const userCanViewAllProgrammeData = useMemo(
+    () => canViewAllProgrammes(userRole, userAttribute),
+    [userRole, userAttribute]
+  );
+  const showProgrammeFilter = userCanViewAllProgrammeData;
   
   const selectedYearNum = useMemo(() => {
     const parsed = parseInt(selectedYear, 10);
@@ -650,7 +653,7 @@ const PerformanceReport = () => {
         
         setAllowedProgrammes(programmesList);
 
-        if (!userIsChiefAdmin) {
+        if (!userCanViewAllProgrammeData) {
           if (programmesList.length > 0) {
              setActiveProgram(programmesList[0]);
           }
@@ -665,7 +668,7 @@ const PerformanceReport = () => {
     });
 
     return () => unsubscribe();
-  }, [auth.currentUser?.uid, userIsChiefAdmin]);
+  }, [auth.currentUser?.uid, userCanViewAllProgrammeData]);
 
   const handleDateRangeChange = useCallback((key: string, value: string) => {
     setDateRange(prev => ({ ...prev, [key]: value }));

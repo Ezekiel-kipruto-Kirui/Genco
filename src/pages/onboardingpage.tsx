@@ -34,7 +34,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import * as XLSX from 'xlsx';
-import { isChiefAdmin } from "@/contexts/authhelper";
+import { canViewAllProgrammes, isChiefAdmin } from "@/contexts/authhelper";
 import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
 
 // --- Constants ---
@@ -338,7 +338,7 @@ const OnboardingCard = ({
 // --- Main Page Component ---
 
 const OnboardingPage = () => {
-  const { user, userRole, allowedProgrammes } = useAuth();
+  const { user, userRole, userAttribute, allowedProgrammes } = useAuth();
   const { toast } = useToast();
   const onboardingCacheKey = useMemo(
     () => cacheKey("admin-page", "onboarding", user?.uid || "anonymous"),
@@ -380,6 +380,10 @@ const OnboardingPage = () => {
   const [currentPage, setCurrentPage] = useState(1);
 
   const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
+  const userCanViewAllProgrammeData = useMemo(
+    () => canViewAllProgrammes(userRole, userAttribute),
+    [userRole, userAttribute]
+  );
   const requireChiefAdmin = () => {
     if (userIsChiefAdmin) return true;
     toast({
@@ -448,7 +452,7 @@ const OnboardingPage = () => {
       return;
     }
 
-    if (isChiefAdmin(userRole)) {
+    if (userCanViewAllProgrammeData) {
       setAvailablePrograms(["RANGE", "KPMD"]);
       if (!activeProgram) setActiveProgram("KPMD"); // Default for admin
       return;
@@ -464,7 +468,7 @@ const OnboardingPage = () => {
     } else if (programs.length === 0) {
       setActiveProgram("");
     }
-  }, [userRole, allowedProgrammes, activeProgram]);
+  }, [userRole, allowedProgrammes, activeProgram, userCanViewAllProgrammeData]);
 
   const fetchOnboardingData = async () => {
     try {
@@ -496,7 +500,7 @@ const OnboardingPage = () => {
           };
 
           // Client-side filtering based on Firebase Rules logic (Match CapacityBuilding logic)
-          if (userIsChiefAdmin) {
+          if (userCanViewAllProgrammeData) {
             data.push(record);
           } else {
             if (availablePrograms.includes(record.programme)) {
@@ -534,7 +538,7 @@ const OnboardingPage = () => {
       return;
     }
 
-    if (!userIsChiefAdmin && availablePrograms.length === 0) {
+    if (!userCanViewAllProgrammeData && availablePrograms.length === 0) {
       setAllOnboarding([]);
       setFilteredOnboarding([]);
       setDisplayedOnboarding([]);
@@ -544,7 +548,7 @@ const OnboardingPage = () => {
 
     fetchOnboardingData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userRole, userIsChiefAdmin, availablePrograms]); // Re-fetch when access scope is resolved
+  }, [userRole, userCanViewAllProgrammeData, availablePrograms]); // Re-fetch when access scope is resolved
 
   // --- Filtering Logic including Programme Switcher ---
   const filterAndProcessData = useCallback((data: OnboardingData[], filterParams: Filters, program: string) => {

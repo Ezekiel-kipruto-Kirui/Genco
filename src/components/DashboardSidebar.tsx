@@ -13,6 +13,7 @@ import {
   HeartPulse,
   Settings,
   LogOut,
+  ShoppingCart,
 } from "lucide-react";
 
 import { NavLink } from "@/components/NavLink";
@@ -35,7 +36,7 @@ import {
 } from "@/components/ui/sidebar";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { useAuth } from "@/contexts/AuthContext";
-import { isChiefAdmin } from "@/contexts/authhelper";
+import { canAccessReports, canAccessSiteManagement } from "@/contexts/authhelper";
 
 const baseMenuItems = [
   {
@@ -81,6 +82,11 @@ const baseMenuItems = [
     icon: Upload,
     url: "/dashboard/requisition",
   },
+  {
+    title: "Orders",
+    icon: ShoppingCart,
+    url: "/dashboard/orders",
+  },
 ];
 
 const reportItems = [
@@ -90,9 +96,10 @@ const reportItems = [
 
 export function DashboardSidebar() {
   const { state } = useSidebar();
-  const { signOutUser, userRole } = useAuth();
+  const { signOutUser, userRole, userAttribute } = useAuth();
   const collapsed = state === "collapsed";
-  const userIsChiefAdmin = isChiefAdmin(userRole);
+  const canViewReports = canAccessReports(userRole, userAttribute);
+  const canViewSiteManagement = canAccessSiteManagement(userRole, userAttribute);
 
   return (
     <Sidebar className={`${collapsed ? "w-14" : "w-64"} bg-green-700 text-white`} collapsible="icon">
@@ -131,42 +138,44 @@ export function DashboardSidebar() {
                 </SidebarMenuButton>
               </SidebarMenuItem>
 
-              <Collapsible defaultOpen className="group/collapsible">
-                <SidebarMenuItem>
-                  <CollapsibleTrigger asChild>
-                    <SidebarMenuButton className="text-green-50 transition-colors hover:bg-green-600">
-                      <LineChart className="h-4 w-4" />
-                      {!collapsed && (
-                        <>
-                          <span>Reports</span>
-                          <ChevronRight className="ml-auto h-4 w-4 transition-transform group-data-[state=open]/collapsible:rotate-90" />
-                        </>
-                      )}
-                    </SidebarMenuButton>
-                  </CollapsibleTrigger>
+              {canViewReports && (
+                <Collapsible defaultOpen className="group/collapsible">
+                  <SidebarMenuItem>
+                    <CollapsibleTrigger asChild>
+                      <SidebarMenuButton className="text-green-50 transition-colors hover:bg-green-600">
+                        <LineChart className="h-4 w-4" />
+                        {!collapsed && (
+                          <>
+                            <span>Reports</span>
+                            <ChevronRight className="ml-auto h-4 w-4 transition-transform group-data-[state=open]/collapsible:rotate-90" />
+                          </>
+                        )}
+                      </SidebarMenuButton>
+                    </CollapsibleTrigger>
 
-                  {!collapsed && (
-                    <CollapsibleContent>
-                      <SidebarMenuSub>
-                        {reportItems.map((sub) => (
-                          <SidebarMenuSubItem key={sub.title}>
-                            <SidebarMenuSubButton asChild>
-                              <NavLink
-                                to={sub.url}
-                                className="text-green-100/70 transition-colors hover:bg-green-600"
-                                activeClassName="bg-white font-bold text-green-700"
-                              >
-                                <sub.icon className="h-3.5 w-3.5" />
-                                <span>{sub.title}</span>
-                              </NavLink>
-                            </SidebarMenuSubButton>
-                          </SidebarMenuSubItem>
-                        ))}
-                      </SidebarMenuSub>
-                    </CollapsibleContent>
-                  )}
-                </SidebarMenuItem>
-              </Collapsible>
+                    {!collapsed && (
+                      <CollapsibleContent>
+                        <SidebarMenuSub>
+                          {reportItems.map((sub) => (
+                            <SidebarMenuSubItem key={sub.title}>
+                              <SidebarMenuSubButton asChild>
+                                <NavLink
+                                  to={sub.url}
+                                  className="text-green-100/70 transition-colors hover:bg-green-600"
+                                  activeClassName="bg-white font-bold text-green-700"
+                                >
+                                  <sub.icon className="h-3.5 w-3.5" />
+                                  <span>{sub.title}</span>
+                                </NavLink>
+                              </SidebarMenuSubButton>
+                            </SidebarMenuSubItem>
+                          ))}
+                        </SidebarMenuSub>
+                      </CollapsibleContent>
+                    )}
+                  </SidebarMenuItem>
+                </Collapsible>
+              )}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
@@ -244,7 +253,7 @@ export function DashboardSidebar() {
 
       <SidebarFooter className="bg-green-700 pt-2">
         <SidebarMenu>
-          {userIsChiefAdmin && (
+          {canViewSiteManagement && (
             <SidebarMenuItem>
               <SidebarMenuButton asChild>
                 <NavLink

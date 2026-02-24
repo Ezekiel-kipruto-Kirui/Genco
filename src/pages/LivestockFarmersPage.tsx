@@ -13,7 +13,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Download, Users, MapPin, Eye, Calendar, Scale, Phone, CreditCard, Edit, Trash2, ShieldCheck, Activity, ChevronRight, Upload, GraduationCap } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { isChiefAdmin } from "@/contexts/authhelper";
+import { canViewAllProgrammes, isChiefAdmin } from "@/contexts/authhelper";
 
 // --- Types ---
 
@@ -203,7 +203,7 @@ const getAcreTotal = (item: Record<string, any>): number => {
 };
 
 const LivestockFarmersPage = () => {
-  const { user, userRole, userName } = useAuth();
+  const { user, userRole, userAttribute, userName } = useAuth();
   const { toast } = useToast();
   
   const [allFarmers, setAllFarmers] = useState<FarmerData[]>([]);
@@ -276,6 +276,10 @@ const LivestockFarmersPage = () => {
   });
 
   const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
+  const userCanViewAllProgrammeData = useMemo(
+    () => canViewAllProgrammes(userRole, userAttribute),
+    [userRole, userAttribute]
+  );
   const requireChiefAdmin = () => {
     if (userIsChiefAdmin) return true;
     toast({
@@ -297,7 +301,7 @@ const LivestockFarmersPage = () => {
   };
 
   useEffect(() => {
-    if (isChiefAdmin(userRole)) {
+    if (userCanViewAllProgrammeData) {
       setAvailablePrograms(["RANGE", "KPMD"]);
       setActiveProgram((prev) => (prev ? prev : "RANGE"));
       return;
@@ -329,7 +333,7 @@ const LivestockFarmersPage = () => {
         console.error("Error fetching user permissions:", error);
     });
     return () => unsubscribe();
-  }, [userRole]);
+  }, [userRole, userCanViewAllProgrammeData]);
 
   useEffect(() => {
     if (!activeProgram) {
@@ -973,7 +977,7 @@ const LivestockFarmersPage = () => {
                 
             
             
-            {userIsChiefAdmin ? (
+            {userCanViewAllProgrammeData ? (
                 <div className="space-y-2 w-full lg:w-[180px]">
                     <Select value={activeProgram} onValueChange={handleProgramChange} disabled={availablePrograms.length === 0}>
                         <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white h-10 font-bold w-full">

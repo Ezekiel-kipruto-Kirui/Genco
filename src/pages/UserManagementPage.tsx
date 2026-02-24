@@ -16,8 +16,16 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Download, Users, User, Edit, Trash2, Mail, Shield, Calendar, Eye, Phone, Plus, AlertTriangle, Briefcase } from "lucide-react"; // Added Briefcase
 import { useToast } from "@/hooks/use-toast";
 import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
+import { isHummanResourceManager, normalizeRole } from "@/contexts/authhelper";
 
 // --- Types ---
+interface AccessControl {
+  // The custom user attribute typed by admin as-is.
+  customAttribute?: string;
+  // Legacy data support from previous structure.
+  customAttributes?: Record<string, string>;
+}
+
 interface UserRecord {
   id: string;
   name?: string;
@@ -29,6 +37,7 @@ interface UserRecord {
   updatedAt?: any;
   uid?: string;
   allowedProgrammes?: { [key: string]: boolean };
+  accessControl?: AccessControl;
 }
 
 interface Filters {
@@ -46,7 +55,10 @@ interface Stats {
   adminUsers: number;
   chiefAdminUsers: number;
   mobileUsers: number;
-  hrUsers: number; // Added HR to stats
+  hrUsers: number;
+  projectManagerUsers: number;
+  financeUsers: number;
+  offtakeOfficerUsers: number;
 }
 
 interface Pagination {
@@ -62,6 +74,7 @@ interface EditForm {
   email: string;
   role: string;
   status: string;
+  customAttribute: string;
   allowedProgrammes: { [key: string]: boolean };
 }
 
@@ -71,6 +84,7 @@ interface AddUserForm {
   role: string;
   password: string;
   confirmPassword: string;
+  customAttribute: string;
   allowedProgrammes: { [key: string]: boolean };
 }
 
@@ -85,10 +99,47 @@ const AVAILABLE_PROGRAMMES = [
   "KPMD", 
   "RANGE"
 ];
+const USER_ATTRIBUTE_OPTIONS = [
+  "CEO",
+  "Project Manager",
+  "Chief Operational Manager",
+  "Humman Resource Manger",
+  "MNE Officer",
+  "Finance",
+  "Offtake Officer",
+] as const;
+const NO_ATTRIBUTE_VALUE = "__none__";
+const ROLE_OPTIONS = [
+  { value: "user", label: "User" },
+  { value: "admin", label: "Admin" },
+  { value: "humman resource manager", label: "Humman Resource Manager" },
+  { value: "project manager", label: "Project Manager" },
+  { value: "finance", label: "Finance" },
+  { value: "offtake officer", label: "Offtake Officer" },
+  { value: "chief-admin", label: "Chief Admin" },
+  { value: "mobile", label: "Mobile User" },
+] as const;
 
 const USER_MANAGEMENT_CACHE_KEY = cacheKey("admin-page", "users");
 
 // --- Helper Functions ---
+const buildAccessControl = (customAttribute: string): AccessControl =>
+  customAttribute ? { customAttribute } : {};
+
+const getCustomAttributeText = (accessControl?: AccessControl): string => {
+  if (!accessControl) return "";
+  if (typeof accessControl.customAttribute === "string") return accessControl.customAttribute;
+
+  // Backward compatibility for records saved using the old key-value map.
+  if (accessControl.customAttributes && typeof accessControl.customAttributes === "object") {
+    return Object.keys(accessControl.customAttributes).join(", ");
+  }
+
+  return "";
+};
+
+const normalizeSelectableAttribute = (attribute: string) =>
+  USER_ATTRIBUTE_OPTIONS.includes(attribute as typeof USER_ATTRIBUTE_OPTIONS[number]) ? attribute : "";
 
 const parseDate = (date: any): Date | null => {
   if (!date) return null;  
@@ -312,7 +363,10 @@ const TableRow = ({ record, selectedRecords, onSelectRecord, onView, onEdit, onD
         className={
           record.role === 'chief-admin' ? 'bg-purple-100 text-purple-800' :
           record.role === 'admin' ? 'bg-blue-100 text-blue-800' :
-          record.role === 'hr' ? 'bg-orange-100 text-orange-800' : // Added HR Color
+          isHummanResourceManager(record.role || null) ? 'bg-orange-100 text-orange-800' :
+          normalizeRole(record.role || null) === 'project manager' ? 'bg-emerald-100 text-emerald-800' :
+          normalizeRole(record.role || null) === 'finance' ? 'bg-cyan-100 text-cyan-800' :
+          normalizeRole(record.role || null) === 'offtake officer' ? 'bg-amber-100 text-amber-800' :
           record.role === 'mobile' ? 'bg-green-100 text-green-800' :
           'bg-gray-100 text-gray-800'
         }
@@ -328,6 +382,7 @@ const TableRow = ({ record, selectedRecords, onSelectRecord, onView, onEdit, onD
         {record.status ? record.status.charAt(0).toUpperCase() + record.status.slice(1) : 'N/A'}
       </Badge>
     </td>
+    <td className="py-2 px-4 text-sm">{getCustomAttributeText(record.accessControl) || 'N/A'}</td>
     <td className="py-2 px-4 text-sm">{formatDate(record.createdAt)}</td>
     <td className="py-2 px-4 text-sm">
       <div className="flex gap-2">
@@ -417,7 +472,10 @@ const UserManagementPage = () => {
     adminUsers: 0,
     chiefAdminUsers: 0,
     mobileUsers: 0,
-    hrUsers: 0, // Initialize HR Users
+    hrUsers: 0,
+    projectManagerUsers: 0,
+    financeUsers: 0,
+    offtakeOfficerUsers: 0,
   });
 
   const [pagination, setPagination] = useState<Pagination>({
@@ -435,6 +493,7 @@ const UserManagementPage = () => {
     email: "",
     role: "",
     status: "active",
+    customAttribute: "",
     allowedProgrammes: initialProgrammes
   });
 
@@ -444,6 +503,7 @@ const UserManagementPage = () => {
     role: "user",
     password: "",
     confirmPassword: "",
+    customAttribute: "",
     allowedProgrammes: initialProgrammes
   });
 
@@ -521,8 +581,9 @@ const UserManagementPage = () => {
 
       if (searchTerm) {
         const searchTermLower = searchTerm.toLowerCase();
+        const attributeSearchText = getCustomAttributeText(record.accessControl);
         const searchMatch = [
-          record.name, record.email, record.role
+          record.name, record.email, record.role, attributeSearchText
         ].some(field => field?.toLowerCase().includes(searchTermLower));
         if (!searchMatch) return false;
       }
@@ -534,7 +595,10 @@ const UserManagementPage = () => {
     const adminUsers = filtered.filter(r => r.role?.toLowerCase() === 'admin').length;
     const chiefAdminUsers = filtered.filter(r => r.role?.toLowerCase() === 'chief-admin').length;
     const mobileUsers = filtered.filter(r => r.role?.toLowerCase() === 'mobile').length;
-    const hrUsers = filtered.filter(r => r.role?.toLowerCase() === 'hr').length; // Logic to count HR
+    const hrUsers = filtered.filter(r => isHummanResourceManager(r.role || null)).length;
+    const projectManagerUsers = filtered.filter(r => normalizeRole(r.role || null) === 'project manager').length;
+    const financeUsers = filtered.filter(r => normalizeRole(r.role || null) === 'finance').length;
+    const offtakeOfficerUsers = filtered.filter(r => normalizeRole(r.role || null) === 'offtake officer').length;
 
     const calculatedStats = {
       totalUsers: filtered.length,
@@ -542,7 +606,10 @@ const UserManagementPage = () => {
       adminUsers,
       chiefAdminUsers,
       mobileUsers,
-      hrUsers, // Added to stats object
+      hrUsers,
+      projectManagerUsers,
+      financeUsers,
+      offtakeOfficerUsers,
     };
 
     const totalPages = Math.ceil(filtered.length / PAGE_LIMIT);
@@ -688,6 +755,7 @@ const UserManagementPage = () => {
       email: record.email || "",
       role: record.role || "",
       status: record.status || "active",
+      customAttribute: normalizeSelectableAttribute(getCustomAttributeText(record.accessControl)),
       allowedProgrammes: mergedProgs
     });
     setIsEditDialogOpen(true);
@@ -706,6 +774,7 @@ const UserManagementPage = () => {
       role: "user",
       password: "",
       confirmPassword: "",
+      customAttribute: "",
       allowedProgrammes: initialProgrammes
     });
     setIsAddDialogOpen(true);
@@ -733,6 +802,7 @@ const UserManagementPage = () => {
         email: editForm.email,
         role: editForm.role,
         status: editForm.status,
+        accessControl: buildAccessControl(editForm.customAttribute),
         allowedProgrammes: editForm.allowedProgrammes,
         updatedAt: serverTimestamp()
       });
@@ -785,6 +855,7 @@ const UserManagementPage = () => {
         email: addForm.email,
         role: addForm.role,
         status: "active",
+        accessControl: buildAccessControl(addForm.customAttribute),
         allowedProgrammes: addForm.allowedProgrammes,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
@@ -799,6 +870,7 @@ const UserManagementPage = () => {
         role: "user",
         password: "",
         confirmPassword: "",
+        customAttribute: "",
         allowedProgrammes: initialProgrammes
       });
 
@@ -891,7 +963,7 @@ const UserManagementPage = () => {
   }, [selectedRecords, fetchAllData, toast, requireChiefAdmin]);
 
   const uniqueRoles = useMemo(() =>
-    ["chief-admin", "admin", "user", "mobile", "hr"], // Added "hr" to lowercase
+    ["chief-admin", "admin", "user", "mobile", "humman resource manager", "project manager", "finance", "offtake officer"],
     []
   );
 
@@ -969,7 +1041,7 @@ const UserManagementPage = () => {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 lg:grid-cols-5 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-4 lg:grid-cols-4 gap-4">
         <StatsCard title="Total Users" value={stats.totalUsers} icon={Users}>
           <div className="flex gap-4 justify-between text-xs text-slate-600 mt-2">
             <span>Active: {stats.activeUsers}</span>
@@ -978,9 +1050,9 @@ const UserManagementPage = () => {
         </StatsCard>
 
         <StatsCard title="Admin Users" value={stats.adminUsers} icon={Shield} description="Administrative users" />
-        <StatsCard title="HR Users" value={stats.hrUsers} icon={Briefcase} description="Human Resources" /> {/* Added HR Stats Card */}
         <StatsCard title="Chief Admins" value={stats.chiefAdminUsers} icon={User} description="Chief administrators" />
-        <StatsCard title="Mobile Users" value={stats.mobileUsers} icon={Phone} description="Mobile app users" />
+        <StatsCard title="Others" value={stats.mobileUsers+stats.hrUsers} icon={Phone} description="Other users" />
+        
       </div>
 
       {/* Filters */}
@@ -1025,6 +1097,7 @@ const UserManagementPage = () => {
                       <th className="text-left py-2 px-4 font-medium text-gray-600">Email</th>
                       <th className="text-left py-2 px-4 font-medium text-gray-600">Role</th>
                       <th className="text-left py-2 px-4 font-medium text-gray-600">Status</th>
+                      <th className="text-left py-2 px-4 font-medium text-gray-600">Attribute</th>
                       <th className="text-left py-2 px-4 font-medium text-gray-600">Created</th>
                       <th className="text-left py-2 px-4 font-medium text-gray-600">Actions</th>
                     </tr>
@@ -1094,7 +1167,10 @@ const UserManagementPage = () => {
                     <Badge variant="secondary" className={
                       viewingRecord.role === 'chief-admin' ? 'bg-purple-100 text-purple-800' :
                       viewingRecord.role === 'admin' ? 'bg-blue-100 text-blue-800' :
-                      viewingRecord.role === 'hr' ? 'bg-orange-100 text-orange-800' : // Added HR View Color
+                      isHummanResourceManager(viewingRecord.role || null) ? 'bg-orange-100 text-orange-800' :
+                      normalizeRole(viewingRecord.role || null) === 'project manager' ? 'bg-emerald-100 text-emerald-800' :
+                      normalizeRole(viewingRecord.role || null) === 'finance' ? 'bg-cyan-100 text-cyan-800' :
+                      normalizeRole(viewingRecord.role || null) === 'offtake officer' ? 'bg-amber-100 text-amber-800' :
                       viewingRecord.role === 'mobile' ? 'bg-green-100 text-green-800' :
                       'bg-gray-100 text-gray-800'
                     }>
@@ -1127,6 +1203,11 @@ const UserManagementPage = () => {
                     <span className="text-sm text-slate-500 italic">No specific programmes assigned</span>
                   )}
                 </div>
+              </div>
+
+              <div className="bg-slate-50 rounded-xl p-4">
+                <h3 className="font-semibold text-slate-800 mb-3 flex items-center gap-2"><Briefcase className="h-4 w-4" /> Attribute</h3>
+                <p className="text-sm text-slate-900 font-medium">{getCustomAttributeText(viewingRecord.accessControl) || "N/A"}</p>
               </div>
 
               <div className="bg-slate-50 rounded-xl p-4">
@@ -1182,11 +1263,32 @@ const UserManagementPage = () => {
                   <Select value={addForm.role} onValueChange={(value) => setAddForm(prev => ({ ...prev, role: value }))}>
                     <SelectTrigger className="bg-white border-slate-300"><SelectValue placeholder="Select role" /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="user">User</SelectItem>
-                      <SelectItem value="admin">Admin</SelectItem>
-                      <SelectItem value="hr">HR</SelectItem> {/* Added HR Role to Add Dialog */}
-                      <SelectItem value="chief-admin">Chief Admin</SelectItem>
-                      <SelectItem value="mobile">Mobile User</SelectItem>
+                      {ROLE_OPTIONS.map((roleOption) => (
+                        <SelectItem key={roleOption.value} value={roleOption.value}>
+                          {roleOption.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="add-custom-attribute" className="text-sm font-medium text-slate-700">Attribute</Label>
+                  <Select
+                    value={addForm.customAttribute || NO_ATTRIBUTE_VALUE}
+                    onValueChange={(value) =>
+                      setAddForm((prev) => ({ ...prev, customAttribute: value === NO_ATTRIBUTE_VALUE ? "" : value }))
+                    }
+                  >
+                    <SelectTrigger id="add-custom-attribute" className="bg-white border-slate-300">
+                      <SelectValue placeholder="No attribute (optional)" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={NO_ATTRIBUTE_VALUE}>No attribute</SelectItem>
+                      {USER_ATTRIBUTE_OPTIONS.map((attribute) => (
+                        <SelectItem key={attribute} value={attribute}>
+                          {attribute}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
@@ -1261,11 +1363,11 @@ const UserManagementPage = () => {
                   <Select value={editForm.role} onValueChange={(value) => setEditForm(prev => ({ ...prev, role: value }))}>
                     <SelectTrigger className="bg-white border-slate-300"><SelectValue placeholder="Select role" /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="user">User</SelectItem>
-                      <SelectItem value="admin">Admin</SelectItem>
-                      <SelectItem value="hr">HR</SelectItem> {/* Added HR Role to Edit Dialog */}
-                      <SelectItem value="chief-admin">Chief Admin</SelectItem>
-                      <SelectItem value="mobile">Mobile User</SelectItem>
+                      {ROLE_OPTIONS.map((roleOption) => (
+                        <SelectItem key={roleOption.value} value={roleOption.value}>
+                          {roleOption.label}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
@@ -1276,6 +1378,27 @@ const UserManagementPage = () => {
                     <SelectContent>
                       <SelectItem value="active">Active</SelectItem>
                       <SelectItem value="inactive">Inactive</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-custom-attribute" className="text-sm font-medium text-slate-700">Attribute</Label>
+                  <Select
+                    value={editForm.customAttribute || NO_ATTRIBUTE_VALUE}
+                    onValueChange={(value) =>
+                      setEditForm((prev) => ({ ...prev, customAttribute: value === NO_ATTRIBUTE_VALUE ? "" : value }))
+                    }
+                  >
+                    <SelectTrigger id="edit-custom-attribute" className="bg-white border-slate-300">
+                      <SelectValue placeholder="No attribute (optional)" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={NO_ATTRIBUTE_VALUE}>No attribute</SelectItem>
+                      {USER_ATTRIBUTE_OPTIONS.map((attribute) => (
+                        <SelectItem key={attribute} value={attribute}>
+                          {attribute}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>

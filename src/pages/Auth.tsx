@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Eye, EyeOff, Mail, Lock } from "lucide-react";
+import { getLandingRouteForRole } from "@/contexts/authhelper";
 
 const Auth = () => {
   const [email, setEmail] = useState("");
@@ -13,21 +14,15 @@ const Auth = () => {
   const [isLoading, setIsLoading] = useState(false);
   
   // Retrieve userRole from the auth context
-  const { signIn, user, userRole } = useAuth(); 
+  const { signIn, user, userRole, userAttribute } = useAuth();
   const navigate = useNavigate();
 
   useEffect(() => {
-    // Only redirect if we have both a user and their role loaded
-    if (user && userRole) {
-      if (userRole === 'hr') {
-        // Redirect HR users to the dashboard requisition route
-        navigate("/requisition");
-      } else {
-        // Default redirect for other users
-        navigate("/dashboard");
-      }
+    // Redirect once either role or custom attribute has loaded.
+    if (user && (userRole || userAttribute)) {
+      navigate(getLandingRouteForRole(userRole, userAttribute), { replace: true });
     }
-  }, [user, userRole, navigate]);
+  }, [user, userRole, userAttribute, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

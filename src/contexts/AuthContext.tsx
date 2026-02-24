@@ -10,11 +10,13 @@ interface UserProfile {
   role: string | null;
   allowedProgrammes: Record<string, boolean> | null;
   name: string | null; // We fetch this from the DB
+  userAttribute: string | null;
 }
 
 interface AuthContextType {
   user: User | null;
   userRole: string | null;
+  userAttribute: string | null;
   userName: string | null; // Exposed to the app
   allowedProgrammes: Record<string, boolean> | null;
   loading: boolean;
@@ -37,10 +39,33 @@ const ROLE_STORAGE_KEY = "user_role";
 export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [userRole, setUserRole] = useState<string | null>(null);
+  const [userAttribute, setUserAttribute] = useState<string | null>(null);
   const [userName, setUserName] = useState<string | null>(null); // Added state for user name
   const [allowedProgrammes, setAllowedProgrammes] = useState<Record<string, boolean> | null>(null);
   const [loading, setLoading] = useState(true);
   const { toast } = useToast();
+
+  const extractUserAttribute = (userData: any): string | null => {
+    const directAttribute = userData?.accessControl?.customAttribute;
+    if (typeof directAttribute === "string" && directAttribute.trim()) {
+      return directAttribute.trim();
+    }
+
+    const legacyAttributes = userData?.accessControl?.customAttributes;
+    if (legacyAttributes && typeof legacyAttributes === "object") {
+      const firstKey = Object.keys(legacyAttributes)[0];
+      if (firstKey && firstKey.trim()) {
+        return firstKey.trim();
+      }
+    }
+
+    const fallbackAttribute = userData?.customAttribute;
+    if (typeof fallbackAttribute === "string" && fallbackAttribute.trim()) {
+      return fallbackAttribute.trim();
+    }
+
+    return null;
+  };
 
   // Fetches Role, Name, and Allowed Programmes from DB 'users' node
   const fetchUserProfile = async (uid: string): Promise<UserProfile> => {
@@ -54,7 +79,8 @@ export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
         return {
           role: userData.role || null,
           allowedProgrammes: userData.allowedProgrammes || null,
-          name: userData.name || null // Fetch name from DB
+          name: userData.name || null, // Fetch name from DB
+          userAttribute: extractUserAttribute(userData)
         };
       }
 
@@ -70,15 +96,16 @@ export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
           return {
             role: match.role || null,
             allowedProgrammes: match.allowedProgrammes || null,
-            name: match.name || null // Fetch name from DB
+            name: match.name || null, // Fetch name from DB
+            userAttribute: extractUserAttribute(match)
           };
         }
       }
       
-      return { role: null, allowedProgrammes: null, name: null };
+      return { role: null, allowedProgrammes: null, name: null, userAttribute: null };
     } catch (error) {
       console.error("Error fetching user profile:", error);
-      return { role: null, allowedProgrammes: null, name: null };
+      return { role: null, allowedProgrammes: null, name: null, userAttribute: null };
     }
   };
 
@@ -96,6 +123,7 @@ export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
           
           if (isMounted) {
             setUserRole(profile.role);
+            setUserAttribute(profile.userAttribute);
             setAllowedProgrammes(profile.allowedProgrammes);
             
             // Set name from DB, fallback to Firebase Auth displayName, then email, then "Admin"
@@ -113,6 +141,7 @@ export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
       } else {
         if (isMounted) {
           setUserRole(null);
+          setUserAttribute(null);
           setAllowedProgrammes(null);
           setUserName(null);
           localStorage.removeItem(ROLE_STORAGE_KEY);
@@ -177,7 +206,7 @@ export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
 
   return (
     // CRITICAL FIX: Added userName to the context value below
-    <AuthContext.Provider value={{ user, userRole, userName, allowedProgrammes, loading, signIn, signOutUser }}>
+    <AuthContext.Provider value={{ user, userRole, userAttribute, userName, allowedProgrammes, loading, signIn, signOutUser }}>
       {children}
     </AuthContext.Provider>
   );

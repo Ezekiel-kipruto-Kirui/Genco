@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import { isChiefAdmin } from "@/contexts/authhelper";
+import { canViewAllProgrammes } from "@/contexts/authhelper";
 import { getAuth } from "firebase/auth";
 import { ref, onValue, query, orderByChild, equalTo, off } from "firebase/database";
 import { db } from "@/lib/firebase";
@@ -414,7 +414,7 @@ const renderCenterLabel = ({ viewBox }: any) => {
 // --- Main Component ---
 
 const salesReport = () => {
-  const { userRole } = useAuth();
+  const { userRole, userAttribute } = useAuth();
   const { toast } = useToast();
   const auth = getAuth();
   const currentMonthDates = useMemo(() => getCurrentMonthDates(), []);
@@ -441,9 +441,12 @@ const salesReport = () => {
 
   const [allowedProgrammes, setAllowedProgrammes] = useState<string[]>([]);
   const [userPermissionsLoading, setUserPermissionsLoading] = useState(true);
-  const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
+  const userCanViewAllProgrammeData = useMemo(
+    () => canViewAllProgrammes(userRole, userAttribute),
+    [userRole, userAttribute]
+  );
   const [activeProgram, setActiveProgram] = useState<string>(""); 
-  const showProgrammeFilter = userIsChiefAdmin;
+  const showProgrammeFilter = userCanViewAllProgrammeData;
 
   const { stats, genderData, countyData, topLocations, topFarmers, monthlyTrend, filteredData, top3Months } = useOfftakeData(offtakeData, dateRange, selectedProgramme);
 
@@ -460,9 +463,9 @@ const salesReport = () => {
         const programmesObj = data.allowedProgrammes || {};
         const programmesList = Object.keys(programmesObj).filter(key => programmesObj[key] === true);
         setAllowedProgrammes(programmesList);
-        if (!userIsChiefAdmin && programmesList.length > 0) {
+        if (!userCanViewAllProgrammeData && programmesList.length > 0) {
            setActiveProgram(programmesList[0]);
-        } else if (userIsChiefAdmin && !activeProgram) {
+        } else if (userCanViewAllProgrammeData && !activeProgram) {
           setActiveProgram("KPMD");
         }
       }
@@ -472,7 +475,7 @@ const salesReport = () => {
       setUserPermissionsLoading(false);
     });
     return () => unsubscribe();
-  }, [auth.currentUser?.uid, userIsChiefAdmin, activeProgram]);
+  }, [auth.currentUser?.uid, userCanViewAllProgrammeData, activeProgram]);
 
   useEffect(() => {
     if (unsubscribeRef.current) {

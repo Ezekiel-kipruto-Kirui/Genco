@@ -13,7 +13,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Download, Users, BookOpen, Edit, Trash2, Calendar, Eye, MapPin, GraduationCap, Upload, User, UserCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { isChiefAdmin } from "@/contexts/authhelper";
+import { canViewAllProgrammes, isChiefAdmin } from "@/contexts/authhelper";
 import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
 
 // --- Types ---
@@ -149,7 +149,7 @@ const useDebounce = (value: string, delay: number) => {
 
 // --- Main Component ---
 const CapacityBuildingPage = () => {
-  const { user, userRole } = useAuth();
+  const { user, userRole, userAttribute } = useAuth();
   const { toast } = useToast();
   
   // State
@@ -177,6 +177,10 @@ const CapacityBuildingPage = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
+  const userCanViewAllProgrammeData = useMemo(
+    () => canViewAllProgrammes(userRole, userAttribute),
+    [userRole, userAttribute]
+  );
   const requireChiefAdmin = () => {
     if (userIsChiefAdmin) return true;
     toast({
@@ -234,7 +238,7 @@ const CapacityBuildingPage = () => {
   useEffect(() => {
     if (!userRole) return;
 
-    if (isChiefAdmin(userRole)) {
+    if (userCanViewAllProgrammeData) {
       setAvailablePrograms(["RANGE", "KPMD"]);
       if (!activeProgram) setActiveProgram("KPMD");
       return;
@@ -267,7 +271,7 @@ const CapacityBuildingPage = () => {
     });
 
     return () => unsubscribe();
-  }, [userRole, activeProgram]);
+  }, [userRole, activeProgram, userCanViewAllProgrammeData]);
 
   // --- 2. Data Fetching ---
   useEffect(() => {
@@ -765,7 +769,7 @@ const CapacityBuildingPage = () => {
           <Button variant="outline" size="sm" onClick={() => { setFilters({...filters, ...currentMonth}); }}>
             This Month
           </Button>
-          {userIsChiefAdmin && (
+          {userCanViewAllProgrammeData && (
             <>
                {/* Programme Selector - ONLY Visible to Chief Admin */}
                <div className="flex justify-end">

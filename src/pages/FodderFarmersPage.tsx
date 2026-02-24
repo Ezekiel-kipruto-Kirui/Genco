@@ -13,7 +13,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Download, Users, Eye, Globe, LayoutGrid, Edit, Trash2, Upload, FileJson, FileSpreadsheet } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { isChiefAdmin } from "@/contexts/authhelper";
+import { canViewAllProgrammes, isChiefAdmin } from "@/contexts/authhelper";
 import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
 
 // --- Types ---
@@ -116,7 +116,7 @@ const getCurrentMonthDates = () => {
 // --- Main Component ---
 
 const FodderFarmersPage = () => {
-  const { user, userRole } = useAuth();
+  const { user, userRole, userAttribute } = useAuth();
   const { toast } = useToast();
   
   // State
@@ -165,6 +165,10 @@ const FodderFarmersPage = () => {
   });
 
   const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
+  const userCanViewAllProgrammeData = useMemo(
+    () => canViewAllProgrammes(userRole, userAttribute),
+    [userRole, userAttribute]
+  );
   const requireChiefAdmin = () => {
     if (userIsChiefAdmin) return true;
     toast({
@@ -183,7 +187,7 @@ const FodderFarmersPage = () => {
   useEffect(() => {
     if (!userRole) return;
 
-    if (isChiefAdmin(userRole)) {
+    if (userCanViewAllProgrammeData) {
       setAvailablePrograms(["RANGE", "KPMD"]);
       if (!activeProgram) setActiveProgram("RANGE");
       return;
@@ -214,7 +218,7 @@ const FodderFarmersPage = () => {
     });
 
     return () => unsubscribe();
-  }, [userRole, activeProgram]);
+  }, [userRole, activeProgram, userCanViewAllProgrammeData]);
 
   // --- 2. Data Fetching (Realtime with Programme Query) ---
   useEffect(() => {
@@ -744,7 +748,7 @@ const FodderFarmersPage = () => {
           <Button variant="outline" size="sm" onClick={clearAllFilters} className="text-xs border-gray-300 hover:bg-gray-50">Clear All Filters</Button>
           <Button variant="outline" size="sm" onClick={resetToCurrentMonth} className="text-xs border-gray-300 hover:bg-gray-50">This Month</Button>
 
-          {userIsChiefAdmin ? (
+          {userCanViewAllProgrammeData ? (
              <div className="flex justify-end w-full sm:w-auto">
                <Select value={activeProgram} onValueChange={handleProgramChange}>
                   <SelectTrigger className="w-full sm:w-[200px] border-gray-300 focus:border-green-500 bg-white"><SelectValue placeholder="Select Programme" /></SelectTrigger>

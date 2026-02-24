@@ -14,7 +14,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Download, Users, MapPin, Eye, Calendar, Scale, Phone, CreditCard, Edit, Trash2, Weight, Upload, Loader2 } from "lucide-react";
 import { toast, useToast } from "@/hooks/use-toast";
-import { isChiefAdmin } from "@/contexts/authhelper";
+import { canViewAllProgrammes, isChiefAdmin } from "@/contexts/authhelper";
 import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
 
 // Types
@@ -255,7 +255,7 @@ const getFarmerGroupingKey = (record: OfftakeData): string => {
 };
 
 const LivestockOfftakePage = () => {
-  const { userRole } = useAuth();
+  const { userRole, userAttribute } = useAuth();
   const { toast } = useToast();
   const auth = getAuth();
   
@@ -345,6 +345,10 @@ const LivestockOfftakePage = () => {
   });
 
   const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
+  const userCanViewAllProgrammeData = useMemo(
+    () => canViewAllProgrammes(userRole, userAttribute),
+    [userRole, userAttribute]
+  );
   const requireChiefAdmin = () => {
     if (userIsChiefAdmin) return true;
     toast({
@@ -633,7 +637,7 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
         
         setAllowedProgrammes(programmesList);
 
-        if (!userIsChiefAdmin) {
+        if (!userCanViewAllProgrammeData) {
           if (programmesList.length > 0) {
              if (!programmesList.includes(activeProgram)) {
                setActiveProgram(programmesList[0]);
@@ -650,7 +654,7 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
     });
 
     return () => unsubscribe();
-  }, [auth.currentUser?.uid, userIsChiefAdmin, activeProgram]);
+  }, [auth.currentUser?.uid, userCanViewAllProgrammeData, activeProgram]);
 
   // Data fetching
   useEffect(() => {
@@ -1515,11 +1519,11 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
   }, []);
 
   const availableProgramsForSelect = useMemo(() => {
-    if (userIsChiefAdmin) {
+    if (userCanViewAllProgrammeData) {
       return AVAILABLE_PROGRAMS;
     }
     return allowedProgrammes.length > 0 ? allowedProgrammes : [];
-  }, [userIsChiefAdmin, allowedProgrammes]);
+  }, [userCanViewAllProgrammeData, allowedProgrammes]);
 
   const StatsCard = useMemo(() => ({ title, value, icon: Icon, description, subValue }: any) => (
     <Card className="bg-white text-slate-900 shadow-lg border border-gray-200 relative overflow-hidden">
@@ -1600,7 +1604,7 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
             </h2>
             <div className="flex items-center gap-2">
                 <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 font-bold px-3 py-1 w-fit">
-                    {userIsChiefAdmin ? `${activeProgram} PROGRAMME` : activeProgram}
+                    {userCanViewAllProgrammeData ? `${activeProgram} PROGRAMME` : activeProgram}
                 </Badge>
             </div>
         </div>
@@ -1608,7 +1612,7 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
         <div className="flex flex-wrap gap-2 items-center w-full xl:w-auto">
             {availableProgramsForSelect.length > 0 && (
                 <div className="mr-4">
-                    <Select value={activeProgram} onValueChange={handleProgramChange} disabled={userPermissionsLoading || (!userIsChiefAdmin && availableProgramsForSelect.length === 1)}>
+                    <Select value={activeProgram} onValueChange={handleProgramChange} disabled={userPermissionsLoading || (!userCanViewAllProgrammeData && availableProgramsForSelect.length === 1)}>
                         <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white w-full sm:w-[140px]">
                             {userPermissionsLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <SelectValue />}
                         </SelectTrigger>

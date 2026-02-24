@@ -1,5 +1,6 @@
-import { Navigate } from "react-router-dom";
+import { Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
+import { getLandingRouteForRole, hasAnyRole } from "@/contexts/authhelper";
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -7,7 +8,8 @@ interface ProtectedRouteProps {
 }
 
 const ProtectedRoute = ({ children, allowedRoles }: ProtectedRouteProps) => {
-  const { user, userRole, loading } = useAuth();
+  const { user, userRole, userAttribute, loading } = useAuth();
+  const location = useLocation();
 
   // 1️⃣ Show loader while waiting for auth/role
   if (loading) {
@@ -27,8 +29,10 @@ const ProtectedRoute = ({ children, allowedRoles }: ProtectedRouteProps) => {
   }
 
   // 3️⃣ If allowedRoles is defined and the user role is NOT in it, redirect
-  if (allowedRoles && (!userRole || !allowedRoles.includes(userRole))) {
-    return <Navigate to="/dashboard" replace />;
+  if (allowedRoles && !hasAnyRole(userRole, allowedRoles, userAttribute)) {
+    const fallbackRoute = getLandingRouteForRole(userRole, userAttribute);
+    const redirectTo = fallbackRoute === location.pathname ? "/auth" : fallbackRoute;
+    return <Navigate to={redirectTo} replace />;
   }
 
   // 4️⃣ Otherwise render children

@@ -15,7 +15,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu"; 
 import { Download, Eye, Calendar, FileText, Edit, Trash2, Car, Wallet, CheckCircle, XCircle, MapPin, Printer, Plus, Minus, Save, FileImage, ExternalLink, MoreHorizontal, LogOut, History, Clock, ChevronDown } from "lucide-react"; 
 import { useToast } from "@/hooks/use-toast";
-import { isChiefAdmin } from "@/contexts/authhelper";
+import { canViewAllProgrammes, isAdmin, isChiefAdmin, isFinance, isHummanResourceManager, isProjectManager, resolvePermissionPrincipal } from "@/contexts/authhelper";
 import html2canvas from "html2canvas";
 import { jsPDF } from "jspdf";
 import { millify } from 'millify';
@@ -196,7 +196,7 @@ const logHistory = async (recordId: string, action: string, details: string) => 
 // --- Main Component ---
 
 const RequisitionsPage = () => {
-  const { user, userRole, userName } = useAuth();
+  const { user, userRole, userAttribute, userName } = useAuth();
   const navigate = useNavigate(); 
   const { toast } = useToast();
   
@@ -261,26 +261,40 @@ const RequisitionsPage = () => {
     hasPrev: false
   });
 
+  const permissionPrincipal = useMemo(
+    () => resolvePermissionPrincipal(userRole, userAttribute),
+    [userRole, userAttribute]
+  );
   const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
-  const canApproveRequisition = userRole === 'admin' || userIsChiefAdmin;
-  const canAuthorizeRequisition = userRole === 'hr';
+  const userIsHummanResourceManager = useMemo(() => isHummanResourceManager(userRole), [userRole]);
+  const userHasProjectManagerRights = useMemo(() => isProjectManager(permissionPrincipal), [permissionPrincipal]);
+  const userHasHummanResourceRights = useMemo(
+    () => isHummanResourceManager(permissionPrincipal),
+    [permissionPrincipal]
+  );
+  const userHasFinanceRights = useMemo(() => isFinance(permissionPrincipal), [permissionPrincipal]);
+  const userCanViewAllProgrammes = useMemo(
+    () => canViewAllProgrammes(userRole, userAttribute),
+    [userRole, userAttribute]
+  );
+  const canViewAllRequisitionProgrammes = useMemo(
+    () => userCanViewAllProgrammes || userHasHummanResourceRights || userHasProjectManagerRights,
+    [userCanViewAllProgrammes, userHasHummanResourceRights, userHasProjectManagerRights]
+  );
+  const canApproveRequisition =
+    isAdmin(permissionPrincipal) || isChiefAdmin(permissionPrincipal) || userHasProjectManagerRights;
+  const canAuthorizeRequisition = userHasHummanResourceRights;
   const canCompleteRequisition = canApproveRequisition || canAuthorizeRequisition;
   const requisitionCacheKey = useMemo(
-    () => cacheKey("admin-page", "requisitions", userRole, activeProgram || "all"),
-    [userRole, activeProgram]
+    () => cacheKey("admin-page", "requisitions", permissionPrincipal || "no-access", activeProgram || "all"),
+    [permissionPrincipal, activeProgram]
   );
 
-  // --- 1. Fetch User Permissions (HR SEES ALL) ---
+  // --- 1. Fetch User Permissions ---
   useEffect(() => {
-    if (userRole === 'hr') {
+    if (canViewAllRequisitionProgrammes) {
       setAvailablePrograms([]);
       setActiveProgram("ALL");
-      return;
-    }
-
-    if (isChiefAdmin(userRole)) {
-      setAvailablePrograms(["RANGE", "KPMD"]);
-      setActiveProgram((prev) => (!prev || prev === "ALL" ? "RANGE" : prev));
       return;
     }
 
@@ -307,11 +321,11 @@ const RequisitionsPage = () => {
       }
     }, (error) => { console.error("Error fetching user permissions:", error); });
     return () => unsubscribe();
-  }, [userRole]);
+  }, [userRole, canViewAllRequisitionProgrammes]);
 
   // --- 2. Data Fetching ---
   useEffect(() => {
-    if (userRole !== 'hr' && !activeProgram) {
+    if (!canViewAllRequisitionProgrammes && !activeProgram) {
         setAllRequisitions([]);
         setLoading(false);
         return;
@@ -325,7 +339,7 @@ const RequisitionsPage = () => {
     }
 
     let reqQuery;
-    if (userRole === 'hr' || activeProgram === "ALL") {
+    if (canViewAllRequisitionProgrammes || activeProgram === "ALL") {
         reqQuery = ref(db, 'requisitions');
     } else {
         reqQuery = query(ref(db, 'requisitions'), orderByChild('programme'), equalTo(activeProgram));
@@ -371,7 +385,7 @@ const RequisitionsPage = () => {
         setLoading(false);
     });
     return () => { if(typeof unsubscribe === 'function') unsubscribe(); };
-  }, [activeProgram, userRole, toast, requisitionCacheKey]);
+  }, [activeProgram, canViewAllRequisitionProgrammes, toast, requisitionCacheKey]);
 
   // --- 3. Filtering & Stats Logic ---
   useEffect(() => {
@@ -381,10 +395,6 @@ const RequisitionsPage = () => {
       return;
     }
     let filteredList = allRequisitions.filter(record => {
-      if (userRole === 'hr') {
-        if (record.status !== 'approved' && record.status !== 'complete') return false;
-      }
-
       if (filters.startDate || filters.endDate) {
         const recordDate = parseDate(record.createdAt);
         if (recordDate) {
@@ -399,7 +409,7 @@ const RequisitionsPage = () => {
         } else if (filters.startDate || filters.endDate) return false;
       }
       
-      if (userRole !== 'hr' && filters.status !== "all" && record.status?.toLowerCase() !== filters.status.toLowerCase()) return false;
+      if (filters.status !== "all" && record.status?.toLowerCase() !== filters.status.toLowerCase()) return false;
       
       if (filters.type !== "all" && record.type?.toLowerCase() !== filters.type.toLowerCase()) return false;
       
@@ -425,7 +435,7 @@ const RequisitionsPage = () => {
     setPagination(prev => ({
       ...prev, page: currentPage, totalPages, hasNext: currentPage < totalPages, hasPrev: currentPage > 1
     }));
-  }, [allRequisitions, filters, pagination.limit, pagination.page, userRole]);
+  }, [allRequisitions, filters, pagination.limit, pagination.page]);
 
   // --- Handlers ---
   const handleLogout = async () => {
@@ -579,7 +589,7 @@ const RequisitionsPage = () => {
 
       if (statusChanged && nextStatus === 'approved') {
         if (!canApproveRequisition) {
-          toast({ title: "Unauthorized", description: "Only Admin and Chief Admin can approve requisitions.", variant: "destructive" });
+          toast({ title: "Unauthorized", description: "Only Project Manager, Admin and Chief Admin can approve requisitions.", variant: "destructive" });
           return;
         }
         updatePayload.approvedBy = actorName;
@@ -588,12 +598,12 @@ const RequisitionsPage = () => {
 
       if (statusChanged && nextStatus === 'complete') {
         if (!canCompleteRequisition) {
-          toast({ title: "Unauthorized", description: "Only HR, Admin or Chief Admin can complete requisitions.", variant: "destructive" });
+          toast({ title: "Unauthorized", description: "Only Humman Resource Manager, Project Manager, Admin or Chief Admin can complete requisitions.", variant: "destructive" });
           return;
         }
         const authorizedBy = String(editRecord.authorizedBy || '').trim();
         if (!authorizedBy) {
-          toast({ title: "Authorization Required", description: "Requisition can only be completed after HR authorization.", variant: "destructive" });
+          toast({ title: "Authorization Required", description: "Requisition can only be completed after Humman Resource Manager authorization.", variant: "destructive" });
           return;
         }
       }
@@ -661,7 +671,7 @@ const RequisitionsPage = () => {
   const handleApprove = async () => {
     if (!viewingRecord) return;
     if (!canApproveRequisition) {
-      toast({ title: "Unauthorized", description: "Only Admin and Chief Admin can approve requisitions.", variant: "destructive" });
+      toast({ title: "Unauthorized", description: "Only Project Manager, Admin and Chief Admin can approve requisitions.", variant: "destructive" });
       return;
     }
     try {
@@ -686,7 +696,7 @@ const RequisitionsPage = () => {
   const handleAuthorize = async () => {
     if (!viewingRecord) return;
     if (!canAuthorizeRequisition) {
-      toast({ title: "Unauthorized", description: "Only HR can authorize requisitions.", variant: "destructive" });
+      toast({ title: "Unauthorized", description: "Only Humman Resource Manager can authorize requisitions.", variant: "destructive" });
       return;
     }
     if (viewingRecord.status !== 'approved') {
@@ -722,7 +732,7 @@ const RequisitionsPage = () => {
   const handleMarkComplete = async () => {
     if (!viewingRecord) return;
     if (!canCompleteRequisition) {
-      toast({ title: "Unauthorized", description: "Only HR, Admin or Chief Admin can complete requisitions.", variant: "destructive" });
+      toast({ title: "Unauthorized", description: "Only Humman Resource Manager, Project Manager, Admin or Chief Admin can complete requisitions.", variant: "destructive" });
       return;
     }
     if (viewingRecord.status !== 'approved') {
@@ -730,7 +740,7 @@ const RequisitionsPage = () => {
       return;
     }
     if (!viewingRecord.authorizedBy) {
-      toast({ title: "Authorization Required", description: "Requisition can only be completed after HR authorization.", variant: "destructive" });
+      toast({ title: "Authorization Required", description: "Requisition can only be completed after Humman Resource Manager authorization.", variant: "destructive" });
       return;
     }
     try {
@@ -960,7 +970,7 @@ const RequisitionsPage = () => {
 
     <div className="space-y-6 px-2 sm:px-4 md:px-0 items-center">
       {/* Header Section */}
-       {!userRole || userRole !== 'hr' && ( <div className="flex flex-col gap-4 text-sm">
+       {!userRole || !userIsHummanResourceManager && ( <div className="flex flex-col gap-4 text-sm">
              <div className="flex flex-col xl:flex-row xl:justify-between xl:items-end gap-4 w-full">
        <div className="w-full xl:w-auto flex flex-wrap items-center gap-3">
           <h2 className="text-md font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
@@ -982,7 +992,7 @@ const RequisitionsPage = () => {
                 </div>
             </div>
             
-            {userIsChiefAdmin && userRole !== 'hr' && (
+            {userIsChiefAdmin && !userIsHummanResourceManager && (
                 <div className="space-y-2 w-full lg:w-[180px]">
                     <Select value={activeProgram} onValueChange={handleProgramChange} disabled={availablePrograms.length === 0}>
                         <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white h-9 font-bold w-full">
@@ -1002,18 +1012,18 @@ const RequisitionsPage = () => {
             </div>
           
         <div className="flex flex-wrap gap-2 w-full xl:w-auto mt-2 xl:mt-0 justify-end">
-          {userRole !== 'hr' && selectedRecords.length > 0 && (
+          {!userIsHummanResourceManager && selectedRecords.length > 0 && (
             <Button variant="destructive" size="sm" onClick={() => {}} className="text-xs">
                Delete ({selectedRecords.length})
             </Button>
           )}
            
-           {userRole === 'hr' && (
+           {(userIsHummanResourceManager || userHasFinanceRights) && (
              <Button onClick={handleLogout} variant="outline" size="sm" className="h-9 px-6 w-full xl:w-auto text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700">
                <LogOut className="h-4 w-4 mr-2" /> Logout
              </Button>
            )}
-           { userRole !== 'hr' && userRole !== 'admin' && (
+           { !userIsHummanResourceManager && userRole !== 'admin' && (
              <Button onClick={() => {}} disabled={exportLoading} className="bg-gradient-to-r from-blue-800 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white shadow-md text-xs h-9 px-6 w-full xl:w-auto">
                 <Download className="h-4 w-4 mr-2" /> Export ({filteredRequisitions.length})
               </Button>
@@ -1024,7 +1034,7 @@ const RequisitionsPage = () => {
 
               
             </div> )}
-      {userRole === 'hr' && ( <div className="flex flex-col gap-4 text-sm">
+      {userIsHummanResourceManager && ( <div className="flex flex-col gap-4 text-sm">
     
       <div className="flex flex-col xl:flex-row xl:justify-between xl:items-end gap-4 w-full">
         
@@ -1064,7 +1074,7 @@ const RequisitionsPage = () => {
                 </div>
             </div>
             
-            {userIsChiefAdmin && userRole !== 'hr' && (
+            {userIsChiefAdmin && !userIsHummanResourceManager && (
                 <div className="space-y-2 w-full lg:w-[180px]">
                     <Select value={activeProgram} onValueChange={handleProgramChange} disabled={availablePrograms.length === 0}>
                         <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white h-9 font-bold w-full">
@@ -1090,12 +1100,12 @@ const RequisitionsPage = () => {
             </Button>
           )}
            
-           {userRole === 'hr' && (
+           {userIsHummanResourceManager && (
              <Button onClick={handleLogout} variant="outline" size="sm" className="h-9 px-6 w-full xl:w-auto text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700">
                <LogOut className="h-4 w-4 mr-2" /> Logout
              </Button>
            )}
-           { userRole !== 'hr' && (
+           { !userIsHummanResourceManager && (
              <Button onClick={() => {}} disabled={exportLoading} className="bg-gradient-to-r from-blue-800 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white shadow-md text-xs h-9 px-6 w-full xl:w-auto">
                 <Download className="h-4 w-4 mr-2" /> Export ({filteredRequisitions.length})
               </Button>
@@ -1138,7 +1148,7 @@ const RequisitionsPage = () => {
 
             <div className="space-y-2">
                 <Label className="font-semibold text-gray-700 text-xs uppercase">Status</Label>
-                <Select value={filters.status} onValueChange={(value) => handleFilterChange("status", value)} disabled={userRole === 'hr'}>
+                <Select value={filters.status} onValueChange={(value) => handleFilterChange("status", value)} disabled={userIsHummanResourceManager}>
                     <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white h-9"><SelectValue placeholder="All Statuses" /></SelectTrigger>
                     <SelectContent>
                         <SelectItem value="all">All Statuses</SelectItem>
@@ -1227,15 +1237,15 @@ const RequisitionsPage = () => {
                                     <FileImage className="mr-2 h-4 w-4 text-indigo-600" /> <span className="text-gray-700">View Images</span>
                                 </DropdownMenuItem>
 
-                                {userRole !== 'hr' && <DropdownMenuSeparator />}
+                                {!userIsHummanResourceManager && <DropdownMenuSeparator />}
                                 
-                                {userRole !== 'hr' && userRole !== 'admin' && (
+                                {!userIsHummanResourceManager && userRole !== 'admin' && (
                                     <DropdownMenuItem onClick={() => openEditDialog(record)}>
                                         <Edit className="mr-2 h-4 w-4 text-gray-600" /> <span className="text-gray-700">Edit</span>
                                     </DropdownMenuItem>
                                 )}
                                 
-                                {userRole !== 'hr' && userRole !== 'admin' && (
+                                {!userIsHummanResourceManager && userRole !== 'admin' && (
                                     <DropdownMenuItem onClick={() => confirmDelete(record)} className="text-red-600 focus:text-red-700 focus:bg-red-50">
                                         <Trash2 className="mr-2 h-4 w-4" /> Delete
                                     </DropdownMenuItem>
@@ -1599,3 +1609,4 @@ const RequisitionsPage = () => {
 };
 
 export default RequisitionsPage;
+
