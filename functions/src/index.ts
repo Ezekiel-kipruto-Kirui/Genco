@@ -13,6 +13,16 @@ const DEFAULT_HR_TIMEOUT_HOURS = 24;
 const DEFAULT_HR_REJECTION_REASON =
   "Rejected by HR because no approval was provided in time.";
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const PHONE_DIGITS_REGEX = /\D+/g;
+const ROLE_HR_IDENTIFIERS = new Set([
+  "hr",
+  "human resource manager",
+  "humman resource manager",
+  "human resource manger",
+  "humman resource manger",
+]);
+const ROLE_PROJECT_MANAGER_IDENTIFIERS = new Set(["project manager"]);
+const ROLE_FINANCE_IDENTIFIERS = new Set(["finance"]);
 
 interface RequisitionRecord {
   status?: string;
@@ -25,6 +35,11 @@ interface RequisitionRecord {
   requesterEmail?: string;
   userEmail?: string;
   programme?: string;
+  phone?: string;
+  phoneNumber?: string;
+  mobile?: string;
+  telephone?: string;
+  contact?: string;
   submittedAt?: number | string;
   approvedAt?: number | string;
   approvedBy?: string;
@@ -48,7 +63,16 @@ interface UserRecord {
   email?: string;
   role?: string;
   status?: string;
+  phone?: string;
+  phoneNumber?: string;
+  mobile?: string;
+  telephone?: string;
+  contact?: string;
   allowedProgrammes?: Record<string, boolean>;
+  accessControl?: {
+    customAttribute?: string;
+    customAttributes?: Record<string, string>;
+  };
   [key: string]: unknown;
 }
 
@@ -81,29 +105,84 @@ const parseTimestampMs = (value: unknown): number | null => {
   return null;
 };
 
-const getRequesterName = (record: RequisitionRecord): string =>
-  record.name || record.userName || record.username || "Requester";
+const normalizePhone = (value: unknown): string | null => {
+  if (typeof value !== "string") return null;
+  const raw = value.trim();
+  if (!raw) return null;
 
-const getRequesterEmail = (record: RequisitionRecord): string | null => {
-  const candidates = [
-    record.email,
-    record.requesterEmail,
-    record.userEmail,
-    record.username,
+  const hasPlus = raw.startsWith("+");
+  let digits = raw.replace(PHONE_DIGITS_REGEX, "");
+  if (!digits) return null;
+
+  if (digits.startsWith("0") && digits.length === 10) {
+    digits = `254${digits.slice(1)}`;
+  } else if (digits.startsWith("7") && digits.length === 9) {
+    digits = `254${digits}`;
+  }
+
+  if (digits.length < 9) return null;
+  return hasPlus ? `+${digits}` : digits;
+};
+
+const getRoleTokens = (user: UserRecord): string[] => {
+  const tokens = new Set<string>();
+  const role = normalize(user.role);
+  if (role) tokens.add(role);
+
+  const customAttribute = normalize(user.accessControl?.customAttribute);
+  if (customAttribute) tokens.add(customAttribute);
+
+  const legacy = user.accessControl?.customAttributes;
+  if (legacy && typeof legacy === "object") {
+    for (const key of Object.keys(legacy)) {
+      const token = normalize(key);
+      if (token) tokens.add(token);
+    }
+  }
+
+  return [...tokens];
+};
+
+const hasAnyRoleToken = (user: UserRecord, allowedTokens: Set<string>): boolean =>
+  getRoleTokens(user).some((token) => allowedTokens.has(token));
+
+const getUserPhone = (user: UserRecord): string | null => {
+  const phoneCandidates = [
+    user.phoneNumber,
+    user.phone,
+    user.mobile,
+    user.telephone,
+    user.contact,
   ];
-
-  for (const candidate of candidates) {
-    if (typeof candidate !== "string") continue;
-    const trimmed = candidate.trim();
-    if (isValidEmail(trimmed)) return trimmed;
+  for (const candidate of phoneCandidates) {
+    const normalizedPhone = normalizePhone(candidate);
+    if (normalizedPhone) return normalizedPhone;
   }
   return null;
 };
 
-const resolveRequesterEmail = async (
+const getRequesterPhone = (record: RequisitionRecord): string | null => {
+  const phoneCandidates = [
+    record.phoneNumber,
+    record.phone,
+    record.mobile,
+    record.telephone,
+    record.contact,
+  ];
+  for (const candidate of phoneCandidates) {
+    const normalizedPhone = normalizePhone(candidate);
+    if (normalizedPhone) return normalizedPhone;
+  }
+  return null;
+};
+
+const getRequesterName = (record: RequisitionRecord): string =>
+  record.name || record.userName || record.username || "Requester";
+
+const resolveRequesterPhone = async (
   record: RequisitionRecord,
 ): Promise<string | null> => {
-  const direct = getRequesterEmail(record);
+  const direct = getRequesterPhone(record);
   if (direct) return direct;
 
   const uid = typeof record.uid === "string" ? record.uid.trim() : "";
@@ -115,13 +194,11 @@ const resolveRequesterEmail = async (
         .get();
       if (directUserSnapshot.exists()) {
         const userData = directUserSnapshot.val() as UserRecord;
-        const userEmail = typeof userData.email === "string" ?
-          userData.email.trim() :
-          "";
-        if (isValidEmail(userEmail)) return userEmail;
+        const phone = getUserPhone(userData);
+        if (phone) return phone;
       }
     } catch (error) {
-      logger.error("Failed requester UID lookup in /users", {uid, error});
+      logger.error("Failed requester UID lookup for phone in /users", {uid, error});
     }
   }
 
@@ -148,9 +225,6 @@ const resolveRequesterEmail = async (
 
     const users = usersSnapshot.val() as Record<string, UserRecord>;
     for (const [userId, user] of Object.entries(users)) {
-      const email = typeof user.email === "string" ? user.email.trim() : "";
-      if (!isValidEmail(email)) continue;
-
       const userTokens = [
         userId,
         user.uid,
@@ -160,10 +234,12 @@ const resolveRequesterEmail = async (
         .filter((value): value is string => typeof value === "string")
         .map((value) => value.trim().toLowerCase());
 
-      if (userTokens.some((token) => identifiers.has(token))) return email;
+      if (!userTokens.some((token) => identifiers.has(token))) continue;
+      const phone = getUserPhone(user);
+      if (phone) return phone;
     }
   } catch (error) {
-    logger.error("Failed requester fallback lookup in /users", {error});
+    logger.error("Failed requester fallback phone lookup in /users", {error});
   }
 
   return null;
@@ -253,13 +329,54 @@ const sendEmail = async (
   }
 };
 
-const getFallbackHrEmails = (): string[] => {
-  const raw = getEnv("HR_NOTIFICATION_EMAILS");
-  if (!raw) return [];
-  return raw
-    .split(",")
-    .map((item) => item.trim())
-    .filter((email) => isValidEmail(email));
+const sendSms = async (phoneNumbers: string[], message: string): Promise<void> => {
+  const recipients = [...new Set(
+    phoneNumbers
+      .map((phone) => normalizePhone(phone))
+      .filter((phone): phone is string => !!phone),
+  )];
+
+  if (!message.trim() || recipients.length === 0) return;
+
+  const apiKey = getEnv("ROAMTECH_API_KEY");
+  const partnerId = getEnv("ROAMTECH_PARTNER_ID");
+  const shortcode = getEnv("SHORTCODE");
+  const smsUrl = getEnv("ROAMTECH_SMS_URL") || "https://sms.roamtech.co.ke/api/services/sendsms/";
+
+  if (!apiKey || !partnerId || !shortcode) {
+    logger.warn(
+      "SMS skipped. Missing ROAMTECH_API_KEY, ROAMTECH_PARTNER_ID or SHORTCODE env vars.",
+    );
+    return;
+  }
+
+  try {
+    const response = await fetch(smsUrl, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        apikey: apiKey,
+        partnerID: partnerId,
+        mobile: recipients.join(","),
+        message,
+        shortcode,
+      }),
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      logger.error("Failed to send SMS", {
+        status: response.status,
+        body: text,
+        recipients: recipients.length,
+      });
+      return;
+    }
+
+    logger.info("SMS sent", {recipients: recipients.length});
+  } catch (error) {
+    logger.error("Failed to send SMS", {error, recipients: recipients.length});
+  }
 };
 
 const userCanHandleProgramme = (
@@ -278,10 +395,11 @@ const userCanHandleProgramme = (
   );
 };
 
-const getHrRecipientEmails = async (
+const getEmailsByRole = async (
+  roleTokens: Set<string>,
   programme: string | undefined,
 ): Promise<string[]> => {
-  const recipients = new Set<string>(getFallbackHrEmails());
+  const recipients = new Set<string>();
 
   try {
     const snapshot = await admin.database().ref("users").get();
@@ -289,7 +407,7 @@ const getHrRecipientEmails = async (
 
     const users = snapshot.val() as Record<string, UserRecord>;
     for (const user of Object.values(users)) {
-      if (normalize(user.role) !== "hr") continue;
+      if (!hasAnyRoleToken(user, roleTokens)) continue;
       if (normalize(user.status) === "inactive") continue;
       if (!userCanHandleProgramme(user, programme)) continue;
 
@@ -297,7 +415,33 @@ const getHrRecipientEmails = async (
       if (isValidEmail(email)) recipients.add(email);
     }
   } catch (error) {
-    logger.error("Failed to load HR recipients from /users", {error});
+    logger.error("Failed to load role-based email recipients from /users", {error});
+  }
+
+  return [...recipients];
+};
+
+const getPhonesByRole = async (
+  roleTokens: Set<string>,
+  programme: string | undefined,
+): Promise<string[]> => {
+  const recipients = new Set<string>();
+
+  try {
+    const snapshot = await admin.database().ref("users").get();
+    if (!snapshot.exists()) return [...recipients];
+
+    const users = snapshot.val() as Record<string, UserRecord>;
+    for (const user of Object.values(users)) {
+      if (!hasAnyRoleToken(user, roleTokens)) continue;
+      if (normalize(user.status) === "inactive") continue;
+      if (!userCanHandleProgramme(user, programme)) continue;
+
+      const phone = getUserPhone(user);
+      if (phone) recipients.add(phone);
+    }
+  } catch (error) {
+    logger.error("Failed to load role-based phone recipients from /users", {error});
   }
 
   return [...recipients];
@@ -324,7 +468,10 @@ const sendHrApprovalRequestEmail = async (
   requisitionId: string,
   record: RequisitionRecord,
 ): Promise<void> => {
-  const hrRecipients = await getHrRecipientEmails(record.programme);
+  const hrRecipients = await getEmailsByRole(
+    ROLE_HR_IDENTIFIERS,
+    record.programme,
+  );
 
   if (hrRecipients.length === 0) {
     logger.warn("No HR recipients found for approved requisition", {
@@ -356,113 +503,160 @@ const sendHrApprovalRequestEmail = async (
   await sendEmail(hrRecipients, subject, text, html);
 };
 
-const sendRequesterApprovedEmail = async (
+const sendProjectManagerNewRequisitionSms = async (
   requisitionId: string,
   record: RequisitionRecord,
 ): Promise<void> => {
-  const requesterEmail = await resolveRequesterEmail(record);
-  if (!requesterEmail) {
+  const pmPhones = await getPhonesByRole(
+    ROLE_PROJECT_MANAGER_IDENTIFIERS,
+    record.programme,
+  );
+  if (pmPhones.length === 0) {
     logger.warn(
-      "Requester email missing for approved requisition",
-      {requisitionId},
+      "Project Manager phone recipients missing for new requisition",
+      {requisitionId, programme: record.programme || "N/A"},
     );
     return;
   }
 
-  const subject = `Your requisition ${requisitionId} was approved`;
-  const text = [
-    `Hello ${getRequesterName(record)},`,
-    "",
-    "Your requisition has been approved.",
-    "HR has been notified for final authorization.",
-    "",
-    buildDetailsText(requisitionId, record),
-  ].join("\n");
-  const html = [
-    `<p>Hello ${getRequesterName(record)},</p>`,
-    "<p>Your requisition has been approved.</p>",
-    "<p>HR has been notified for final authorization.</p>",
-    `<p><strong>Requisition ID:</strong> ${requisitionId}<br/>`,
-    "<strong>Status:</strong> Approved</p>",
-  ].join("");
+  const message = [
+    "New requisition submitted.",
+    `ID: ${requisitionId}`,
+    `Requester: ${getRequesterName(record)}`,
+    `Programme: ${record.programme || "N/A"}`,
+    `Amount: ${formatAmount(record)}`,
+  ].join(" ");
 
-  await sendEmail([requesterEmail], subject, text, html);
+  await sendSms(pmPhones, message);
 };
 
-const sendRequesterRejectedEmail = async (
+const sendRequesterRejectedSms = async (
   requisitionId: string,
   record: RequisitionRecord,
 ): Promise<void> => {
-  const requesterEmail = await resolveRequesterEmail(record);
-  if (!requesterEmail) {
+  const requesterPhone = await resolveRequesterPhone(record);
+  if (!requesterPhone) {
     logger.warn(
-      "Requester email missing for rejected requisition",
+      "Requester phone missing for rejected requisition SMS",
       {requisitionId},
     );
     return;
   }
-
-  const rejectedByHr =
-    normalize(record.rejectedBy) === "hr" || record.hrAutoRejected === true;
 
   const rejectionReason = typeof record.rejectionReason === "string" &&
       record.rejectionReason.trim() ?
     record.rejectionReason.trim() :
-    (
-      rejectedByHr ?
-        DEFAULT_HR_REJECTION_REASON :
-        "No rejection reason provided."
-    );
+    DEFAULT_HR_REJECTION_REASON;
 
-  const heading = rejectedByHr ?
-    "Your requisition was rejected by HR." :
-    "Your requisition was rejected.";
-
-  const subject = `Your requisition ${requisitionId} was rejected`;
-  const text = [
-    `Hello ${getRequesterName(record)},`,
-    "",
-    heading,
+  const message = [
+    `Hello ${getRequesterName(record)}.`,
+    `Your requisition ${requisitionId} was rejected by Human Resource Manager.`,
     `Reason: ${rejectionReason}`,
+  ].join(" ");
+
+  await sendSms([requesterPhone], message);
+};
+
+const sendRequesterAuthorizedSms = async (
+  requisitionId: string,
+  record: RequisitionRecord,
+): Promise<void> => {
+  const requesterPhone = await resolveRequesterPhone(record);
+  if (!requesterPhone) {
+    logger.warn(
+      "Requester phone missing for authorized requisition SMS",
+      {requisitionId},
+    );
+    return;
+  }
+
+  const message = [
+    `Hello ${getRequesterName(record)}.`,
+    `Your requisition ${requisitionId} has been authorized by Human Resource Manager.`,
+    "Finance has been notified to process the transaction.",
+  ].join(" ");
+
+  await sendSms([requesterPhone], message);
+};
+
+const sendFinanceAuthorizedEmail = async (
+  requisitionId: string,
+  record: RequisitionRecord,
+): Promise<void> => {
+  const financeRecipients = await getEmailsByRole(
+    ROLE_FINANCE_IDENTIFIERS,
+    record.programme,
+  );
+
+  if (financeRecipients.length === 0) {
+    logger.warn("No Finance recipients found for authorized requisition", {
+      requisitionId,
+      programme: record.programme || "N/A",
+    });
+    return;
+  }
+
+  const details = buildDetailsText(requisitionId, record);
+  const subject = `Finance action required: authorized requisition ${requisitionId}`;
+  const text = [
+    "A requisition has been authorized by HR.",
+    "Please process the transaction.",
     "",
-    `Requisition ID: ${requisitionId}`,
-    "Status: Rejected",
+    details,
+    "",
+    `Authorized by: ${record.authorizedBy || "HR"}`,
   ].join("\n");
   const html = [
-    `<p>Hello ${getRequesterName(record)},</p>`,
-    `<p>${heading}</p>`,
-    `<p><strong>Reason:</strong> ${rejectionReason}</p>`,
+    "<p>A requisition has been authorized by HR.</p>",
+    "<p><strong>Please process the transaction.</strong></p>",
     `<p><strong>Requisition ID:</strong> ${requisitionId}<br/>`,
-    "<strong>Status:</strong> Rejected</p>",
+    `<strong>Requester:</strong> ${getRequesterName(record)}<br/>`,
+    `<strong>Programme:</strong> ${record.programme || "N/A"}<br/>`,
+    `<strong>Amount:</strong> ${formatAmount(record)}<br/>`,
+    `<strong>Authorized by:</strong> ${record.authorizedBy || "HR"}</p>`,
   ].join("");
 
-  await sendEmail([requesterEmail], subject, text, html);
+  await sendEmail(financeRecipients, subject, text, html);
 };
 
 export const notifyRequisitionStatusEmails = onValueWritten(
   "/requisitions/{requisitionId}",
-  async (event): Promise<void> => {
+  async (event: any): Promise<void> => {
     const before = event.data.before.val() as RequisitionRecord | null;
     const after = event.data.after.val() as RequisitionRecord | null;
 
     if (!after) return;
 
+    const requisitionId = String(event.params.requisitionId);
     const previousStatus = normalize(before?.status);
     const nextStatus = normalize(after.status);
-    if (previousStatus === nextStatus) return;
+    const previousAuthorizedBy = normalize(before?.authorizedBy);
+    const nextAuthorizedBy = normalize(after.authorizedBy);
 
-    const requisitionId = String(event.params.requisitionId);
-
-    if (nextStatus === "approved") {
-      await Promise.all([
-        sendHrApprovalRequestEmail(requisitionId, after),
-        sendRequesterApprovedEmail(requisitionId, after),
-      ]);
+    if (!before && after) {
+      await sendProjectManagerNewRequisitionSms(requisitionId, after);
       return;
     }
 
-    if (nextStatus === "rejected") {
-      await sendRequesterRejectedEmail(requisitionId, after);
+    if (nextStatus === "approved") {
+      if (previousStatus !== nextStatus) {
+        await sendHrApprovalRequestEmail(requisitionId, after);
+      }
+    }
+
+    if (
+      nextStatus === "rejected" &&
+      previousStatus !== nextStatus
+    ) {
+      await sendRequesterRejectedSms(requisitionId, after);
+    }
+
+    if (!previousAuthorizedBy && !!nextAuthorizedBy) {
+      await Promise.all([
+        sendRequesterAuthorizedSms(requisitionId, after),
+        sendFinanceAuthorizedEmail(requisitionId, after),
+      ]);
+      return;
     }
   },
 );
