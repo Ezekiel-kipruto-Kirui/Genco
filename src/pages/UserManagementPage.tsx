@@ -30,6 +30,8 @@ interface UserRecord {
   id: string;
   name?: string;
   email?: string;
+  phoneNumber?: string;
+  phone?: string;
   role?: string;
   createdAt?: any;
   lastLogin?: any;
@@ -72,6 +74,7 @@ interface Pagination {
 interface EditForm {
   name: string;
   email: string;
+  phoneNumber: string;
   role: string;
   status: string;
   customAttribute: string;
@@ -81,6 +84,7 @@ interface EditForm {
 interface AddUserForm {
   name: string;
   email: string;
+  phoneNumber: string;
   role: string;
   password: string;
   confirmPassword: string;
@@ -91,7 +95,7 @@ interface AddUserForm {
 // --- Constants ---
 const PAGE_LIMIT = 15;
 const EXPORT_HEADERS = [
-  'Name', 'Email', 'Role', 'Status', 'Created At', 'Last Login', 'Updated At'
+  'Name', 'Email', 'Phone Number', 'Role', 'Status', 'Created At', 'Last Login', 'Updated At'
 ];
 
 // UPDATED: Now only contains KPMD and RANGE
@@ -357,6 +361,7 @@ const TableRow = ({ record, selectedRecords, onSelectRecord, onView, onEdit, onD
     </td>
     <td className="py-2 px-4 text-sm">{record.name || 'N/A'}</td>
     <td className="py-2 px-4 text-sm">{record.email || 'N/A'}</td>
+    <td className="py-2 px-4 text-sm">{record.phoneNumber || record.phone || 'N/A'}</td>
     <td className="py-2 px-4 text-sm">
       <Badge 
         variant="secondary"
@@ -491,6 +496,7 @@ const UserManagementPage = () => {
   const [editForm, setEditForm] = useState<EditForm>({
     name: "",
     email: "",
+    phoneNumber: "",
     role: "",
     status: "active",
     customAttribute: "",
@@ -500,6 +506,7 @@ const UserManagementPage = () => {
   const [addForm, setAddForm] = useState<AddUserForm>({
     name: "",
     email: "",
+    phoneNumber: "",
     role: "user",
     password: "",
     confirmPassword: "",
@@ -583,7 +590,7 @@ const UserManagementPage = () => {
         const searchTermLower = searchTerm.toLowerCase();
         const attributeSearchText = getCustomAttributeText(record.accessControl);
         const searchMatch = [
-          record.name, record.email, record.role, attributeSearchText
+          record.name, record.email, record.phoneNumber, record.phone, record.role, attributeSearchText
         ].some(field => field?.toLowerCase().includes(searchTermLower));
         if (!searchMatch) return false;
       }
@@ -670,6 +677,7 @@ const UserManagementPage = () => {
       const csvData = filteredRecords.map(record => [
         record.name || 'N/A',
         record.email || 'N/A',
+        record.phoneNumber || record.phone || 'N/A',
         record.role || 'N/A',
         record.status || 'N/A',
         formatDate(record.createdAt),
@@ -753,6 +761,7 @@ const UserManagementPage = () => {
     setEditForm({
       name: record.name || "",
       email: record.email || "",
+      phoneNumber: record.phoneNumber || record.phone || "",
       role: record.role || "",
       status: record.status || "active",
       customAttribute: normalizeSelectableAttribute(getCustomAttributeText(record.accessControl)),
@@ -771,6 +780,7 @@ const UserManagementPage = () => {
     setAddForm({
       name: "",
       email: "",
+      phoneNumber: "",
       role: "user",
       password: "",
       confirmPassword: "",
@@ -800,6 +810,7 @@ const UserManagementPage = () => {
       await update(ref(db, `users/${editingRecord.id}`), {
         name: editForm.name,
         email: editForm.email,
+        phoneNumber: editForm.phoneNumber.trim(),
         role: editForm.role,
         status: editForm.status,
         accessControl: buildAccessControl(editForm.customAttribute),
@@ -853,6 +864,7 @@ const UserManagementPage = () => {
         uid: newUser.uid, 
         name: addForm.name,
         email: addForm.email,
+        phoneNumber: addForm.phoneNumber.trim(),
         role: addForm.role,
         status: "active",
         accessControl: buildAccessControl(addForm.customAttribute),
@@ -867,6 +879,7 @@ const UserManagementPage = () => {
       setAddForm({
         name: "",
         email: "",
+        phoneNumber: "",
         role: "user",
         password: "",
         confirmPassword: "",
@@ -1095,6 +1108,7 @@ const UserManagementPage = () => {
                       </th>
                       <th className="text-left py-2 px-4 font-medium text-gray-600">Name</th>
                       <th className="text-left py-2 px-4 font-medium text-gray-600">Email</th>
+                      <th className="text-left py-2 px-4 font-medium text-gray-600">Phone</th>
                       <th className="text-left py-2 px-4 font-medium text-gray-600">Role</th>
                       <th className="text-left py-2 px-4 font-medium text-gray-600">Status</th>
                       <th className="text-left py-2 px-4 font-medium text-gray-600">Attribute</th>
@@ -1161,6 +1175,10 @@ const UserManagementPage = () => {
                   <div>
                     <Label className="text-sm font-medium text-slate-600">Email</Label>
                     <p className="text-slate-900 font-medium">{viewingRecord.email || 'N/A'}</p>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-medium text-slate-600">Phone Number</Label>
+                    <p className="text-slate-900 font-medium">{viewingRecord.phoneNumber || viewingRecord.phone || 'N/A'}</p>
                   </div>
                   <div>
                     <Label className="text-sm font-medium text-slate-600">Role</Label>
@@ -1255,6 +1273,10 @@ const UserManagementPage = () => {
                 <div className="space-y-2">
                   <Label htmlFor="add-email" className="text-sm font-medium text-slate-700">Email *</Label>
                   <Input id="add-email" type="email" value={addForm.email} onChange={(e) => setAddForm(prev => ({ ...prev, email: e.target.value }))} className="bg-white border-slate-300" placeholder="Enter email address" />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="add-phone" className="text-sm font-medium text-slate-700">Phone Number</Label>
+                  <Input id="add-phone" type="tel" value={addForm.phoneNumber} onChange={(e) => setAddForm(prev => ({ ...prev, phoneNumber: e.target.value }))} className="bg-white border-slate-300" placeholder="e.g. 07XXXXXXXX or +2547XXXXXXXX" />
                 </div>
               </div>              
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -1355,6 +1377,10 @@ const UserManagementPage = () => {
                 <div className="space-y-2">
                   <Label htmlFor="edit-email" className="text-sm font-medium text-slate-700">Email</Label>
                   <Input id="edit-email" value={editForm.email} onChange={(e) => setEditForm(prev => ({ ...prev, email: e.target.value }))} className="bg-white border-slate-300" />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-phone" className="text-sm font-medium text-slate-700">Phone Number</Label>
+                  <Input id="edit-phone" type="tel" value={editForm.phoneNumber} onChange={(e) => setEditForm(prev => ({ ...prev, phoneNumber: e.target.value }))} className="bg-white border-slate-300" />
                 </div>
               </div>              
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

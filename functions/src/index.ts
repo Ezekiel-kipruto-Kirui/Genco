@@ -44,6 +44,8 @@ interface RequisitionRecord {
   approvedAt?: number | string;
   approvedBy?: string;
   authorizedBy?: string;
+  completedBy?: string;
+  completedAt?: number | string;
   county?: string;
   subcounty?: string;
   tripPurpose?: string;
@@ -53,6 +55,7 @@ interface RequisitionRecord {
   rejectedBy?: string;
   rejectedAt?: number | string;
   rejectionReason?: string;
+  rejectionSmsText?: string;
   hrAutoRejected?: boolean;
   [key: string]: unknown;
 }
@@ -179,6 +182,38 @@ const getRequesterPhone = (record: RequisitionRecord): string | null => {
 const getRequesterName = (record: RequisitionRecord): string =>
   record.name || record.userName || record.username || "Requester";
 
+const getUserByKey = async (userKey: string): Promise<UserRecord | null> => {
+  const key = userKey.trim();
+  if (!key) return null;
+
+  const snapshot = await admin.database().ref(`users/${key}`).get();
+  if (!snapshot.exists()) return null;
+
+  return snapshot.val() as UserRecord;
+};
+
+const getFirstUserByChild = async (
+  childKey: string,
+  value: string,
+): Promise<UserRecord | null> => {
+  const trimmedValue = value.trim();
+  if (!trimmedValue) return null;
+
+  const snapshot = await admin
+    .database()
+    .ref("users")
+    .orderByChild(childKey)
+    .equalTo(trimmedValue)
+    .limitToFirst(1)
+    .get();
+
+  if (!snapshot.exists()) return null;
+
+  const data = snapshot.val() as Record<string, UserRecord>;
+  const first = Object.values(data)[0];
+  return first || null;
+};
+
 const resolveRequesterPhone = async (
   record: RequisitionRecord,
 ): Promise<string | null> => {
@@ -186,60 +221,49 @@ const resolveRequesterPhone = async (
   if (direct) return direct;
 
   const uid = typeof record.uid === "string" ? record.uid.trim() : "";
-  if (uid) {
-    try {
-      const directUserSnapshot = await admin
-        .database()
-        .ref(`users/${uid}`)
-        .get();
-      if (directUserSnapshot.exists()) {
-        const userData = directUserSnapshot.val() as UserRecord;
-        const phone = getUserPhone(userData);
-        if (phone) return phone;
-      }
-    } catch (error) {
-      logger.error("Failed requester UID lookup for phone in /users", {uid, error});
-    }
-  }
+  const keyCandidates = [
+    uid,
+    typeof record.username === "string" ? record.username.trim() : "",
+    typeof record.userName === "string" ? record.userName.trim() : "",
+  ].filter((value) => value.length > 0);
 
-  const identifiers = new Set(
-    [
-      record.uid,
-      record.name,
-      record.userName,
-      record.username,
+  try {
+    for (const key of keyCandidates) {
+      const userData = await getUserByKey(key);
+      if (!userData) continue;
+      const phone = getUserPhone(userData);
+      if (phone) return phone;
+    }
+
+    if (uid) {
+      const userByUid = await getFirstUserByChild("uid", uid);
+      const phoneByUid = userByUid ? getUserPhone(userByUid) : null;
+      if (phoneByUid) return phoneByUid;
+    }
+
+    const emailCandidates = [
       record.email,
       record.requesterEmail,
       record.userEmail,
     ]
       .filter((value): value is string => typeof value === "string")
-      .map((value) => value.trim().toLowerCase())
-      .filter((value) => value.length > 0),
-  );
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0);
 
-  if (identifiers.size === 0) return null;
+    for (const email of emailCandidates) {
+      const userByEmail = await getFirstUserByChild("email", email);
+      const phoneByEmail = userByEmail ? getUserPhone(userByEmail) : null;
+      if (phoneByEmail) return phoneByEmail;
 
-  try {
-    const usersSnapshot = await admin.database().ref("users").get();
-    if (!usersSnapshot.exists()) return null;
-
-    const users = usersSnapshot.val() as Record<string, UserRecord>;
-    for (const [userId, user] of Object.entries(users)) {
-      const userTokens = [
-        userId,
-        user.uid,
-        user.name,
-        user.email,
-      ]
-        .filter((value): value is string => typeof value === "string")
-        .map((value) => value.trim().toLowerCase());
-
-      if (!userTokens.some((token) => identifiers.has(token))) continue;
-      const phone = getUserPhone(user);
-      if (phone) return phone;
+      const emailLower = email.toLowerCase();
+      if (emailLower !== email) {
+        const userByLowerEmail = await getFirstUserByChild("email", emailLower);
+        const phoneByLowerEmail = userByLowerEmail ? getUserPhone(userByLowerEmail) : null;
+        if (phoneByLowerEmail) return phoneByLowerEmail;
+      }
     }
   } catch (error) {
-    logger.error("Failed requester fallback phone lookup in /users", {error});
+    logger.error("Failed requester phone lookup in /users", {uid, error});
   }
 
   return null;
@@ -543,6 +567,15 @@ const sendRequesterRejectedSms = async (
     return;
   }
 
+  const customSmsText = typeof record.rejectionSmsText === "string" ?
+    record.rejectionSmsText.trim() :
+    "";
+
+  if (customSmsText) {
+    await sendSms([requesterPhone], customSmsText);
+    return;
+  }
+
   const rejectionReason = typeof record.rejectionReason === "string" &&
       record.rejectionReason.trim() ?
     record.rejectionReason.trim() :
@@ -572,8 +605,30 @@ const sendRequesterAuthorizedSms = async (
 
   const message = [
     `Hello ${getRequesterName(record)}.`,
-    `Your requisition ${requisitionId} has been authorized by Human Resource Manager.`,
-    "Finance has been notified to process the transaction.",
+    `Your requisition ${requisitionId} has been authorized and is now being processed.`,
+    "Finance has been notified.",
+  ].join(" ");
+
+  await sendSms([requesterPhone], message);
+};
+
+const sendRequesterCompletedSms = async (
+  requisitionId: string,
+  record: RequisitionRecord,
+): Promise<void> => {
+  const requesterPhone = await resolveRequesterPhone(record);
+  if (!requesterPhone) {
+    logger.warn(
+      "Requester phone missing for completed requisition SMS",
+      {requisitionId},
+    );
+    return;
+  }
+
+  const message = [
+    `Hello ${getRequesterName(record)}.`,
+    `Your requisition ${requisitionId} transaction has been made successfully.`,
+    `Amount: ${formatAmount(record)}.`,
   ].join(" ");
 
   await sendSms([requesterPhone], message);
@@ -649,6 +704,14 @@ export const notifyRequisitionStatusEmails = onValueWritten(
       previousStatus !== nextStatus
     ) {
       await sendRequesterRejectedSms(requisitionId, after);
+    }
+
+    if (
+      nextStatus === "complete" &&
+      previousStatus !== nextStatus
+    ) {
+      await sendRequesterCompletedSms(requisitionId, after);
+      return;
     }
 
     if (!previousAuthorizedBy && !!nextAuthorizedBy) {

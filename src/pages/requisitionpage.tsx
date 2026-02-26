@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu"; 
 import { Download, Eye, Calendar, FileText, Edit, Trash2, Car, Wallet, CheckCircle, XCircle, MapPin, Printer, Plus, Minus, Save, FileImage, ExternalLink, MoreHorizontal, LogOut, History, Clock, ChevronDown } from "lucide-react"; 
 import { useToast } from "@/hooks/use-toast";
@@ -54,6 +55,12 @@ interface RequisitionData {
   approvedAt?: string | number;
   authorizedBy?: string;
   authorizedAt?: string | number;
+  completedBy?: string;
+  completedAt?: string | number;
+  rejectedBy?: string;
+  rejectedAt?: string | number;
+  rejectionReason?: string;
+  rejectionSmsText?: string;
   createdAt?: number | string;
   totalAmount?: number;
   history?: HistoryEntry[];
@@ -212,6 +219,9 @@ const RequisitionsPage = () => {
   // Dialog States
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
   const [viewingRecord, setViewingRecord] = useState<RequisitionData | null>(null);
+  const [hrDecisionAction, setHrDecisionAction] = useState<string>("");
+  const [isRejectDialogOpen, setIsRejectDialogOpen] = useState(false);
+  const [rejectionSmsText, setRejectionSmsText] = useState<string>("");
   
   const [isImageViewerOpen, setIsImageViewerOpen] = useState(false);
   const [viewingImages, setViewingImages] = useState<string[]>([]);
@@ -284,7 +294,7 @@ const RequisitionsPage = () => {
   const canApproveRequisition =
     isAdmin(permissionPrincipal) || isChiefAdmin(permissionPrincipal) || userHasProjectManagerRights;
   const canAuthorizeRequisition = userHasHummanResourceRights;
-  const canCompleteRequisition = canApproveRequisition || canAuthorizeRequisition;
+  const canCompleteRequisition = userHasFinanceRights;
   const requisitionCacheKey = useMemo(
     () => cacheKey("admin-page", "requisitions", permissionPrincipal || "no-access", activeProgram || "all"),
     [permissionPrincipal, activeProgram]
@@ -481,8 +491,22 @@ const RequisitionsPage = () => {
     });
   }, [filteredRequisitions.length]);
 
+  const resetHrDecisionState = useCallback(() => {
+    setHrDecisionAction("");
+    setIsRejectDialogOpen(false);
+    setRejectionSmsText("");
+  }, []);
+
+  const handleViewDialogOpenChange = useCallback((open: boolean) => {
+    setIsViewDialogOpen(open);
+    if (!open) {
+      resetHrDecisionState();
+    }
+  }, [resetHrDecisionState]);
+
   const openViewDialog = useCallback(async (record: RequisitionData) => { 
     setViewingRecord(record); 
+    resetHrDecisionState();
     
     // Fetch history for this record
     if (record.id) {
@@ -500,7 +524,7 @@ const RequisitionsPage = () => {
     }
     
     setIsViewDialogOpen(true); 
-  }, []);
+  }, [resetHrDecisionState]);
 
   const openHistoryOnly = useCallback((record: RequisitionData) => {
     setViewingRecord(record);
@@ -598,7 +622,7 @@ const RequisitionsPage = () => {
 
       if (statusChanged && nextStatus === 'complete') {
         if (!canCompleteRequisition) {
-          toast({ title: "Unauthorized", description: "Only Humman Resource Manager, Project Manager, Admin or Chief Admin can complete requisitions.", variant: "destructive" });
+          toast({ title: "Unauthorized", description: "Only Finance can complete transactions.", variant: "destructive" });
           return;
         }
         const authorizedBy = String(editRecord.authorizedBy || '').trim();
@@ -606,6 +630,8 @@ const RequisitionsPage = () => {
           toast({ title: "Authorization Required", description: "Requisition can only be completed after Humman Resource Manager authorization.", variant: "destructive" });
           return;
         }
+        updatePayload.completedBy = actorName;
+        updatePayload.completedAt = Date.now();
       }
 
       if (editRecord.type === 'fuel and Service') {
@@ -686,22 +712,22 @@ const RequisitionsPage = () => {
         await logHistory(viewingRecord.id, "Approved", `Approved by ${approverName}`);
         
         toast({ title: "Approved", description: "Requisition approved successfully" });
-        setIsViewDialogOpen(false); 
+        handleViewDialogOpenChange(false); 
     } catch (error) {
         toast({ title: "Error", description: "Failed to approve", variant: "destructive" });
     }
   };
 
   // --- HR Authorization Handler ---
-  const handleAuthorize = async () => {
-    if (!viewingRecord) return;
+  const handleAuthorize = async (): Promise<boolean> => {
+    if (!viewingRecord) return false;
     if (!canAuthorizeRequisition) {
       toast({ title: "Unauthorized", description: "Only Humman Resource Manager can authorize requisitions.", variant: "destructive" });
-      return;
+      return false;
     }
     if (viewingRecord.status !== 'approved') {
       toast({ title: "Invalid Status", description: "Only approved requisitions can be authorized.", variant: "destructive" });
-      return;
+      return false;
     }
     try {
         const actorName = userName || user?.displayName || user?.email || "Admin";
@@ -723,8 +749,80 @@ const RequisitionsPage = () => {
             authorizedBy: actorName, 
             authorizedAt: Date.now() 
         } : null);
+        return true;
     } catch (error) {
         toast({ title: "Error", description: "Failed to authorize", variant: "destructive" });
+        return false;
+    }
+  };
+
+  const handleHrDecisionChange = async (decision: string) => {
+    setHrDecisionAction(decision);
+    if (!viewingRecord) return;
+
+    if (decision === "authorize") {
+      const succeeded = await handleAuthorize();
+      if (succeeded) setHrDecisionAction("");
+      return;
+    }
+
+    if (decision === "reject") {
+      const officerName = getOfficerName(viewingRecord);
+      setRejectionSmsText(
+        `Hello ${officerName}. Your requisition ${viewingRecord.id} has been rejected by Human Resource Manager.`
+      );
+      setIsRejectDialogOpen(true);
+    }
+  };
+
+  const handleRejectRequisition = async () => {
+    if (!viewingRecord) return;
+    if (!canAuthorizeRequisition) {
+      toast({ title: "Unauthorized", description: "Only Humman Resource Manager can reject requisitions.", variant: "destructive" });
+      return;
+    }
+    if (viewingRecord.status !== "approved") {
+      toast({ title: "Invalid Status", description: "Only approved requisitions can be rejected by HR.", variant: "destructive" });
+      return;
+    }
+
+    const smsText = rejectionSmsText.trim();
+    if (!smsText) {
+      toast({ title: "Message Required", description: "Enter the SMS text to send to the requester.", variant: "destructive" });
+      return;
+    }
+
+    try {
+      const actorName = userName || user?.displayName || user?.email || "Admin";
+      const rejectedAt = Date.now();
+      await update(ref(db, `requisitions/${viewingRecord.id}`), {
+        status: "rejected",
+        rejectedBy: actorName,
+        rejectedAt,
+        rejectionReason: smsText,
+        rejectionSmsText: smsText,
+      });
+      removeCachedValue(requisitionCacheKey);
+      await logHistory(viewingRecord.id, "Rejected", `Rejected by ${actorName}. SMS sent to requester.`);
+
+      toast({ title: "Rejected", description: "Requisition rejected and requester will be notified by SMS." });
+      setViewingRecord((prev) =>
+        prev ?
+          {
+            ...prev,
+            status: "rejected",
+            rejectedBy: actorName,
+            rejectedAt,
+            rejectionReason: smsText,
+            rejectionSmsText: smsText,
+          } :
+          null
+      );
+      setIsRejectDialogOpen(false);
+      setHrDecisionAction("");
+      setRejectionSmsText("");
+    } catch (error) {
+      toast({ title: "Error", description: "Failed to reject requisition.", variant: "destructive" });
     }
   };
 
@@ -732,7 +830,7 @@ const RequisitionsPage = () => {
   const handleMarkComplete = async () => {
     if (!viewingRecord) return;
     if (!canCompleteRequisition) {
-      toast({ title: "Unauthorized", description: "Only Humman Resource Manager, Project Manager, Admin or Chief Admin can complete requisitions.", variant: "destructive" });
+      toast({ title: "Unauthorized", description: "Only Finance can complete transactions.", variant: "destructive" });
       return;
     }
     if (viewingRecord.status !== 'approved') {
@@ -748,6 +846,8 @@ const RequisitionsPage = () => {
         
         const updatePayload: any = {
             status: 'complete',
+            completedBy: actorName,
+            completedAt: Date.now(),
         };
 
         await update(ref(db, `requisitions/${viewingRecord.id}`), updatePayload);
@@ -757,7 +857,12 @@ const RequisitionsPage = () => {
 
         toast({ title: "Completed", description: "Requisition marked as complete." });
         
-        setViewingRecord(prev => prev ? { ...prev, status: 'complete' } : null);
+        setViewingRecord(prev => prev ? {
+          ...prev,
+          status: 'complete',
+          completedBy: actorName,
+          completedAt: updatePayload.completedAt,
+        } : null);
         setIsHistoryOpen(false);
     } catch (error) {
         toast({ title: "Error", description: "Failed to mark complete", variant: "destructive" });
@@ -1272,7 +1377,7 @@ const RequisitionsPage = () => {
       </Card>
 
       {/* --- VIEW DIALOG --- */}
-      <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
+      <Dialog open={isViewDialogOpen} onOpenChange={handleViewDialogOpenChange}>
         <DialogContent className="print-content-wrapper font-times sm:max-w-5xl bg-gray-200 rounded-none w-[95vw] sm:w-full max-h-[95vh] flex flex-col">
           <div className="overflow-y-auto flex-1">
             {viewingRecord && (
@@ -1408,21 +1513,72 @@ const RequisitionsPage = () => {
               
               
               {canAuthorizeRequisition && viewingRecord?.status === 'approved' && !viewingRecord.authorizedBy && (
-                <Button onClick={handleAuthorize} className="bg-indigo-600 hover:bg-indigo-700 flex-1 sm:flex-none">
-                  <CheckCircle className="h-4 w-4 mr-2" /> Authorize
-                </Button>
+                <div className="w-full sm:w-[250px]">
+                  <Select value={hrDecisionAction} onValueChange={handleHrDecisionChange}>
+                    <SelectTrigger className="h-10 border-indigo-300 bg-indigo-50 text-indigo-900 focus:ring-indigo-500">
+                      <SelectValue placeholder="HR action: authorize or reject" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="authorize">Authorize requisition</SelectItem>
+                      <SelectItem value="reject">Reject requisition</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
               )}
 
         
               {canCompleteRequisition && viewingRecord?.status === 'approved' && !!viewingRecord.authorizedBy && (
                 <Button onClick={handleMarkComplete} className="bg-blue-800 hover:bg-blue-900 flex-1 sm:flex-none">
-                  <CheckCircle className="h-4 w-4 mr-2" /> Mark Complete
+                  <CheckCircle className="h-4 w-4 mr-2" /> Complete Transaction
                 </Button>
               )}
 
-              <Button variant="outline" onClick={() => setIsViewDialogOpen(false)} className="flex-1 sm:flex-none">Close</Button>
+              <Button variant="outline" onClick={() => handleViewDialogOpenChange(false)} className="flex-1 sm:flex-none">Close</Button>
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={isRejectDialogOpen}
+        onOpenChange={(open) => {
+          setIsRejectDialogOpen(open);
+          if (!open) {
+            setHrDecisionAction("");
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Reject Requisition</DialogTitle>
+            <DialogDescription>
+              Enter the SMS text that will be sent to the field officer who submitted this requisition.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="rejection-sms-text">SMS Message</Label>
+            <Textarea
+              id="rejection-sms-text"
+              value={rejectionSmsText}
+              onChange={(event) => setRejectionSmsText(event.target.value)}
+              placeholder="Type SMS message to the requester..."
+              rows={5}
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setIsRejectDialogOpen(false);
+                setHrDecisionAction("");
+              }}
+            >
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleRejectRequisition}>
+              Reject & Send SMS
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -1526,7 +1682,12 @@ const RequisitionsPage = () => {
                   <div className="space-y-2"><Label>Status</Label>
                     <Select value={editFormData.status} onValueChange={(val) => handleEditFieldChange('status', val)}>
                       <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent><SelectItem value="pending">Pending</SelectItem><SelectItem value="approved">Approved</SelectItem><SelectItem value="rejected">Rejected</SelectItem><SelectItem value="complete">Complete</SelectItem></SelectContent>
+                      <SelectContent>
+                        <SelectItem value="pending">Pending</SelectItem>
+                        <SelectItem value="approved">Approved</SelectItem>
+                        <SelectItem value="rejected">Rejected</SelectItem>
+                        {userHasFinanceRights && <SelectItem value="complete">Complete</SelectItem>}
+                      </SelectContent>
                     </Select>
                   </div>
                   <div className="space-y-2"><Label>County</Label><Input value={editFormData.county || ''} onChange={(e) => handleEditFieldChange('county', e.target.value)} /></div>

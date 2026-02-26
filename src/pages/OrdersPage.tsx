@@ -1,36 +1,41 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import { onValue, orderByChild, equalTo, query, ref, update } from "firebase/database";
+import { onValue, orderByChild, equalTo, query, ref, remove, update } from "firebase/database";
 import { db } from "@/lib/firebase";
 import { canViewAllProgrammes } from "@/contexts/authhelper";
 import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { ChevronDown, ChevronUp, Pencil, Save, ShoppingCart, Trash2, X } from "lucide-react";
+import { ChevronDown, Pencil, Save, ShoppingCart, Trash2, X } from "lucide-react";
 
 interface OrderItem {
   id?: string;
   date?: string | number;
   goats?: number;
+  location?: string;
+  village?: string;
 }
 
 interface OrderRecord {
   id: string;
+  recordId?: string;
   completedAt?: string | number;
   county?: string;
   createdAt?: string | number;
   goatsBought?: number;
   location?: string;
-  orders?: OrderItem[];
+  orders?: OrderItem[] | Record<string, OrderItem>;
   programme?: string;
   remainingGoats?: number;
   status?: string;
   subcounty?: string;
+  timestamp?: number;
   totalGoats?: number;
   username?: string;
 }
@@ -39,13 +44,18 @@ interface NormalizedOrderItem {
   id: string;
   date: string | number;
   goats: number;
+  location: string;
+  village: string;
 }
 
 interface BatchOrderRow {
   batchId: string;
   batchDate: string | number;
+  createdAt: string | number;
+  completedAt: string | number;
   totalGoats: number;
   goatsBought: number;
+  remainingGoats: number;
   status: string;
   county: string;
   subcounty: string;
@@ -127,21 +137,35 @@ const getBatchTotalGoats = (record: OrderRecord, itemsTotal: number): number => 
   return Math.max(itemsTotal, storedTotal, bought + remaining, 0);
 };
 
+const getOrderEntries = (orders: OrderRecord["orders"]): OrderItem[] => {
+  if (Array.isArray(orders)) return orders.filter(Boolean);
+  if (orders && typeof orders === "object") return Object.values(orders).filter(Boolean);
+  return [];
+};
+
 const getNormalizedItems = (record: OrderRecord): NormalizedOrderItem[] => {
-  if (Array.isArray(record.orders) && record.orders.length > 0) {
-    return record.orders.map((item, index) => ({
-      id: item.id || `${record.id}-${index + 1}`,
-      date: item.date || record.completedAt || record.createdAt || "",
-      goats: Number(item.goats || 0),
-    }));
+  const orderEntries = getOrderEntries(record.orders);
+  if (orderEntries.length > 0) {
+    return orderEntries.map((item, index) => {
+      const itemLocation = item.location || item.village || record.location || "N/A";
+      return {
+        id: item.id || `${record.id}-${index + 1}`,
+        date: item.date || record.completedAt || record.createdAt || record.timestamp || "",
+        goats: Number(item.goats || 0),
+        location: itemLocation,
+        village: item.village || itemLocation,
+      };
+    });
   }
 
   const fallbackGoats = Number(record.totalGoats || record.goatsBought || 0);
   return [
     {
       id: `${record.id}-1`,
-      date: record.completedAt || record.createdAt || "",
+      date: record.completedAt || record.createdAt || record.timestamp || "",
       goats: fallbackGoats,
+      location: record.location || "N/A",
+      village: record.location || "N/A",
     },
   ];
 };
@@ -154,7 +178,7 @@ const OrdersPage = () => {
   const [loading, setLoading] = useState(true);
   const [activeProgram, setActiveProgram] = useState<string>("");
   const [availablePrograms, setAvailablePrograms] = useState<string[]>([]);
-  const [expandedBatchIds, setExpandedBatchIds] = useState<string[]>([]);
+  const [ordersDialogBatchId, setOrdersDialogBatchId] = useState<string | null>(null);
 
   const [editingBatchId, setEditingBatchId] = useState<string | null>(null);
   const [goatsBoughtDraft, setGoatsBoughtDraft] = useState<string>("");
@@ -220,14 +244,18 @@ const OrdersPage = () => {
           return;
         }
 
-        const records: OrderRecord[] = Object.keys(data).map((key) => ({
-          id: key,
-          ...data[key],
-        }));
+        const records: OrderRecord[] = Object.keys(data).map((key) => {
+          const recordData = data[key] as Partial<OrderRecord> & { id?: string };
+          return {
+            ...recordData,
+            id: key,
+            recordId: recordData?.id || key,
+          };
+        });
 
         records.sort((a, b) => {
-          const aDate = parseDate(a.completedAt || a.createdAt)?.getTime() || 0;
-          const bDate = parseDate(b.completedAt || b.createdAt)?.getTime() || 0;
+          const aDate = parseDate(a.completedAt || a.createdAt || a.timestamp)?.getTime() || 0;
+          const bDate = parseDate(b.completedAt || b.createdAt || b.timestamp)?.getTime() || 0;
           return bDate - aDate;
         });
 
@@ -240,19 +268,32 @@ const OrdersPage = () => {
     return () => unsubscribe();
   }, [activeProgram]);
 
+  useEffect(() => {
+    setOrdersDialogBatchId(null);
+  }, [activeProgram]);
+
   const batchRows = useMemo(() => {
     return allRecords.map((record) => {
       const items = getNormalizedItems(record);
       const itemsTotal = items.reduce((sum, item) => sum + Number(item.goats || 0), 0);
       const totalGoats = getBatchTotalGoats(record, itemsTotal);
       const goatsBought = clamp(Number(record.goatsBought || 0), 0, Math.max(totalGoats, 0));
-      const batchDate = record.completedAt || record.createdAt || items[0]?.date || "";
+      const storedRemaining = Number(record.remainingGoats);
+      const remainingGoats = Number.isFinite(storedRemaining)
+        ? clamp(storedRemaining, 0, Math.max(totalGoats, 0))
+        : Math.max(totalGoats - goatsBought, 0);
+      const createdAt = record.createdAt || record.timestamp || "";
+      const completedAt = record.completedAt || "";
+      const batchDate = completedAt || createdAt || items[0]?.date || "";
 
       return {
         batchId: record.id,
         batchDate,
+        createdAt,
+        completedAt,
         totalGoats,
         goatsBought,
+        remainingGoats,
         status: normalizeStatus(record.status),
         county: record.county || "N/A",
         subcounty: record.subcounty || "N/A",
@@ -264,6 +305,20 @@ const OrdersPage = () => {
       };
     });
   }, [allRecords, activeProgram]);
+
+  const ordersDialogRow = useMemo(
+    () => batchRows.find((row) => row.batchId === ordersDialogBatchId) || null,
+    [batchRows, ordersDialogBatchId]
+  );
+
+  useEffect(() => {
+    if (ordersDialogBatchId && !ordersDialogRow) {
+      setOrdersDialogBatchId(null);
+      setEditingOrderKey(null);
+      setOrderGoatsDraft("");
+      setOrderDateDraft("");
+    }
+  }, [ordersDialogBatchId, ordersDialogRow]);
 
   const filteredBatchRows = useMemo(() => {
     const searchTerm = filters.search.toLowerCase().trim();
@@ -285,7 +340,6 @@ const OrdersPage = () => {
       if (!searchTerm) return true;
 
       return [
-        row.batchId,
         row.county,
         row.subcounty,
         row.location,
@@ -353,10 +407,11 @@ const OrdersPage = () => {
     setPagination((prev) => ({ ...prev, page: 1 }));
   };
 
-  const toggleBatchExpansion = (batchId: string) => {
-    setExpandedBatchIds((prev) =>
-      prev.includes(batchId) ? prev.filter((id) => id !== batchId) : [...prev, batchId]
-    );
+  const closeOrdersDialog = () => {
+    setOrdersDialogBatchId(null);
+    setEditingOrderKey(null);
+    setOrderGoatsDraft("");
+    setOrderDateDraft("");
   };
 
   const updateBatchOrders = async (
@@ -364,11 +419,16 @@ const OrdersPage = () => {
     nextItems: NormalizedOrderItem[],
     nextGoatsBought?: number
   ) => {
-    const sanitizedItems = nextItems.map((item, index) => ({
-      id: item.id || `${row.batchId}-${index + 1}`,
-      goats: Math.max(0, Number(item.goats || 0)),
-      date: item.date || row.batchDate || "",
-    }));
+    const sanitizedItems = nextItems.map((item, index) => {
+      const orderLocation = item.location || item.village || row.location || "";
+      return {
+        id: item.id || `${row.batchId}-${index + 1}`,
+        goats: Math.max(0, Number(item.goats || 0)),
+        date: item.date || row.batchDate || "",
+        location: orderLocation,
+        village: item.village || orderLocation,
+      };
+    });
 
     const total = sanitizedItems.reduce((sum, item) => sum + item.goats, 0);
     const goatsBought = clamp(
@@ -478,6 +538,20 @@ const OrdersPage = () => {
     }
   };
 
+  const deleteBatch = async (row: BatchOrderRow) => {
+    const confirmed = window.confirm("Delete this batch and all its orders?");
+    if (!confirmed) return;
+
+    try {
+      await remove(ref(db, `orders/${row.batchId}`));
+      if (ordersDialogBatchId === row.batchId) closeOrdersDialog();
+      if (editingBatchId === row.batchId) cancelGoatsBoughtEdit();
+      toast({ title: "Deleted", description: "Batch deleted successfully." });
+    } catch {
+      toast({ title: "Error", description: "Failed to delete batch.", variant: "destructive" });
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4">
@@ -521,14 +595,12 @@ const OrdersPage = () => {
 
       <Card>
         <CardContent className="space-y-4 pt-6">
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-6">
+          <div className="flex flex-col md:flex-row lg:flex-row md:items-center gap-2 ">
             <div className="space-y-2 lg:col-span-2">
-              <Label htmlFor="search" className="font-semibold text-gray-700">
-                Search
-              </Label>
+             
               <Input
                 id="search"
-                placeholder="Search batch id, county, user..."
+                placeholder="Search county, subcounty, user..."
                 value={filters.search}
                 onChange={(e) => handleFilterChange("search", e.target.value)}
                 className="border-gray-300 focus:border-blue-500 bg-white"
@@ -536,7 +608,7 @@ const OrdersPage = () => {
             </div>
 
             <div className="space-y-2">
-              <Label className="font-semibold text-gray-700">From Date</Label>
+             
               <Input
                 type="date"
                 value={filters.startDate}
@@ -546,7 +618,7 @@ const OrdersPage = () => {
             </div>
 
             <div className="space-y-2">
-              <Label className="font-semibold text-gray-700">To Date</Label>
+              
               <Input
                 type="date"
                 value={filters.endDate}
@@ -556,7 +628,7 @@ const OrdersPage = () => {
             </div>
 
             <div className="space-y-2">
-              <Label className="font-semibold text-gray-700">Status</Label>
+             
               <Select value={filters.status} onValueChange={(value) => handleFilterChange("status", value)}>
                 <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white">
                   <SelectValue placeholder="All status" />
@@ -573,7 +645,6 @@ const OrdersPage = () => {
             </div>
 
             <div className="space-y-2">
-              <Label className="font-semibold text-gray-700">Programme</Label>
               <Select value={activeProgram} onValueChange={setActiveProgram} disabled={availablePrograms.length === 0}>
                 <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white">
                   <SelectValue placeholder="Select programme" />
@@ -587,13 +658,14 @@ const OrdersPage = () => {
                 </SelectContent>
               </Select>
             </div>
-          </div>
-
-          <div className="flex justify-end">
+             <div className="space-y-2">
             <Button variant="outline" onClick={clearFilters}>
               Clear Filters
             </Button>
           </div>
+          </div>
+
+         
         </CardContent>
       </Card>
 
@@ -610,162 +682,85 @@ const OrdersPage = () => {
             </div>
           ) : (
             <>
-              <Table>
+              <Table className="min-w-[980px] [&_th]:h-8 [&_th]:px-3 [&_th]:py-1.5 [&_th]:align-middle [&_th]:whitespace-nowrap [&_td]:px-3 [&_td]:py-1.5 [&_td]:align-middle">
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Batch ID</TableHead>
-                    <TableHead>Date</TableHead>
-                    <TableHead>County</TableHead>
-                    <TableHead>Subcounty</TableHead>
-                    <TableHead>Location</TableHead>
+                    <TableHead className="w-32 text-left whitespace-nowrap">Date</TableHead>
+                    <TableHead className="text-left">County</TableHead>
+                    <TableHead className="text-left">Subcounty</TableHead>
+                    <TableHead className="text-left">Programme</TableHead>
+                    <TableHead className="text-left">User</TableHead>
                     <TableHead className="text-right">Total Goats</TableHead>
                     <TableHead className="text-right">Goats Bought</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="text-right">Orders</TableHead>
+                    <TableHead className="text-right">Remaining Goats</TableHead>
+                    <TableHead className="text-left">Status</TableHead>
+                    <TableHead className="text-right">Batch Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {pageRows.map((row) => {
-                    const isExpanded = expandedBatchIds.includes(row.batchId);
-                    return (
-                      <Fragment key={row.batchId}>
-                        <TableRow key={row.batchId}>
-                          <TableCell className="font-medium">{row.batchId}</TableCell>
-                          <TableCell>{formatDate(row.batchDate)}</TableCell>
-                          <TableCell>{row.county}</TableCell>
-                          <TableCell>{row.subcounty}</TableCell>
-                          <TableCell>{row.location}</TableCell>
-                          <TableCell className="text-right font-semibold">{row.totalGoats.toLocaleString()}</TableCell>
-                          <TableCell className="text-right">
-                            {editingBatchId === row.batchId ? (
-                              <div className="ml-auto flex w-44 items-center justify-end gap-2">
-                                <Input
-                                  type="number"
-                                  min={0}
-                                  max={row.totalGoats}
-                                  value={goatsBoughtDraft}
-                                  onChange={(e) => setGoatsBoughtDraft(e.target.value)}
-                                  className="h-8 text-right"
-                                />
-                                <Button size="icon" variant="outline" onClick={() => saveGoatsBoughtEdit(row)}>
-                                  <Save className="h-4 w-4" />
-                                </Button>
-                                <Button size="icon" variant="outline" onClick={cancelGoatsBoughtEdit}>
-                                  <X className="h-4 w-4" />
-                                </Button>
-                              </div>
-                            ) : (
-                              <div className="ml-auto flex items-center justify-end gap-2">
-                                <span className="font-semibold">{row.goatsBought.toLocaleString()}</span>
-                                <Button size="icon" variant="ghost" onClick={() => startGoatsBoughtEdit(row)}>
-                                  <Pencil className="h-4 w-4" />
-                                </Button>
-                              </div>
-                            )}
-                          </TableCell>
-                          <TableCell>
-                            <Badge className={getStatusBadgeClass(row.status)}>{row.status}</Badge>
-                          </TableCell>
-                          <TableCell className="text-right">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="gap-2"
-                              onClick={() => toggleBatchExpansion(row.batchId)}
-                            >
-                              {row.items.length} Orders
-                              {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                  {pageRows.map((row) => (
+                    <TableRow key={row.batchId} className="h-9">
+                      <TableCell className="text-left whitespace-nowrap font-medium">{formatDate(row.batchDate)}</TableCell>
+                      <TableCell className="text-[12px] text-left">{row.county}</TableCell>
+                      <TableCell className="text-[12px] text-left">{row.subcounty}</TableCell>
+                      <TableCell className="text-[12px] text-left">{row.programme}</TableCell>
+                      <TableCell className="text-[12px] text-left">{row.username}</TableCell>
+                      <TableCell className="text-[12px] text-right font-semibold tabular-nums">{row.totalGoats.toLocaleString()}</TableCell>
+                      <TableCell className="text-[12px] text-right">
+                        {editingBatchId === row.batchId ? (
+                          <div className="ml-auto flex w-44 items-center justify-end gap-2">
+                            <Input
+                              type="number"
+                              min={0}
+                              max={row.totalGoats}
+                              value={goatsBoughtDraft}
+                              onChange={(e) => setGoatsBoughtDraft(e.target.value)}
+                              className="h-7 text-right"
+                            />
+                            <Button size="icon" variant="outline" className="h-7 w-7" onClick={() => saveGoatsBoughtEdit(row)}>
+                              <Save className="h-4 w-4" />
                             </Button>
-                          </TableCell>
-                        </TableRow>
-
-                        {isExpanded && (
-                          <TableRow key={`${row.batchId}-expanded`}>
-                            <TableCell colSpan={9} className="bg-slate-50">
-                              <div className="rounded-md border bg-white p-3">
-                                <div className="mb-2 text-sm font-semibold text-slate-700">Batch Orders</div>
-                                <Table>
-                                  <TableHeader>
-                                    <TableRow>
-                                      <TableHead>Order ID</TableHead>
-                                      <TableHead>Date</TableHead>
-                                      <TableHead className="text-right">Goats</TableHead>
-                                      <TableHead className="text-right">Actions</TableHead>
-                                    </TableRow>
-                                  </TableHeader>
-                                  <TableBody>
-                                    {row.items.map((item, index) => {
-                                      const orderKey = `${row.batchId}:${index}`;
-                                      const isEditingOrder = editingOrderKey === orderKey;
-                                      return (
-                                        <TableRow key={orderKey}>
-                                          <TableCell>{item.id}</TableCell>
-                                          <TableCell>
-                                            {isEditingOrder ? (
-                                              <Input
-                                                type="date"
-                                                value={orderDateDraft}
-                                                onChange={(e) => setOrderDateDraft(e.target.value)}
-                                                className="h-8 max-w-40"
-                                              />
-                                            ) : (
-                                              formatDate(item.date)
-                                            )}
-                                          </TableCell>
-                                          <TableCell className="text-right">
-                                            {isEditingOrder ? (
-                                              <Input
-                                                type="number"
-                                                min={0}
-                                                value={orderGoatsDraft}
-                                                onChange={(e) => setOrderGoatsDraft(e.target.value)}
-                                                className="ml-auto h-8 max-w-28 text-right"
-                                              />
-                                            ) : (
-                                              <span className="font-semibold">{item.goats.toLocaleString()}</span>
-                                            )}
-                                          </TableCell>
-                                          <TableCell className="text-right">
-                                            {isEditingOrder ? (
-                                              <div className="flex justify-end gap-2">
-                                                <Button size="sm" variant="outline" onClick={() => saveOrderEdit(row, index)}>
-                                                  <Save className="mr-1 h-4 w-4" />
-                                                  Save
-                                                </Button>
-                                                <Button size="sm" variant="outline" onClick={cancelOrderEdit}>
-                                                  <X className="mr-1 h-4 w-4" />
-                                                  Cancel
-                                                </Button>
-                                              </div>
-                                            ) : (
-                                              <div className="flex justify-end gap-2">
-                                                <Button size="sm" variant="outline" onClick={() => startOrderEdit(row, item, index)}>
-                                                  <Pencil className="mr-1 h-4 w-4" />
-                                                  Edit
-                                                </Button>
-                                                <Button
-                                                  size="sm"
-                                                  variant="destructive"
-                                                  onClick={() => deleteOrderItem(row, index)}
-                                                >
-                                                  <Trash2 className="mr-1 h-4 w-4" />
-                                                  Delete
-                                                </Button>
-                                              </div>
-                                            )}
-                                          </TableCell>
-                                        </TableRow>
-                                      );
-                                    })}
-                                  </TableBody>
-                                </Table>
-                              </div>
-                            </TableCell>
-                          </TableRow>
+                            <Button size="icon" variant="outline" className="h-7 w-7" onClick={cancelGoatsBoughtEdit}>
+                              <X className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        ) : (
+                          <div className="ml-auto flex items-center justify-end gap-2">
+                            <span className="font-semibold tabular-nums">{row.goatsBought.toLocaleString()}</span>
+                            <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => startGoatsBoughtEdit(row)}>
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                          </div>
                         )}
-                      </Fragment>
-                    );
-                  })}
+                      </TableCell>
+                      <TableCell className="text-right font-semibold tabular-nums">{row.remainingGoats.toLocaleString()}</TableCell>
+                      <TableCell className="text-left">
+                        <Badge className={getStatusBadgeClass(row.status)}>{row.status}</Badge>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-7 gap-2"
+                            onClick={() => setOrdersDialogBatchId(row.batchId)}
+                          >
+                            {row.items.length} Orders
+                            <ChevronDown className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            className="h-7"
+                            onClick={() => deleteBatch(row)}
+                          >
+                            <Trash2 className="mr-1 h-4 w-4" />
+                            Delete
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
                 </TableBody>
               </Table>
 
@@ -797,6 +792,150 @@ const OrdersPage = () => {
           )}
         </CardContent>
       </Card>
+
+      <Dialog
+        open={Boolean(ordersDialogBatchId && ordersDialogRow)}
+        onOpenChange={(open) => {
+          if (!open) closeOrdersDialog();
+        }}
+      >
+        <DialogContent className="sm:max-w-5xl bg-white rounded-2xl max-h-[90vh] overflow-hidden">
+          <DialogHeader>
+            <DialogTitle className="text-slate-900">Orders Breakdown</DialogTitle>
+          </DialogHeader>
+
+          {ordersDialogRow ? (
+            <div className="space-y-4 overflow-y-auto pr-1">
+              <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+                <div className="rounded-md border bg-slate-50 p-3">
+                  <p className="text-slate-500">Date</p>
+                  <p className="font-semibold text-slate-900">{formatDate(ordersDialogRow.batchDate)}</p>
+                </div>
+                <div className="rounded-md border bg-slate-50 p-3">
+                  <p className="text-slate-500">County / Subcounty</p>
+                  <p className="font-semibold text-slate-900">
+                    {ordersDialogRow.county} / {ordersDialogRow.subcounty}
+                  </p>
+                </div>
+                <div className="rounded-md border bg-slate-50 p-3">
+                  <p className="text-slate-500">Location</p>
+                  <p className="font-semibold text-slate-900">{ordersDialogRow.location}</p>
+                </div>
+                <div className="rounded-md border bg-slate-50 p-3">
+                  <p className="text-slate-500">Programme</p>
+                  <p className="font-semibold text-slate-900">{ordersDialogRow.programme}</p>
+                </div>
+                <div className="rounded-md border bg-slate-50 p-3">
+                  <p className="text-slate-500">Submitted By</p>
+                  <p className="font-semibold text-slate-900">{ordersDialogRow.username}</p>
+                </div>
+                <div className="rounded-md border bg-slate-50 p-3">
+                  <p className="text-slate-500">Status</p>
+                  <Badge className={getStatusBadgeClass(ordersDialogRow.status)}>{ordersDialogRow.status}</Badge>
+                </div>
+                <div className="rounded-md border bg-slate-50 p-3">
+                  <p className="text-slate-500">Goats Bought</p>
+                  <p className="font-semibold text-slate-900">{ordersDialogRow.goatsBought.toLocaleString()}</p>
+                </div>
+                <div className="rounded-md border bg-slate-50 p-3">
+                  <p className="text-slate-500">Remaining Goats</p>
+                  <p className="font-semibold text-slate-900">{ordersDialogRow.remainingGoats.toLocaleString()}</p>
+                </div>
+              </div>
+
+              <div className="rounded-md border">
+                <Table className="[&_th]:h-8 [&_th]:px-3 [&_th]:py-1.5 [&_th]:align-middle [&_th]:whitespace-nowrap [&_td]:px-3 [&_td]:py-1.5 [&_td]:align-middle">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="text-left">Date</TableHead>
+                      <TableHead className="text-left">Location</TableHead>
+                      <TableHead className="text-right">Goats</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {ordersDialogRow.items.map((item, index) => {
+                      const orderKey = `${ordersDialogRow.batchId}:${index}`;
+                      const isEditingOrder = editingOrderKey === orderKey;
+
+                      return (
+                        <TableRow key={orderKey} className="h-9">
+                          <TableCell className="text-left">
+                            {isEditingOrder ? (
+                              <Input
+                                type="date"
+                                value={orderDateDraft}
+                                onChange={(e) => setOrderDateDraft(e.target.value)}
+                                className="h-7 max-w-40"
+                              />
+                            ) : (
+                              formatDate(item.date)
+                            )}
+                          </TableCell>
+                          <TableCell className="text-left">{item.location}</TableCell>
+                          <TableCell className="text-right">
+                            {isEditingOrder ? (
+                              <Input
+                                type="number"
+                                min={0}
+                                value={orderGoatsDraft}
+                                onChange={(e) => setOrderGoatsDraft(e.target.value)}
+                                className="ml-auto h-7 max-w-28 text-right"
+                              />
+                            ) : (
+                              <span className="font-semibold tabular-nums">{item.goats.toLocaleString()}</span>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {isEditingOrder ? (
+                              <div className="flex justify-end gap-2">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7"
+                                  onClick={() => saveOrderEdit(ordersDialogRow, index)}
+                                >
+                                  <Save className="mr-1 h-4 w-4" />
+                                  Save
+                                </Button>
+                                <Button size="sm" variant="outline" className="h-7" onClick={cancelOrderEdit}>
+                                  <X className="mr-1 h-4 w-4" />
+                                  Cancel
+                                </Button>
+                              </div>
+                            ) : (
+                              <div className="flex justify-end gap-2">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7"
+                                  onClick={() => startOrderEdit(ordersDialogRow, item, index)}
+                                >
+                                  <Pencil className="mr-1 h-4 w-4" />
+                                  Edit
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="destructive"
+                                  className="h-7"
+                                  onClick={() => deleteOrderItem(ordersDialogRow, index)}
+                                >
+                                  <Trash2 className="mr-1 h-4 w-4" />
+                                  Delete
+                                </Button>
+                              </div>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
