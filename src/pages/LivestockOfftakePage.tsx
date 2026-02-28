@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback, useMemo, useRef, memo } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { getAuth } from "firebase/auth";
-import { ref, set, update, remove, onValue, push, query, orderByChild, equalTo } from "firebase/database";
+import { ref, set, update, remove, onValue, push, query, orderByChild, equalTo, get } from "firebase/database";
 import { db } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
@@ -249,6 +250,22 @@ const calculateTotal = (data: number[]): number => {
   return data.reduce((acc, val) => acc + (Number(val) || 0), 0);
 };
 
+const getFarmerPhoneFromRecord = (record: Record<string, unknown>): string => {
+  const candidates = [
+    record.phone,
+    record.phoneNumber,
+    record.mobile,
+    record.telephone,
+    record.contact,
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate !== "string") continue;
+    const trimmed = candidate.trim();
+    if (trimmed) return trimmed;
+  }
+  return "";
+};
+
 const getFarmerGroupingKey = (record: OfftakeData): string => {
   const normalizedId = String(record.idNumber || '').trim().toLowerCase();
   return normalizedId ? `id:${normalizedId}` : `record:${record.id}`;
@@ -286,12 +303,15 @@ const LivestockOfftakePage = () => {
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [isWeightEditDialogOpen, setIsWeightEditDialogOpen] = useState(false);
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
+  const [isBulkSmsDialogOpen, setIsBulkSmsDialogOpen] = useState(false);
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   const [isSingleDeleteDialogOpen, setIsSingleDeleteDialogOpen] = useState(false);
   const [viewingRecord, setViewingRecord] = useState<OfftakeData | null>(null);
   const [editingRecord, setEditingRecord] = useState<OfftakeData | null>(null);
   const [recordToDelete, setRecordToDelete] = useState<OfftakeData | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
+  const [bulkSmsMessage, setBulkSmsMessage] = useState("");
+  const [bulkSmsSending, setBulkSmsSending] = useState(false);
   const [uploadFile, setUploadFile] = useState<File[] | null>(null);
   
   const currentMonth = useMemo(getCurrentMonthDates, []);
@@ -1419,6 +1439,102 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
     }
   };
 
+  const openBulkSmsDialog = () => {
+    if (selectedRecords.length === 0) {
+      toast({
+        title: "No Records Selected",
+        description: "Select farmers to send bulk SMS.",
+        variant: "destructive",
+      });
+      return;
+    }
+    setIsBulkSmsDialogOpen(true);
+  };
+
+  const handleSendBulkSms = async () => {
+    const message = bulkSmsMessage.trim();
+    if (!message) {
+      toast({
+        title: "Message Required",
+        description: "Enter the SMS message to send.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const selectedSet = new Set(selectedRecords);
+    const selectedOfftakes = allOfftake.filter((record) => selectedSet.has(record.id));
+    const farmerPhonesById = new Map<string, string>();
+
+    try {
+      const farmersSnapshot = await get(ref(db, "farmers"));
+      const farmersData = farmersSnapshot.val() as Record<string, Record<string, unknown>> | null;
+      if (farmersData) {
+        for (const farmer of Object.values(farmersData)) {
+          const farmerIdNumber = typeof farmer.idNumber === "string" ? farmer.idNumber.trim().toLowerCase() : "";
+          const farmerPhone = getFarmerPhoneFromRecord(farmer);
+          if (farmerIdNumber && farmerPhone && !farmerPhonesById.has(farmerIdNumber)) {
+            farmerPhonesById.set(farmerIdNumber, farmerPhone);
+          }
+        }
+      }
+    } catch (error) {
+      console.error("Failed to load farmer phone numbers from Realtime Database:", error);
+    }
+
+    const recipients = selectedOfftakes
+      .map((record) => {
+        const directPhone = String(record.phoneNumber || "").trim();
+        if (directPhone) return directPhone;
+
+        const idNumberKey = String(record.idNumber || "").trim().toLowerCase();
+        if (!idNumberKey) return "";
+        return farmerPhonesById.get(idNumberKey) || "";
+      })
+      .filter((phone) => phone.length > 0);
+    const uniqueRecipients = Array.from(new Set(recipients));
+
+    if (uniqueRecipients.length === 0) {
+      toast({
+        title: "No Phone Numbers",
+        description: "No valid phone numbers found in Realtime Database for selected farmers.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setBulkSmsSending(true);
+    try {
+      const requestRef = push(ref(db, "smsOutbox"));
+      await set(requestRef, {
+        status: "pending",
+        sourcePage: "livestock-offtake",
+        programme: activeProgram,
+        createdAt: Date.now(),
+        createdBy: auth.currentUser?.email || auth.currentUser?.uid || "unknown",
+        message,
+        recipients: uniqueRecipients,
+        selectedRecordCount: selectedRecords.length,
+      });
+
+      toast({
+        title: "SMS Queued",
+        description: `Bulk SMS queued for ${uniqueRecipients.length} farmers.`,
+      });
+      setBulkSmsMessage("");
+      setIsBulkSmsDialogOpen(false);
+    } catch (error) {
+      console.error("Failed to queue bulk SMS:", error);
+      toast({
+        title: "Queue Failed",
+        description: "Failed to queue bulk SMS.",
+        variant: "destructive",
+      });
+    } finally {
+      setBulkSmsSending(false);
+    }
+  };
+
   const handleEditSubmit = async () => {
     if (!requireChiefAdmin()) return;
     if (!editingRecord) return;
@@ -1629,6 +1745,17 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
             <Button variant="destructive" size="sm" onClick={openBulkDeleteConfirm} disabled={deleteLoading} className="text-xs">
               <Trash2 className="h-4 w-4 mr-2" />
               Delete ({selectedRecords.length})
+            </Button>
+          )}
+          {selectedRecords.length > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={openBulkSmsDialog}
+              className="text-xs border-green-300 text-green-700 hover:bg-green-50"
+            >
+              <Phone className="h-4 w-4 mr-2" />
+              Send SMS ({selectedRecords.length})
             </Button>
           )}
           <Button variant="outline" size="sm" onClick={clearAllFilters} className="text-xs border-gray-300 hover:bg-gray-50">
@@ -2076,6 +2203,45 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsDeleteConfirmOpen(false)}>Cancel</Button>
             <Button variant="destructive" onClick={handleDeleteMultiple} disabled={deleteLoading}>Delete All</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={isBulkSmsDialogOpen}
+        onOpenChange={(open) => {
+          if (!bulkSmsSending) setIsBulkSmsDialogOpen(open);
+        }}
+      >
+        <DialogContent className="sm:max-w-lg bg-white rounded-2xl">
+          <DialogHeader>
+            <DialogTitle>Send Bulk SMS to Farmers</DialogTitle>
+            <DialogDescription>
+              This message will be sent to selected farmers with valid phone numbers.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="offtake-bulk-sms-message">SMS Message</Label>
+            <Textarea
+              id="offtake-bulk-sms-message"
+              rows={5}
+              value={bulkSmsMessage}
+              onChange={(event) => setBulkSmsMessage(event.target.value)}
+              placeholder="Type SMS message..."
+              disabled={bulkSmsSending}
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setIsBulkSmsDialogOpen(false)}
+              disabled={bulkSmsSending}
+            >
+              Cancel
+            </Button>
+            <Button onClick={handleSendBulkSms} disabled={bulkSmsSending}>
+              {bulkSmsSending ? "Sending..." : "Send SMS"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

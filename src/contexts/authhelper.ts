@@ -11,6 +11,13 @@ const HR_IDENTIFIERS = new Set([
 const PROJECT_MANAGER_IDENTIFIERS = new Set(["project manager"]);
 const FINANCE_IDENTIFIERS = new Set(["finance"]);
 const OFFTAKE_IDENTIFIERS = new Set(["offtake officer"]);
+const ME_IDENTIFIERS = new Set([
+  "m&e officer",
+  "mne officer",
+  "me officer",
+  "monitoring and evaluation officer",
+  "monitoring & evaluation officer",
+]);
 const FULL_ACCESS_ATTRIBUTE_IDENTIFIERS = new Set([
   "ceo",
   "chief operations manager",
@@ -63,6 +70,10 @@ export const isFinance = (value: string | null | undefined): boolean =>
 
 export const isOfftakeOfficer = (value: string | null | undefined): boolean =>
   OFFTAKE_IDENTIFIERS.has(normalizeRole(value));
+
+export const isMonitoringAndEvaluationOfficer = (
+  value: string | null | undefined
+): boolean => ME_IDENTIFIERS.has(normalizeRole(value));
 
 export const isFullAccessAttribute = (value: string | null | undefined): boolean =>
   FULL_ACCESS_ATTRIBUTE_IDENTIFIERS.has(normalizeRole(value));

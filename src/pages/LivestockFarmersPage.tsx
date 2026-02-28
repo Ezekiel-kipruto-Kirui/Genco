@@ -6,6 +6,7 @@ import { db } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
@@ -215,6 +216,7 @@ const LivestockFarmersPage = () => {
   const [selectedRecords, setSelectedRecords] = useState<string[]>([]);
   const [trainingRecords, setTrainingRecords] = useState<TrainingData[]>([]);
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
+  const [isBulkSmsDialogOpen, setIsBulkSmsDialogOpen] = useState(false);
   const [uploadLoading, setUploadLoading] = useState(false);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -226,6 +228,8 @@ const LivestockFarmersPage = () => {
   const [editingRecord, setEditingRecord] = useState<FarmerData | null>(null);
   const [recordToDelete, setRecordToDelete] = useState<FarmerData | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
+  const [bulkSmsMessage, setBulkSmsMessage] = useState("");
+  const [bulkSmsSending, setBulkSmsSending] = useState(false);
   const currentMonth = useMemo(getCurrentMonthDates, []);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
@@ -668,6 +672,77 @@ const LivestockFarmersPage = () => {
     } finally { setDeleteLoading(false); }
   };
 
+  const openBulkSmsDialog = () => {
+    if (selectedRecords.length === 0) {
+      toast({
+        title: "No Records Selected",
+        description: "Select farmers to send bulk SMS.",
+        variant: "destructive",
+      });
+      return;
+    }
+    setIsBulkSmsDialogOpen(true);
+  };
+
+  const handleSendBulkSms = async () => {
+    const message = bulkSmsMessage.trim();
+    if (!message) {
+      toast({
+        title: "Message Required",
+        description: "Enter the SMS message to send.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const selectedSet = new Set(selectedRecords);
+    const recipients = allFarmers
+      .filter((record) => selectedSet.has(record.id))
+      .map((record) => String(record.phone || "").trim())
+      .filter((phone) => phone.length > 0);
+    const uniqueRecipients = Array.from(new Set(recipients));
+
+    if (uniqueRecipients.length === 0) {
+      toast({
+        title: "No Phone Numbers",
+        description: "Selected farmers have no valid phone numbers.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setBulkSmsSending(true);
+    try {
+      const requestRef = push(ref(db, "smsOutbox"));
+      await set(requestRef, {
+        status: "pending",
+        sourcePage: "livestock-farmers",
+        programme: activeProgram,
+        createdAt: Date.now(),
+        createdBy: userName || user?.email || user?.uid || "unknown",
+        message,
+        recipients: uniqueRecipients,
+        selectedRecordCount: selectedRecords.length,
+      });
+
+      toast({
+        title: "SMS Queued",
+        description: `Bulk SMS queued for ${uniqueRecipients.length} farmers.`,
+      });
+      setBulkSmsMessage("");
+      setIsBulkSmsDialogOpen(false);
+    } catch (error) {
+      console.error("Failed to queue bulk SMS:", error);
+      toast({
+        title: "Queue Failed",
+        description: "Failed to queue bulk SMS.",
+        variant: "destructive",
+      });
+    } finally {
+      setBulkSmsSending(false);
+    }
+  };
+
   const parseCSVLine = (line: string): string[] => {
     const result: string[] = [];
     let current = "";
@@ -1003,6 +1078,16 @@ const LivestockFarmersPage = () => {
             {selectedRecords.length > 0 && (
             <Button variant="destructive" size="sm" onClick={openBulkDeleteConfirm} disabled={deleteLoading} className="text-xs h-10">
               <Trash2 className="h-4 w-4 mr-2" /> Delete ({selectedRecords.length})
+            </Button>
+          )}
+          {selectedRecords.length > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={openBulkSmsDialog}
+              className="border-green-300 text-green-700 h-10 hover:bg-green-50"
+            >
+              <Phone className="h-4 w-4 mr-2" /> Send SMS ({selectedRecords.length})
             </Button>
           )}
           {userIsChiefAdmin && (
@@ -1412,6 +1497,45 @@ const LivestockFarmersPage = () => {
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsDeleteConfirmOpen(false)}>Cancel</Button>
             <Button variant="destructive" onClick={handleDeleteMultiple} disabled={deleteLoading}>Delete All</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={isBulkSmsDialogOpen}
+        onOpenChange={(open) => {
+          if (!bulkSmsSending) setIsBulkSmsDialogOpen(open);
+        }}
+      >
+        <DialogContent className="sm:max-w-lg w-[95vw] sm:w-full">
+          <DialogHeader>
+            <DialogTitle>Send Bulk SMS to Farmers</DialogTitle>
+            <DialogDescription>
+              This message will be sent to selected farmers with valid phone numbers.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="farmers-bulk-sms-message">SMS Message</Label>
+            <Textarea
+              id="farmers-bulk-sms-message"
+              rows={5}
+              value={bulkSmsMessage}
+              onChange={(event) => setBulkSmsMessage(event.target.value)}
+              placeholder="Type SMS message..."
+              disabled={bulkSmsSending}
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setIsBulkSmsDialogOpen(false)}
+              disabled={bulkSmsSending}
+            >
+              Cancel
+            </Button>
+            <Button onClick={handleSendBulkSms} disabled={bulkSmsSending}>
+              {bulkSmsSending ? "Sending..." : "Send SMS"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

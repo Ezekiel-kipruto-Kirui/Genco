@@ -11,12 +11,13 @@ import {
 } from "recharts";
 import { 
   Beef, TrendingUp, Award, Star, 
-  MapPin, DollarSign, Package, Users, Loader2, Calendar, Filter, Zap, ChevronDown
+  MapPin, DollarSign, Package, Users, Loader2, Calendar, Filter, Zap, ChevronDown, Calculator
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -45,6 +46,8 @@ const BAR_COLORS = [
   COLORS.purple, COLORS.teal, COLORS.maroon, COLORS.red, COLORS.gray, COLORS.darkBlue
 ];
 
+const SALES_INPUTS_STORAGE_KEY = "sales-metrics-inputs-v1";
+
 // --- Types ---
 
 interface OfftakeData {
@@ -63,6 +66,11 @@ interface OfftakeData {
   totalPrice?: number;
   phone?: string;
   username?: string;
+}
+
+interface SalesInputs {
+  pricePerKg: number;
+  expenses: number;
 }
 
 // --- Optimized Data Cache Manager ---
@@ -167,13 +175,15 @@ const getQDates = (year: number, quarter: 1 | 2 | 3 | 4) => {
 const useOfftakeData = (
   offtakeData: OfftakeData[], 
   dateRange: { startDate: string; endDate: string },
-  selectedProgramme: string | null
+  selectedProgramme: string | null,
+  salesInputs: SalesInputs
 ) => {
   return useMemo(() => {
     if (offtakeData.length === 0) {
       return {
         filteredData: [],
         stats: {
+          totalPurchaseCost: 0,
           totalRevenue: 0,
           costPerGoat: 0,
           totalAnimals: 0,
@@ -184,9 +194,10 @@ const useOfftakeData = (
           avgLiveWeight: 0,
           totalCarcassWeight: 0,
           avgCarcassWeight: 0,
-          expenses: 0, 
-          netProfit: 0,
-          avgCostPerKgCarcass: 0 
+          pricePerKg: salesInputs.pricePerKg,
+          expenses: salesInputs.expenses,
+          netProfit: -salesInputs.expenses,
+          avgCostPerKgCarcass: 0
         },
         genderData: [],
         countyData: [],
@@ -202,6 +213,7 @@ const useOfftakeData = (
              (selectedProgramme ? record.programme === selectedProgramme : true);
     });
 
+    let totalPurchaseCost = 0;
     let totalRevenue = 0;
     let totalGoats = 0;
     let totalSheep = 0;
@@ -217,8 +229,8 @@ const useOfftakeData = (
     const monthlyData: Record<string, { monthName: string; revenue: number; volume: number; monthIndex: number }> = {};
 
     for (const record of filteredData) {
-      const txRevenue = Number(record.totalPrice) || 0;
-      totalRevenue += txRevenue;
+      const txCost = Number(record.totalPrice) || 0;
+      totalPurchaseCost += txCost;
 
       const goatsArr = record.goats || [];
       const sheepArr = record.sheep || [];
@@ -234,10 +246,15 @@ const useOfftakeData = (
       totalAnimalsCount += (txGoats + txSheep + txCattle);
 
       const allAnimals = [...goatsArr, ...sheepArr, ...cattleArr];
+      let txCarcassWeight = 0;
       for(const animal of allAnimals) {
         totalLiveWeight += Number(animal.live) || 0;
-        totalCarcassWeight += Number(animal.carcass) || 0;
+        const carcass = Number(animal.carcass) || 0;
+        totalCarcassWeight += carcass;
+        txCarcassWeight += carcass;
       }
+      const txRevenue = txCarcassWeight * salesInputs.pricePerKg;
+      totalRevenue += txRevenue;
 
       if (record.gender) {
         const g = record.gender.charAt(0).toUpperCase() + record.gender.slice(1).toLowerCase();
@@ -279,12 +296,11 @@ const useOfftakeData = (
       }
     }
 
-    const costPerGoat = totalGoats > 0 ? totalRevenue / totalGoats : 0;
+    const costPerGoat = totalGoats > 0 ? totalPurchaseCost / totalGoats : 0;
     const avgLiveWeight = totalAnimalsCount > 0 ? totalLiveWeight / totalAnimalsCount : 0;
     const avgCarcassWeight = totalAnimalsCount > 0 ? totalCarcassWeight / totalAnimalsCount : 0;
-    const expenses = 0; 
-    const netProfit = totalRevenue - expenses;
-    const avgCostPerKgCarcass = totalCarcassWeight > 0 ? totalRevenue / totalCarcassWeight : 0;
+    const netProfit = totalRevenue - totalPurchaseCost - salesInputs.expenses;
+    const avgCostPerKgCarcass = totalCarcassWeight > 0 ? totalPurchaseCost / totalCarcassWeight : 0;
 
     const genderData = [
       { name: 'Male', value: genderCounts.Male },
@@ -327,6 +343,7 @@ const useOfftakeData = (
     return {
       filteredData,
       stats: {
+        totalPurchaseCost,
         totalRevenue,
         costPerGoat,
         totalAnimals: totalAnimalsCount,
@@ -337,7 +354,8 @@ const useOfftakeData = (
         avgLiveWeight,
         totalCarcassWeight,
         avgCarcassWeight,
-        expenses,
+        pricePerKg: salesInputs.pricePerKg,
+        expenses: salesInputs.expenses,
         netProfit,
         avgCostPerKgCarcass
       },
@@ -348,7 +366,7 @@ const useOfftakeData = (
       monthlyTrend: monthlyTrendData,
       top3Months
     };
-  }, [offtakeData, dateRange, selectedProgramme]);
+  }, [offtakeData, dateRange, selectedProgramme, salesInputs.expenses, salesInputs.pricePerKg]);
 };
 
 // --- Sub Components ---
@@ -447,10 +465,38 @@ const salesReport = () => {
   );
   const [activeProgram, setActiveProgram] = useState<string>(""); 
   const showProgrammeFilter = userCanViewAllProgrammeData;
+  const [salesInputs, setSalesInputs] = useState<SalesInputs>({ pricePerKg: 0, expenses: 0 });
+  const [isSalesInputsDialogOpen, setIsSalesInputsDialogOpen] = useState(false);
+  const [salesInputsForm, setSalesInputsForm] = useState<{ pricePerKg: string; expenses: string }>({
+    pricePerKg: "0",
+    expenses: "0",
+  });
 
-  const { stats, genderData, countyData, topLocations, topFarmers, monthlyTrend, filteredData, top3Months } = useOfftakeData(offtakeData, dateRange, selectedProgramme);
+  const { stats, genderData, countyData, topLocations, topFarmers, monthlyTrend, filteredData, top3Months } =
+    useOfftakeData(offtakeData, dateRange, selectedProgramme, salesInputs);
 
   const unsubscribeRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    try {
+      const storedInputs = localStorage.getItem(SALES_INPUTS_STORAGE_KEY);
+      if (!storedInputs) return;
+      const parsedInputs = JSON.parse(storedInputs) as Partial<SalesInputs>;
+      const nextPrice = Number(parsedInputs.pricePerKg);
+      const nextExpenses = Number(parsedInputs.expenses);
+
+      setSalesInputs({
+        pricePerKg: Number.isFinite(nextPrice) && nextPrice >= 0 ? nextPrice : 0,
+        expenses: Number.isFinite(nextExpenses) && nextExpenses >= 0 ? nextExpenses : 0,
+      });
+    } catch (error) {
+      console.error("Failed to load saved sales inputs:", error);
+    }
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem(SALES_INPUTS_STORAGE_KEY, JSON.stringify(salesInputs));
+  }, [salesInputs]);
 
   useEffect(() => {
     const uid = auth.currentUser?.uid;
@@ -513,12 +559,18 @@ const salesReport = () => {
            const d = new Date(dateValue);
            if (!isNaN(d.getTime())) dateValue = d;
         }
-        const goatsArr = item.goats || [];
+        const goatsArr = Array.isArray(item.goats) ? item.goats : [];
+        const sheepArr = Array.isArray(item.sheep) ? item.sheep : [];
+        const cattleArr = Array.isArray(item.cattle) ? item.cattle : [];
         return {
           id: key, date: dateValue, farmerName: item.name || '', gender: item.gender || '',
           idNumber: item.idNumber || '', location: item.location || '', county: item.county || '',
           programme: item.programme || activeProgram, phone: item.phone || '', username: item.username || '',
-          goats: goatsArr, totalGoats: item.totalGoats || goatsArr.length, totalPrice: item.totalPrice || 0
+          goats: goatsArr,
+          sheep: sheepArr,
+          cattle: cattleArr,
+          totalGoats: Number(item.totalGoats) || goatsArr.length,
+          totalPrice: Number(item.totalPrice) || 0
         };
       });
 
@@ -572,10 +624,34 @@ const salesReport = () => {
   }, [activeProgram]);
 
   const formatCurrency = (val: number) => `KES ${val.toLocaleString(undefined, {maximumFractionDigits: 0})}`;
+  const openSalesInputsDialog = () => {
+    setSalesInputsForm({
+      pricePerKg: salesInputs.pricePerKg.toString(),
+      expenses: salesInputs.expenses.toString(),
+    });
+    setIsSalesInputsDialogOpen(true);
+  };
+
+  const saveSalesInputs = () => {
+    const isUpdate = salesInputs.pricePerKg > 0 || salesInputs.expenses > 0;
+    const parsedPricePerKg = Math.max(0, Number(salesInputsForm.pricePerKg) || 0);
+    const parsedExpenses = Math.max(0, Number(salesInputsForm.expenses) || 0);
+
+    setSalesInputs({
+      pricePerKg: parsedPricePerKg,
+      expenses: parsedExpenses,
+    });
+    setIsSalesInputsDialogOpen(false);
+    toast({
+      title: isUpdate ? "Inputs Updated" : "Inputs Added",
+      description: "Revenue and expenses saved. Revenue uses carcass weight only.",
+    });
+  };
   const handleProgramChange = (program: string) => { setActiveProgram(program); setSelectedProgramme(program); };
 
   const goatPct = stats.totalAnimals > 0 ? ((stats.totalGoats / stats.totalAnimals) * 100).toFixed(1) : 0;
   const sheepPct = stats.totalAnimals > 0 ? ((stats.totalSheep / stats.totalAnimals) * 100).toFixed(1) : 0;
+  const hasConfiguredSalesInputs = salesInputs.pricePerKg > 0 || salesInputs.expenses > 0;
 
   if (loading || userPermissionsLoading) {
     return (
@@ -602,6 +678,10 @@ const salesReport = () => {
                 {isCacheHit && <span className="text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full border border-blue-200">Cached</span>}
               </p>
             </div>
+            <Button type="button" variant="outline" className="w-full md:w-auto" onClick={openSalesInputsDialog}>
+              <Calculator className="h-4 w-4 mr-2" />
+              {hasConfiguredSalesInputs ? "Update Revenue Inputs" : "Add Revenue Inputs"}
+            </Button>
           </div>
 
           {/* Modern Responsive Filter Control Panel */}
@@ -684,6 +764,12 @@ const salesReport = () => {
             
             </div>
           </div>
+
+          <div className="grid gap-2 sm:grid-cols-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-xs text-slate-700">
+            <p><span className="font-semibold">Price/Kg:</span> {formatCurrency(stats.pricePerKg)} (carcass)</p>
+            <p><span className="font-semibold">Carcass Weight:</span> {millify(stats.totalCarcassWeight)} kg</p>
+            <p><span className="font-semibold">Expenses:</span> {formatCurrency(stats.expenses)}</p>
+          </div>
         </div>
 
         {/* --- SECTION 1: PURCHASES --- */}
@@ -703,7 +789,7 @@ const salesReport = () => {
             />
             <StatsCard 
               title="Total COST" 
-              value={millify(stats.totalRevenue)} 
+              value={millify(stats.totalPurchaseCost)} 
               icon={DollarSign} 
               subText={`Cost/Goat: ${formatCurrency(stats.costPerGoat)} • Avg/Kg: ${formatCurrency(stats.avgCostPerKgCarcass)}`} 
               color="green" 
@@ -855,10 +941,35 @@ const salesReport = () => {
              <h2 className="text-lg font-bold text-gray-800">Financial and Expenses Tracks </h2>
           </div>
 
-          <div className="grid gap-4 md:grid-cols-3">
-            <StatsCard title="Total Cost" value={millify(stats.totalRevenue)} icon={DollarSign} subText="Total cost for animal purchased " color="green" />
-            <StatsCard title="Total Revenue" value={millify(stats.totalRevenue - stats.expenses)} icon={TrendingUp} subText="Total revenue from animal sales" color="red" />
-            <StatsCard title="Net Profit" value={millify(stats.netProfit)} icon={Star} subText={stats.netProfit >= 0 ? "Positive" : "Negative"} color={stats.netProfit >= 0 ? "blue" : "red"} />
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <StatsCard
+              title="Purchase Cost"
+              value={millify(stats.totalPurchaseCost)}
+              icon={DollarSign}
+              subText="Total buying cost from offtake records"
+              color="green"
+            />
+            <StatsCard
+              title="Total Revenue"
+              value={millify(stats.totalRevenue)}
+              icon={TrendingUp}
+              subText={`Carcass ${millify(stats.totalCarcassWeight)}kg x ${formatCurrency(stats.pricePerKg)}/kg`}
+              color="teal"
+            />
+            <StatsCard
+              title="Total Expenses"
+              value={millify(stats.expenses)}
+              icon={DollarSign}
+              subText="Additional operational expenses from dialog input"
+              color="orange"
+            />
+            <StatsCard
+              title="Net Profit"
+              value={millify(stats.netProfit)}
+              icon={Star}
+              subText={stats.netProfit >= 0 ? "Revenue - Cost - Expenses (Positive)" : "Revenue - Cost - Expenses (Negative)"}
+              color={stats.netProfit >= 0 ? "blue" : "red"}
+            />
           </div>
 
           <Card className="border-0 shadow-sm bg-white rounded-2xl">
@@ -901,6 +1012,50 @@ const salesReport = () => {
             </CardContent>
           </Card>
         </section>
+
+        <Dialog open={isSalesInputsDialogOpen} onOpenChange={setIsSalesInputsDialogOpen}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>
+                {hasConfiguredSalesInputs ? "Update Revenue and Expense Inputs" : "Add Revenue and Expense Inputs"}
+              </DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4 py-2">
+              <p className="text-xs text-slate-500">
+                Use this dialog to add or update `Price per Kg` and `Total Expenses`.
+              </p>
+              <div className="space-y-2">
+                <Label htmlFor="price-per-kg">Price per Kg (KES)</Label>
+                <Input
+                  id="price-per-kg"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={salesInputsForm.pricePerKg}
+                  onChange={(e) => setSalesInputsForm((prev) => ({ ...prev, pricePerKg: e.target.value }))}
+                />
+                <p className="text-xs text-slate-500">Revenue is computed from carcass weight only.</p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="total-expenses">Total Expenses (KES)</Label>
+                <Input
+                  id="total-expenses"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={salesInputsForm.expenses}
+                  onChange={(e) => setSalesInputsForm((prev) => ({ ...prev, expenses: e.target.value }))}
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setIsSalesInputsDialogOpen(false)}>Cancel</Button>
+              <Button onClick={saveSalesInputs}>
+                {hasConfiguredSalesInputs ? "Update Inputs" : "Add Inputs"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </div>
   );

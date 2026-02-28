@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { ChevronDown, Pencil, Save, ShoppingCart, Trash2, X } from "lucide-react";
+import { ChevronDown,Eye, Pencil, Save, ShoppingCart, Trash2, X } from "lucide-react";
 
 interface OrderItem {
   id?: string;
@@ -742,11 +742,11 @@ const OrdersPage = () => {
                           <Button
                             variant="outline"
                             size="sm"
-                            className="h-7 gap-2"
+                            className="h-7 gap-2 bg-orange-100"
                             onClick={() => setOrdersDialogBatchId(row.batchId)}
                           >
-                            {row.items.length} Orders
-                            <ChevronDown className="h-4 w-4" />
+                            
+                            <Eye className="h-4 w-4" />
                           </Button>
                           <Button
                             variant="destructive"
@@ -755,7 +755,7 @@ const OrdersPage = () => {
                             onClick={() => deleteBatch(row)}
                           >
                             <Trash2 className="mr-1 h-4 w-4" />
-                            Delete
+                            
                           </Button>
                         </div>
                       </TableCell>

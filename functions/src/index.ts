@@ -44,6 +44,8 @@ interface RequisitionRecord {
   approvedAt?: number | string;
   approvedBy?: string;
   authorizedBy?: string;
+  transactionCompletedBy?: string;
+  transactionCompletedAt?: number | string;
   completedBy?: string;
   completedAt?: number | string;
   county?: string;
@@ -76,6 +78,18 @@ interface UserRecord {
     customAttribute?: string;
     customAttributes?: Record<string, string>;
   };
+  [key: string]: unknown;
+}
+
+interface SmsOutboxRecord {
+  status?: string;
+  message?: string;
+  recipients?: string[];
+  recipientPhones?: string[];
+  sourcePage?: string;
+  programme?: string;
+  createdBy?: string;
+  createdAt?: number | string;
   [key: string]: unknown;
 }
 
@@ -146,7 +160,10 @@ const getRoleTokens = (user: UserRecord): string[] => {
   return [...tokens];
 };
 
-const hasAnyRoleToken = (user: UserRecord, allowedTokens: Set<string>): boolean =>
+const hasAnyRoleToken = (
+  user: UserRecord,
+  allowedTokens: Set<string>,
+): boolean =>
   getRoleTokens(user).some((token) => allowedTokens.has(token));
 
 const getUserPhone = (user: UserRecord): string | null => {
@@ -258,7 +275,9 @@ const resolveRequesterPhone = async (
       const emailLower = email.toLowerCase();
       if (emailLower !== email) {
         const userByLowerEmail = await getFirstUserByChild("email", emailLower);
-        const phoneByLowerEmail = userByLowerEmail ? getUserPhone(userByLowerEmail) : null;
+        const phoneByLowerEmail = userByLowerEmail ?
+          getUserPhone(userByLowerEmail) :
+          null;
         if (phoneByLowerEmail) return phoneByLowerEmail;
       }
     }
@@ -353,7 +372,10 @@ const sendEmail = async (
   }
 };
 
-const sendSms = async (phoneNumbers: string[], message: string): Promise<void> => {
+const sendSms = async (
+  phoneNumbers: string[],
+  message: string,
+): Promise<void> => {
   const recipients = [...new Set(
     phoneNumbers
       .map((phone) => normalizePhone(phone))
@@ -365,14 +387,20 @@ const sendSms = async (phoneNumbers: string[], message: string): Promise<void> =
   const apiKey = getEnv("ROAMTECH_API_KEY");
   const partnerId = getEnv("ROAMTECH_PARTNER_ID");
   const shortcode = getEnv("SHORTCODE");
-  const smsUrl = getEnv("ROAMTECH_SMS_URL") || "https://sms.roamtech.co.ke/api/services/sendsms/";
+  const passType = getEnv("ROAMTECH_PASS_TYPE") || "plain";
+  const smsUrl = getEnv("ROAMTECH_SMS_URL") || "https://api.v2.emalify.com/api/services/sendsms/";
 
   if (!apiKey || !partnerId || !shortcode) {
     logger.warn(
-      "SMS skipped. Missing ROAMTECH_API_KEY, ROAMTECH_PARTNER_ID or SHORTCODE env vars.",
+      "SMS skipped. Missing ROAMTECH_API_KEY, ROAMTECH_PARTNER_ID " +
+      "or SHORTCODE env vars.",
     );
     return;
   }
+
+  const apiMobiles = recipients.map((phone) =>
+    phone.startsWith("+") ? phone.slice(1) : phone,
+  );
 
   try {
     const response = await fetch(smsUrl, {
@@ -381,23 +409,46 @@ const sendSms = async (phoneNumbers: string[], message: string): Promise<void> =
       body: JSON.stringify({
         apikey: apiKey,
         partnerID: partnerId,
-        mobile: recipients.join(","),
+        mobile: apiMobiles.join(","),
         message,
         shortcode,
+        pass_type: passType,
       }),
     });
 
-    if (!response.ok) {
-      const text = await response.text();
+    const text = await response.text();
+    let responseBody: Record<string, unknown> | null = null;
+    try {
+      responseBody = JSON.parse(text) as Record<string, unknown>;
+    } catch (_error) {
+      responseBody = null;
+    }
+
+    const responseCode =
+      responseBody?.["response-code"] ??
+      responseBody?.response_code ??
+      responseBody?.code;
+    const hasSuccessfulResponseCode =
+      responseCode === undefined ||
+      responseCode === null ||
+      responseCode === 200 ||
+      responseCode === "200";
+
+    if (!response.ok || !hasSuccessfulResponseCode) {
       logger.error("Failed to send SMS", {
         status: response.status,
         body: text,
+        responseCode,
         recipients: recipients.length,
       });
       return;
     }
 
-    logger.info("SMS sent", {recipients: recipients.length});
+    logger.info("SMS sent", {
+      recipients: recipients.length,
+      status: response.status,
+      responseCode: responseCode ?? "N/A",
+    });
   } catch (error) {
     logger.error("Failed to send SMS", {error, recipients: recipients.length});
   }
@@ -439,7 +490,10 @@ const getEmailsByRole = async (
       if (isValidEmail(email)) recipients.add(email);
     }
   } catch (error) {
-    logger.error("Failed to load role-based email recipients from /users", {error});
+    logger.error(
+      "Failed to load role-based email recipients from /users",
+      {error},
+    );
   }
 
   return [...recipients];
@@ -465,7 +519,10 @@ const getPhonesByRole = async (
       if (phone) recipients.add(phone);
     }
   } catch (error) {
-    logger.error("Failed to load role-based phone recipients from /users", {error});
+    logger.error(
+      "Failed to load role-based phone recipients from /users",
+      {error},
+    );
   }
 
   return [...recipients];
@@ -567,24 +624,19 @@ const sendRequesterRejectedSms = async (
     return;
   }
 
-  const customSmsText = typeof record.rejectionSmsText === "string" ?
-    record.rejectionSmsText.trim() :
-    "";
-
-  if (customSmsText) {
-    await sendSms([requesterPhone], customSmsText);
-    return;
-  }
+  const customSmsMessage =
+    typeof record.rejectionSmsText === "string" && record.rejectionSmsText.trim() ?
+      record.rejectionSmsText.trim() :
+      "";
 
   const rejectionReason = typeof record.rejectionReason === "string" &&
       record.rejectionReason.trim() ?
     record.rejectionReason.trim() :
     DEFAULT_HR_REJECTION_REASON;
 
-  const message = [
+  const message = customSmsMessage || [
     `Hello ${getRequesterName(record)}.`,
-    `Your requisition ${requisitionId} was rejected by Human Resource Manager.`,
-    `Reason: ${rejectionReason}`,
+    `Your requisition ${requisitionId} has been rejected because of ${rejectionReason}.`,
   ].join(" ");
 
   await sendSms([requesterPhone], message);
@@ -605,8 +657,29 @@ const sendRequesterAuthorizedSms = async (
 
   const message = [
     `Hello ${getRequesterName(record)}.`,
-    `Your requisition ${requisitionId} has been authorized and is now being processed.`,
-    "Finance has been notified.",
+    `Your requisition ${requisitionId} has been authorized and is waiting for transaction.`,
+  ].join(" ");
+
+  await sendSms([requesterPhone], message);
+};
+
+const sendRequesterTransactionCompletedSms = async (
+  requisitionId: string,
+  record: RequisitionRecord,
+): Promise<void> => {
+  const requesterPhone = await resolveRequesterPhone(record);
+  if (!requesterPhone) {
+    logger.warn(
+      "Requester phone missing for transaction completed SMS",
+      {requisitionId},
+    );
+    return;
+  }
+
+  const message = [
+    `Hello ${getRequesterName(record)}.`,
+    `Transaction for requisition ${requisitionId} has been completed.`,
+    `Amount: ${formatAmount(record)}.`,
   ].join(" ");
 
   await sendSms([requesterPhone], message);
@@ -627,12 +700,61 @@ const sendRequesterCompletedSms = async (
 
   const message = [
     `Hello ${getRequesterName(record)}.`,
-    `Your requisition ${requisitionId} transaction has been made successfully.`,
-    `Amount: ${formatAmount(record)}.`,
+    `Your requisition ${requisitionId} has been marked complete after receipt verification.`,
   ].join(" ");
 
   await sendSms([requesterPhone], message);
 };
+
+export const processSmsOutboxQueue = onValueWritten(
+  "/smsOutbox/{messageId}",
+  async (event: any): Promise<void> => {
+    const before = event.data.before.val() as SmsOutboxRecord | null;
+    const after = event.data.after.val() as SmsOutboxRecord | null;
+    if (!after) return;
+
+    const previousStatus = normalize(before?.status);
+    const nextStatus = normalize(after.status);
+
+    if (nextStatus && nextStatus !== "pending") return;
+    if (previousStatus && previousStatus !== "pending") return;
+
+    const rawRecipients = Array.isArray(after.recipients) ?
+      after.recipients :
+      (Array.isArray(after.recipientPhones) ? after.recipientPhones : []);
+    const recipients = rawRecipients
+      .filter((value): value is string => typeof value === "string")
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0);
+
+    const message = typeof after.message === "string" ? after.message.trim() : "";
+    const requestRef = event.data.after.ref;
+    const timestamp = Date.now();
+
+    if (!message || recipients.length === 0) {
+      await requestRef.update({
+        status: "failed",
+        failedAt: timestamp,
+        failureReason: "Message or recipients missing.",
+      });
+      return;
+    }
+
+    await requestRef.update({
+      status: "processing",
+      processingAt: timestamp,
+      recipientCount: recipients.length,
+    });
+
+    await sendSms(recipients, message);
+
+    await requestRef.update({
+      status: "sent",
+      sentAt: Date.now(),
+      recipientCount: recipients.length,
+    });
+  },
+);
 
 const sendFinanceAuthorizedEmail = async (
   requisitionId: string,
@@ -652,7 +774,8 @@ const sendFinanceAuthorizedEmail = async (
   }
 
   const details = buildDetailsText(requisitionId, record);
-  const subject = `Finance action required: authorized requisition ${requisitionId}`;
+  const subject =
+    `Finance action required: authorized requisition ${requisitionId}`;
   const text = [
     "A requisition has been authorized by HR.",
     "Please process the transaction.",
@@ -687,6 +810,8 @@ export const notifyRequisitionStatusEmails = onValueWritten(
     const nextStatus = normalize(after.status);
     const previousAuthorizedBy = normalize(before?.authorizedBy);
     const nextAuthorizedBy = normalize(after.authorizedBy);
+    const previousTransactionCompletedBy = normalize(before?.transactionCompletedBy);
+    const nextTransactionCompletedBy = normalize(after.transactionCompletedBy);
 
     if (!before && after) {
       await sendProjectManagerNewRequisitionSms(requisitionId, after);
@@ -706,20 +831,22 @@ export const notifyRequisitionStatusEmails = onValueWritten(
       await sendRequesterRejectedSms(requisitionId, after);
     }
 
-    if (
-      nextStatus === "complete" &&
-      previousStatus !== nextStatus
-    ) {
-      await sendRequesterCompletedSms(requisitionId, after);
-      return;
-    }
-
     if (!previousAuthorizedBy && !!nextAuthorizedBy) {
       await Promise.all([
         sendRequesterAuthorizedSms(requisitionId, after),
         sendFinanceAuthorizedEmail(requisitionId, after),
       ]);
-      return;
+    }
+
+    if (!previousTransactionCompletedBy && !!nextTransactionCompletedBy) {
+      await sendRequesterTransactionCompletedSms(requisitionId, after);
+    }
+
+    if (
+      nextStatus === "complete" &&
+      previousStatus !== nextStatus
+    ) {
+      await sendRequesterCompletedSms(requisitionId, after);
     }
   },
 );

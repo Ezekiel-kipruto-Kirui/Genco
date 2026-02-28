@@ -99,6 +99,7 @@ const VACCINE_OPTIONS = [
 ];
 
 const PROGRAMME_OPTIONS = ["KPMD", "RANGE"];
+type ProgrammeView = "ALL" | "KPMD" | "RANGE";
 const FARMERS_PER_PAGE = 20;
 
 const toFarmerArray = (records: unknown): Record<string, unknown>[] => {
@@ -208,6 +209,7 @@ const AnimalHealthPage = () => {
   const [searchTerm, setSearchTerm] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
+  const [programmeView, setProgrammeView] = useState<ProgrammeView>("KPMD");
   const [selectedActivities, setSelectedActivities] = useState<string[]>([]);
   const [isSelecting, setIsSelecting] = useState(false);
   const { toast } = useToast();
@@ -507,7 +509,7 @@ const AnimalHealthPage = () => {
     setSelectedActivities(prev => prev.includes(activityId) ? prev.filter(id => id !== activityId) : [...prev, activityId]);
   };
   const selectAllActivities = () => {
-    setSelectedActivities(selectedActivities.length === filteredActivities.length ? [] : filteredActivities.map(a => a.id));
+    setSelectedActivities(selectedActivities.length === displayedActivities.length ? [] : displayedActivities.map(a => a.id));
   };
   const openViewDialog = (activity: AnimalHealthActivity) => {
     setViewingActivity(activity);
@@ -517,16 +519,21 @@ const AnimalHealthPage = () => {
   const openFieldOfficersDialog = (fo: FieldOfficer[] = []) => { setSelectedActivityFieldOfficers(fo); setIsFieldOfficersDialogOpen(true); };
 
   // --- CALCULATIONS FOR STATS ---
-  const totalDosesAdministered = useMemo(() => activities.reduce((s, a) => s + getActivityTotalDoses(a), 0), [activities]);
+  const statsActivities = useMemo(() => {
+    if (programmeView === "ALL") return activities;
+    return activities.filter((activity) => activity.programme === programmeView);
+  }, [activities, programmeView]);
+
+  const totalDosesAdministered = useMemo(() => statsActivities.reduce((s, a) => s + getActivityTotalDoses(a), 0), [statsActivities]);
   
   // Beneficiary Calculations
   const totalMaleBeneficiaries = useMemo(
-    () => activities.reduce((sum, a) => sum + (a.malebeneficiaries || 0), 0),
-    [activities]
+    () => statsActivities.reduce((sum, a) => sum + (a.malebeneficiaries || 0), 0),
+    [statsActivities]
   );
   const totalFemaleBeneficiaries = useMemo(
-    () => activities.reduce((sum, a) => sum + (a.femalebeneficiaries || 0), 0),
-    [activities]
+    () => statsActivities.reduce((sum, a) => sum + (a.femalebeneficiaries || 0), 0),
+    [statsActivities]
   );
   const totalBeneficiaries = useMemo(
     () => totalMaleBeneficiaries + totalFemaleBeneficiaries,
@@ -534,8 +541,8 @@ const AnimalHealthPage = () => {
   );
 
   const calculateVaccinationRate = () => {
-    if (activities.length < 2) return { rate: 0, trend: 'neutral', currentDoses: 0, previousDoses: 0 };
-    const sorted = [...activities].sort((a, b) => (b.date ? new Date(b.date).getTime() : 0) - (a.date ? new Date(a.date).getTime() : 0));
+    if (statsActivities.length < 2) return { rate: 0, trend: 'neutral', currentDoses: 0, previousDoses: 0 };
+    const sorted = [...statsActivities].sort((a, b) => (b.date ? new Date(b.date).getTime() : 0) - (a.date ? new Date(a.date).getTime() : 0));
     const curr = sorted[0], prev = sorted[1];
     const currD = getActivityTotalDoses(curr), prevD = getActivityTotalDoses(prev);
     if (prevD === 0) return { rate: currD > 0 ? 100 : 0, trend: currD > 0 ? 'up' : 'neutral', currentDoses: currD, previousDoses: prevD };
@@ -555,6 +562,21 @@ const AnimalHealthPage = () => {
     const matchEnd = !endDate || aDate <= new Date(endDate + 'T23:59:59');
     return (matchSearch || matchIssue) && matchStart && matchEnd;
   }), [activities, searchTerm, startDate, endDate]);
+
+  const activitiesByProgramme = useMemo(() => ({
+    KPMD: filteredActivities.filter((activity) => activity.programme === "KPMD"),
+    RANGE: filteredActivities.filter((activity) => activity.programme === "RANGE"),
+  }), [filteredActivities]);
+
+  const displayedActivities = useMemo(() => {
+    if (programmeView === "ALL") return filteredActivities;
+    return activitiesByProgramme[programmeView];
+  }, [activitiesByProgramme, filteredActivities, programmeView]);
+
+  useEffect(() => {
+    const visibleIds = new Set(displayedActivities.map((activity) => activity.id));
+    setSelectedActivities((prev) => prev.filter((id) => visibleIds.has(id)));
+  }, [displayedActivities]);
 
   const openEditDialog = (activity: AnimalHealthActivity) => {
     if (!userIsChiefAdmin) return;
@@ -577,7 +599,7 @@ const AnimalHealthPage = () => {
   const exportToCSV = () => {
     try {
       const headers = ['Date', 'Programme', 'County', 'Subcounty', 'Location', 'Male Ben.', 'Female Ben.', 'Total Goats', 'Total Sheep', 'Vaccines', 'Total Doses', 'Field Officers', 'Issues', 'Comment'];
-      const csvData = filteredActivities.map(a => {
+      const csvData = displayedActivities.map(a => {
         const vText = getActivityVaccines(a).map(v => `${v.type}(${v.doses})`).join(';');
         const iText = (a.issues || []).map(i => `${i.name}(${i.status})`).join(';');
         const tGoats = (a.beneficiaries || []).reduce((s, b) => s + (b.goats || 0), 0);
@@ -587,7 +609,8 @@ const AnimalHealthPage = () => {
       const csvContent = [headers.join(','), ...csvData.map(r => r.map(f => `"${f}"`).join(','))].join('\n');
       const blob = new Blob([csvContent], { type: 'text/csv' });
       const link = document.createElement('a'); link.href = window.URL.createObjectURL(blob);
-      link.download = `vaccination-${new Date().toISOString().split('T')[0]}.csv`; link.click();
+      const programmeSuffix = programmeView === "ALL" ? "all-programmes" : programmeView.toLowerCase();
+      link.download = `vaccination-${programmeSuffix}-${new Date().toISOString().split('T')[0]}.csv`; link.click();
       toast({ title: "Success", description: "Exported" });
     } catch (e) { toast({ title: "Error", description: "Export failed", variant: "destructive" }); }
   };
@@ -843,7 +866,7 @@ const AnimalHealthPage = () => {
         </div>
 
         {/* Action Buttons & Search */}
-        <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex flex-col lg:flex-row justify-between items-stretch lg:items-center gap-4">
+        <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 space-y-4">
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full lg:w-auto flex-1">
                 <div className="relative flex-1 min-w-0">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
@@ -851,6 +874,20 @@ const AnimalHealthPage = () => {
                 </div>
                 <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="w-full sm:max-w-[160px]" />
                 <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="w-full sm:max-w-[160px]" />
+            </div>
+
+            <div className="w-full sm:w-[280px] space-y-1">
+                <Label className="text-xs text-slate-600">Programme View</Label>
+                <Select value={programmeView} onValueChange={(value) => setProgrammeView(value as ProgrammeView)}>
+                    <SelectTrigger className="h-9">
+                        <SelectValue placeholder="Select programme" />
+                    </SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="KPMD">KPMD ({activitiesByProgramme.KPMD.length})</SelectItem>
+                        <SelectItem value="RANGE">RANGE ({activitiesByProgramme.RANGE.length})</SelectItem>
+                        <SelectItem value="ALL">ALL ({filteredActivities.length})</SelectItem>
+                    </SelectContent>
+                </Select>
             </div>
             
             <div className="flex flex-wrap items-center gap-2">
@@ -869,6 +906,12 @@ const AnimalHealthPage = () => {
         </div>
 
         {/* Activities Table */}
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 px-1">
+          <h2 className="text-sm font-semibold text-slate-700">
+            {programmeView === "ALL" ? "All Programme Activities" : `${programmeView} Activities`}
+          </h2>
+          <p className="text-xs text-slate-500">Showing {displayedActivities.length} records</p>
+        </div>
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -876,7 +919,7 @@ const AnimalHealthPage = () => {
                 <tr className="bg-slate-50 border-b border-slate-200">
                   {isSelecting && (
                     <th className="py-3 px-4 text-left w-12">
-                      <Checkbox checked={selectedActivities.length === filteredActivities.length && filteredActivities.length > 0} onCheckedChange={selectAllActivities} />
+                      <Checkbox checked={selectedActivities.length === displayedActivities.length && displayedActivities.length > 0} onCheckedChange={selectAllActivities} />
                     </th>
                   )}
                   <th className="py-3 px-4 text-left font-semibold text-slate-600">Vaccination Date</th>
@@ -891,10 +934,10 @@ const AnimalHealthPage = () => {
               <tbody>
                 {loading ? (
                   <tr><td colSpan={8} className="text-center py-10"><Skeleton className="h-8 w-full" /></td></tr>
-                ) : filteredActivities.length === 0 ? (
+                ) : displayedActivities.length === 0 ? (
                   <tr><td colSpan={8} className="text-center py-10 text-slate-500">No activities found.</td></tr>
                 ) : (
-                  filteredActivities.map((activity) => (
+                  displayedActivities.map((activity) => (
                     <tr key={activity.id} className="border-b border-slate-100 hover:bg-slate-50/50 transition-colors">
                       {isSelecting && (
                         <td className="py-3 px-4">

@@ -16,7 +16,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu"; 
 import { Download, Eye, Calendar, FileText, Edit, Trash2, Car, Wallet, CheckCircle, XCircle, MapPin, Printer, Plus, Minus, Save, FileImage, ExternalLink, MoreHorizontal, LogOut, History, Clock, ChevronDown } from "lucide-react"; 
 import { useToast } from "@/hooks/use-toast";
-import { canViewAllProgrammes, isAdmin, isChiefAdmin, isFinance, isHummanResourceManager, isProjectManager, resolvePermissionPrincipal } from "@/contexts/authhelper";
+import { canViewAllProgrammes, isAdmin, isChiefAdmin, isFinance, isHummanResourceManager, isMonitoringAndEvaluationOfficer, isProjectManager, resolvePermissionPrincipal } from "@/contexts/authhelper";
 import html2canvas from "html2canvas";
 import { jsPDF } from "jspdf";
 import { millify } from 'millify';
@@ -55,6 +55,8 @@ interface RequisitionData {
   approvedAt?: string | number;
   authorizedBy?: string;
   authorizedAt?: string | number;
+  transactionCompletedBy?: string;
+  transactionCompletedAt?: string | number;
   completedBy?: string;
   completedAt?: string | number;
   rejectedBy?: string;
@@ -215,13 +217,16 @@ const RequisitionsPage = () => {
   const [loading, setLoading] = useState(true);
   const [exportLoading, setExportLoading] = useState(false);
   const [selectedRecords, setSelectedRecords] = useState<string[]>([]);
+  const [isBulkProcessing, setIsBulkProcessing] = useState(false);
   
   // Dialog States
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
   const [viewingRecord, setViewingRecord] = useState<RequisitionData | null>(null);
   const [hrDecisionAction, setHrDecisionAction] = useState<string>("");
   const [isRejectDialogOpen, setIsRejectDialogOpen] = useState(false);
-  const [rejectionSmsText, setRejectionSmsText] = useState<string>("");
+  const [rejectionMessageText, setRejectionMessageText] = useState<string>("");
+  const [isBulkRejectDialogOpen, setIsBulkRejectDialogOpen] = useState(false);
+  const [bulkRejectionMessageText, setBulkRejectionMessageText] = useState<string>("");
   
   const [isImageViewerOpen, setIsImageViewerOpen] = useState(false);
   const [viewingImages, setViewingImages] = useState<string[]>([]);
@@ -282,6 +287,10 @@ const RequisitionsPage = () => {
     () => isHummanResourceManager(permissionPrincipal),
     [permissionPrincipal]
   );
+  const userHasMerRights = useMemo(
+    () => isMonitoringAndEvaluationOfficer(permissionPrincipal),
+    [permissionPrincipal]
+  );
   const userHasFinanceRights = useMemo(() => isFinance(permissionPrincipal), [permissionPrincipal]);
   const userCanViewAllProgrammes = useMemo(
     () => canViewAllProgrammes(userRole, userAttribute),
@@ -292,9 +301,20 @@ const RequisitionsPage = () => {
     [userCanViewAllProgrammes, userHasHummanResourceRights, userHasProjectManagerRights]
   );
   const canApproveRequisition =
-    isAdmin(permissionPrincipal) || isChiefAdmin(permissionPrincipal) || userHasProjectManagerRights;
+    isAdmin(permissionPrincipal) ||
+    isChiefAdmin(permissionPrincipal) ||
+    userHasProjectManagerRights ||
+    userHasMerRights;
   const canAuthorizeRequisition = userHasHummanResourceRights;
-  const canCompleteRequisition = userHasFinanceRights;
+  const canCompleteTransaction = userHasFinanceRights;
+  const canMarkRequisitionComplete = useMemo(
+    () => !userHasFinanceRights && (canApproveRequisition || canAuthorizeRequisition || userCanViewAllProgrammes),
+    [userHasFinanceRights, canApproveRequisition, canAuthorizeRequisition, userCanViewAllProgrammes]
+  );
+  const canDeleteRequisition = useMemo(
+    () => userIsChiefAdmin,
+    [userIsChiefAdmin]
+  );
   const requisitionCacheKey = useMemo(
     () => cacheKey("admin-page", "requisitions", permissionPrincipal || "no-access", activeProgram || "all"),
     [permissionPrincipal, activeProgram]
@@ -447,7 +467,33 @@ const RequisitionsPage = () => {
     }));
   }, [allRequisitions, filters, pagination.limit, pagination.page]);
 
+  useEffect(() => {
+    const filteredIds = new Set(filteredRequisitions.map((record) => record.id));
+    setSelectedRecords((prev) => prev.filter((id) => filteredIds.has(id)));
+  }, [filteredRequisitions]);
+
   // --- Handlers ---
+  const toggleRecordSelection = (recordId: string) => {
+    setSelectedRecords((prev) =>
+      prev.includes(recordId) ? prev.filter((id) => id !== recordId) : [...prev, recordId]
+    );
+  };
+
+  const toggleSelectAllCurrentPage = () => {
+    const pageIds = getCurrentPageRecords().map((record) => record.id);
+    setSelectedRecords((prev) => {
+      const allSelected = pageIds.length > 0 && pageIds.every((id) => prev.includes(id));
+      if (allSelected) return prev.filter((id) => !pageIds.includes(id));
+      return Array.from(new Set([...prev, ...pageIds]));
+    });
+  };
+
+  const getSelectedRequisitions = (): RequisitionData[] => {
+    if (selectedRecords.length === 0) return [];
+    const selectedSet = new Set(selectedRecords);
+    return allRequisitions.filter((record) => selectedSet.has(record.id));
+  };
+
   const handleLogout = async () => {
     try {
       await signOut(getAuth());
@@ -494,7 +540,7 @@ const RequisitionsPage = () => {
   const resetHrDecisionState = useCallback(() => {
     setHrDecisionAction("");
     setIsRejectDialogOpen(false);
-    setRejectionSmsText("");
+    setRejectionMessageText("");
   }, []);
 
   const handleViewDialogOpenChange = useCallback((open: boolean) => {
@@ -613,7 +659,7 @@ const RequisitionsPage = () => {
 
       if (statusChanged && nextStatus === 'approved') {
         if (!canApproveRequisition) {
-          toast({ title: "Unauthorized", description: "Only Project Manager, Admin and Chief Admin can approve requisitions.", variant: "destructive" });
+          toast({ title: "Unauthorized", description: "Only Project Manager, M&E Officer, Admin and Chief Admin can approve requisitions.", variant: "destructive" });
           return;
         }
         updatePayload.approvedBy = actorName;
@@ -621,13 +667,27 @@ const RequisitionsPage = () => {
       }
 
       if (statusChanged && nextStatus === 'complete') {
-        if (!canCompleteRequisition) {
-          toast({ title: "Unauthorized", description: "Only Finance can complete transactions.", variant: "destructive" });
+        if (!canMarkRequisitionComplete) {
+          toast({ title: "Unauthorized", description: "Only non-finance authorized users can mark requisitions complete.", variant: "destructive" });
           return;
         }
-        const authorizedBy = String(editRecord.authorizedBy || '').trim();
+        const authorizedBy = String(editFormData.authorizedBy || editRecord.authorizedBy || '').trim();
         if (!authorizedBy) {
           toast({ title: "Authorization Required", description: "Requisition can only be completed after Humman Resource Manager authorization.", variant: "destructive" });
+          return;
+        }
+        const transactionCompletedBy = String(
+          editFormData.transactionCompletedBy || editRecord.transactionCompletedBy || ''
+        ).trim();
+        if (!transactionCompletedBy) {
+          toast({ title: "Transaction Required", description: "Finance must complete the transaction before requisition can be marked complete.", variant: "destructive" });
+          return;
+        }
+        const receiptImages = getRequisitionImages(
+          String(editFormData.requisitionUrl || editRecord.requisitionUrl || "")
+        );
+        if (receiptImages.length === 0) {
+          toast({ title: "Receipts Required", description: "Requisition can only be marked complete after receipt images are uploaded.", variant: "destructive" });
           return;
         }
         updatePayload.completedBy = actorName;
@@ -697,7 +757,7 @@ const RequisitionsPage = () => {
   const handleApprove = async () => {
     if (!viewingRecord) return;
     if (!canApproveRequisition) {
-      toast({ title: "Unauthorized", description: "Only Project Manager, Admin and Chief Admin can approve requisitions.", variant: "destructive" });
+      toast({ title: "Unauthorized", description: "Only Project Manager, M&E Officer, Admin and Chief Admin can approve requisitions.", variant: "destructive" });
       return;
     }
     try {
@@ -767,10 +827,7 @@ const RequisitionsPage = () => {
     }
 
     if (decision === "reject") {
-      const officerName = getOfficerName(viewingRecord);
-      setRejectionSmsText(
-        `Hello ${officerName}. Your requisition ${viewingRecord.id} has been rejected by Human Resource Manager.`
-      );
+      setRejectionMessageText("");
       setIsRejectDialogOpen(true);
     }
   };
@@ -786,9 +843,9 @@ const RequisitionsPage = () => {
       return;
     }
 
-    const smsText = rejectionSmsText.trim();
-    if (!smsText) {
-      toast({ title: "Message Required", description: "Enter the SMS text to send to the requester.", variant: "destructive" });
+    const rejectionMessage = rejectionMessageText.trim();
+    if (!rejectionMessage) {
+      toast({ title: "Message Required", description: "Enter an SMS message.", variant: "destructive" });
       return;
     }
 
@@ -799,8 +856,8 @@ const RequisitionsPage = () => {
         status: "rejected",
         rejectedBy: actorName,
         rejectedAt,
-        rejectionReason: smsText,
-        rejectionSmsText: smsText,
+        rejectionReason: rejectionMessage,
+        rejectionSmsText: rejectionMessage,
       });
       removeCachedValue(requisitionCacheKey);
       await logHistory(viewingRecord.id, "Rejected", `Rejected by ${actorName}. SMS sent to requester.`);
@@ -813,23 +870,23 @@ const RequisitionsPage = () => {
             status: "rejected",
             rejectedBy: actorName,
             rejectedAt,
-            rejectionReason: smsText,
-            rejectionSmsText: smsText,
+            rejectionReason: rejectionMessage,
+            rejectionSmsText: rejectionMessage,
           } :
           null
       );
       setIsRejectDialogOpen(false);
       setHrDecisionAction("");
-      setRejectionSmsText("");
+      setRejectionMessageText("");
     } catch (error) {
       toast({ title: "Error", description: "Failed to reject requisition.", variant: "destructive" });
     }
   };
 
-  // --- Mark Complete Handler ---
-  const handleMarkComplete = async () => {
+  // --- Transaction Completion Handler (Finance) ---
+  const handleCompleteTransaction = async () => {
     if (!viewingRecord) return;
-    if (!canCompleteRequisition) {
+    if (!canCompleteTransaction) {
       toast({ title: "Unauthorized", description: "Only Finance can complete transactions.", variant: "destructive" });
       return;
     }
@@ -841,9 +898,62 @@ const RequisitionsPage = () => {
       toast({ title: "Authorization Required", description: "Requisition can only be completed after Humman Resource Manager authorization.", variant: "destructive" });
       return;
     }
+    if (viewingRecord.transactionCompletedBy) {
+      toast({ title: "Already Completed", description: "Transaction has already been completed by Finance." });
+      return;
+    }
     try {
         const actorName = userName || user?.displayName || user?.email || "Admin";
         
+        const updatePayload: any = {
+            transactionCompletedBy: actorName,
+            transactionCompletedAt: Date.now(),
+        };
+
+        await update(ref(db, `requisitions/${viewingRecord.id}`), updatePayload);
+        removeCachedValue(requisitionCacheKey);
+
+        await logHistory(viewingRecord.id, "Transaction Completed", `Finance completed transaction by ${actorName}`);
+
+        toast({ title: "Transaction Completed", description: "Finance transaction completed successfully." });
+        
+        setViewingRecord(prev => prev ? {
+          ...prev,
+          transactionCompletedBy: actorName,
+          transactionCompletedAt: updatePayload.transactionCompletedAt,
+        } : null);
+        setIsHistoryOpen(false);
+    } catch (error) {
+        toast({ title: "Error", description: "Failed to complete transaction", variant: "destructive" });
+    }
+  };
+
+  // --- Mark Requisition Complete Handler (Non-Finance) ---
+  const handleMarkComplete = async () => {
+    if (!viewingRecord) return;
+    if (!canMarkRequisitionComplete) {
+      toast({ title: "Unauthorized", description: "Only non-finance authorized users can mark requisition complete.", variant: "destructive" });
+      return;
+    }
+    if (viewingRecord.status !== 'approved') {
+      toast({ title: "Invalid Status", description: "Only approved requisitions can be marked complete.", variant: "destructive" });
+      return;
+    }
+    if (!viewingRecord.authorizedBy) {
+      toast({ title: "Authorization Required", description: "Requisition can only be completed after Humman Resource Manager authorization.", variant: "destructive" });
+      return;
+    }
+    if (!viewingRecord.transactionCompletedBy) {
+      toast({ title: "Transaction Required", description: "Finance must complete the transaction before marking requisition complete.", variant: "destructive" });
+      return;
+    }
+    const receiptImages = getRequisitionImages(viewingRecord.requisitionUrl);
+    if (receiptImages.length === 0) {
+      toast({ title: "Receipts Required", description: "Requisition can only be marked complete after receipt images are uploaded.", variant: "destructive" });
+      return;
+    }
+    try {
+        const actorName = userName || user?.displayName || user?.email || "Admin";
         const updatePayload: any = {
             status: 'complete',
             completedBy: actorName,
@@ -853,7 +963,7 @@ const RequisitionsPage = () => {
         await update(ref(db, `requisitions/${viewingRecord.id}`), updatePayload);
         removeCachedValue(requisitionCacheKey);
 
-        await logHistory(viewingRecord.id, "Completed", `Marked complete by ${actorName}`);
+        await logHistory(viewingRecord.id, "Completed", `Marked complete by ${actorName} after receipt submission.`);
 
         toast({ title: "Completed", description: "Requisition marked as complete." });
         
@@ -866,6 +976,395 @@ const RequisitionsPage = () => {
         setIsHistoryOpen(false);
     } catch (error) {
         toast({ title: "Error", description: "Failed to mark complete", variant: "destructive" });
+    }
+  };
+
+  // --- Bulk Actions ---
+  const handleBulkApprove = async () => {
+    if (!canApproveRequisition) {
+      toast({ title: "Unauthorized", description: "You do not have permission to approve requisitions.", variant: "destructive" });
+      return;
+    }
+
+    const selected = getSelectedRequisitions();
+    const eligible = selected.filter((record) => record.status === "pending" && !record.approvedBy);
+    const skipped = selected.length - eligible.length;
+
+    if (eligible.length === 0) {
+      toast({ title: "No Eligible Records", description: "Select pending requisitions that are not yet approved." });
+      return;
+    }
+
+    const actorName = userName || user?.displayName || user?.email || "Admin";
+    setIsBulkProcessing(true);
+    try {
+      const results = await Promise.all(
+        eligible.map(async (record) => {
+          try {
+            await update(ref(db, `requisitions/${record.id}`), {
+              status: "approved",
+              approvedBy: actorName,
+              approvedAt: Date.now(),
+            });
+            await logHistory(record.id, "Approved", `Approved by ${actorName}`);
+            return true;
+          } catch (error) {
+            console.error("Bulk approve failed for record:", record.id, error);
+            return false;
+          }
+        })
+      );
+      const successCount = results.filter(Boolean).length;
+      if (successCount > 0) removeCachedValue(requisitionCacheKey);
+      setSelectedRecords([]);
+      toast({
+        title: "Bulk Approve Complete",
+        description: `${successCount} approved${skipped ? `, ${skipped} skipped` : ""}.`,
+      });
+    } finally {
+      setIsBulkProcessing(false);
+    }
+  };
+
+  const handleBulkAuthorize = async () => {
+    if (!canAuthorizeRequisition) {
+      toast({ title: "Unauthorized", description: "Only Humman Resource Manager can authorize requisitions.", variant: "destructive" });
+      return;
+    }
+
+    const selected = getSelectedRequisitions();
+    const eligible = selected.filter((record) => record.status === "approved" && !record.authorizedBy);
+    const skipped = selected.length - eligible.length;
+
+    if (eligible.length === 0) {
+      toast({ title: "No Eligible Records", description: "Select approved requisitions that are not yet authorized." });
+      return;
+    }
+
+    const actorName = userName || user?.displayName || user?.email || "Admin";
+    setIsBulkProcessing(true);
+    try {
+      const results = await Promise.all(
+        eligible.map(async (record) => {
+          try {
+            await update(ref(db, `requisitions/${record.id}`), {
+              authorizedBy: actorName,
+              authorizedAt: Date.now(),
+            });
+            await logHistory(record.id, "Authorized", `Authorized by ${actorName}`);
+            return true;
+          } catch (error) {
+            console.error("Bulk authorize failed for record:", record.id, error);
+            return false;
+          }
+        })
+      );
+      const successCount = results.filter(Boolean).length;
+      if (successCount > 0) removeCachedValue(requisitionCacheKey);
+      setSelectedRecords([]);
+      toast({
+        title: "Bulk Authorize Complete",
+        description: `${successCount} authorized${skipped ? `, ${skipped} skipped` : ""}.`,
+      });
+    } finally {
+      setIsBulkProcessing(false);
+    }
+  };
+
+  const handleBulkReject = async () => {
+    if (!canAuthorizeRequisition) {
+      toast({ title: "Unauthorized", description: "Only Humman Resource Manager can reject requisitions.", variant: "destructive" });
+      return;
+    }
+
+    const rejectionMessage = bulkRejectionMessageText.trim();
+    if (!rejectionMessage) {
+      toast({ title: "Message Required", description: "Enter an SMS message.", variant: "destructive" });
+      return;
+    }
+
+    const selected = getSelectedRequisitions();
+    const eligible = selected.filter((record) => record.status === "approved");
+    const skipped = selected.length - eligible.length;
+
+    if (eligible.length === 0) {
+      toast({ title: "No Eligible Records", description: "Only approved requisitions can be rejected." });
+      return;
+    }
+
+    const actorName = userName || user?.displayName || user?.email || "Admin";
+    const rejectedAt = Date.now();
+    setIsBulkProcessing(true);
+    try {
+      const results = await Promise.all(
+        eligible.map(async (record) => {
+          try {
+            await update(ref(db, `requisitions/${record.id}`), {
+              status: "rejected",
+              rejectedBy: actorName,
+              rejectedAt,
+              rejectionReason: rejectionMessage,
+              rejectionSmsText: rejectionMessage,
+            });
+            await logHistory(record.id, "Rejected", `Rejected by ${actorName}. SMS sent to requester.`);
+            return true;
+          } catch (error) {
+            console.error("Bulk reject failed for record:", record.id, error);
+            return false;
+          }
+        })
+      );
+      const successCount = results.filter(Boolean).length;
+      if (successCount > 0) removeCachedValue(requisitionCacheKey);
+      setSelectedRecords([]);
+      setIsBulkRejectDialogOpen(false);
+      setBulkRejectionMessageText("");
+      toast({
+        title: "Bulk Reject Complete",
+        description: `${successCount} rejected${skipped ? `, ${skipped} skipped` : ""}.`,
+      });
+    } finally {
+      setIsBulkProcessing(false);
+    }
+  };
+
+  const handleBulkCompleteTransaction = async () => {
+    if (!canCompleteTransaction) {
+      toast({ title: "Unauthorized", description: "Only Finance can complete transactions.", variant: "destructive" });
+      return;
+    }
+
+    const selected = getSelectedRequisitions();
+    const eligible = selected.filter(
+      (record) => record.status === "approved" && !!record.authorizedBy && !record.transactionCompletedBy
+    );
+    const skipped = selected.length - eligible.length;
+
+    if (eligible.length === 0) {
+      toast({ title: "No Eligible Records", description: "Select authorized approved requisitions pending transaction completion." });
+      return;
+    }
+
+    const actorName = userName || user?.displayName || user?.email || "Admin";
+    setIsBulkProcessing(true);
+    try {
+      const results = await Promise.all(
+        eligible.map(async (record) => {
+          try {
+            const transactionCompletedAt = Date.now();
+            await update(ref(db, `requisitions/${record.id}`), {
+              transactionCompletedBy: actorName,
+              transactionCompletedAt,
+            });
+            await logHistory(record.id, "Transaction Completed", `Finance completed transaction by ${actorName}`);
+            return true;
+          } catch (error) {
+            console.error("Bulk transaction completion failed for record:", record.id, error);
+            return false;
+          }
+        })
+      );
+      const successCount = results.filter(Boolean).length;
+      if (successCount > 0) removeCachedValue(requisitionCacheKey);
+      setSelectedRecords([]);
+      toast({
+        title: "Bulk Transaction Complete",
+        description: `${successCount} transactions completed${skipped ? `, ${skipped} skipped` : ""}.`,
+      });
+    } finally {
+      setIsBulkProcessing(false);
+    }
+  };
+
+  const handleCompleteAllTransactions = async () => {
+    if (!canCompleteTransaction) {
+      toast({ title: "Unauthorized", description: "Only Finance can complete transactions.", variant: "destructive" });
+      return;
+    }
+
+    const scopeRecords = filteredRequisitions;
+    const eligible = scopeRecords.filter(
+      (record) => record.status === "approved" && !!record.authorizedBy && !record.transactionCompletedBy
+    );
+    const skipped = scopeRecords.length - eligible.length;
+
+    if (eligible.length === 0) {
+      toast({ title: "No Eligible Records", description: "No authorized approved requisitions are pending transaction completion." });
+      return;
+    }
+
+    const actorName = userName || user?.displayName || user?.email || "Admin";
+    setIsBulkProcessing(true);
+    try {
+      const results = await Promise.all(
+        eligible.map(async (record) => {
+          try {
+            const transactionCompletedAt = Date.now();
+            await update(ref(db, `requisitions/${record.id}`), {
+              transactionCompletedBy: actorName,
+              transactionCompletedAt,
+            });
+            await logHistory(record.id, "Transaction Completed", `Finance completed transaction by ${actorName}`);
+            return true;
+          } catch (error) {
+            console.error("Complete-all transaction failed for record:", record.id, error);
+            return false;
+          }
+        })
+      );
+      const successCount = results.filter(Boolean).length;
+      if (successCount > 0) removeCachedValue(requisitionCacheKey);
+      setSelectedRecords([]);
+      toast({
+        title: "All Transactions Complete",
+        description: `${successCount} transactions completed${skipped ? `, ${skipped} skipped` : ""}.`,
+      });
+    } finally {
+      setIsBulkProcessing(false);
+    }
+  };
+
+  const handleBulkMarkComplete = async () => {
+    if (!canMarkRequisitionComplete) {
+      toast({ title: "Unauthorized", description: "Only non-finance authorized users can mark requisitions complete.", variant: "destructive" });
+      return;
+    }
+
+    const selected = getSelectedRequisitions();
+    const eligible = selected.filter((record) => (
+      record.status === "approved" &&
+      !!record.authorizedBy &&
+      !!record.transactionCompletedBy &&
+      getRequisitionImages(record.requisitionUrl).length > 0
+    ));
+    const skipped = selected.length - eligible.length;
+
+    if (eligible.length === 0) {
+      toast({ title: "No Eligible Records", description: "Select requisitions with authorization, completed transaction and uploaded receipts." });
+      return;
+    }
+
+    const actorName = userName || user?.displayName || user?.email || "Admin";
+    setIsBulkProcessing(true);
+    try {
+      const results = await Promise.all(
+        eligible.map(async (record) => {
+          try {
+            const completedAt = Date.now();
+            await update(ref(db, `requisitions/${record.id}`), {
+              status: "complete",
+              completedBy: actorName,
+              completedAt,
+            });
+            await logHistory(record.id, "Completed", `Marked complete by ${actorName} after receipt submission.`);
+            return true;
+          } catch (error) {
+            console.error("Bulk mark complete failed for record:", record.id, error);
+            return false;
+          }
+        })
+      );
+      const successCount = results.filter(Boolean).length;
+      if (successCount > 0) removeCachedValue(requisitionCacheKey);
+      setSelectedRecords([]);
+      toast({
+        title: "Bulk Completion Done",
+        description: `${successCount} requisitions marked complete${skipped ? `, ${skipped} skipped` : ""}.`,
+      });
+    } finally {
+      setIsBulkProcessing(false);
+    }
+  };
+
+  const handleMarkAllComplete = async () => {
+    if (!canMarkRequisitionComplete) {
+      toast({ title: "Unauthorized", description: "Only non-finance authorized users can mark requisitions complete.", variant: "destructive" });
+      return;
+    }
+
+    const scopeRecords = filteredRequisitions;
+    const eligible = scopeRecords.filter((record) => (
+      record.status === "approved" &&
+      !!record.authorizedBy &&
+      !!record.transactionCompletedBy &&
+      getRequisitionImages(record.requisitionUrl).length > 0
+    ));
+    const skipped = scopeRecords.length - eligible.length;
+
+    if (eligible.length === 0) {
+      toast({ title: "No Eligible Records", description: "No requisitions meet completion requirements in the current list." });
+      return;
+    }
+
+    const actorName = userName || user?.displayName || user?.email || "Admin";
+    setIsBulkProcessing(true);
+    try {
+      const results = await Promise.all(
+        eligible.map(async (record) => {
+          try {
+            const completedAt = Date.now();
+            await update(ref(db, `requisitions/${record.id}`), {
+              status: "complete",
+              completedBy: actorName,
+              completedAt,
+            });
+            await logHistory(record.id, "Completed", `Marked complete by ${actorName} after receipt submission.`);
+            return true;
+          } catch (error) {
+            console.error("Mark-all complete failed for record:", record.id, error);
+            return false;
+          }
+        })
+      );
+      const successCount = results.filter(Boolean).length;
+      if (successCount > 0) removeCachedValue(requisitionCacheKey);
+      setSelectedRecords([]);
+      toast({
+        title: "All Requisitions Marked",
+        description: `${successCount} requisitions marked complete${skipped ? `, ${skipped} skipped` : ""}.`,
+      });
+    } finally {
+      setIsBulkProcessing(false);
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (!canDeleteRequisition) {
+      toast({ title: "Unauthorized", description: "You do not have permission to delete requisitions.", variant: "destructive" });
+      return;
+    }
+
+    const selected = getSelectedRequisitions();
+    if (selected.length === 0) {
+      toast({ title: "No Selection", description: "Select requisitions to delete." });
+      return;
+    }
+
+    const confirmed = window.confirm(`Delete ${selected.length} selected requisitions? This action cannot be undone.`);
+    if (!confirmed) return;
+
+    setIsBulkProcessing(true);
+    try {
+      const results = await Promise.all(
+        selected.map(async (record) => {
+          try {
+            await remove(ref(db, `requisitions/${record.id}`));
+            return true;
+          } catch (error) {
+            console.error("Bulk delete failed for record:", record.id, error);
+            return false;
+          }
+        })
+      );
+      const successCount = results.filter(Boolean).length;
+      if (successCount > 0) removeCachedValue(requisitionCacheKey);
+      setSelectedRecords([]);
+      toast({
+        title: "Bulk Delete Complete",
+        description: `${successCount} requisitions deleted.`,
+      });
+    } finally {
+      setIsBulkProcessing(false);
     }
   };
 
@@ -938,6 +1437,11 @@ const RequisitionsPage = () => {
     const endIndex = startIndex + pagination.limit;
     return filteredRequisitions.slice(startIndex, endIndex);
   }, [filteredRequisitions, pagination.page, pagination.limit]);
+
+  const currentPageRecords = getCurrentPageRecords();
+  const allCurrentPageSelected =
+    currentPageRecords.length > 0 &&
+    currentPageRecords.every((record) => selectedRecords.includes(record.id));
 
   const StatsCard = memo(({ title, value, icon: Icon, color = "blue", description }: any) => (
     <Card className="bg-white text-slate-900 shadow-lg border border-gray-200 relative overflow-hidden">
@@ -1117,12 +1621,6 @@ const RequisitionsPage = () => {
             </div>
           
         <div className="flex flex-wrap gap-2 w-full xl:w-auto mt-2 xl:mt-0 justify-end">
-          {!userIsHummanResourceManager && selectedRecords.length > 0 && (
-            <Button variant="destructive" size="sm" onClick={() => {}} className="text-xs">
-               Delete ({selectedRecords.length})
-            </Button>
-          )}
-           
            {userHasFinanceRights && (
              <Button onClick={handleLogout} variant="outline" size="sm" className="h-9 px-6 w-full xl:w-auto text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700">
                <LogOut className="h-4 w-4 mr-2" /> Logout
@@ -1199,12 +1697,6 @@ const RequisitionsPage = () => {
             </div>
           
         <div className="flex flex-wrap gap-2 w-full xl:w-auto mt-2 xl:mt-0 justify-end">
-          {(
-            <Button variant="destructive" size="sm" onClick={() => {}} className="text-xs">
-               Delete ({selectedRecords.length})
-            </Button>
-          )}
-           
            {userHasFinanceRights && (
              <Button onClick={handleLogout} variant="outline" size="sm" className="h-9 px-6 w-full xl:w-auto text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700">
                <LogOut className="h-4 w-4 mr-2" /> Logout
@@ -1273,12 +1765,30 @@ const RequisitionsPage = () => {
         </CardContent>
       </Card>
 
+      {canDeleteRequisition && (
+        <Card className="shadow-lg border border-blue-100 bg-blue-50/40">
+          <CardContent className="pt-4 pb-4 space-y-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                variant="destructive"
+                size="sm"
+                onClick={handleBulkDelete}
+                disabled={isBulkProcessing || selectedRecords.length === 0}
+              >
+                Delete Selected
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Data Table Section */}
       <Card className="shadow-lg border-0 bg-white">
         <CardContent className="p-0">
           {loading ? (
             <div className="text-center py-12"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div><p className="text-muted-foreground mt-2">Loading requisitions...</p></div>
-          ) : getCurrentPageRecords().length === 0 ? (
+          ) : currentPageRecords.length === 0 ? (
             <div className="text-center py-12 text-muted-foreground">No records found matching your criteria</div>
           ) : (
             <>
@@ -1286,6 +1796,9 @@ const RequisitionsPage = () => {
                 <table className="w-full border-collapse border border-gray-300 text-sm text-left whitespace-nowrap">
                   <thead>
                     <tr className="bg-blue-50 text-xs">
+                      <th className="py-3 px-3 font-semibold text-gray-700">
+                        <Checkbox checked={allCurrentPageSelected} onCheckedChange={toggleSelectAllCurrentPage} />
+                      </th>
                       <th className="py-3 px-3 font-semibold text-gray-700">Date</th>
                       <th className="py-3 px-3 font-semibold text-gray-700">Type</th>
                       <th className="py-3 px-3 font-semibold text-gray-700">Field Officer</th>
@@ -1296,8 +1809,14 @@ const RequisitionsPage = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {getCurrentPageRecords().map((record) => (
+                    {currentPageRecords.map((record) => (
                       <tr key={record.id} className="border-b hover:bg-blue-50 transition-colors group">
+                        <td className="py-2 px-3">
+                          <Checkbox
+                            checked={selectedRecords.includes(record.id)}
+                            onCheckedChange={() => toggleRecordSelection(record.id)}
+                          />
+                        </td>
                         <td className="py-2 px-3 text-xs text-gray-500">{formatDate(record.submittedAt)}</td>
                         <td className="py-2 px-3 text-xs font-medium">
                             {record.type === 'fuel and Service' ? (
@@ -1314,12 +1833,17 @@ const RequisitionsPage = () => {
                             KES {record.type === 'fuel and Service' ? record.fuelAmount?.toLocaleString() : record.total?.toLocaleString()}
                         </td>
                         <td className="py-2 px-3">
-                             <Badge 
-                                variant={record.status === 'approved' || record.status === 'complete' ? "default" : record.status === 'rejected' ? "destructive" : "outline"}
-                                className={record.status === 'approved' ? "bg-green-100 text-green-800 hover:bg-green-100" : record.status === 'complete' ? "bg-blue-100 text-blue-800 hover:bg-blue-100" : ""}
-                             >
-                                {record.status}
-                             </Badge>
+                             <div className="flex flex-col gap-1">
+                               <Badge 
+                                  variant={record.status === 'approved' || record.status === 'complete' ? "default" : record.status === 'rejected' ? "destructive" : "outline"}
+                                  className={record.status === 'approved' ? "bg-green-100 text-green-800 hover:bg-green-100" : record.status === 'complete' ? "bg-blue-100 text-blue-800 hover:bg-blue-100" : ""}
+                               >
+                                  {record.status}
+                               </Badge>
+                               {record.status === "approved" && !!record.transactionCompletedBy && (
+                                 <span className="text-[10px] text-blue-700 font-medium">Transaction complete</span>
+                               )}
+                             </div>
                         </td>
                         <td className="py-2 px-3 text-right">
                           <DropdownMenu>
@@ -1350,7 +1874,7 @@ const RequisitionsPage = () => {
                                     </DropdownMenuItem>
                                 )}
                                 
-                                {!userIsHummanResourceManager && userRole !== 'admin' && (
+                                {canDeleteRequisition && (
                                     <DropdownMenuItem onClick={() => confirmDelete(record)} className="text-red-600 focus:text-red-700 focus:bg-red-50">
                                         <Trash2 className="mr-2 h-4 w-4" /> Delete
                                     </DropdownMenuItem>
@@ -1468,7 +1992,7 @@ const RequisitionsPage = () => {
                             {viewingRecord.authorizedAt ? formatDateTime(viewingRecord.authorizedAt) : ""}
                           </div>
                         </div>
-                          
+
                           <div>
                             <div className="flex-1 flex flex-col justify-between mt-2">
                           <span className="text-[17px]">Signature : </span>
@@ -1527,10 +2051,19 @@ const RequisitionsPage = () => {
               )}
 
         
-              {canCompleteRequisition && viewingRecord?.status === 'approved' && !!viewingRecord.authorizedBy && (
-                <Button onClick={handleMarkComplete} className="bg-blue-800 hover:bg-blue-900 flex-1 sm:flex-none">
+              {canCompleteTransaction && viewingRecord?.status === 'approved' && !!viewingRecord.authorizedBy && !viewingRecord.transactionCompletedBy && (
+                <Button onClick={handleCompleteTransaction} className="bg-blue-800 hover:bg-blue-900 flex-1 sm:flex-none">
                   <CheckCircle className="h-4 w-4 mr-2" /> Complete Transaction
                 </Button>
+              )}
+              {canMarkRequisitionComplete &&
+                viewingRecord?.status === 'approved' &&
+                !!viewingRecord.authorizedBy &&
+                !!viewingRecord.transactionCompletedBy &&
+                getRequisitionImages(viewingRecord?.requisitionUrl).length > 0 && (
+                  <Button onClick={handleMarkComplete} className="bg-green-700 hover:bg-green-800 flex-1 sm:flex-none">
+                    <CheckCircle className="h-4 w-4 mr-2" /> Mark Requisition Complete
+                  </Button>
               )}
 
               <Button variant="outline" onClick={() => handleViewDialogOpenChange(false)} className="flex-1 sm:flex-none">Close</Button>
@@ -1545,6 +2078,7 @@ const RequisitionsPage = () => {
           setIsRejectDialogOpen(open);
           if (!open) {
             setHrDecisionAction("");
+            setRejectionMessageText("");
           }
         }}
       >
@@ -1552,16 +2086,16 @@ const RequisitionsPage = () => {
           <DialogHeader>
             <DialogTitle>Reject Requisition</DialogTitle>
             <DialogDescription>
-              Enter the SMS text that will be sent to the field officer who submitted this requisition.
+              Enter the SMS message to send to the requester.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
-            <Label htmlFor="rejection-sms-text">SMS Message</Label>
+            <Label htmlFor="rejection-message-text">SMS Message</Label>
             <Textarea
-              id="rejection-sms-text"
-              value={rejectionSmsText}
-              onChange={(event) => setRejectionSmsText(event.target.value)}
-              placeholder="Type SMS message to the requester..."
+              id="rejection-message-text"
+              value={rejectionMessageText}
+              onChange={(event) => setRejectionMessageText(event.target.value)}
+              placeholder="Type SMS message for rejected requisition..."
               rows={5}
             />
           </div>
@@ -1571,12 +2105,56 @@ const RequisitionsPage = () => {
               onClick={() => {
                 setIsRejectDialogOpen(false);
                 setHrDecisionAction("");
+                setRejectionMessageText("");
               }}
             >
               Cancel
             </Button>
             <Button variant="destructive" onClick={handleRejectRequisition}>
-              Reject & Send SMS
+              Reject Requisition
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={isBulkRejectDialogOpen}
+        onOpenChange={(open) => {
+          setIsBulkRejectDialogOpen(open);
+          if (!open) {
+            setBulkRejectionMessageText("");
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Reject Selected Requisitions</DialogTitle>
+            <DialogDescription>
+              Enter one SMS message to apply to all selected approved requisitions.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="bulk-rejection-message-text">SMS Message</Label>
+            <Textarea
+              id="bulk-rejection-message-text"
+              value={bulkRejectionMessageText}
+              onChange={(event) => setBulkRejectionMessageText(event.target.value)}
+              placeholder="Type SMS message for selected rejected requisitions..."
+              rows={5}
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setIsBulkRejectDialogOpen(false);
+                setBulkRejectionMessageText("");
+              }}
+            >
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleBulkReject} disabled={isBulkProcessing}>
+              Reject Selected
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1686,7 +2264,7 @@ const RequisitionsPage = () => {
                         <SelectItem value="pending">Pending</SelectItem>
                         <SelectItem value="approved">Approved</SelectItem>
                         <SelectItem value="rejected">Rejected</SelectItem>
-                        {userHasFinanceRights && <SelectItem value="complete">Complete</SelectItem>}
+                        {canMarkRequisitionComplete && <SelectItem value="complete">Complete</SelectItem>}
                       </SelectContent>
                     </Select>
                   </div>
