@@ -1655,20 +1655,6 @@ const RequisitionsPage = () => {
       <div className="flex flex-col xl:flex-row xl:justify-between xl:items-end gap-4 w-full">
         
          <div className="w-full xl:w-auto flex flex-wrap items-center gap-3">
-          
-          <div className="flex flex-row gap-4">
-            
-          <div className="flex flex-row gap-4 items-center justify-center">
-            <div className="w-10 rounded-full shadow-full">
-               <img src="/img/logo copy.png" alt="" className="w-full rounded-full" />
-            </div>
-           
-            <p>Human Resource Management</p>
-          </div>
-          </div>
-          
-         
-          
             <h2 className="text-md font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
             Requisitions
           </h2>
