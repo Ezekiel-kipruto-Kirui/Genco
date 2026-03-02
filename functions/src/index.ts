@@ -9,7 +9,6 @@ setGlobalOptions({maxInstances: 10, region: "us-central1"});
 
 admin.initializeApp();
 
-const DEFAULT_HR_TIMEOUT_HOURS = 24;
 const DEFAULT_HR_REJECTION_REASON =
   "Rejected by HR because no approval was provided in time.";
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -115,17 +114,6 @@ const parseNumber = (value: unknown): number | null => {
   if (typeof value === "string") {
     const parsed = Number(value);
     if (Number.isFinite(parsed)) return parsed;
-  }
-  return null;
-};
-
-const parseTimestampMs = (value: unknown): number | null => {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string") {
-    const fromNumeric = Number(value);
-    if (Number.isFinite(fromNumeric)) return fromNumeric;
-    const fromDate = new Date(value).getTime();
-    if (Number.isFinite(fromDate)) return fromDate;
   }
   return null;
 };
@@ -847,89 +835,14 @@ export const notifyRequisitionStatusEmails = onValueWritten(
   },
 );
 
-const getHrTimeoutMs = (): number => {
-  const raw = getEnv("HR_APPROVAL_TIMEOUT_HOURS");
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return DEFAULT_HR_TIMEOUT_HOURS * 60 * 60 * 1000;
-  }
-  return parsed * 60 * 60 * 1000;
-};
-
 export const autoRejectUnapprovedRequisitions = onSchedule(
   {
     schedule: "every 60 minutes",
     timeZone: "Africa/Nairobi",
   },
   async (): Promise<void> => {
-    const now = Date.now();
-    const cutoffTime = now - getHrTimeoutMs();
-
-    const snapshot = await admin.database()
-      .ref("requisitions")
-      .orderByChild("status")
-      .equalTo("approved")
-      .get();
-
-    if (!snapshot.exists()) {
-      logger.info("HR auto-rejection job found no approved requisitions.");
-      return;
-    }
-
-    const requisitions = snapshot.val() as Record<string, RequisitionRecord>;
-    const jobs: Array<Promise<boolean>> = [];
-
-    for (const [requisitionId, record] of Object.entries(requisitions)) {
-      if (!record || typeof record !== "object") continue;
-      if (
-        typeof record.authorizedBy === "string" &&
-        record.authorizedBy.trim()
-      ) {
-        continue;
-      }
-
-      const approvedAtMs = parseTimestampMs(record.approvedAt);
-      if (approvedAtMs === null || approvedAtMs > cutoffTime) continue;
-
-      jobs.push((async (): Promise<boolean> => {
-        try {
-          const requisitionRef = admin
-            .database()
-            .ref(`requisitions/${requisitionId}`);
-          await requisitionRef.update({
-            status: "rejected",
-            rejectedBy: "HR",
-            rejectedAt: now,
-            rejectionReason: DEFAULT_HR_REJECTION_REASON,
-            hrAutoRejected: true,
-            hrAutoRejectedAt: now,
-          });
-
-          await requisitionRef.child("history").push({
-            action: "Rejected",
-            actor: "HR System",
-            timestamp: now,
-            details: "Automatically rejected after HR approval timeout.",
-          });
-
-          return true;
-        } catch (error) {
-          logger.error(
-            "Failed auto-rejecting requisition",
-            {requisitionId, error},
-          );
-          return false;
-        }
-      })());
-    }
-
-    const outcomes = await Promise.all(jobs);
-    const rejectedCount = outcomes.filter((result) => result).length;
-
-    logger.info("HR auto-rejection job completed", {
-      scanned: Object.keys(requisitions).length,
-      rejectedCount,
-      timeoutHours: getHrTimeoutMs() / (60 * 60 * 1000),
-    });
+    logger.info(
+      "HR auto-rejection disabled; approved requisitions no longer time out.",
+    );
   },
 );
