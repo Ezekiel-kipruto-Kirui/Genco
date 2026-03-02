@@ -52,8 +52,10 @@ interface RequisitionData {
   phone?: string;
   phoneNumber?: string;
   approvedBy?: string;
+  approvedByAttribute?: string;
   approvedAt?: string | number;
   authorizedBy?: string;
+  authorizedByAttribute?: string;
   authorizedAt?: string | number;
   transactionCompletedBy?: string;
   transactionCompletedAt?: string | number;
@@ -315,6 +317,11 @@ const RequisitionsPage = () => {
     () => userIsChiefAdmin,
     [userIsChiefAdmin]
   );
+  const actorAttribute = useMemo(() => {
+    if (typeof userAttribute === "string" && userAttribute.trim()) return userAttribute.trim();
+    if (typeof userRole === "string" && userRole.trim()) return userRole.trim();
+    return "Unknown";
+  }, [userAttribute, userRole]);
   const requisitionCacheKey = useMemo(
     () => cacheKey("admin-page", "requisitions", permissionPrincipal || "no-access", activeProgram || "all"),
     [permissionPrincipal, activeProgram]
@@ -663,6 +670,7 @@ const RequisitionsPage = () => {
           return;
         }
         updatePayload.approvedBy = actorName;
+        updatePayload.approvedByAttribute = actorAttribute;
         updatePayload.approvedAt = Date.now();
       }
 
@@ -765,11 +773,12 @@ const RequisitionsPage = () => {
         await update(ref(db, `requisitions/${viewingRecord.id}`), {
             status: 'approved',
             approvedBy: approverName,
+            approvedByAttribute: actorAttribute,
             approvedAt: Date.now()
         });
         removeCachedValue(requisitionCacheKey);
         
-        await logHistory(viewingRecord.id, "Approved", `Approved by ${approverName}`);
+        await logHistory(viewingRecord.id, "Approved", `Approved by ${approverName} (${actorAttribute})`);
         
         toast({ title: "Approved", description: "Requisition approved successfully" });
         handleViewDialogOpenChange(false); 
@@ -795,11 +804,12 @@ const RequisitionsPage = () => {
         // Only updates authorizedBy and authorizedAt, keeps status as 'approved'
         await update(ref(db, `requisitions/${viewingRecord.id}`), {
             authorizedBy: actorName,
+            authorizedByAttribute: actorAttribute,
             authorizedAt: Date.now()
         });
         removeCachedValue(requisitionCacheKey);
 
-        await logHistory(viewingRecord.id, "Authorized", `Authorized by ${actorName}`);
+        await logHistory(viewingRecord.id, "Authorized", `Authorized by ${actorName} (${actorAttribute})`);
 
         toast({ title: "Authorized", description: "Requisition authorized successfully." });
         
@@ -807,6 +817,7 @@ const RequisitionsPage = () => {
         setViewingRecord(prev => prev ? { 
             ...prev, 
             authorizedBy: actorName, 
+            authorizedByAttribute: actorAttribute,
             authorizedAt: Date.now() 
         } : null);
         return true;
@@ -1004,9 +1015,10 @@ const RequisitionsPage = () => {
             await update(ref(db, `requisitions/${record.id}`), {
               status: "approved",
               approvedBy: actorName,
+              approvedByAttribute: actorAttribute,
               approvedAt: Date.now(),
             });
-            await logHistory(record.id, "Approved", `Approved by ${actorName}`);
+            await logHistory(record.id, "Approved", `Approved by ${actorName} (${actorAttribute})`);
             return true;
           } catch (error) {
             console.error("Bulk approve failed for record:", record.id, error);
@@ -1049,9 +1061,10 @@ const RequisitionsPage = () => {
           try {
             await update(ref(db, `requisitions/${record.id}`), {
               authorizedBy: actorName,
+              authorizedByAttribute: actorAttribute,
               authorizedAt: Date.now(),
             });
-            await logHistory(record.id, "Authorized", `Authorized by ${actorName}`);
+            await logHistory(record.id, "Authorized", `Authorized by ${actorName} (${actorAttribute})`);
             return true;
           } catch (error) {
             console.error("Bulk authorize failed for record:", record.id, error);
@@ -1765,19 +1778,95 @@ const RequisitionsPage = () => {
         </CardContent>
       </Card>
 
-      {canDeleteRequisition && (
+      {selectedRecords.length > 0 && (
         <Card className="shadow-lg border border-blue-100 bg-blue-50/40">
           <CardContent className="pt-4 pb-4 space-y-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <Button
-                type="button"
-                variant="destructive"
-                size="sm"
-                onClick={handleBulkDelete}
-                disabled={isBulkProcessing || selectedRecords.length === 0}
-              >
-                Delete Selected
-              </Button>
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div className="text-sm font-medium text-blue-900">
+                {selectedRecords.length} requisition{selectedRecords.length === 1 ? "" : "s"} selected
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {canApproveRequisition && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={handleBulkApprove}
+                    disabled={isBulkProcessing}
+                    className="bg-green-600 hover:bg-green-700"
+                  >
+                    <CheckCircle className="h-4 w-4 mr-2" />
+                    Approve Selected
+                  </Button>
+                )}
+
+                {canAuthorizeRequisition && (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={isBulkProcessing}
+                        className="border-indigo-300 text-indigo-700 hover:bg-indigo-50"
+                      >
+                        HR Actions
+                        <ChevronDown className="h-4 w-4 ml-2" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onClick={handleBulkAuthorize}>
+                        <CheckCircle className="h-4 w-4 mr-2 text-green-600" />
+                        Authorize Selected
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onClick={() => setIsBulkRejectDialogOpen(true)}
+                        className="text-red-600 focus:text-red-700 focus:bg-red-50"
+                      >
+                        <XCircle className="h-4 w-4 mr-2" />
+                        Reject Selected
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                )}
+
+                {canCompleteTransaction && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={handleBulkCompleteTransaction}
+                    disabled={isBulkProcessing}
+                    className="bg-blue-700 hover:bg-blue-800"
+                  >
+                    <CheckCircle className="h-4 w-4 mr-2" />
+                    Complete Transaction
+                  </Button>
+                )}
+
+                {canMarkRequisitionComplete && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={handleBulkMarkComplete}
+                    disabled={isBulkProcessing}
+                    className="bg-emerald-700 hover:bg-emerald-800"
+                  >
+                    <CheckCircle className="h-4 w-4 mr-2" />
+                    Mark Complete
+                  </Button>
+                )}
+
+                {canDeleteRequisition && (
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    size="sm"
+                    onClick={handleBulkDelete}
+                    disabled={isBulkProcessing}
+                  >
+                    Delete Selected
+                  </Button>
+                )}
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -1975,14 +2064,29 @@ const RequisitionsPage = () => {
                       <div className="grid grid-cols-2 mt-4 gap-8">
                         <div className="flex flex-row">
                           <span className="text-[17px] text-gray-700">Approved By : </span>
-                          <div className="flex-1 flex relative h-6">{viewingRecord.approvedBy ? <span className="text-[17px] ml-2">{viewingRecord.approvedBy} (Project Manager)</span> : <span className="text-xs italic text-gray-300">Pending Approval</span>}</div></div>
+                          <div className="flex-1 flex relative h-6">
+                            {viewingRecord.approvedBy ? (
+                              <span className="text-[17px] ml-2">
+                                {viewingRecord.approvedBy}
+                                {viewingRecord.approvedByAttribute ? ` (${viewingRecord.approvedByAttribute})` : ""}
+                              </span>
+                            ) : (
+                              <span className="text-xs italic text-gray-300">Pending Approval</span>
+                            )}
+                          </div>
+                        </div>
                         <div className="flex flex-row"><span className="text-[17px]">Date : </span><div className="flex justify-between text-2xs text-gray-900 ml-2"><span>{viewingRecord.approvedAt ? formatDateTime(viewingRecord.approvedAt) : 'Date'}</span></div></div>
                         
                        
                           <div className="flex flex-row">
                              <span className="text-[17px] text-gray-800 ">Authorized By :</span>
                           <div className="flex-1 h-6 ml-2">
-                            {viewingRecord.authorizedBy ? <span className="text-[17px]">{viewingRecord.authorizedBy}</span> : ""}
+                            {viewingRecord.authorizedBy ? (
+                              <span className="text-[17px]">
+                                {viewingRecord.authorizedBy}
+                                {viewingRecord.authorizedByAttribute ? ` (${viewingRecord.authorizedByAttribute})` : ""}
+                              </span>
+                            ) : ""}
                           </div>
 
                           </div>
