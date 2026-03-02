@@ -283,7 +283,10 @@ const RequisitionsPage = () => {
     [userRole, userAttribute]
   );
   const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
-  const userIsHummanResourceManager = useMemo(() => isHummanResourceManager(userRole), [userRole]);
+  const userIsHummanResourceManager = useMemo(
+    () => isHummanResourceManager(permissionPrincipal),
+    [permissionPrincipal]
+  );
   const userHasProjectManagerRights = useMemo(() => isProjectManager(permissionPrincipal), [permissionPrincipal]);
   const userHasHummanResourceRights = useMemo(
     () => isHummanResourceManager(permissionPrincipal),
@@ -1639,6 +1642,15 @@ const RequisitionsPage = () => {
                <LogOut className="h-4 w-4 mr-2" /> Logout
              </Button>
            )}
+           {userHasFinanceRights && (
+            <div className="flex justify-between items-center text-sm">
+              <div className="font-semibold text-gray-700 rounded-md bg-gray-100 px-2 py-1 border border-gray-300">
+                <span className="font-normal">
+                  {`${userName || user?.email || "System"} - ${permissionPrincipal || userRole || "user"}`}
+                </span>
+              </div>
+            </div>
+           )}
            { !userIsHummanResourceManager && userRole !== 'admin' && (
              <Button onClick={() => {}} disabled={exportLoading} className="bg-gradient-to-r from-blue-800 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white shadow-md text-xs h-9 px-6 w-full xl:w-auto">
                 <Download className="h-4 w-4 mr-2" /> Export ({filteredRequisitions.length})
@@ -1706,13 +1718,6 @@ const RequisitionsPage = () => {
                 <Download className="h-4 w-4 mr-2" /> Export ({filteredRequisitions.length})
               </Button>
            )}
-
-            <div className="flex justify-between items-center text-sm">
-            
-              <div className="font-semibold text-gray-700 rounded-md bg-gray-100 px-2 py-1 border border-gray-300">
-                  <span className="font-normal">{userName+" - "+userRole || user?.email || "System"}</span>
-              </div>
-            </div>
         </div>
         </div>
       </div>
