@@ -209,6 +209,15 @@ const formatDate = (date: any): string => {
   }) : 'N/A';
 };
 
+const getOfftakeTimestamp = (record: Partial<OfftakeData> | null | undefined): number => {
+  if (!record) return 0;
+  const parsed = parseDate(record.date) || parseDate(record.createdAt);
+  return parsed ? parsed.getTime() : 0;
+};
+
+const sortOfftakeByLatest = (records: OfftakeData[]): OfftakeData[] =>
+  [...records].sort((a, b) => getOfftakeTimestamp(b) - getOfftakeTimestamp(a));
+
 const formatDateToLocal = (date: Date): string => {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -682,7 +691,7 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
 
     const cachedOfftakes = readCachedValue<OfftakeData[]>(offtakeCacheKey);
     if (cachedOfftakes) {
-      setAllOfftake(cachedOfftakes);
+      setAllOfftake(sortOfftakeByLatest(cachedOfftakes));
       setLoading(false);
     } else {
       setLoading(true);
@@ -736,8 +745,9 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
         };
       });
 
-      setAllOfftake(offtakeList);
-      writeCachedValue(offtakeCacheKey, offtakeList);
+      const sortedOfftakeList = sortOfftakeByLatest(offtakeList);
+      setAllOfftake(sortedOfftakeList);
+      writeCachedValue(offtakeCacheKey, sortedOfftakeList);
       setLoading(false);
     }, (error) => {
       console.error("Error fetching livestock offtake data:", error);
@@ -773,7 +783,7 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
       return;
     }
 
-    let filtered = allOfftake.filter(record => {
+    const filtered = allOfftake.filter(record => {
       if (filters.region !== "all" && record.region?.toLowerCase() !== filters.region.toLowerCase()) {
         return false;
       }
@@ -818,16 +828,17 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
       return true;
     });
 
-    setFilteredOfftake(filtered);
+    const sortedFiltered = sortOfftakeByLatest(filtered);
+    setFilteredOfftake(sortedFiltered);
     
-    const totalAnimals = filtered.reduce((sum, record) => sum + (record.noSheepGoats || 0), 0);
-    const totalRevenue = filtered.reduce((sum, record) => sum + (record.totalprice || 0), 0);
+    const totalAnimals = sortedFiltered.reduce((sum, record) => sum + (record.noSheepGoats || 0), 0);
+    const totalRevenue = sortedFiltered.reduce((sum, record) => sum + (record.totalprice || 0), 0);
     
-    const uniqueRegions = new Set(filtered.map(f => f.region).filter(Boolean));
+    const uniqueRegions = new Set(sortedFiltered.map(f => f.region).filter(Boolean));
 
     // Count farmers by unique ID number so repeated sessions are treated as one farmer.
     const uniqueFarmersMap = new Map<string, OfftakeData>();
-    filtered.forEach((record) => {
+    sortedFiltered.forEach((record) => {
       const farmerKey = getFarmerGroupingKey(record);
       if (!uniqueFarmersMap.has(farmerKey)) {
         uniqueFarmersMap.set(farmerKey, record);
@@ -843,8 +854,8 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
       else if (record.gender?.toLowerCase() === 'female') totalFemaleFarmers++;
     });
 
-    const totalLiveWeight = filtered.reduce((sum, record) => sum + calculateTotal(record.liveWeight), 0);
-    const totalCarcassWeight = filtered.reduce((sum, record) => sum + calculateTotal(record.carcassWeight || []), 0);
+    const totalLiveWeight = sortedFiltered.reduce((sum, record) => sum + calculateTotal(record.liveWeight), 0);
+    const totalCarcassWeight = sortedFiltered.reduce((sum, record) => sum + calculateTotal(record.carcassWeight || []), 0);
     
     const averageLiveWeight = totalAnimals > 0 ? totalLiveWeight / totalAnimals : 0;
     const averageCarcassWeight = totalAnimals > 0 ? totalCarcassWeight / totalAnimals : 0;
@@ -864,7 +875,7 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
       avgPricePerCarcassKg
     });
 
-    const totalPages = Math.ceil(filtered.length / pagination.limit);
+    const totalPages = Math.ceil(sortedFiltered.length / pagination.limit);
     const currentPage = Math.min(pagination.page, Math.max(1, totalPages));
     
     setPagination(prev => ({

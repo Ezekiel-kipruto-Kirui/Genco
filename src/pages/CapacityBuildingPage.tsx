@@ -111,6 +111,18 @@ const formatDate = (date: any): string => {
   }) : 'N/A';
 };
 
+const getTrainingTimestamp = (record: Partial<TrainingRecord> | null | undefined): number => {
+  if (!record) return 0;
+  const parsed =
+    parseDate(record.startDate) ||
+    parseDate(record.createdAt) ||
+    parseDate(record.rawTimestamp);
+  return parsed ? parsed.getTime() : 0;
+};
+
+const sortTrainingByLatest = (records: TrainingRecord[]): TrainingRecord[] =>
+  [...records].sort((a, b) => getTrainingTimestamp(b) - getTrainingTimestamp(a));
+
 const formatDateForExcel = (date: any): string => {
   const parsedDate = parseDate(date);
   if (!parsedDate) return "";
@@ -283,7 +295,7 @@ const CapacityBuildingPage = () => {
 
     const cachedRecords = readCachedValue<TrainingRecord[]>(trainingCacheKey);
     if (cachedRecords) {
-      setAllRecords(cachedRecords);
+      setAllRecords(sortTrainingByLatest(cachedRecords));
       setLoading(false);
     } else {
       setLoading(true);
@@ -313,8 +325,9 @@ const CapacityBuildingPage = () => {
         };
       });
 
-      setAllRecords(recordsData);
-      writeCachedValue(trainingCacheKey, recordsData);
+      const sortedRecordsData = sortTrainingByLatest(recordsData);
+      setAllRecords(sortedRecordsData);
+      writeCachedValue(trainingCacheKey, sortedRecordsData);
       setLoading(false);
     }, (error) => {
       console.error("Error fetching data:", error);
@@ -382,20 +395,21 @@ const CapacityBuildingPage = () => {
       return true;
     });
 
-    setFilteredRecords(filtered);
+    const sortedFiltered = sortTrainingByLatest(filtered);
+    setFilteredRecords(sortedFiltered);
 
     // --- CORRECTED STATS CALCULATION ---
     // Derive counts from actual string data (unique officers, unique subcounties)
     // rather than summing empty numeric fields.
-    const totalParticipants = filtered.reduce((sum, r) => sum + (Number(r.totalFarmers) || 0), 0);
+    const totalParticipants = sortedFiltered.reduce((sum, r) => sum + (Number(r.totalFarmers) || 0), 0);
     
     // Count unique officers (Trainers)
-    const allOfficers = filtered.map(r => r.fieldOfficer || r.username).filter(Boolean);
+    const allOfficers = sortedFiltered.map(r => r.fieldOfficer || r.username).filter(Boolean);
     const uniqueOfficersSet = new Set(allOfficers);
     const totalTrainers = uniqueOfficersSet.size;
 
     // Count unique subcounties
-    const allSubCounties = filtered.map(r => r.subcounty).filter(Boolean);
+    const allSubCounties = sortedFiltered.map(r => r.subcounty).filter(Boolean);
     const uniqueSubCountiesSet = new Set(allSubCounties);
     const totalSubCounties = uniqueSubCountiesSet.size;
 
@@ -405,7 +419,7 @@ const CapacityBuildingPage = () => {
       totalSubCounties
     });
 
-    const totalPages = Math.ceil(filtered.length / pagination.limit);
+    const totalPages = Math.ceil(sortedFiltered.length / pagination.limit);
     setPagination(prev => ({
       ...prev,
       totalPages,

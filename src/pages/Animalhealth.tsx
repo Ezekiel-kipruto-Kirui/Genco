@@ -93,6 +93,19 @@ interface AnimalHealthActivity {
 
 const ANIMAL_HEALTH_CACHE_KEY = cacheKey("admin-page", "animal-health", "activities");
 
+const getAnimalHealthTimestamp = (
+  activity: Partial<AnimalHealthActivity> | null | undefined
+): number => {
+  if (!activity) return 0;
+  const dateValue = activity.date ? new Date(activity.date).getTime() : 0;
+  if (Number.isFinite(dateValue) && dateValue > 0) return dateValue;
+  const createdAtValue = activity.createdAt ? new Date(activity.createdAt).getTime() : 0;
+  return Number.isFinite(createdAtValue) ? createdAtValue : 0;
+};
+
+const sortAnimalHealthByLatest = (records: AnimalHealthActivity[]): AnimalHealthActivity[] =>
+  [...records].sort((a, b) => getAnimalHealthTimestamp(b) - getAnimalHealthTimestamp(a));
+
 const VACCINE_OPTIONS = [
   "PPR", "CCPP", "Sheep and Goat Pox", "Enterotoxemia", "Anthrax",
   "Rift Valley Fever", "Brucellosis", "Foot and Mouth Disease"
@@ -240,7 +253,7 @@ const AnimalHealthPage = () => {
     try {
       const cachedActivities = readCachedValue<AnimalHealthActivity[]>(ANIMAL_HEALTH_CACHE_KEY);
       if (cachedActivities) {
-        setActivities(cachedActivities);
+        setActivities(sortAnimalHealthByLatest(cachedActivities));
         setLoading(false);
       } else {
         setLoading(true);
@@ -286,13 +299,9 @@ const AnimalHealthPage = () => {
           } as AnimalHealthActivity;
         });
         
-        activitiesData.sort((a, b) => {
-          const dateA = a.date ? new Date(a.date).getTime() : 0;
-          const dateB = b.date ? new Date(b.date).getTime() : 0;
-          return dateB - dateA;
-        });
-        setActivities(activitiesData);
-        writeCachedValue(ANIMAL_HEALTH_CACHE_KEY, activitiesData);
+        const sortedActivitiesData = sortAnimalHealthByLatest(activitiesData);
+        setActivities(sortedActivitiesData);
+        writeCachedValue(ANIMAL_HEALTH_CACHE_KEY, sortedActivitiesData);
       } else {
         setActivities([]);
         removeCachedValue(ANIMAL_HEALTH_CACHE_KEY);

@@ -151,6 +151,15 @@ const formatDate = (date: any): string => {
   }) : 'N/A';
 };
 
+const getFarmerTimestamp = (record: Partial<FarmerData> | null | undefined): number => {
+  if (!record) return 0;
+  const parsed = parseDate(record.createdAt) || parseDate(record.registrationDate);
+  return parsed ? parsed.getTime() : 0;
+};
+
+const sortFarmersByLatest = (records: FarmerData[]): FarmerData[] =>
+  [...records].sort((a, b) => getFarmerTimestamp(b) - getFarmerTimestamp(a));
+
 const formatDateForExcel = (date: any): string => {
   const parsedDate = parseDate(date);
   if (!parsedDate) return "";
@@ -349,7 +358,7 @@ const LivestockFarmersPage = () => {
     const cacheKey = `farmers_cache_${activeProgram}`;
     const cachedFarmers = getCachedData(cacheKey);
     if (cachedFarmers && cachedFarmers.length > 0) {
-      setAllFarmers(cachedFarmers);
+      setAllFarmers(sortFarmersByLatest(cachedFarmers));
       setLoading(false);
     }
 
@@ -401,11 +410,11 @@ const LivestockFarmersPage = () => {
         };
       });
 
-      farmersList.sort((a, b) => (b.createdAt as number) - (a.createdAt as number));
-      setAllFarmers(farmersList);
+      const sortedFarmersList = sortFarmersByLatest(farmersList);
+      setAllFarmers(sortedFarmersList);
       setLoading(false);
       try {
-        localStorage.setItem(cacheKey, JSON.stringify(farmersList));
+        localStorage.setItem(cacheKey, JSON.stringify(sortedFarmersList));
       } catch (e) {
         console.warn("Cache write failed (likely full)", e);
       }
@@ -458,7 +467,7 @@ const LivestockFarmersPage = () => {
       return;
     }
 
-    let filteredFarmersList = allFarmers.filter(record => {
+    const filteredFarmersList = allFarmers.filter(record => {
       if (filters.startDate || filters.endDate) {
         const recordDate = parseDate(record.createdAt);
         if (recordDate) {
@@ -486,7 +495,8 @@ const LivestockFarmersPage = () => {
       return true;
     });
 
-    setFilteredFarmers(filteredFarmersList);
+    const sortedFilteredFarmers = sortFarmersByLatest(filteredFarmersList);
+    setFilteredFarmers(sortedFilteredFarmers);
     
     let filteredTraining = trainingRecords.filter(record => {
         if (filters.startDate || filters.endDate) {
@@ -505,19 +515,19 @@ const LivestockFarmersPage = () => {
         return true;
     });
 
-    const totalFarmers = filteredFarmersList.length;
-    const totalGoats = filteredFarmersList.reduce((sum, f) => sum + getGoatTotal(f.goats), 0);
-    const totalSheep = filteredFarmersList.reduce((sum, f) => sum + (Number(f.sheep) || 0), 0);
-    const totalCattle = filteredFarmersList.reduce((sum, f) => sum + (Number(f.cattle) || 0), 0);
-    const totalAcres = filteredFarmersList.reduce((sum, f) => sum + (Number(f.acres) || 0), 0);
-    const vaccinatedCount = filteredFarmersList.filter(f => f.vaccinated).length;
-    const maleFarmers = filteredFarmersList.filter(f => f.gender?.toLowerCase() === 'male').length;
-    const femaleFarmers = filteredFarmersList.filter(f => f.gender?.toLowerCase() === 'female').length;
+    const totalFarmers = sortedFilteredFarmers.length;
+    const totalGoats = sortedFilteredFarmers.reduce((sum, f) => sum + getGoatTotal(f.goats), 0);
+    const totalSheep = sortedFilteredFarmers.reduce((sum, f) => sum + (Number(f.sheep) || 0), 0);
+    const totalCattle = sortedFilteredFarmers.reduce((sum, f) => sum + (Number(f.cattle) || 0), 0);
+    const totalAcres = sortedFilteredFarmers.reduce((sum, f) => sum + (Number(f.acres) || 0), 0);
+    const vaccinatedCount = sortedFilteredFarmers.filter(f => f.vaccinated).length;
+    const maleFarmers = sortedFilteredFarmers.filter(f => f.gender?.toLowerCase() === 'male').length;
+    const femaleFarmers = sortedFilteredFarmers.filter(f => f.gender?.toLowerCase() === 'female').length;
     const totalTrainedFarmers = filteredTraining.reduce((sum, t) => sum + (Number(t.totalFarmers) || 0), 0);
 
     setStats({ totalFarmers, totalGoats, totalSheep, totalCattle, totalAcres, vaccinatedCount, maleFarmers, femaleFarmers, totalTrainedFarmers });
 
-    const totalPages = Math.ceil(filteredFarmersList.length / pagination.limit);
+    const totalPages = Math.ceil(sortedFilteredFarmers.length / pagination.limit);
     const currentPage = Math.min(pagination.page, Math.max(1, totalPages));
     setPagination(prev => ({
       ...prev, page: currentPage, totalPages, hasNext: currentPage < totalPages, hasPrev: currentPage > 1

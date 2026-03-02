@@ -187,6 +187,15 @@ const formatDate = (date: any): string => {
   }) : 'N/A';
 };
 
+const getBoreholeTimestamp = (record: Partial<Borehole> | null | undefined): number => {
+  if (!record) return 0;
+  const parsed = parseDate(record.date);
+  return parsed ? parsed.getTime() : 0;
+};
+
+const sortBoreholesByLatest = (records: Borehole[]): Borehole[] =>
+  [...records].sort((a, b) => getBoreholeTimestamp(b) - getBoreholeTimestamp(a));
+
 const formatDateForExcel = (date: any): string => {
   const parsedDate = parseDate(date);
   if (!parsedDate) return "";
@@ -412,7 +421,7 @@ const BoreholePage = () => {
     try {
       const cachedBoreholes = readCachedValue<Borehole[]>(BOREHOLE_CACHE_KEY);
       if (cachedBoreholes) {
-        setAllBoreholes(cachedBoreholes);
+        setAllBoreholes(sortBoreholesByLatest(cachedBoreholes));
         setLoading(false);
       } else {
         setLoading(true);
@@ -448,9 +457,10 @@ const BoreholePage = () => {
           };
         });
         
-        console.log("Final processed borehole data:", boreholeData);
-        setAllBoreholes(boreholeData);
-        writeCachedValue(BOREHOLE_CACHE_KEY, boreholeData);
+        const sortedBoreholeData = sortBoreholesByLatest(boreholeData);
+        console.log("Final processed borehole data:", sortedBoreholeData);
+        setAllBoreholes(sortedBoreholeData);
+        writeCachedValue(BOREHOLE_CACHE_KEY, sortedBoreholeData);
       } else {
         console.warn("No BoreholeStorage data found in Realtime Database");
         setAllBoreholes([]);
@@ -487,7 +497,7 @@ const BoreholePage = () => {
 
     console.log("Applying filters to", allBoreholes.length, "borehole records");
     
-    let filtered = allBoreholes.filter(record => {
+    const filtered = allBoreholes.filter(record => {
       // Location filter
       if (filters.location !== "all" && record.location?.toLowerCase() !== filters.location.toLowerCase()) {
         return false;
@@ -526,20 +536,21 @@ const BoreholePage = () => {
       return true;
     });
 
-    console.log("Filtered to", filtered.length, "borehole records");
-    setFilteredBoreholes(filtered);
+    const sortedFiltered = sortBoreholesByLatest(filtered);
+    console.log("Filtered to", sortedFiltered.length, "borehole records");
+    setFilteredBoreholes(sortedFiltered);
     
     // Update stats
-    const totalPeople = filtered.reduce((sum, record) => sum + safePeopleToNumber(record.people), 0);
-    const totalWaterUsed = filtered.reduce((sum, record) => sum + safeWaterToInteger(record.waterUsed), 0);
-    const drilledBoreholes = filtered.filter(record => record.drilled).length;
-    const equippedBoreholes = filtered.filter(record => record.equipped).length; // Updated
-    const rehabilitatedBoreholes = filtered.filter(record => record.rehabilitated).length; // Added
+    const totalPeople = sortedFiltered.reduce((sum, record) => sum + safePeopleToNumber(record.people), 0);
+    const totalWaterUsed = sortedFiltered.reduce((sum, record) => sum + safeWaterToInteger(record.waterUsed), 0);
+    const drilledBoreholes = sortedFiltered.filter(record => record.drilled).length;
+    const equippedBoreholes = sortedFiltered.filter(record => record.equipped).length; // Updated
+    const rehabilitatedBoreholes = sortedFiltered.filter(record => record.rehabilitated).length; // Added
 
-    console.log("Stats - Total Boreholes:", filtered.length, "Drilled:", drilledBoreholes, "Equipped:", equippedBoreholes, "Rehabilitated:", rehabilitatedBoreholes, "People:", totalPeople, "Water Used:", totalWaterUsed);
+    console.log("Stats - Total Boreholes:", sortedFiltered.length, "Drilled:", drilledBoreholes, "Equipped:", equippedBoreholes, "Rehabilitated:", rehabilitatedBoreholes, "People:", totalPeople, "Water Used:", totalWaterUsed);
 
     setStats({
-      totalBoreholes: filtered.length,
+      totalBoreholes: sortedFiltered.length,
       drilledBoreholes,
       equippedBoreholes,
       rehabilitatedBoreholes,
@@ -548,7 +559,7 @@ const BoreholePage = () => {
     });
 
     // Update pagination
-    const totalPages = Math.ceil(filtered.length / pagination.limit);
+    const totalPages = Math.ceil(sortedFiltered.length / pagination.limit);
     setPagination(prev => ({
       ...prev,
       totalPages,

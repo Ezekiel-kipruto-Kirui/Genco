@@ -97,6 +97,17 @@ const normalizeOnboardingRecord = (record: Partial<OnboardingData>): OnboardingD
   status: record.status === "completed" ? "completed" : "pending",
 });
 
+const getOnboardingTimestamp = (record: Partial<OnboardingData> | null | undefined): number => {
+  if (!record) return 0;
+  const dateValue = record.date ? new Date(record.date).getTime() : 0;
+  if (Number.isFinite(dateValue) && dateValue > 0) return dateValue;
+  const createdAtValue = record.createdAt ? new Date(record.createdAt).getTime() : 0;
+  return Number.isFinite(createdAtValue) ? createdAtValue : 0;
+};
+
+const sortOnboardingByLatest = (records: OnboardingData[]): OnboardingData[] =>
+  [...records].sort((a, b) => getOnboardingTimestamp(b) - getOnboardingTimestamp(a));
+
 // --- Utility Functions ---
 
 const getTopicIcon = (topic: string) => {
@@ -474,7 +485,8 @@ const OnboardingPage = () => {
     try {
       const cachedOnboarding = readCachedValue<OnboardingData[]>(onboardingCacheKey);
       if (cachedOnboarding) {
-        setAllOnboarding(cachedOnboarding.map(normalizeOnboardingRecord));
+        const normalizedCachedOnboarding = cachedOnboarding.map(normalizeOnboardingRecord);
+        setAllOnboarding(sortOnboardingByLatest(normalizedCachedOnboarding));
         setLoading(false);
       } else {
         setLoading(true);
@@ -510,8 +522,9 @@ const OnboardingPage = () => {
         });
       }
       
-      setAllOnboarding(data);
-      writeCachedValue(onboardingCacheKey, data);
+      const sortedData = sortOnboardingByLatest(data);
+      setAllOnboarding(sortedData);
+      writeCachedValue(onboardingCacheKey, sortedData);
       // FilteredOnboarding will be updated by the programme filter effect
       setSelectedRecords([]);
       if (!snapshot.exists()) {
@@ -582,11 +595,13 @@ const OnboardingPage = () => {
     const maleFarmers = allFarmers.filter(f => f.gender?.toLowerCase() === 'male').length;
     const femaleFarmers = allFarmers.filter(f => f.gender?.toLowerCase() === 'female').length;
 
+    const sortedFiltered = sortOnboardingByLatest(filtered);
+
     return {
-      filteredOnboarding: filtered,
+      filteredOnboarding: sortedFiltered,
       stats: {
         totalFarmers: uniqueFarmers.size,
-        totalOnboarding: filtered.length,
+        totalOnboarding: sortedFiltered.length,
         uniqueSubcounties: uniqueSubcounties.size,
         uniqueCounties: uniqueCounties.size,
         completedSessions,

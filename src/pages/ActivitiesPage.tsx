@@ -52,6 +52,17 @@ interface Activity {
 
 const ACTIVITIES_CACHE_KEY = cacheKey("admin-page", "activities", "recent");
 
+const getActivityTimestamp = (activity: Partial<Activity> | null | undefined): number => {
+  if (!activity) return 0;
+  const createdAtValue = activity.createdAt ? new Date(activity.createdAt).getTime() : 0;
+  if (Number.isFinite(createdAtValue) && createdAtValue > 0) return createdAtValue;
+  const dateValue = activity.date ? new Date(activity.date).getTime() : 0;
+  return Number.isFinite(dateValue) ? dateValue : 0;
+};
+
+const sortActivitiesByLatest = (records: Activity[]): Activity[] =>
+  [...records].sort((a, b) => getActivityTimestamp(b) - getActivityTimestamp(a));
+
 const ActivitiesPage = () => {
   const [activities, setActivities] = useState<Activity[]>([]);
   const [loading, setLoading] = useState(true);
@@ -96,7 +107,7 @@ const ActivitiesPage = () => {
     try {
       const cachedActivities = readCachedValue<Activity[]>(ACTIVITIES_CACHE_KEY);
       if (cachedActivities) {
-        setActivities(cachedActivities);
+        setActivities(sortActivitiesByLatest(cachedActivities));
         setLoading(false);
       } else {
         setLoading(true);
@@ -113,15 +124,9 @@ const ActivitiesPage = () => {
           ...data[key]
         })) as Activity[];
 
-        // Sort by createdAt descending (client-side sort for RTDB)
-        activitiesData.sort((a, b) => {
-          const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-          const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-          return dateB - dateA;
-        });
-
-        setActivities(activitiesData);
-        writeCachedValue(ACTIVITIES_CACHE_KEY, activitiesData);
+        const sortedActivitiesData = sortActivitiesByLatest(activitiesData);
+        setActivities(sortedActivitiesData);
+        writeCachedValue(ACTIVITIES_CACHE_KEY, sortedActivitiesData);
       } else {
         setActivities([]);
         removeCachedValue(ACTIVITIES_CACHE_KEY);

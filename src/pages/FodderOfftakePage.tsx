@@ -104,6 +104,15 @@ const formatDate = (date: any): string => {
   }) : 'N/A';
 };
 
+const getFodderTimestamp = (record: Partial<FodderFarmer> | null | undefined): number => {
+  if (!record) return 0;
+  const parsed = parseDate(record.date);
+  return parsed ? parsed.getTime() : 0;
+};
+
+const sortFodderByLatest = (records: FodderFarmer[]): FodderFarmer[] =>
+  [...records].sort((a, b) => getFodderTimestamp(b) - getFodderTimestamp(a));
+
 const getCurrentMonthDates = () => {
   const now = new Date();
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -233,7 +242,7 @@ const FodderFarmersPage = () => {
 
     const cachedFodder = readCachedValue<FodderFarmer[]>(fodderCacheKey);
     if (cachedFodder) {
-      setAllFodder(cachedFodder);
+      setAllFodder(sortFodderByLatest(cachedFodder));
       setLoading(false);
     } else {
       setLoading(true);
@@ -298,8 +307,9 @@ const FodderFarmersPage = () => {
         };
       });
 
-      setAllFodder(fodderData);
-      writeCachedValue(fodderCacheKey, fodderData);
+      const sortedFodderData = sortFodderByLatest(fodderData);
+      setAllFodder(sortedFodderData);
+      writeCachedValue(fodderCacheKey, sortedFodderData);
       setLoading(false);
     }, (error) => {
       console.error("Error fetching fodder data:", error);
@@ -318,7 +328,7 @@ const FodderFarmersPage = () => {
       return;
     }
 
-    let filtered = allFodder.filter(record => {
+    const filtered = allFodder.filter(record => {
       if (filters.region !== "all" && record.region?.toLowerCase() !== filters.region.toLowerCase()) return false;
       if (filters.location !== "all" && record.location?.toLowerCase() !== filters.location.toLowerCase()) return false;
       if (filters.model !== "all" && record.model?.toLowerCase() !== filters.model.toLowerCase()) return false;
@@ -352,15 +362,16 @@ const FodderFarmersPage = () => {
       return true;
     });
 
-    setFilteredFodder(filtered);
+    const sortedFiltered = sortFodderByLatest(filtered);
+    setFilteredFodder(sortedFiltered);
     
-    const totalFarmers = filtered.reduce((sum, record) => sum + (record.farmers?.length || 0), 0);
-    const uniqueRegions = new Set(filtered.map(f => f.region).filter(Boolean));
-    const uniqueModels = new Set(filtered.map(f => f.model).filter(Boolean));
+    const totalFarmers = sortedFiltered.reduce((sum, record) => sum + (record.farmers?.length || 0), 0);
+    const uniqueRegions = new Set(sortedFiltered.map(f => f.region).filter(Boolean));
+    const uniqueModels = new Set(sortedFiltered.map(f => f.model).filter(Boolean));
 
     setStats({ totalFarmers, totalRegions: uniqueRegions.size, totalModels: uniqueModels.size });
 
-    const totalPages = Math.ceil(filtered.length / pagination.limit);
+    const totalPages = Math.ceil(sortedFiltered.length / pagination.limit);
     setPagination(prev => ({
       ...prev,
       totalPages,

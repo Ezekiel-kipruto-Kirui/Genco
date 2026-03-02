@@ -167,6 +167,31 @@ const getOfficerName = (record: RequisitionData | null | undefined): string => {
   return record.name || record.userName || record.username || record.email || "Unknown";
 };
 
+const getRequisitionTimestamp = (
+  record: Partial<RequisitionData> | null | undefined
+): number => {
+  if (!record) return 0;
+  const dateCandidates = [
+    record.submittedAt,
+    record.createdAt,
+    record.approvedAt,
+    record.authorizedAt,
+    record.transactionCompletedAt,
+    record.completedAt,
+    record.rejectedAt,
+  ];
+
+  for (const candidate of dateCandidates) {
+    const parsed = parseDate(candidate);
+    if (parsed) return parsed.getTime();
+  }
+
+  return 0;
+};
+
+const sortRequisitionsByLatest = (records: RequisitionData[]): RequisitionData[] =>
+  [...records].sort((a, b) => getRequisitionTimestamp(b) - getRequisitionTimestamp(a));
+
 const getCurrentMonthDates = () => {
   const now = new Date();
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(),1);
@@ -320,6 +345,10 @@ const RequisitionsPage = () => {
     () => userIsChiefAdmin,
     [userIsChiefAdmin]
   );
+  const approvalActorAttribute = useMemo(() => {
+    if (typeof userAttribute === "string" && userAttribute.trim()) return userAttribute.trim();
+    return "";
+  }, [userAttribute]);
   const actorAttribute = useMemo(() => {
     if (typeof userAttribute === "string" && userAttribute.trim()) return userAttribute.trim();
     if (typeof userRole === "string" && userRole.trim()) return userRole.trim();
@@ -372,7 +401,7 @@ const RequisitionsPage = () => {
     }
     const cachedRequisitions = readCachedValue<RequisitionData[]>(requisitionCacheKey);
     if (cachedRequisitions) {
-      setAllRequisitions(cachedRequisitions);
+      setAllRequisitions(sortRequisitionsByLatest(cachedRequisitions));
       setLoading(false);
     } else {
       setLoading(true);
@@ -395,13 +424,7 @@ const RequisitionsPage = () => {
         }
         const records = Object.keys(data).map((key) => {
             const item = data[key];
-            let dateVal = item.submittedAt;
-            if (typeof dateVal === 'string') {
-               const d = parseDate(dateVal);
-               dateVal = d ? d.getTime() : Date.now();
-            } else if (typeof dateVal !== 'number') {
-               dateVal = Date.now();
-            }
+            const dateVal = getRequisitionTimestamp(item as Partial<RequisitionData>);
             const isFuel = item.type === 'fuel and Service';
             const normalizedPhone = item.phoneNumber || item.phone || item.phone_number || item.Phone || item.mobile || item.contact || item.telephone || '';
             return {
@@ -410,14 +433,15 @@ const RequisitionsPage = () => {
                 phoneNumber: normalizedPhone,
                 tripPurpose: isFuel ? item.fuelPurpose : item.tripPurpose,
                 items: Array.isArray(item.items) ? item.items : [], 
-                createdAt: dateVal, 
+                submittedAt: item.submittedAt || item.createdAt || dateVal,
+                createdAt: dateVal || 0,
                 totalAmount: (isFuel ? item.fuelAmount : item.total) || 0,
                 fileUploaded: item.fileUploaded || false
             };
         });
-        records.sort((a, b) => (b.createdAt as number) - (a.createdAt as number));
-        setAllRequisitions(records);
-        writeCachedValue(requisitionCacheKey, records);
+        const sortedRecords = sortRequisitionsByLatest(records);
+        setAllRequisitions(sortedRecords);
+        writeCachedValue(requisitionCacheKey, sortedRecords);
         setLoading(false);
     }, (error) => {
         console.error("Error fetching requisition data:", error);
@@ -434,7 +458,7 @@ const RequisitionsPage = () => {
       setStats({ totalRequests: 0, pendingRequests: 0, totalAmount: 0 });
       return;
     }
-    let filteredList = allRequisitions.filter(record => {
+    const filteredList = allRequisitions.filter(record => {
       if (filters.startDate || filters.endDate) {
         const recordDate = parseDate(record.createdAt);
         if (recordDate) {
@@ -462,15 +486,16 @@ const RequisitionsPage = () => {
       }
       return true;
     });
-    setFilteredRequisitions(filteredList);
+    const sortedFilteredList = sortRequisitionsByLatest(filteredList);
+    setFilteredRequisitions(sortedFilteredList);
     
-    const totalRequests = filteredList.length;
-    const pendingRequests = filteredList.filter(r => r.status === 'pending').length;
-    const totalAmount = filteredList.reduce((sum, r) => sum + (r.totalAmount || 0), 0);
+    const totalRequests = sortedFilteredList.length;
+    const pendingRequests = sortedFilteredList.filter(r => r.status === 'pending').length;
+    const totalAmount = sortedFilteredList.reduce((sum, r) => sum + (r.totalAmount || 0), 0);
     
     setStats({ totalRequests, pendingRequests, totalAmount });
     
-    const totalPages = Math.ceil(filteredList.length / pagination.limit);
+    const totalPages = Math.ceil(sortedFilteredList.length / pagination.limit);
     const currentPage = Math.min(pagination.page, Math.max(1, totalPages));
     setPagination(prev => ({
       ...prev, page: currentPage, totalPages, hasNext: currentPage < totalPages, hasPrev: currentPage > 1
@@ -673,7 +698,7 @@ const RequisitionsPage = () => {
           return;
         }
         updatePayload.approvedBy = actorName;
-        updatePayload.approvedByAttribute = actorAttribute;
+        updatePayload.approvedByAttribute = approvalActorAttribute || null;
         updatePayload.approvedAt = Date.now();
       }
 
@@ -776,12 +801,15 @@ const RequisitionsPage = () => {
         await update(ref(db, `requisitions/${viewingRecord.id}`), {
             status: 'approved',
             approvedBy: approverName,
-            approvedByAttribute: actorAttribute,
+            approvedByAttribute: approvalActorAttribute || null,
             approvedAt: Date.now()
         });
         removeCachedValue(requisitionCacheKey);
         
-        await logHistory(viewingRecord.id, "Approved", `Approved by ${approverName} (${actorAttribute})`);
+        const approvalDetails = approvalActorAttribute ?
+          `Approved by ${approverName} (${approvalActorAttribute})` :
+          `Approved by ${approverName}`;
+        await logHistory(viewingRecord.id, "Approved", approvalDetails);
         
         toast({ title: "Approved", description: "Requisition approved successfully" });
         handleViewDialogOpenChange(false); 
@@ -1018,10 +1046,13 @@ const RequisitionsPage = () => {
             await update(ref(db, `requisitions/${record.id}`), {
               status: "approved",
               approvedBy: actorName,
-              approvedByAttribute: actorAttribute,
+              approvedByAttribute: approvalActorAttribute || null,
               approvedAt: Date.now(),
             });
-            await logHistory(record.id, "Approved", `Approved by ${actorName} (${actorAttribute})`);
+            const approvalDetails = approvalActorAttribute ?
+              `Approved by ${actorName} (${approvalActorAttribute})` :
+              `Approved by ${actorName}`;
+            await logHistory(record.id, "Approved", approvalDetails);
             return true;
           } catch (error) {
             console.error("Bulk approve failed for record:", record.id, error);

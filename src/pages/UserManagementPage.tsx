@@ -227,6 +227,13 @@ const parseDate = (date: any): Date | null => {
   return null;
 };
 
+const sortUsersByLatest = (records: UserRecord[]): UserRecord[] =>
+  [...records].sort((a, b) => {
+    const dateA = parseDate(a.createdAt) || new Date(0);
+    const dateB = parseDate(b.createdAt) || new Date(0);
+    return dateB.getTime() - dateA.getTime();
+  });
+
 const getCurrentMonthDates = () => {
   const now = new Date();
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -602,7 +609,7 @@ const UserManagementPage = () => {
     try {
       const cachedUsers = readCachedValue<UserRecord[]>(USER_MANAGEMENT_CACHE_KEY);
       if (cachedUsers) {
-        setAllRecords(cachedUsers);
+        setAllRecords(sortUsersByLatest(cachedUsers));
         setLoading(false);
       } else {
         setLoading(true);
@@ -610,16 +617,12 @@ const UserManagementPage = () => {
       
       // Only fetch Users
       const recordsData: UserRecord[] = (await fetchCollection("users")) as UserRecord[];
-      
-      recordsData.sort((a, b) => {
-        const dateA = parseDate(a.createdAt) || new Date(0);
-        const dateB = parseDate(b.createdAt) || new Date(0);
-        return dateB.getTime() - dateA.getTime();
-      });
 
-      setAllRecords(recordsData);
-      if (recordsData.length > 0) {
-        writeCachedValue(USER_MANAGEMENT_CACHE_KEY, recordsData);
+      const sortedRecordsData = sortUsersByLatest(recordsData);
+
+      setAllRecords(sortedRecordsData);
+      if (sortedRecordsData.length > 0) {
+        writeCachedValue(USER_MANAGEMENT_CACHE_KEY, sortedRecordsData);
       } else {
         removeCachedValue(USER_MANAGEMENT_CACHE_KEY);
       }
@@ -688,17 +691,19 @@ const UserManagementPage = () => {
       return true;
     });
 
-    const activeUsers = filtered.filter(r => r.status?.toLowerCase() === 'active').length;
-    const adminUsers = filtered.filter((r) => getEffectiveRole(r) === "admin").length;
-    const chiefAdminUsers = filtered.filter((r) => getEffectiveRole(r) === "chief-admin").length;
-    const mobileUsers = filtered.filter((r) => getEffectiveRole(r) === "mobile").length;
-    const hrUsers = filtered.filter((r) => isHummanResourceManager(getRecordPermissionPrincipal(r))).length;
-    const projectManagerUsers = filtered.filter((r) => isProjectManager(getRecordPermissionPrincipal(r))).length;
-    const financeUsers = filtered.filter((r) => isFinance(getRecordPermissionPrincipal(r))).length;
-    const offtakeOfficerUsers = filtered.filter((r) => isOfftakeOfficer(getRecordPermissionPrincipal(r))).length;
+    const sortedFiltered = sortUsersByLatest(filtered);
+
+    const activeUsers = sortedFiltered.filter(r => r.status?.toLowerCase() === 'active').length;
+    const adminUsers = sortedFiltered.filter((r) => getEffectiveRole(r) === "admin").length;
+    const chiefAdminUsers = sortedFiltered.filter((r) => getEffectiveRole(r) === "chief-admin").length;
+    const mobileUsers = sortedFiltered.filter((r) => getEffectiveRole(r) === "mobile").length;
+    const hrUsers = sortedFiltered.filter((r) => isHummanResourceManager(getRecordPermissionPrincipal(r))).length;
+    const projectManagerUsers = sortedFiltered.filter((r) => isProjectManager(getRecordPermissionPrincipal(r))).length;
+    const financeUsers = sortedFiltered.filter((r) => isFinance(getRecordPermissionPrincipal(r))).length;
+    const offtakeOfficerUsers = sortedFiltered.filter((r) => isOfftakeOfficer(getRecordPermissionPrincipal(r))).length;
 
     const calculatedStats = {
-      totalUsers: filtered.length,
+      totalUsers: sortedFiltered.length,
       activeUsers,
       adminUsers,
       chiefAdminUsers,
@@ -709,10 +714,10 @@ const UserManagementPage = () => {
       offtakeOfficerUsers,
     };
 
-    const totalPages = Math.ceil(filtered.length / PAGE_LIMIT);
+    const totalPages = Math.ceil(sortedFiltered.length / PAGE_LIMIT);
 
     return {
-      filteredRecords: filtered,
+      filteredRecords: sortedFiltered,
       stats: calculatedStats,
       totalPages
     };

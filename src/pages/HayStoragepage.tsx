@@ -143,6 +143,15 @@ const formatDate = (date: any): string => {
   }) : 'N/A';
 };
 
+const getHayStorageTimestamp = (record: Partial<HayStorage> | null | undefined): number => {
+  if (!record) return 0;
+  const parsed = parseDate(record.date_planted) || parseDate(record.created_at);
+  return parsed ? parsed.getTime() : 0;
+};
+
+const sortHayStorageByLatest = (records: HayStorage[]): HayStorage[] =>
+  [...records].sort((a, b) => getHayStorageTimestamp(b) - getHayStorageTimestamp(a));
+
 const formatDateForInput = (date: any): string => {
   const parsedDate = parseDate(date);
   return parsedDate
@@ -476,7 +485,7 @@ const HayStoragePage = () => {
     try {
       const cachedHayStorage = readCachedValue<HayStorage[]>(HAY_STORAGE_CACHE_KEY);
       if (cachedHayStorage) {
-        setAllHayStorage(cachedHayStorage);
+        setAllHayStorage(sortHayStorageByLatest(cachedHayStorage));
         setLoading(false);
       } else {
         setLoading(true);
@@ -506,8 +515,9 @@ const HayStoragePage = () => {
             created_by: item.created_by || 'unknown'
           };
         });
-        setAllHayStorage(hayStorageData);
-        writeCachedValue(HAY_STORAGE_CACHE_KEY, hayStorageData);
+        const sortedHayStorageData = sortHayStorageByLatest(hayStorageData);
+        setAllHayStorage(sortedHayStorageData);
+        writeCachedValue(HAY_STORAGE_CACHE_KEY, sortedHayStorageData);
       } else {
         setAllHayStorage([]);
         removeCachedValue(HAY_STORAGE_CACHE_KEY);
@@ -541,7 +551,7 @@ const HayStoragePage = () => {
     }
 
     // 1. Filter Raw Data based on criteria
-    let filtered = allHayStorage.filter(record => {
+    const filtered = allHayStorage.filter(record => {
       if (filters.county !== "all" && record.county?.toLowerCase() !== filters.county.toLowerCase()) return false;
       if (filters.subcounty !== "all" && record.subcounty?.toLowerCase() !== filters.subcounty.toLowerCase()) return false;
 
@@ -572,18 +582,20 @@ const HayStoragePage = () => {
       return true;
     });
 
+    const sortedFiltered = sortHayStorageByLatest(filtered);
+
     // 2. UPDATE: No longer aggregating. Show all records.
-    setFilteredHayStorage(filtered);
-    setRawFilteredHayStorage(filtered);
+    setFilteredHayStorage(sortedFiltered);
+    setRawFilteredHayStorage(sortedFiltered);
 
     // 3. Calculate Stats based on Raw Data (since we aren't aggregating)
-    const totalRevenue = filtered.reduce((sum, record) => sum + (record.revenue_generated || 0), 0);
-    const totalBalesHarvested = filtered.reduce((sum, record) => sum + (record.bales_harvested_stored || 0), 0);
-    const totalBalesSold = filtered.reduce((sum, record) => sum + (record.bales_sold || 0), 0);
-    const totalLandUnderPasture = filtered.reduce((sum, record) => sum + (record.land_under_pasture || 0), 0);
+    const totalRevenue = sortedFiltered.reduce((sum, record) => sum + (record.revenue_generated || 0), 0);
+    const totalBalesHarvested = sortedFiltered.reduce((sum, record) => sum + (record.bales_harvested_stored || 0), 0);
+    const totalBalesSold = sortedFiltered.reduce((sum, record) => sum + (record.bales_sold || 0), 0);
+    const totalLandUnderPasture = sortedFiltered.reduce((sum, record) => sum + (record.land_under_pasture || 0), 0);
     
     // Count unique facilities in the view
-    const uniqueFacilities = new Set(filtered.map(r => r.storage_facility).filter(Boolean)).size; 
+    const uniqueFacilities = new Set(sortedFiltered.map(r => r.storage_facility).filter(Boolean)).size; 
 
     setStats({
       totalLandUnderPasture,
@@ -594,7 +606,7 @@ const HayStoragePage = () => {
       totalBalesBalance: totalBalesHarvested - totalBalesSold
     });
 
-    const totalPages = Math.ceil(filtered.length / pagination.limit);
+    const totalPages = Math.ceil(sortedFiltered.length / pagination.limit);
     setPagination(prev => ({
       ...prev,
       totalPages,
