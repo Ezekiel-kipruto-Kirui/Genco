@@ -42,7 +42,9 @@ interface RequisitionRecord {
   submittedAt?: number | string;
   approvedAt?: number | string;
   approvedBy?: string;
+  approvedByAttribute?: string;
   authorizedBy?: string;
+  authorizedByAttribute?: string;
   transactionCompletedBy?: string;
   transactionCompletedAt?: number | string;
   completedBy?: string;
@@ -309,6 +311,37 @@ const formatAmount = (record: RequisitionRecord): string => {
   }).format(amount);
 };
 
+const formatSubmittedDate = (submittedAt: unknown): string => {
+  if (typeof submittedAt === "number" && Number.isFinite(submittedAt)) {
+    const parsed = new Date(submittedAt);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed.toLocaleDateString("en-KE", {
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+      });
+    }
+  }
+
+  if (typeof submittedAt === "string") {
+    const trimmed = submittedAt.trim();
+    if (!trimmed) return "N/A";
+
+    const parsed = new Date(trimmed);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed.toLocaleDateString("en-KE", {
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+      });
+    }
+
+    return trimmed;
+  }
+
+  return "N/A";
+};
+
 const getTransporter = (): nodemailer.Transporter | null => {
   if (transporter) return transporter;
 
@@ -541,23 +574,6 @@ const getPhoneRecipientsByRole = async (
   return [...recipients].map(([phone, name]) => ({phone, name}));
 };
 
-const buildDetailsText = (id: string, record: RequisitionRecord): string => {
-  const purpose = record.type === "fuel and Service" ?
-    (record.fuelPurpose || "N/A") :
-    (record.tripPurpose || "N/A");
-
-  return [
-    `Requisition ID: ${id}`,
-    `Requester: ${getRequesterName(record)}`,
-    `Type: ${record.type || "N/A"}`,
-    `Programme: ${record.programme || "N/A"}`,
-    `County: ${record.county || "N/A"}`,
-    `Subcounty: ${record.subcounty || "N/A"}`,
-    `Purpose: ${purpose}`,
-    `Amount: ${formatAmount(record)}`,
-  ].join("\n");
-};
-
 const sendHrApprovalRequestEmail = async (
   requisitionId: string,
   record: RequisitionRecord,
@@ -575,19 +591,40 @@ const sendHrApprovalRequestEmail = async (
     return;
   }
 
-  const details = buildDetailsText(requisitionId, record);
-  const subject = ` Approved requisition ${requisitionId}`;
+  const submittedDate = formatSubmittedDate(record.submittedAt);
+  const approvedBy = record.approvedBy || "Name of person who approved";
+  const approvedByAttribute =
+    typeof record.approvedByAttribute === "string" &&
+      record.approvedByAttribute.trim() ?
+      record.approvedByAttribute.trim() :
+      "N/A";
+  const subject = "Requisition Authorization";
   const text = [
-    "A requisition has been approved and now requires HR authorization.",
+    "Dear HR,",
     "",
-    details,
+    "A new requisition has been approved and requires your authorization.",
     "",
+    `Requester: ${getRequesterName(record)}`,
+    `Date Submitted: ${submittedDate}`,
+    `Approved By: ${approvedBy}`,
+    `Approved By Attribute: ${approvedByAttribute}`,
+    "",
+    "Please review and approve at your earliest convenience.",
+    "",
+    "Regards,",
+    approvedBy,
   ].join("\n");
   const html = [
-    "<p>A requisition has been approved and now requires authorization.</p>",
+    "<p>Dear HR,</p>",
+    "<p>A new requisition has been approved and requires your " +
+      "authorization.</p>",
+    "<p>",
     `<strong>Requester:</strong> ${getRequesterName(record)}<br/>`,
-    `<strong>Type:</strong> ${record.type || "N/A"}<br/>`,
-    `<strong>Amount:</strong> ${formatAmount(record)}<br/>`,
+    `<strong>Date Submitted:</strong> ${submittedDate}<br/>`,
+    `<strong>Approved By:</strong> ${approvedBy}<br/>`,
+    `<strong>Approved By Attribute:</strong> ${approvedByAttribute}</p>`,
+    "<p>Please review and approve at your earliest convenience.</p>",
+    `<p>Regards,<br/>${approvedBy}</p>`,
   ].join("");
 
   await sendEmail(hrRecipients, subject, text, html);
@@ -669,8 +706,9 @@ const sendRequesterAuthorizedSms = async (
   }
 
   const message = [
-    `Hello ${getRequesterName(record)}, your requisition has been received`,
-    "and is now being processed.",
+    `Hello ${getRequesterName(record)}, your requisition has been received ` +
+      "and is now being processed.",
+    "You will be notified once transaction is completed.Thank you",
   ].join(" ");
 
   await sendSms([requesterPhone], message);
@@ -767,21 +805,46 @@ const sendFinanceAuthorizedEmail = async (
     return;
   }
 
-  const details = buildDetailsText(requisitionId, record);
-  const subject = "Authorized requisition";
+  const submittedDate = formatSubmittedDate(record.submittedAt);
+  const authorizedBy = record.authorizedBy || "HR";
+  const authorizedByAttribute =
+    typeof record.authorizedByAttribute === "string" &&
+      record.authorizedByAttribute.trim() ?
+      record.authorizedByAttribute.trim() :
+      "N/A";
+  const subject = "Authorized Requisition";
   const text = [
-    "A requisition has been authorized by HR.",
-    "Please process the transaction.",
+    "Dear Finance,",
     "",
-    details,
+    "The below requisition has been reviewed and authorized by HR " +
+      "and is now ready for financial processing",
     "",
-    `Authorized by: ${record.authorizedBy || "HR"}`,
+    `Requester: ${getRequesterName(record)}`,
+    `Date Submitted: ${submittedDate}`,
+    `Amount:${formatAmount(record)}`,
+    "",
+    "Please log in to the system to access and print the requisition " +
+      "documentation for further reference",
+    "Kindly proceed with the necessary payment/transaction processing.",
+    "",
+    "Regards,",
+    authorizedBy,
+    authorizedByAttribute,
   ].join("\n");
   const html = [
-    "<p>A requisition has been authorized by HR.</p>",
-    "<p><strong>Please process the transaction.</strong></p>",
+    "<p>Dear Finance,</p>",
+    "<p>The below requisition has been reviewed and authorized by HR " +
+      "and is now ready for financial processing.</p>",
+    "<p>",
     `<strong>Requester:</strong> ${getRequesterName(record)}<br/>`,
+    `<strong>Date Submitted:</strong> ${submittedDate}<br/>`,
     `<strong>Amount:</strong> ${formatAmount(record)}<br/>`,
+    " </p>",
+    "<p>Please log in to the system to access and print the requisition " +
+      "documentation for further reference.</p>",
+    "<p>Kindly proceed with the necessary payment/transaction processing.</p>",
+    `<p>Regards,<br/>${authorizedBy}</p>`,
+    `<p>${authorizedByAttribute}</p>`,
   ].join("");
 
   await sendEmail(financeRecipients, subject, text, html);

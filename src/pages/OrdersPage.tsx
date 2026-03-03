@@ -689,10 +689,10 @@ const OrdersPage = () => {
                     <TableHead className="text-left">County</TableHead>
                     <TableHead className="text-left">Subcounty</TableHead>
                     <TableHead className="text-left">Programme</TableHead>
-                    <TableHead className="text-left">User</TableHead>
+                    <TableHead className="text-left">Field Officer</TableHead>
                     <TableHead className="text-right">Total Goats</TableHead>
                     <TableHead className="text-right">Goats Bought</TableHead>
-                    <TableHead className="text-right">Remaining Goats</TableHead>
+                   
                     <TableHead className="text-left">Status</TableHead>
                     <TableHead className="text-right">Batch Actions</TableHead>
                   </TableRow>
@@ -733,7 +733,7 @@ const OrdersPage = () => {
                           </div>
                         )}
                       </TableCell>
-                      <TableCell className="text-right font-semibold tabular-nums">{row.remainingGoats.toLocaleString()}</TableCell>
+                    
                       <TableCell className="text-left">
                         <Badge className={getStatusBadgeClass(row.status)}>{row.status}</Badge>
                       </TableCell>
@@ -799,32 +799,15 @@ const OrdersPage = () => {
           if (!open) closeOrdersDialog();
         }}
       >
-        <DialogContent className="sm:max-w-5xl bg-white rounded-2xl max-h-[90vh] overflow-hidden">
+        <DialogContent className="sm:max-w-2xl bg-white rounded-2xl max-h-[90vh] overflow-hidden">
           <DialogHeader>
             <DialogTitle className="text-slate-900">Orders Breakdown</DialogTitle>
           </DialogHeader>
 
           {ordersDialogRow ? (
             <div className="space-y-4 overflow-y-auto pr-1">
-              <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
-                <div className="rounded-md border bg-slate-50 p-3">
-                  <p className="text-slate-500">Date</p>
-                  <p className="font-semibold text-slate-900">{formatDate(ordersDialogRow.batchDate)}</p>
-                </div>
-                <div className="rounded-md border bg-slate-50 p-3">
-                  <p className="text-slate-500">County / Subcounty</p>
-                  <p className="font-semibold text-slate-900">
-                    {ordersDialogRow.county} / {ordersDialogRow.subcounty}
-                  </p>
-                </div>
-                <div className="rounded-md border bg-slate-50 p-3">
-                  <p className="text-slate-500">Location</p>
-                  <p className="font-semibold text-slate-900">{ordersDialogRow.location}</p>
-                </div>
-                <div className="rounded-md border bg-slate-50 p-3">
-                  <p className="text-slate-500">Programme</p>
-                  <p className="font-semibold text-slate-900">{ordersDialogRow.programme}</p>
-                </div>
+              <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2 lg:grid-cols-2">
+                
                 <div className="rounded-md border bg-slate-50 p-3">
                   <p className="text-slate-500">Submitted By</p>
                   <p className="font-semibold text-slate-900">{ordersDialogRow.username}</p>

@@ -33,6 +33,7 @@ const queryClient = new QueryClient();
 const FULL_ACCESS_IDENTITIES = ["admin", "chief-admin", "ceo", "chief operational manager", "mne officer"];
 const DASHBOARD_ALLOWED_IDENTITIES = [
   ...FULL_ACCESS_IDENTITIES,
+  "finance",
   "project manager",
   "humman resource manager",
   "humman resource manger",
@@ -65,14 +66,12 @@ const App = () => (
               <Route path="/auth" element={<Auth />} />
               
               {/* --- NEW: HR Standalone Route --- */}
-              {/* This route is outside DashboardLayout, so no sidebar appears. */}
+              {/* Legacy route: keep it for backward compatibility and redirect to dashboard layout. */}
               <Route
                 path="/requisition"
                 element={
                   <ProtectedRoute allowedRoles={REQUISITION_ONLY_IDENTITIES}>
-                    <div className="min-h-screen bg-slate-50/80 p-4 md:p-6 lg:p-8 pb-20">
-                      <RequsitionPage />
-                    </div>
+                    <Navigate to="/dashboard/requisition" replace />
                   </ProtectedRoute>
                 }
               />

@@ -41,6 +41,7 @@ interface Activity {
   activityName: string;
   date: string;
   numberOfPersons: number;
+  programme?: string;
   county: string;
   location: string;
   participants: Participant[];
@@ -50,7 +51,29 @@ interface Activity {
   createdBy: string;
 }
 
+interface ActivityForm {
+  activityName: string;
+  date: string;
+  numberOfPersons: string;
+  programme: string;
+  county: string;
+  subcounty: string;
+  location: string;
+}
+
 const ACTIVITIES_CACHE_KEY = cacheKey("admin-page", "activities", "recent");
+const PROGRAMME_OPTIONS = ["KPMD", "RANGE"] as const;
+const UNASSIGNED_PROGRAMME_LABEL = "Unassigned";
+
+const normalizeProgramme = (programme: string | null | undefined): string => {
+  if (!programme) return "";
+  const normalized = programme.trim().toUpperCase();
+  if (normalized === "KPMD" || normalized === "RANGE") return normalized;
+  return programme.trim();
+};
+
+const getProgrammeLabel = (programme: string | null | undefined): string =>
+  normalizeProgramme(programme) || UNASSIGNED_PROGRAMME_LABEL;
 
 const getActivityTimestamp = (activity: Partial<Activity> | null | undefined): number => {
   if (!activity) return 0;
@@ -73,10 +96,11 @@ const ActivitiesPage = () => {
   const [editingActivity, setEditingActivity] = useState<Activity | null>(null);
   const [participantForm, setParticipantForm] = useState({ name: "", role: "" });
   const [participants, setParticipants] = useState<Participant[]>([]);
-  const [activityForm, setActivityForm] = useState({
+  const [activityForm, setActivityForm] = useState<ActivityForm>({
     activityName: "",
     date: "",
     numberOfPersons: "",
+    programme: PROGRAMME_OPTIONS[0],
     county: "",
     subcounty: "",
     location: "",
@@ -84,6 +108,7 @@ const ActivitiesPage = () => {
   const { userRole } = useAuth();
   const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
   const [filterStatus, setFilterStatus] = useState<string>("all");
+  const [filterProgramme, setFilterProgramme] = useState<string>("all");
   const [searchTerm, setSearchTerm] = useState("");
   const { toast } = useToast();
   const { user } = useAuth();
@@ -121,7 +146,8 @@ const ActivitiesPage = () => {
         // Transform object from RTDB to array
         const activitiesData = Object.keys(data).map((key) => ({
           id: key,
-          ...data[key]
+          ...data[key],
+          programme: normalizeProgramme(data[key]?.programme),
         })) as Activity[];
 
         const sortedActivitiesData = sortActivitiesByLatest(activitiesData);
@@ -167,10 +193,19 @@ const ActivitiesPage = () => {
       });
       return;
     }
+    if (!activityForm.programme) {
+      toast({
+        title: "Error",
+        description: "Please select a programme",
+        variant: "destructive",
+      });
+      return;
+    }
 
     try {
       await push(ref(db, "Recent Activities"), {
         ...activityForm,
+        programme: normalizeProgramme(activityForm.programme),
         numberOfPersons: participants.length,
         participants: participants,
         status: 'pending',
@@ -186,6 +221,7 @@ const ActivitiesPage = () => {
         activityName: "",
         date: "",
         numberOfPersons: "",
+        programme: PROGRAMME_OPTIONS[0],
         county: "",
         subcounty: "",
         location: "",
@@ -212,6 +248,7 @@ const ActivitiesPage = () => {
     try {
       await update(ref(db, "Recent Activities/" + editingActivity.id), {
         ...activityForm,
+        programme: normalizeProgramme(activityForm.programme),
         numberOfPersons: participants.length,
         participants: participants,
       });
@@ -226,6 +263,7 @@ const ActivitiesPage = () => {
         activityName: "",
         date: "",
         numberOfPersons: "",
+        programme: PROGRAMME_OPTIONS[0],
         county: "",
         subcounty: "",
         location: "",
@@ -295,6 +333,7 @@ const ActivitiesPage = () => {
       activityName: activity.activityName,
       date: activity.date,
       numberOfPersons: activity.numberOfPersons.toString(),
+      programme: normalizeProgramme(activity.programme) || PROGRAMME_OPTIONS[0],
       county: activity.county,
       subcounty: activity.subcounty,
       location: activity.location,
@@ -320,14 +359,24 @@ const ActivitiesPage = () => {
 
   const filteredActivities = activities.filter(activity => {
     const matchesStatus = filterStatus === "all" || activity.status === filterStatus;
+    const activityProgramme = normalizeProgramme(activity.programme);
+    const matchesProgramme =
+      filterProgramme === "all" || activityProgramme === filterProgramme;
     const matchesSearch = activity.activityName.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          activity.location.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         activity.county.toLowerCase().includes(searchTerm.toLowerCase());
-    return matchesStatus && matchesSearch;
+                         activity.county.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         activityProgramme.toLowerCase().includes(searchTerm.toLowerCase());
+    return matchesStatus && matchesProgramme && matchesSearch;
   });
 
   const pendingActivitiesCount = activities.filter(activity => activity.status === 'pending').length;
   const completedActivitiesCount = activities.filter(activity => activity.status === 'completed').length;
+  const kpmdActivitiesCount = activities.filter(
+    (activity) => normalizeProgramme(activity.programme) === "KPMD"
+  ).length;
+  const rangeActivitiesCount = activities.filter(
+    (activity) => normalizeProgramme(activity.programme) === "RANGE"
+  ).length;
 
   const formatDate = (dateString: string) => {
     if (!dateString) return 'No date';
@@ -370,7 +419,7 @@ const ActivitiesPage = () => {
                 </DialogTitle>
               </DialogHeader>
               <div className="grid gap-6 py-4">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                   <div className="space-y-2">
                     <Label htmlFor="activityName" className="text-sm font-medium text-slate-700">Activity Name</Label>
                     <Input
@@ -390,6 +439,24 @@ const ActivitiesPage = () => {
                       onChange={(e) => setActivityForm({...activityForm, date: e.target.value})}
                       className="rounded-xl border-slate-300 focus:border-blue-500 focus:ring-blue-500 transition-all bg-white"
                     />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="programme" className="text-sm font-medium text-slate-700">Programme</Label>
+                    <Select
+                      value={activityForm.programme}
+                      onValueChange={(value) => setActivityForm({ ...activityForm, programme: value })}
+                    >
+                      <SelectTrigger id="programme" className="rounded-xl border-slate-300 focus:border-blue-500 bg-white">
+                        <SelectValue placeholder="Select programme" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {PROGRAMME_OPTIONS.map((programmeOption) => (
+                          <SelectItem key={programmeOption} value={programmeOption}>
+                            {programmeOption}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -547,10 +614,11 @@ const ActivitiesPage = () => {
               </div>
             </CardContent>
           </Card>
+        
         </div>
 
         {/* Filters */}
-        <div className="flex gap-4">
+        <div className="flex flex-col gap-4 md:flex-row">
           <div className="flex-1">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400 h-4 w-4" />
@@ -562,8 +630,18 @@ const ActivitiesPage = () => {
               />
             </div>
           </div>
+          <Select value={filterProgramme} onValueChange={setFilterProgramme}>
+            <SelectTrigger className="w-full md:w-44 bg-white rounded-xl">
+              <SelectValue placeholder="Filter by programme" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Programmes</SelectItem>
+              <SelectItem value="KPMD">KPMD</SelectItem>
+              <SelectItem value="RANGE">RANGE</SelectItem>
+            </SelectContent>
+          </Select>
           <Select value={filterStatus} onValueChange={setFilterStatus}>
-            <SelectTrigger className="w-40 bg-white rounded-xl">
+            <SelectTrigger className="w-full md:w-40 bg-white rounded-xl">
               <SelectValue placeholder="Filter by status" />
             </SelectTrigger>
             <SelectContent>
@@ -591,6 +669,7 @@ const ActivitiesPage = () => {
                     <tr className="bg-blue-50 text-xs">
                       <th className="py-3 px-3 font-semibold text-gray-700">Activity Name</th>
                       <th className="py-3 px-3 font-semibold text-gray-700">Date</th>
+                      <th className="py-3 px-3 font-semibold text-gray-700">Programme</th>
                       <th className="py-3 px-3 font-semibold text-gray-700">Location</th>
                       <th className="py-3 px-3 font-semibold text-gray-700">County</th>
                       <th className="py-3 px-3 font-semibold text-gray-700">Participants</th>
@@ -606,6 +685,11 @@ const ActivitiesPage = () => {
                       >
                         <td className="py-2 px-3 font-medium text-sm">{activity.activityName}</td>
                         <td className="py-2 px-3 text-xs text-gray-500">{formatDate(activity.date)}</td>
+                        <td className="py-2 px-3 text-xs">
+                          <Badge variant="outline" className="font-semibold">
+                            {getProgrammeLabel(activity.programme)}
+                          </Badge>
+                        </td>
                         <td className="py-2 px-3 text-xs">{activity.location}</td>
                         <td className="py-2 px-3 text-xs">{activity.county}</td>
                         <td className="py-2 px-3">
@@ -676,17 +760,18 @@ const ActivitiesPage = () => {
                   No activities found
                 </h4>
                 <p className="text-slate-600 mb-4">
-                  {searchTerm || filterStatus !== 'all' 
+                  {searchTerm || filterStatus !== 'all' || filterProgramme !== 'all'
                     ? "Try adjusting your search or filter criteria"
                     : "Get started by scheduling your first activity"
                   }
                 </p>
-                {(searchTerm || filterStatus !== 'all') ? (
+                {(searchTerm || filterStatus !== 'all' || filterProgramme !== 'all') ? (
                   <Button 
                     variant="outline"
                     onClick={() => {
                       setSearchTerm("");
                       setFilterStatus("all");
+                      setFilterProgramme("all");
                     }}
                   >
                     Clear Filters
@@ -716,7 +801,7 @@ const ActivitiesPage = () => {
             </DialogTitle>
           </DialogHeader>
           <div className="grid gap-6 py-4">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="edit-activityName" className="text-sm font-medium text-slate-700">Activity Name</Label>
                 <Input
@@ -736,6 +821,24 @@ const ActivitiesPage = () => {
                   onChange={(e) => setActivityForm({...activityForm, date: e.target.value})}
                   className="rounded-xl border-slate-300 focus:border-blue-500 focus:ring-blue-500 transition-all bg-white"
                 />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-programme" className="text-sm font-medium text-slate-700">Programme</Label>
+                <Select
+                  value={activityForm.programme}
+                  onValueChange={(value) => setActivityForm({ ...activityForm, programme: value })}
+                >
+                  <SelectTrigger id="edit-programme" className="rounded-xl border-slate-300 focus:border-blue-500 bg-white">
+                    <SelectValue placeholder="Select programme" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {PROGRAMME_OPTIONS.map((programmeOption) => (
+                      <SelectItem key={programmeOption} value={programmeOption}>
+                        {programmeOption}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef, ChangeEvent, memo } from "react";
-import { useNavigate } from "react-router-dom"; 
 import { useAuth } from "@/contexts/AuthContext";
-import { getAuth, signOut } from "firebase/auth"; 
+import { getAuth } from "firebase/auth"; 
 import { ref, set, update, remove, push, onValue, query, orderByChild, equalTo } from "firebase/database";
 import { db } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
@@ -14,7 +13,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu"; 
-import { Download, Eye, Calendar, FileText, Edit, Trash2, Car, Wallet, CheckCircle, XCircle, MapPin, Printer, Plus, Minus, Save, FileImage, ExternalLink, MoreHorizontal, LogOut, History, Clock, ChevronDown } from "lucide-react"; 
+import { Download, Eye, Calendar, FileText, Edit, Trash2, Car, Wallet, CheckCircle, XCircle, MapPin, Printer, Plus, Minus, Save, FileImage, ExternalLink, MoreHorizontal, History, Clock, ChevronDown } from "lucide-react"; 
 import { useToast } from "@/hooks/use-toast";
 import { canViewAllProgrammes, isAdmin, isChiefAdmin, isFinance, isHummanResourceManager, isMonitoringAndEvaluationOfficer, isProjectManager, resolvePermissionPrincipal } from "@/contexts/authhelper";
 import html2canvas from "html2canvas";
@@ -104,6 +103,8 @@ interface Filters {
 interface Stats {
   totalRequests: number;
   pendingRequests: number;
+  approvedRequests: number;
+  completeRequests: number;
   totalAmount: number;
 }
 
@@ -233,7 +234,6 @@ const logHistory = async (recordId: string, action: string, details: string) => 
 
 const RequisitionsPage = () => {
   const { user, userRole, userAttribute, userName } = useAuth();
-  const navigate = useNavigate(); 
   const { toast } = useToast();
   
   // List State
@@ -292,6 +292,8 @@ const RequisitionsPage = () => {
   const [stats, setStats] = useState<Stats>({
     totalRequests: 0,
     pendingRequests: 0,
+    approvedRequests: 0,
+    completeRequests: 0,
     totalAmount: 0
   });
 
@@ -308,10 +310,6 @@ const RequisitionsPage = () => {
     [userRole, userAttribute]
   );
   const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
-  const userIsHummanResourceManager = useMemo(
-    () => isHummanResourceManager(permissionPrincipal),
-    [permissionPrincipal]
-  );
   const userHasProjectManagerRights = useMemo(() => isProjectManager(permissionPrincipal), [permissionPrincipal]);
   const userHasHummanResourceRights = useMemo(
     () => isHummanResourceManager(permissionPrincipal),
@@ -322,13 +320,17 @@ const RequisitionsPage = () => {
     [permissionPrincipal]
   );
   const userHasFinanceRights = useMemo(() => isFinance(permissionPrincipal), [permissionPrincipal]);
+  const userHasHrLikeViewRights = useMemo(
+    () => userHasHummanResourceRights || userHasFinanceRights,
+    [userHasHummanResourceRights, userHasFinanceRights]
+  );
   const userCanViewAllProgrammes = useMemo(
     () => canViewAllProgrammes(userRole, userAttribute),
     [userRole, userAttribute]
   );
   const canViewAllRequisitionProgrammes = useMemo(
-    () => userCanViewAllProgrammes || userHasHummanResourceRights || userHasProjectManagerRights,
-    [userCanViewAllProgrammes, userHasHummanResourceRights, userHasProjectManagerRights]
+    () => userCanViewAllProgrammes || userHasHrLikeViewRights || userHasProjectManagerRights,
+    [userCanViewAllProgrammes, userHasHrLikeViewRights, userHasProjectManagerRights]
   );
   const canApproveRequisition =
     isAdmin(permissionPrincipal) ||
@@ -337,9 +339,22 @@ const RequisitionsPage = () => {
     userHasMerRights;
   const canAuthorizeRequisition = userHasHummanResourceRights;
   const canCompleteTransaction = userHasFinanceRights;
+  const canSendRequisitionSms = useMemo(
+    () => userIsChiefAdmin,
+    [userIsChiefAdmin]
+  );
   const canMarkRequisitionComplete = useMemo(
-    () => !userHasFinanceRights && (canApproveRequisition || canAuthorizeRequisition || userCanViewAllProgrammes),
-    [userHasFinanceRights, canApproveRequisition, canAuthorizeRequisition, userCanViewAllProgrammes]
+    () =>
+      userHasFinanceRights ||
+      canApproveRequisition ||
+      canAuthorizeRequisition ||
+      userCanViewAllProgrammes,
+    [
+      userHasFinanceRights,
+      canApproveRequisition,
+      canAuthorizeRequisition,
+      userCanViewAllProgrammes,
+    ]
   );
   const canDeleteRequisition = useMemo(
     () => userIsChiefAdmin,
@@ -455,7 +470,13 @@ const RequisitionsPage = () => {
   useEffect(() => {
     if (allRequisitions.length === 0) {
       setFilteredRequisitions([]);
-      setStats({ totalRequests: 0, pendingRequests: 0, totalAmount: 0 });
+      setStats({
+        totalRequests: 0,
+        pendingRequests: 0,
+        approvedRequests: 0,
+        completeRequests: 0,
+        totalAmount: 0,
+      });
       return;
     }
     const filteredList = allRequisitions.filter(record => {
@@ -491,9 +512,17 @@ const RequisitionsPage = () => {
     
     const totalRequests = sortedFilteredList.length;
     const pendingRequests = sortedFilteredList.filter(r => r.status === 'pending').length;
+    const approvedRequests = sortedFilteredList.filter(r => r.status === 'approved').length;
+    const completeRequests = sortedFilteredList.filter(r => r.status === 'complete').length;
     const totalAmount = sortedFilteredList.reduce((sum, r) => sum + (r.totalAmount || 0), 0);
     
-    setStats({ totalRequests, pendingRequests, totalAmount });
+    setStats({
+      totalRequests,
+      pendingRequests,
+      approvedRequests,
+      completeRequests,
+      totalAmount,
+    });
     
     const totalPages = Math.ceil(sortedFilteredList.length / pagination.limit);
     const currentPage = Math.min(pagination.page, Math.max(1, totalPages));
@@ -527,16 +556,6 @@ const RequisitionsPage = () => {
     if (selectedRecords.length === 0) return [];
     const selectedSet = new Set(selectedRecords);
     return allRequisitions.filter((record) => selectedSet.has(record.id));
-  };
-
-  const handleLogout = async () => {
-    try {
-      await signOut(getAuth());
-      navigate("/auth");
-      toast({ title: "Logged out", description: "You have been logged out successfully." });
-    } catch (error) {
-      toast({ title: "Error", description: "Failed to log out", variant: "destructive" });
-    }
   };
 
   const handleProgramChange = (program: string) => {
@@ -704,7 +723,7 @@ const RequisitionsPage = () => {
 
       if (statusChanged && nextStatus === 'complete') {
         if (!canMarkRequisitionComplete) {
-          toast({ title: "Unauthorized", description: "Only non-finance authorized users can mark requisitions complete.", variant: "destructive" });
+          toast({ title: "Unauthorized", description: "You do not have permission to mark requisitions complete.", variant: "destructive" });
           return;
         }
         const authorizedBy = String(editFormData.authorizedBy || editRecord.authorizedBy || '').trim();
@@ -728,6 +747,11 @@ const RequisitionsPage = () => {
         }
         updatePayload.completedBy = actorName;
         updatePayload.completedAt = Date.now();
+      }
+
+      if (statusChanged && nextStatus === "rejected" && !canSendRequisitionSms) {
+        toast({ title: "Unauthorized", description: "Only Chief Admin can send SMS/reject requisitions.", variant: "destructive" });
+        return;
       }
 
       if (editRecord.type === 'fuel and Service') {
@@ -869,6 +893,11 @@ const RequisitionsPage = () => {
     }
 
     if (decision === "reject") {
+      if (!canSendRequisitionSms) {
+        toast({ title: "Unauthorized", description: "Only Chief Admin can send SMS/reject requisitions.", variant: "destructive" });
+        setHrDecisionAction("");
+        return;
+      }
       setRejectionMessageText("");
       setIsRejectDialogOpen(true);
     }
@@ -876,8 +905,8 @@ const RequisitionsPage = () => {
 
   const handleRejectRequisition = async () => {
     if (!viewingRecord) return;
-    if (!canAuthorizeRequisition) {
-      toast({ title: "Unauthorized", description: "Only Humman Resource Manager can reject requisitions.", variant: "destructive" });
+    if (!canSendRequisitionSms) {
+      toast({ title: "Unauthorized", description: "Only Chief Admin can send SMS/reject requisitions.", variant: "destructive" });
       return;
     }
     if (viewingRecord.status !== "approved") {
@@ -974,7 +1003,7 @@ const RequisitionsPage = () => {
   const handleMarkComplete = async () => {
     if (!viewingRecord) return;
     if (!canMarkRequisitionComplete) {
-      toast({ title: "Unauthorized", description: "Only non-finance authorized users can mark requisition complete.", variant: "destructive" });
+      toast({ title: "Unauthorized", description: "You do not have permission to mark requisitions complete.", variant: "destructive" });
       return;
     }
     if (viewingRecord.status !== 'approved') {
@@ -1119,8 +1148,8 @@ const RequisitionsPage = () => {
   };
 
   const handleBulkReject = async () => {
-    if (!canAuthorizeRequisition) {
-      toast({ title: "Unauthorized", description: "Only Humman Resource Manager can reject requisitions.", variant: "destructive" });
+    if (!canSendRequisitionSms) {
+      toast({ title: "Unauthorized", description: "Only Chief Admin can send SMS/reject requisitions.", variant: "destructive" });
       return;
     }
 
@@ -1273,7 +1302,7 @@ const RequisitionsPage = () => {
 
   const handleBulkMarkComplete = async () => {
     if (!canMarkRequisitionComplete) {
-      toast({ title: "Unauthorized", description: "Only non-finance authorized users can mark requisitions complete.", variant: "destructive" });
+      toast({ title: "Unauthorized", description: "You do not have permission to mark requisitions complete.", variant: "destructive" });
       return;
     }
 
@@ -1325,7 +1354,7 @@ const RequisitionsPage = () => {
 
   const handleMarkAllComplete = async () => {
     if (!canMarkRequisitionComplete) {
-      toast({ title: "Unauthorized", description: "Only non-finance authorized users can mark requisitions complete.", variant: "destructive" });
+      toast({ title: "Unauthorized", description: "You do not have permission to mark requisitions complete.", variant: "destructive" });
       return;
     }
 
@@ -1497,12 +1526,14 @@ const RequisitionsPage = () => {
         <CardTitle className="text-sm font-medium text-gray-400">{title}</CardTitle>
       </CardHeader>
       <CardContent className="pl-6 pb-4 flex flex-col">
-        <div className="flex items-center gap-3 mb-1">
-            <div className="rounded-full bg-gray-50 p-2">
-                <Icon className={`h-5 w-5 text-${color}-600`} />
-            </div>
-            <div className="text-xl font-bold text-gray-800">{value}</div>
-        </div>
+        {(value !== undefined && value !== null && value !== "") && (
+          <div className="flex items-center gap-3 mb-1">
+              <div className="rounded-full bg-gray-50 p-2">
+                  <Icon className={`h-5 w-5 text-${color}-600`} />
+              </div>
+              <div className="text-xl font-bold text-gray-800">{value}</div>
+          </div>
+        )}
         {description && <p className="text-xs mt-2 bg-gray-50 px-2 py-1 rounded-md border border-slate-100">{description}</p>}
       </CardContent>
     </Card>
@@ -1626,7 +1657,7 @@ const RequisitionsPage = () => {
 
     <div className="space-y-6 px-2 sm:px-4 md:px-0 items-center">
       {/* Header Section */}
-       {!userRole || !userIsHummanResourceManager && ( <div className="flex flex-col gap-4 text-sm">
+       {(!userRole || !userHasHrLikeViewRights) && ( <div className="flex flex-col gap-4 text-sm">
              <div className="flex flex-col xl:flex-row xl:justify-between xl:items-end gap-4 w-full">
        <div className="w-full xl:w-auto flex flex-wrap items-center gap-3">
           <h2 className="text-md font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
@@ -1648,7 +1679,7 @@ const RequisitionsPage = () => {
                 </div>
             </div>
             
-            {userIsChiefAdmin && !userIsHummanResourceManager && (
+            {userIsChiefAdmin && !userHasHrLikeViewRights && (
                 <div className="space-y-2 w-full lg:w-[180px]">
                     <Select value={activeProgram} onValueChange={handleProgramChange} disabled={availablePrograms.length === 0}>
                         <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white h-9 font-bold w-full">
@@ -1669,11 +1700,6 @@ const RequisitionsPage = () => {
           
         <div className="flex flex-wrap gap-2 w-full xl:w-auto mt-2 xl:mt-0 justify-end">
            {userHasFinanceRights && (
-             <Button onClick={handleLogout} variant="outline" size="sm" className="h-9 px-6 w-full xl:w-auto text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700">
-               <LogOut className="h-4 w-4 mr-2" /> Logout
-             </Button>
-           )}
-           {userHasFinanceRights && (
             <div className="flex justify-between items-center text-sm">
               <div className="font-semibold text-gray-700 rounded-md bg-gray-100 px-2 py-1 border border-gray-300">
                 <span className="font-normal">
@@ -1682,7 +1708,7 @@ const RequisitionsPage = () => {
               </div>
             </div>
            )}
-           { !userIsHummanResourceManager && userRole !== 'admin' && (
+           { !userHasHrLikeViewRights && userRole !== 'admin' && (
              <Button onClick={() => {}} disabled={exportLoading} className="bg-gradient-to-r from-blue-800 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white shadow-md text-xs h-9 px-6 w-full xl:w-auto">
                 <Download className="h-4 w-4 mr-2" /> Export ({filteredRequisitions.length})
               </Button>
@@ -1693,7 +1719,7 @@ const RequisitionsPage = () => {
 
               
             </div> )}
-      {userIsHummanResourceManager && ( <div className="flex flex-col gap-4 text-sm">
+      {userHasHrLikeViewRights && ( <div className="flex flex-col gap-4 text-sm">
     
       <div className="flex flex-col xl:flex-row xl:justify-between xl:items-end gap-4 w-full">
         
@@ -1719,7 +1745,7 @@ const RequisitionsPage = () => {
                 </div>
             </div>
             
-            {userIsChiefAdmin && !userIsHummanResourceManager && (
+            {userIsChiefAdmin && !userHasHrLikeViewRights && (
                 <div className="space-y-2 w-full lg:w-[180px]">
                     <Select value={activeProgram} onValueChange={handleProgramChange} disabled={availablePrograms.length === 0}>
                         <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white h-9 font-bold w-full">
@@ -1739,12 +1765,7 @@ const RequisitionsPage = () => {
             </div>
           
         <div className="flex flex-wrap gap-2 w-full xl:w-auto mt-2 xl:mt-0 justify-end">
-           {userHasFinanceRights && (
-             <Button onClick={handleLogout} variant="outline" size="sm" className="h-9 px-6 w-full xl:w-auto text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700">
-               <LogOut className="h-4 w-4 mr-2" /> Logout
-             </Button>
-           )}
-           { !userIsHummanResourceManager && (
+           { !userHasHrLikeViewRights && (
              <Button onClick={() => {}} disabled={exportLoading} className="bg-gradient-to-r from-blue-800 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white shadow-md text-xs h-9 px-6 w-full xl:w-auto">
                 <Download className="h-4 w-4 mr-2" /> Export ({filteredRequisitions.length})
               </Button>
@@ -1758,7 +1779,12 @@ const RequisitionsPage = () => {
       {/* Stats Section */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         <StatsCard title="TOTAL REQUESTS" value={stats.totalRequests.toLocaleString()} icon={FileText} color="blue"/>
-        <StatsCard title="PENDING APPROVAL" value={stats.pendingRequests.toLocaleString()} icon={Calendar} color="orange"/>
+        <StatsCard
+          title="REQUEST STATUS"
+          icon={Calendar}
+          color="orange"
+          description={`Pending: ${stats.pendingRequests.toLocaleString()} | Complete: ${stats.completeRequests.toLocaleString()} | Approved: ${stats.approvedRequests.toLocaleString()}`}
+        />
         <StatsCard title="TOTAL AMOUNT" value={`KES ${millify(stats.totalAmount)}`} icon={Wallet} color="green"/>
       </div>
 
@@ -1780,7 +1806,7 @@ const RequisitionsPage = () => {
 
             <div className="space-y-2">
                 <Label className="font-semibold text-gray-700 text-xs uppercase">Status</Label>
-                <Select value={filters.status} onValueChange={(value) => handleFilterChange("status", value)} disabled={userIsHummanResourceManager}>
+                <Select value={filters.status} onValueChange={(value) => handleFilterChange("status", value)} disabled={userHasHrLikeViewRights}>
                     <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white h-9"><SelectValue placeholder="All Statuses" /></SelectTrigger>
                     <SelectContent>
                         <SelectItem value="all">All Statuses</SelectItem>
@@ -1840,15 +1866,30 @@ const RequisitionsPage = () => {
                         <CheckCircle className="h-4 w-4 mr-2 text-green-600" />
                         Authorize Selected
                       </DropdownMenuItem>
-                      <DropdownMenuItem
-                        onClick={() => setIsBulkRejectDialogOpen(true)}
-                        className="text-red-600 focus:text-red-700 focus:bg-red-50"
-                      >
-                        <XCircle className="h-4 w-4 mr-2" />
-                        Reject Selected
-                      </DropdownMenuItem>
+                      {canSendRequisitionSms && (
+                        <DropdownMenuItem
+                          onClick={() => setIsBulkRejectDialogOpen(true)}
+                          className="text-red-600 focus:text-red-700 focus:bg-red-50"
+                        >
+                          <XCircle className="h-4 w-4 mr-2" />
+                          Reject Selected
+                        </DropdownMenuItem>
+                      )}
                     </DropdownMenuContent>
                   </DropdownMenu>
+                )}
+
+                {canSendRequisitionSms && !canAuthorizeRequisition && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="destructive"
+                    onClick={() => setIsBulkRejectDialogOpen(true)}
+                    disabled={isBulkProcessing}
+                  >
+                    <XCircle className="h-4 w-4 mr-2" />
+                    Reject Selected
+                  </Button>
                 )}
 
                 {canCompleteTransaction && (
@@ -1954,6 +1995,9 @@ const RequisitionsPage = () => {
                                {record.status === "approved" && !!record.transactionCompletedBy && (
                                  <span className="text-[10px] text-blue-700 font-medium">Transaction complete</span>
                                )}
+                               {getRequisitionImages(record.requisitionUrl).length > 0 && (
+                                 <span className="text-[10px] text-emerald-700 font-medium">Images uploaded</span>
+                               )}
                              </div>
                         </td>
                         <td className="py-2 px-3 text-right">
@@ -1976,10 +2020,13 @@ const RequisitionsPage = () => {
                                 <DropdownMenuItem onClick={() => handleOpenImageViewer(record)}>
                                     <FileImage className="mr-2 h-4 w-4 text-indigo-600" /> <span className="text-gray-700">View Images</span>
                                 </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => handleOpenImageViewer(record, true)}>
+                                    <Printer className="mr-2 h-4 w-4 text-indigo-700" /> <span className="text-gray-700">Print Images</span>
+                                </DropdownMenuItem>
 
-                                {!userIsHummanResourceManager && <DropdownMenuSeparator />}
+                                {!userHasHrLikeViewRights && <DropdownMenuSeparator />}
                                 
-                                {!userIsHummanResourceManager && userRole !== 'admin' && (
+                                {!userHasHrLikeViewRights && userRole !== 'admin' && (
                                     <DropdownMenuItem onClick={() => openEditDialog(record)}>
                                         <Edit className="mr-2 h-4 w-4 text-gray-600" /> <span className="text-gray-700">Edit</span>
                                     </DropdownMenuItem>
@@ -2166,14 +2213,29 @@ const RequisitionsPage = () => {
                 <div className="w-full sm:w-[250px]">
                   <Select value={hrDecisionAction} onValueChange={handleHrDecisionChange}>
                     <SelectTrigger className="h-10 border-indigo-300 bg-indigo-50 text-indigo-900 focus:ring-indigo-500">
-                      <SelectValue placeholder="HR action: authorize or reject" />
+                      <SelectValue placeholder="HR action: authorize" />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="authorize">Authorize requisition</SelectItem>
-                      <SelectItem value="reject">Reject requisition</SelectItem>
+                      {canSendRequisitionSms && (
+                        <SelectItem value="reject">Reject requisition</SelectItem>
+                      )}
                     </SelectContent>
                   </Select>
                 </div>
+              )}
+
+              {canSendRequisitionSms && !canAuthorizeRequisition && viewingRecord?.status === 'approved' && (
+                <Button
+                  onClick={() => {
+                    setRejectionMessageText("");
+                    setIsRejectDialogOpen(true);
+                  }}
+                  variant="destructive"
+                  className="flex-1 sm:flex-none"
+                >
+                  <XCircle className="h-4 w-4 mr-2" /> Reject Requisition
+                </Button>
               )}
 
         
@@ -2212,7 +2274,8 @@ const RequisitionsPage = () => {
           <DialogHeader>
             <DialogTitle>Reject Requisition</DialogTitle>
             <DialogDescription>
-              Enter the SMS message to send to the requester.
+              Enter the SMS message to send to the requester. Only Chief Admin
+              can perform this action.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
@@ -2256,7 +2319,8 @@ const RequisitionsPage = () => {
           <DialogHeader>
             <DialogTitle>Reject Selected Requisitions</DialogTitle>
             <DialogDescription>
-              Enter one SMS message to apply to all selected approved requisitions.
+              Enter one SMS message to apply to all selected approved
+              requisitions. Only Chief Admin can perform this action.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
@@ -2389,7 +2453,7 @@ const RequisitionsPage = () => {
                       <SelectContent>
                         <SelectItem value="pending">Pending</SelectItem>
                         <SelectItem value="approved">Approved</SelectItem>
-                        <SelectItem value="rejected">Rejected</SelectItem>
+                        {canSendRequisitionSms && <SelectItem value="rejected">Rejected</SelectItem>}
                         {canMarkRequisitionComplete && <SelectItem value="complete">Complete</SelectItem>}
                       </SelectContent>
                     </Select>

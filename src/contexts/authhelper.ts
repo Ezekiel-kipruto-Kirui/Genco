@@ -101,10 +101,11 @@ export const canAccessDashboard = (
   userAttribute?: string | null
 ): boolean => {
   const principal = resolvePermissionPrincipal(userRole, userAttribute);
-  if (isFinance(principal) || isOfftakeOfficer(principal)) return false;
+  if (isOfftakeOfficer(principal)) return false;
   return (
     isChiefAdmin(principal) ||
     isAdmin(principal) ||
+    isFinance(principal) ||
     isProjectManager(principal) ||
     isHummanResourceManager(principal) ||
     isFullAccessAttribute(principal)
@@ -153,7 +154,7 @@ export const getLandingRouteForRole = (
 ): string => {
   const principal = resolvePermissionPrincipal(userRole, userAttribute);
 
-  if (isFinance(principal)) return "/requisition";
+  if (isFinance(principal)) return "/dashboard/requisition";
   if (isOfftakeOfficer(principal)) return "/orders";
   if (canAccessDashboard(userRole, userAttribute)) return "/dashboard";
   return "/auth";
