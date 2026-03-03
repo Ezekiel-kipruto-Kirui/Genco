@@ -343,6 +343,10 @@ const RequisitionsPage = () => {
     () => userIsChiefAdmin,
     [userIsChiefAdmin]
   );
+  const canRejectRequisition = useMemo(
+    () => canAuthorizeRequisition || canSendRequisitionSms,
+    [canAuthorizeRequisition, canSendRequisitionSms]
+  );
   const canMarkRequisitionComplete = useMemo(
     () =>
       userHasFinanceRights ||
@@ -479,7 +483,7 @@ const RequisitionsPage = () => {
       });
       return;
     }
-    const filteredList = allRequisitions.filter(record => {
+    const baseFilteredList = allRequisitions.filter(record => {
       if (filters.startDate || filters.endDate) {
         const recordDate = parseDate(record.createdAt);
         if (recordDate) {
@@ -493,11 +497,9 @@ const RequisitionsPage = () => {
           if (endDate && recordDateOnly > endDate) return false;
         } else if (filters.startDate || filters.endDate) return false;
       }
-      
-      if (filters.status !== "all" && record.status?.toLowerCase() !== filters.status.toLowerCase()) return false;
-      
+
       if (filters.type !== "all" && record.type?.toLowerCase() !== filters.type.toLowerCase()) return false;
-      
+
       if (filters.search) {
         const term = filters.search.toLowerCase();
         const match = [
@@ -507,14 +509,26 @@ const RequisitionsPage = () => {
       }
       return true;
     });
-    const sortedFilteredList = sortRequisitionsByLatest(filteredList);
+
+    const roleScopedList = baseFilteredList.filter((record) => {
+      if (userHasHummanResourceRights) return record.status === "approved";
+      if (userHasFinanceRights) return !!String(record.authorizedBy || "").trim();
+      return true;
+    });
+
+    const tableFilteredList = roleScopedList.filter((record) => {
+      if (filters.status !== "all" && record.status?.toLowerCase() !== filters.status.toLowerCase()) return false;
+      return true;
+    });
+
+    const sortedFilteredList = sortRequisitionsByLatest(tableFilteredList);
     setFilteredRequisitions(sortedFilteredList);
-    
-    const totalRequests = sortedFilteredList.length;
-    const pendingRequests = sortedFilteredList.filter(r => r.status === 'pending').length;
-    const approvedRequests = sortedFilteredList.filter(r => r.status === 'approved').length;
-    const completeRequests = sortedFilteredList.filter(r => r.status === 'complete').length;
-    const totalAmount = sortedFilteredList.reduce((sum, r) => sum + (r.totalAmount || 0), 0);
+
+    const totalRequests = baseFilteredList.length;
+    const pendingRequests = baseFilteredList.filter(r => r.status === 'pending').length;
+    const approvedRequests = baseFilteredList.filter(r => r.status === 'approved').length;
+    const completeRequests = baseFilteredList.filter(r => r.status === 'complete').length;
+    const totalAmount = baseFilteredList.reduce((sum, r) => sum + (r.totalAmount || 0), 0);
     
     setStats({
       totalRequests,
@@ -529,7 +543,14 @@ const RequisitionsPage = () => {
     setPagination(prev => ({
       ...prev, page: currentPage, totalPages, hasNext: currentPage < totalPages, hasPrev: currentPage > 1
     }));
-  }, [allRequisitions, filters, pagination.limit, pagination.page]);
+  }, [
+    allRequisitions,
+    filters,
+    pagination.limit,
+    pagination.page,
+    userHasHummanResourceRights,
+    userHasFinanceRights,
+  ]);
 
   useEffect(() => {
     const filteredIds = new Set(filteredRequisitions.map((record) => record.id));
@@ -749,8 +770,8 @@ const RequisitionsPage = () => {
         updatePayload.completedAt = Date.now();
       }
 
-      if (statusChanged && nextStatus === "rejected" && !canSendRequisitionSms) {
-        toast({ title: "Unauthorized", description: "Only Chief Admin can send SMS/reject requisitions.", variant: "destructive" });
+      if (statusChanged && nextStatus === "rejected" && !canRejectRequisition) {
+        toast({ title: "Unauthorized", description: "Only HR or Chief Admin can reject requisitions.", variant: "destructive" });
         return;
       }
 
@@ -893,8 +914,8 @@ const RequisitionsPage = () => {
     }
 
     if (decision === "reject") {
-      if (!canSendRequisitionSms) {
-        toast({ title: "Unauthorized", description: "Only Chief Admin can send SMS/reject requisitions.", variant: "destructive" });
+      if (!canRejectRequisition) {
+        toast({ title: "Unauthorized", description: "Only HR or Chief Admin can reject requisitions.", variant: "destructive" });
         setHrDecisionAction("");
         return;
       }
@@ -905,8 +926,8 @@ const RequisitionsPage = () => {
 
   const handleRejectRequisition = async () => {
     if (!viewingRecord) return;
-    if (!canSendRequisitionSms) {
-      toast({ title: "Unauthorized", description: "Only Chief Admin can send SMS/reject requisitions.", variant: "destructive" });
+    if (!canRejectRequisition) {
+      toast({ title: "Unauthorized", description: "Only HR or Chief Admin can reject requisitions.", variant: "destructive" });
       return;
     }
     if (viewingRecord.status !== "approved") {
@@ -1148,8 +1169,8 @@ const RequisitionsPage = () => {
   };
 
   const handleBulkReject = async () => {
-    if (!canSendRequisitionSms) {
-      toast({ title: "Unauthorized", description: "Only Chief Admin can send SMS/reject requisitions.", variant: "destructive" });
+    if (!canRejectRequisition) {
+      toast({ title: "Unauthorized", description: "Only HR or Chief Admin can reject requisitions.", variant: "destructive" });
       return;
     }
 
@@ -1866,7 +1887,7 @@ const RequisitionsPage = () => {
                         <CheckCircle className="h-4 w-4 mr-2 text-green-600" />
                         Authorize Selected
                       </DropdownMenuItem>
-                      {canSendRequisitionSms && (
+                      {canRejectRequisition && (
                         <DropdownMenuItem
                           onClick={() => setIsBulkRejectDialogOpen(true)}
                           className="text-red-600 focus:text-red-700 focus:bg-red-50"
@@ -1879,7 +1900,7 @@ const RequisitionsPage = () => {
                   </DropdownMenu>
                 )}
 
-                {canSendRequisitionSms && !canAuthorizeRequisition && (
+                {canRejectRequisition && !canAuthorizeRequisition && (
                   <Button
                     type="button"
                     size="sm"
@@ -1986,12 +2007,38 @@ const RequisitionsPage = () => {
                         </td>
                         <td className="py-2 px-3">
                              <div className="flex flex-col gap-1">
-                               <Badge 
-                                  variant={record.status === 'approved' || record.status === 'complete' ? "default" : record.status === 'rejected' ? "destructive" : "outline"}
-                                  className={record.status === 'approved' ? "bg-green-100 text-green-800 hover:bg-green-100" : record.status === 'complete' ? "bg-blue-100 text-blue-800 hover:bg-blue-100" : ""}
-                               >
-                                  {record.status}
-                               </Badge>
+                               {(() => {
+                                 const isAuthorized =
+                                   record.status === "approved" &&
+                                   !!String(record.authorizedBy || "").trim();
+                                 return (
+                                <Badge 
+                                   variant={
+                                     isAuthorized ||
+                                     record.status === "approved" ||
+                                     record.status === "complete" ?
+                                       "default" :
+                                       record.status === "rejected" ?
+                                         "destructive" :
+                                         "outline"
+                                   }
+                                   className={
+                                     isAuthorized ?
+                                       "bg-indigo-100 text-indigo-800 hover:bg-indigo-100" :
+                                       record.status === "approved" ?
+                                         "bg-green-100 text-green-800 hover:bg-green-100" :
+                                         record.status === "complete" ?
+                                           "bg-blue-100 text-blue-800 hover:bg-blue-100" :
+                                           ""
+                                   }
+                                >
+                                   {isAuthorized ? "authorized" : record.status}
+                                </Badge>
+                                 );
+                               })()}
+                                {record.status === "rejected" && (
+                                  <span className="text-[10px] text-red-700 font-medium">Rejected</span>
+                                )}
                                {record.status === "approved" && !!record.transactionCompletedBy && (
                                  <span className="text-[10px] text-blue-700 font-medium">Transaction complete</span>
                                )}
@@ -2213,11 +2260,11 @@ const RequisitionsPage = () => {
                 <div className="w-full sm:w-[250px]">
                   <Select value={hrDecisionAction} onValueChange={handleHrDecisionChange}>
                     <SelectTrigger className="h-10 border-indigo-300 bg-indigo-50 text-indigo-900 focus:ring-indigo-500">
-                      <SelectValue placeholder="HR action: authorize" />
+                      <SelectValue placeholder="HR action: authorize or reject" />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="authorize">Authorize requisition</SelectItem>
-                      {canSendRequisitionSms && (
+                      {canRejectRequisition && (
                         <SelectItem value="reject">Reject requisition</SelectItem>
                       )}
                     </SelectContent>
@@ -2225,7 +2272,7 @@ const RequisitionsPage = () => {
                 </div>
               )}
 
-              {canSendRequisitionSms && !canAuthorizeRequisition && viewingRecord?.status === 'approved' && (
+              {canRejectRequisition && !canAuthorizeRequisition && viewingRecord?.status === 'approved' && (
                 <Button
                   onClick={() => {
                     setRejectionMessageText("");
@@ -2274,8 +2321,8 @@ const RequisitionsPage = () => {
           <DialogHeader>
             <DialogTitle>Reject Requisition</DialogTitle>
             <DialogDescription>
-              Enter the SMS message to send to the requester. Only Chief Admin
-              can perform this action.
+              Enter the SMS message to send to the requester. Only HR or Chief
+              Admin can perform this action.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
@@ -2320,7 +2367,7 @@ const RequisitionsPage = () => {
             <DialogTitle>Reject Selected Requisitions</DialogTitle>
             <DialogDescription>
               Enter one SMS message to apply to all selected approved
-              requisitions. Only Chief Admin can perform this action.
+              requisitions. Only HR or Chief Admin can perform this action.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
@@ -2453,7 +2500,7 @@ const RequisitionsPage = () => {
                       <SelectContent>
                         <SelectItem value="pending">Pending</SelectItem>
                         <SelectItem value="approved">Approved</SelectItem>
-                        {canSendRequisitionSms && <SelectItem value="rejected">Rejected</SelectItem>}
+                        {canRejectRequisition && <SelectItem value="rejected">Rejected</SelectItem>}
                         {canMarkRequisitionComplete && <SelectItem value="complete">Complete</SelectItem>}
                       </SelectContent>
                     </Select>
