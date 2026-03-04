@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { onValue, orderByChild, equalTo, query, ref, remove, update } from "firebase/database";
 import { db } from "@/lib/firebase";
-import { canViewAllProgrammes } from "@/contexts/authhelper";
+import { canViewAllProgrammes, isChiefAdmin } from "@/contexts/authhelper";
 import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -207,6 +207,17 @@ const OrdersPage = () => {
     () => canViewAllProgrammes(userRole, userAttribute),
     [userRole, userAttribute]
   );
+  const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
+
+  const ensureChiefAdminAccess = () => {
+    if (userIsChiefAdmin) return true;
+    toast({
+      title: "Unauthorized",
+      description: "Only chief admin can edit or delete orders.",
+      variant: "destructive",
+    });
+    return false;
+  };
 
   useEffect(() => {
     if (userCanViewAllProgrammeData) {
@@ -446,6 +457,7 @@ const OrdersPage = () => {
   };
 
   const startGoatsBoughtEdit = (row: BatchOrderRow) => {
+    if (!ensureChiefAdminAccess()) return;
     setEditingBatchId(row.batchId);
     setGoatsBoughtDraft(String(row.goatsBought || 0));
   };
@@ -456,6 +468,7 @@ const OrdersPage = () => {
   };
 
   const saveGoatsBoughtEdit = async (row: BatchOrderRow) => {
+    if (!ensureChiefAdminAccess()) return;
     const nextValue = Number(goatsBoughtDraft);
     if (!Number.isFinite(nextValue) || nextValue < 0) {
       toast({ title: "Invalid value", description: "Goats bought must be a number 0 or greater.", variant: "destructive" });
@@ -483,6 +496,7 @@ const OrdersPage = () => {
   };
 
   const startOrderEdit = (row: BatchOrderRow, item: NormalizedOrderItem, index: number) => {
+    if (!ensureChiefAdminAccess()) return;
     setEditingOrderKey(`${row.batchId}:${index}`);
     setOrderGoatsDraft(String(item.goats || 0));
     setOrderDateDraft(toInputDate(item.date));
@@ -495,6 +509,7 @@ const OrdersPage = () => {
   };
 
   const saveOrderEdit = async (row: BatchOrderRow, index: number) => {
+    if (!ensureChiefAdminAccess()) return;
     const nextGoats = Number(orderGoatsDraft);
     if (!Number.isFinite(nextGoats) || nextGoats < 0) {
       toast({ title: "Invalid value", description: "Order goats must be a number 0 or greater.", variant: "destructive" });
@@ -525,6 +540,7 @@ const OrdersPage = () => {
   };
 
   const deleteOrderItem = async (row: BatchOrderRow, index: number) => {
+    if (!ensureChiefAdminAccess()) return;
     const confirmed = window.confirm("Delete this order item from the batch?");
     if (!confirmed) return;
 
@@ -539,6 +555,7 @@ const OrdersPage = () => {
   };
 
   const deleteBatch = async (row: BatchOrderRow) => {
+    if (!ensureChiefAdminAccess()) return;
     const confirmed = window.confirm("Delete this batch and all its orders?");
     if (!confirmed) return;
 
@@ -707,7 +724,7 @@ const OrdersPage = () => {
                       <TableCell className="text-[12px] text-left">{row.username}</TableCell>
                       <TableCell className="text-[12px] text-right font-semibold tabular-nums">{row.totalGoats.toLocaleString()}</TableCell>
                       <TableCell className="text-[12px] text-right">
-                        {editingBatchId === row.batchId ? (
+                        {userIsChiefAdmin && editingBatchId === row.batchId ? (
                           <div className="ml-auto flex w-44 items-center justify-end gap-2">
                             <Input
                               type="number"
@@ -727,9 +744,11 @@ const OrdersPage = () => {
                         ) : (
                           <div className="ml-auto flex items-center justify-end gap-2">
                             <span className="font-semibold tabular-nums">{row.goatsBought.toLocaleString()}</span>
-                            <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => startGoatsBoughtEdit(row)}>
-                              <Pencil className="h-4 w-4" />
-                            </Button>
+                            {userIsChiefAdmin && (
+                              <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => startGoatsBoughtEdit(row)}>
+                                <Pencil className="h-4 w-4" />
+                              </Button>
+                            )}
                           </div>
                         )}
                       </TableCell>
@@ -748,15 +767,16 @@ const OrdersPage = () => {
                             
                             <Eye className="h-4 w-4" />
                           </Button>
-                          <Button
-                            variant="destructive"
-                            size="sm"
-                            className="h-7"
-                            onClick={() => deleteBatch(row)}
-                          >
-                            <Trash2 className="mr-1 h-4 w-4" />
-                            
-                          </Button>
+                          {userIsChiefAdmin && (
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              className="h-7"
+                              onClick={() => deleteBatch(row)}
+                            >
+                              <Trash2 className="mr-1 h-4 w-4" />
+                            </Button>
+                          )}
                         </div>
                       </TableCell>
                     </TableRow>
@@ -839,7 +859,7 @@ const OrdersPage = () => {
                   <TableBody>
                     {ordersDialogRow.items.map((item, index) => {
                       const orderKey = `${ordersDialogRow.batchId}:${index}`;
-                      const isEditingOrder = editingOrderKey === orderKey;
+                      const isEditingOrder = userIsChiefAdmin && editingOrderKey === orderKey;
 
                       return (
                         <TableRow key={orderKey} className="h-9">
@@ -888,24 +908,28 @@ const OrdersPage = () => {
                               </div>
                             ) : (
                               <div className="flex justify-end gap-2">
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  className="h-7"
-                                  onClick={() => startOrderEdit(ordersDialogRow, item, index)}
-                                >
-                                  <Pencil className="mr-1 h-4 w-4" />
-                                  Edit
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="destructive"
-                                  className="h-7"
-                                  onClick={() => deleteOrderItem(ordersDialogRow, index)}
-                                >
-                                  <Trash2 className="mr-1 h-4 w-4" />
-                                  Delete
-                                </Button>
+                                {userIsChiefAdmin && (
+                                  <>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      className="h-7"
+                                      onClick={() => startOrderEdit(ordersDialogRow, item, index)}
+                                    >
+                                      <Pencil className="mr-1 h-4 w-4" />
+                                      Edit
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="destructive"
+                                      className="h-7"
+                                      onClick={() => deleteOrderItem(ordersDialogRow, index)}
+                                    >
+                                      <Trash2 className="mr-1 h-4 w-4" />
+                                      Delete
+                                    </Button>
+                                  </>
+                                )}
                               </div>
                             )}
                           </TableCell>
