@@ -13,12 +13,12 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu"; 
-import { Download, Eye, Calendar, FileText, Edit, Trash2, Car, Wallet, CheckCircle, XCircle, MapPin, Printer, Plus, Minus, Save, FileImage, ExternalLink, MoreHorizontal, History, Clock, ChevronDown } from "lucide-react"; 
+import { Download, Eye, Calendar, Edit, Trash2, Car, Wallet, CheckCircle, XCircle, MapPin, Printer, Plus, Minus, Save, FileImage, ExternalLink, MoreHorizontal, History, Clock, ChevronDown, FileText } from "lucide-react"; 
 import { useToast } from "@/hooks/use-toast";
 import { canViewAllProgrammes, isAdmin, isChiefAdmin, isFinance, isHummanResourceManager, isMonitoringAndEvaluationOfficer, isProjectManager, resolvePermissionPrincipal } from "@/contexts/authhelper";
 import html2canvas from "html2canvas";
 import { jsPDF } from "jspdf";
-import { millify } from 'millify';
+import { millify } from "millify";
 import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
 
 // --- Types ---
@@ -104,6 +104,8 @@ interface Stats {
   totalRequests: number;
   pendingRequests: number;
   approvedRequests: number;
+  authorizedRequests: number;
+  rejectedRequests: number;
   completeRequests: number;
   totalAmount: number;
 }
@@ -293,6 +295,8 @@ const RequisitionsPage = () => {
     totalRequests: 0,
     pendingRequests: 0,
     approvedRequests: 0,
+    authorizedRequests: 0,
+    rejectedRequests: 0,
     completeRequests: 0,
     totalAmount: 0
   });
@@ -478,6 +482,8 @@ const RequisitionsPage = () => {
         totalRequests: 0,
         pendingRequests: 0,
         approvedRequests: 0,
+        authorizedRequests: 0,
+        rejectedRequests: 0,
         completeRequests: 0,
         totalAmount: 0,
       });
@@ -527,6 +533,10 @@ const RequisitionsPage = () => {
     const totalRequests = baseFilteredList.length;
     const pendingRequests = baseFilteredList.filter(r => r.status === 'pending').length;
     const approvedRequests = baseFilteredList.filter(r => r.status === 'approved').length;
+    const authorizedRequests = baseFilteredList.filter(
+      (r) => r.status === "approved" && !!String(r.authorizedBy || "").trim()
+    ).length;
+    const rejectedRequests = baseFilteredList.filter(r => r.status === "rejected").length;
     const completeRequests = baseFilteredList.filter(r => r.status === 'complete').length;
     const totalAmount = baseFilteredList.reduce((sum, r) => sum + (r.totalAmount || 0), 0);
     
@@ -534,6 +544,8 @@ const RequisitionsPage = () => {
       totalRequests,
       pendingRequests,
       approvedRequests,
+      authorizedRequests,
+      rejectedRequests,
       completeRequests,
       totalAmount,
     });
@@ -677,13 +689,21 @@ const RequisitionsPage = () => {
   };
 
   const openEditDialog = useCallback((record: RequisitionData) => {
+    if (!userIsChiefAdmin) {
+      toast({
+        title: "Unauthorized",
+        description: "Only chief admin can edit requisitions.",
+        variant: "destructive",
+      });
+      return;
+    }
     setEditRecord(record);
     setEditFormData({
       ...record,
       items: record.items ? [...record.items] : []
     });
     setIsEditDialogOpen(true);
-  }, []);
+  }, [toast, userIsChiefAdmin]);
 
   const handleEditFieldChange = (field: keyof RequisitionData, value: any) => {
     setEditFormData(prev => ({ ...prev, [field]: value }));
@@ -717,6 +737,14 @@ const RequisitionsPage = () => {
   };
 
   const saveEdit = async () => {
+    if (!userIsChiefAdmin) {
+      toast({
+        title: "Unauthorized",
+        description: "Only chief admin can edit requisitions.",
+        variant: "destructive",
+      });
+      return;
+    }
     if (!editRecord) return;
     setIsSaving(true);
     try {
@@ -815,11 +843,27 @@ const RequisitionsPage = () => {
   };
 
   const confirmDelete = (record: RequisitionData) => {
+    if (!canDeleteRequisition) {
+      toast({
+        title: "Unauthorized",
+        description: "Only chief admin can delete requisitions.",
+        variant: "destructive",
+      });
+      return;
+    }
     setRecordToDelete(record);
     setIsDeleteConfirmOpen(true);
   };
 
   const executeDelete = async () => {
+    if (!canDeleteRequisition) {
+      toast({
+        title: "Unauthorized",
+        description: "Only chief admin can delete requisitions.",
+        variant: "destructive",
+      });
+      return;
+    }
     if (!recordToDelete) return;
     setDeleteLoading(true);
     try {
@@ -1799,14 +1843,21 @@ const RequisitionsPage = () => {
 
       {/* Stats Section */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        <StatsCard title="TOTAL REQUESTS" value={stats.totalRequests.toLocaleString()} icon={FileText} color="blue"/>
         <StatsCard
-          title="REQUEST STATUS"
+          title="TOTAL REQUESTS"
+          value={stats.totalRequests.toLocaleString()}
+          icon={FileText}
+          color="blue"
+          description={`Pending Orders: ${stats.pendingRequests.toLocaleString()} | Approved Orders: ${stats.approvedRequests.toLocaleString()}`}
+        />
+        <StatsCard
+          title="AUTHORIZED REQUISITIONS"
+          value={stats.authorizedRequests.toLocaleString()}
           icon={Calendar}
           color="orange"
-          description={`Pending: ${stats.pendingRequests.toLocaleString()} | Complete: ${stats.completeRequests.toLocaleString()} | Approved: ${stats.approvedRequests.toLocaleString()}`}
+          description={`Rejected Requisitions: ${stats.rejectedRequests.toLocaleString()}`}
         />
-        <StatsCard title="TOTAL AMOUNT" value={`KES ${millify(stats.totalAmount)}`} icon={Wallet} color="green"/>
+        <StatsCard title="TOTAL AMOUNT" value={`KES ${millify(stats.totalAmount)}`} icon={Wallet} color="green" />
       </div>
 
       {/* Filter Section */}
@@ -2071,9 +2122,9 @@ const RequisitionsPage = () => {
                                     <Printer className="mr-2 h-4 w-4 text-indigo-700" /> <span className="text-gray-700">Print Images</span>
                                 </DropdownMenuItem>
 
-                                {!userHasHrLikeViewRights && <DropdownMenuSeparator />}
-                                
-                                {!userHasHrLikeViewRights && userRole !== 'admin' && (
+                                {userIsChiefAdmin && <DropdownMenuSeparator />}
+
+                                {userIsChiefAdmin && (
                                     <DropdownMenuItem onClick={() => openEditDialog(record)}>
                                         <Edit className="mr-2 h-4 w-4 text-gray-600" /> <span className="text-gray-700">Edit</span>
                                     </DropdownMenuItem>
