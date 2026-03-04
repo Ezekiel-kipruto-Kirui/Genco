@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef, ChangeEvent, memo } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { getAuth } from "firebase/auth"; 
-import { ref, set, update, remove, push, onValue, query, orderByChild, equalTo } from "firebase/database";
+import { ref, set, update, remove, push, onValue } from "firebase/database";
 import { db } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -430,14 +430,8 @@ const RequisitionsPage = () => {
       setLoading(true);
     }
 
-    let reqQuery;
-    if (canViewAllRequisitionProgrammes || activeProgram === "ALL") {
-        reqQuery = ref(db, 'requisitions');
-    } else {
-        reqQuery = query(ref(db, 'requisitions'), orderByChild('programme'), equalTo(activeProgram));
-    }
-
-    const unsubscribe = onValue(reqQuery, (snapshot) => {
+    // Always fetch from the full requisitions collection, then apply view/program filters locally.
+    const unsubscribe = onValue(ref(db, 'requisitions'), (snapshot) => {
         const data = snapshot.val();
         if (!data) {
             setAllRequisitions([]);
@@ -490,6 +484,15 @@ const RequisitionsPage = () => {
       return;
     }
     const baseFilteredList = allRequisitions.filter(record => {
+      if (
+        !canViewAllRequisitionProgrammes &&
+        activeProgram &&
+        activeProgram !== "ALL" &&
+        String(record.programme || "").trim() !== activeProgram
+      ) {
+        return false;
+      }
+
       if (filters.startDate || filters.endDate) {
         const recordDate = parseDate(record.createdAt);
         if (recordDate) {
@@ -518,7 +521,11 @@ const RequisitionsPage = () => {
 
     const roleScopedList = baseFilteredList.filter((record) => {
       if (userHasHummanResourceRights) return record.status === "approved";
-      if (userHasFinanceRights) return !!String(record.authorizedBy || "").trim();
+      if (userHasFinanceRights) {
+        const isAuthorized = !!String(record.authorizedBy || "").trim();
+        const isCompleted = String(record.status || "").toLowerCase() === "complete";
+        return isAuthorized || isCompleted;
+      }
       return true;
     });
 
@@ -562,6 +569,8 @@ const RequisitionsPage = () => {
     pagination.page,
     userHasHummanResourceRights,
     userHasFinanceRights,
+    activeProgram,
+    canViewAllRequisitionProgrammes,
   ]);
 
   useEffect(() => {
