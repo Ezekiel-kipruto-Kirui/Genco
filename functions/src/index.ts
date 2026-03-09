@@ -1,6 +1,6 @@
 import * as admin from "firebase-admin";
 import * as logger from "firebase-functions/logger";
-import {onValueWritten} from "firebase-functions/v2/database";
+import {onValueCreated, onValueWritten} from "firebase-functions/v2/database";
 import {setGlobalOptions} from "firebase-functions/v2/options";
 import {onSchedule} from "firebase-functions/v2/scheduler";
 import nodemailer from "nodemailer";
@@ -60,6 +60,21 @@ interface RequisitionRecord {
   rejectionReason?: string;
   rejectionSmsText?: string;
   hrAutoRejected?: boolean;
+  [key: string]: unknown;
+}
+
+interface FarmerRecord {
+  name?: string;
+  farmerName?: string;
+  phone?: string;
+  phoneNumber?: string;
+  mobile?: string;
+  telephone?: string;
+  contact?: string;
+  programme?: string;
+  farmerId?: string;
+  createdAt?: number | string;
+  registrationDate?: number | string;
   [key: string]: unknown;
 }
 
@@ -211,6 +226,31 @@ const getRequesterPhone = (record: RequisitionRecord): string | null => {
 
 const getRequesterName = (record: RequisitionRecord): string =>
   record.name || record.userName || record.username || "Requester";
+
+const getFarmerPhone = (record: FarmerRecord): string | null => {
+  const phoneCandidates = [
+    record.phoneNumber,
+    record.phone,
+    record.mobile,
+    record.telephone,
+    record.contact,
+  ];
+  for (const candidate of phoneCandidates) {
+    const normalizedPhone = normalizePhone(candidate);
+    if (normalizedPhone) return normalizedPhone;
+  }
+  return null;
+};
+
+const getFarmerName = (record: FarmerRecord): string => {
+  const candidates = [record.name, record.farmerName];
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+  return "Farmer";
+};
 
 const getUserByKey = async (userKey: string): Promise<UserRecord | null> => {
   const key = userKey.trim();
@@ -736,6 +776,34 @@ const sendRequesterTransactionCompletedSms = async (
   await sendSms([requesterPhone], message);
 };
 
+const sendLivestockFarmerRegistrationSms = async (
+  farmerId: string,
+  record: FarmerRecord,
+): Promise<void> => {
+  const farmerPhone = getFarmerPhone(record);
+  if (!farmerPhone) {
+    logger.warn(
+      "Farmer phone missing for livestock registration SMS",
+      {farmerId},
+    );
+    return;
+  }
+
+  const programme = typeof record.programme === "string" &&
+      record.programme.trim() ?
+    record.programme.trim() :
+    "";
+  const programmeText = programme ? ` under ${programme} programme` : "";
+  const message = [
+    `Hello ${getFarmerName(record)},`,
+    `your livestock farmer registration${programmeText} ` +
+      "has been completed successfully.",
+    "Thank you.",
+  ].join(" ");
+
+  await sendSms([farmerPhone], message);
+};
+
 export const processSmsOutboxQueue = onValueWritten(
   "/smsOutbox/{messageId}",
   async (event: any): Promise<void> => {
@@ -785,6 +853,17 @@ export const processSmsOutboxQueue = onValueWritten(
       sentAt: Date.now(),
       recipientCount: recipients.length,
     });
+  },
+);
+
+export const notifyLivestockFarmerRegistrationSms = onValueCreated(
+  "/farmers/{farmerId}",
+  async (event): Promise<void> => {
+    const after = event.data.val() as FarmerRecord | null;
+    if (!after) return;
+
+    const farmerId = String(event.params.farmerId);
+    await sendLivestockFarmerRegistrationSms(farmerId, after);
   },
 );
 
