@@ -89,7 +89,7 @@ export const getCollectionSchema = async (
           if (field.toLowerCase().includes('email')) {
             schema[field].pattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
           } else if (field.toLowerCase().includes('phone')) {
-            schema[field].pattern = /^[\+]?[1-9][\d]{0,15}$/;
+            schema[field].pattern = /^[+]?[1-9]\d{0,15}$/;
           } else if (field.toLowerCase().includes('id')) {
             schema[field].minLength = 1;
           }

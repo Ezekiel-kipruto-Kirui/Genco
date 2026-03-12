@@ -504,7 +504,7 @@ const LivestockFarmersPage = () => {
     const sortedFilteredFarmers = sortFarmersByLatest(filteredFarmersList);
     setFilteredFarmers(sortedFilteredFarmers);
     
-    let filteredTraining = trainingRecords.filter(record => {
+    const filteredTraining = trainingRecords.filter(record => {
         if (filters.startDate || filters.endDate) {
             const recordDate = parseDate(record.startDate || record.createdAt || record.rawTimestamp);
             if (recordDate) {
@@ -810,7 +810,7 @@ const LivestockFarmersPage = () => {
 
         const rawHeaders = parseCSVLine(lines[0]);
         const headers = rawHeaders.map(h =>
-          h.replace(/^﻿/, '').trim().toLowerCase().replace(/\(.*?\)/g, '').replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ')
+          h.replace(/^\uFEFF/, '').trim().toLowerCase().replace(/\(.*?\)/g, '').replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ')
         );
 
         const findIndex = (keys: string[]) => headers.findIndex(h => keys.some(k => h.includes(k)));
@@ -896,7 +896,7 @@ const LivestockFarmersPage = () => {
           if (foundGoatsMale || foundGoatsFemale) {
              const maleCount = foundGoatsMale ? (Number(valAt(values, idxGoatsMale)) || 0) : 0;
              const femaleCount = foundGoatsFemale ? (Number(valAt(values, idxGoatsFemale)) || 0) : 0;
-             let totalGoats = foundGoatsTotal ? (Number(valAt(values, idxGoatsTotal)) || 0) : (maleCount + femaleCount);
+             const totalGoats = foundGoatsTotal ? (Number(valAt(values, idxGoatsTotal)) || 0) : (maleCount + femaleCount);
              obj.goats = { male: maleCount, female: femaleCount, total: totalGoats };
           } else if (foundGoatsTotal) {
              const totalGoats = Number(valAt(values, idxGoatsTotal)) || 0;

@@ -812,7 +812,7 @@ const FodderFarmersPage = () => {
               </Select>
              </div>
           ) : (
-             <div className="hidden sm:block sm:w-[200px]"></div>
+            <div className="hidden sm:block sm:w-[200px]"></div>
           )}
 
           {userIsChiefAdmin && (

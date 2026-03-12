@@ -560,7 +560,6 @@ const OnboardingPage = () => {
     }
 
     fetchOnboardingData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userRole, userCanViewAllProgrammeData, availablePrograms]); // Re-fetch when access scope is resolved
 
   // --- Filtering Logic including Programme Switcher ---
@@ -732,7 +731,7 @@ const OnboardingPage = () => {
 
   const resetForm = () => {
     // Default to active program when opening new form
-    let defaultProg = activeProgram as 'KPMD' | 'RANGE' || 'KPMD';
+    const defaultProg = activeProgram as 'KPMD' | 'RANGE' || 'KPMD';
     
     setOnboardingForm({ id: "", topic: "", comment: "", date: "", status: 'pending', programme: defaultProg });
     setStaff([{ name: "", role: "" }]);

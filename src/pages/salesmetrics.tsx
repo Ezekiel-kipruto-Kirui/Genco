@@ -165,7 +165,7 @@ const getCurrentMonthDates = () => {
 const getQDates = (year: number, quarter: 1 | 2 | 3 | 4) => {
   const start = `${year}-${(quarter - 1) * 3 + 1}-01`;
   let endMonth = quarter * 3;
-  let endYear = year;
+  const endYear = year;
   if (endMonth > 12) { endMonth = 12; }
   const endDay = new Date(endYear, endMonth, 0).getDate();
   return { startDate: start, endDate: `${endYear}-${String(endMonth).padStart(2,'0')}-${endDay}` };
@@ -420,8 +420,9 @@ const StatsCard = ({ title, value, icon: Icon, subText, color = "blue", trend = 
   );
 };
 
-const renderCenterLabel = ({ viewBox }: any) => {
-  const { cx, cy } = viewBox;
+const renderCenterLabel = ({ viewBox }: { viewBox?: { cx?: number; cy?: number } }) => {
+  const cx = viewBox?.cx ?? 0;
+  const cy = viewBox?.cy ?? 0;
   return (
     <text x={cx} y={cy} fill="#374151" textAnchor="middle" dominantBaseline="middle" className="text-sm font-bold fill-gray-700">
       Farmers
@@ -431,7 +432,7 @@ const renderCenterLabel = ({ viewBox }: any) => {
 
 // --- Main Component ---
 
-const salesReport = () => {
+const SalesReport = () => {
   const { userRole, userAttribute } = useAuth();
   const { toast } = useToast();
   const auth = getAuth();
@@ -1061,4 +1062,4 @@ const salesReport = () => {
   );
 };
 
-export default salesReport;
+export default SalesReport;
