@@ -66,6 +66,7 @@ interface RequisitionData {
   rejectionSmsText?: string;
   createdAt?: number | string;
   totalAmount?: number;
+  transactedAmount?: number;
   history?: HistoryEntry[];
   
   // Fuel & Service Fields
@@ -212,6 +213,20 @@ const getRequisitionImages = (urlString: string | undefined): string[] => {
   return urlString.split('|').map(url => url.trim()).filter(url => url.length > 0);
 };
 
+const getRequestedAmount = (record: RequisitionData | null | undefined): number => {
+  if (!record) return 0;
+  return record.type === "fuel and Service"
+    ? Number(record.fuelAmount || 0)
+    : Number(record.total || 0);
+};
+
+const getTransactedAmount = (record: RequisitionData | null | undefined): number | null => {
+  if (!record) return null;
+  if (typeof record.transactedAmount === "number") return record.transactedAmount;
+  if (record.transactionCompletedBy) return getRequestedAmount(record);
+  return null;
+};
+
 // --- Helper to Log History ---
 const logHistory = async (recordId: string, action: string, details: string) => {
   const auth = getAuth();
@@ -252,6 +267,7 @@ const RequisitionsPage = () => {
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
   const [viewingRecord, setViewingRecord] = useState<RequisitionData | null>(null);
   const [hrDecisionAction, setHrDecisionAction] = useState<string>("");
+  const [pmDecisionAction, setPmDecisionAction] = useState<string>("");
   const [isRejectDialogOpen, setIsRejectDialogOpen] = useState(false);
   const [rejectionMessageText, setRejectionMessageText] = useState<string>("");
   const [isBulkRejectDialogOpen, setIsBulkRejectDialogOpen] = useState(false);
@@ -259,6 +275,11 @@ const RequisitionsPage = () => {
   
   const [isImageViewerOpen, setIsImageViewerOpen] = useState(false);
   const [viewingImages, setViewingImages] = useState<string[]>([]);
+  const [imageRecord, setImageRecord] = useState<RequisitionData | null>(null);
+  const [isImageEditDialogOpen, setIsImageEditDialogOpen] = useState(false);
+  const [imageEditIndex, setImageEditIndex] = useState<number | null>(null);
+  const [imageEditUrl, setImageEditUrl] = useState("");
+  const [imageActionLoading, setImageActionLoading] = useState(false);
   
   // History State
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
@@ -351,6 +372,10 @@ const RequisitionsPage = () => {
     () => canAuthorizeRequisition || canSendRequisitionSms,
     [canAuthorizeRequisition, canSendRequisitionSms]
   );
+  const canRejectPendingRequisition = useMemo(
+    () => userHasProjectManagerRights,
+    [userHasProjectManagerRights]
+  );
   const canMarkRequisitionComplete = useMemo(
     () =>
       userHasFinanceRights ||
@@ -367,6 +392,14 @@ const RequisitionsPage = () => {
   const canDeleteRequisition = useMemo(
     () => userIsChiefAdmin,
     [userIsChiefAdmin]
+  );
+  const canManageImages = useMemo(
+    () =>
+      canApproveRequisition ||
+      canAuthorizeRequisition ||
+      canCompleteTransaction ||
+      userIsChiefAdmin,
+    [canApproveRequisition, canAuthorizeRequisition, canCompleteTransaction, userIsChiefAdmin]
   );
   const approvalActorAttribute = useMemo(() => {
     if (typeof userAttribute === "string" && userAttribute.trim()) return userAttribute.trim();
@@ -635,6 +668,7 @@ const RequisitionsPage = () => {
 
   const resetHrDecisionState = useCallback(() => {
     setHrDecisionAction("");
+    setPmDecisionAction("");
     setIsRejectDialogOpen(false);
     setRejectionMessageText("");
   }, []);
@@ -693,8 +727,92 @@ const RequisitionsPage = () => {
       return;
     }
     setViewingImages(images);
+    setImageRecord(record);
     setIsImageViewerOpen(true);
     if (printImmediately) setTimeout(() => window.print(), 500);
+  };
+
+  const updateRequisitionImages = async (
+    recordId: string,
+    nextImages: string[],
+    historyDetails: string
+  ) => {
+    setImageActionLoading(true);
+    try {
+      const nextUrl = nextImages.join(" | ");
+      await update(ref(db, `requisitions/${recordId}`), {
+        requisitionUrl: nextUrl,
+        fileUploaded: nextImages.length > 0,
+      });
+      removeCachedValue(requisitionCacheKey);
+      setViewingImages(nextImages);
+      setViewingRecord((prev) =>
+        prev && prev.id === recordId
+          ? { ...prev, requisitionUrl: nextUrl, fileUploaded: nextImages.length > 0 }
+          : prev
+      );
+      setImageRecord((prev) =>
+        prev && prev.id === recordId
+          ? { ...prev, requisitionUrl: nextUrl, fileUploaded: nextImages.length > 0 }
+          : prev
+      );
+      await logHistory(recordId, "Receipts Updated", historyDetails);
+      toast({ title: "Updated", description: "Receipt images updated." });
+    } catch (error) {
+      console.error("Failed to update receipt images:", error);
+      toast({ title: "Error", description: "Failed to update receipt images.", variant: "destructive" });
+    } finally {
+      setImageActionLoading(false);
+    }
+  };
+
+  const openImageEditDialog = (index: number) => {
+    if (!canManageImages) {
+      toast({ title: "Unauthorized", description: "You do not have permission to edit images.", variant: "destructive" });
+      return;
+    }
+    setImageEditIndex(index);
+    setImageEditUrl(viewingImages[index] || "");
+    setIsImageEditDialogOpen(true);
+  };
+
+  const handleSaveImageEdit = async () => {
+    if (!imageRecord || imageEditIndex === null) return;
+    if (!canManageImages) {
+      toast({ title: "Unauthorized", description: "You do not have permission to edit images.", variant: "destructive" });
+      return;
+    }
+    const nextUrl = imageEditUrl.trim();
+    if (!nextUrl) {
+      toast({ title: "Invalid URL", description: "Enter a valid image URL.", variant: "destructive" });
+      return;
+    }
+    const nextImages = [...viewingImages];
+    nextImages[imageEditIndex] = nextUrl;
+    await updateRequisitionImages(
+      imageRecord.id,
+      nextImages,
+      `Updated receipt image #${imageEditIndex + 1}`
+    );
+    setIsImageEditDialogOpen(false);
+    setImageEditIndex(null);
+    setImageEditUrl("");
+  };
+
+  const handleDeleteImage = async (index: number) => {
+    if (!imageRecord) return;
+    if (!canManageImages) {
+      toast({ title: "Unauthorized", description: "You do not have permission to delete images.", variant: "destructive" });
+      return;
+    }
+    const confirmed = window.confirm(`Delete receipt #${index + 1}? This cannot be undone.`);
+    if (!confirmed) return;
+    const nextImages = viewingImages.filter((_, i) => i !== index);
+    await updateRequisitionImages(
+      imageRecord.id,
+      nextImages,
+      `Deleted receipt image #${index + 1}`
+    );
   };
 
   const openEditDialog = useCallback((record: RequisitionData) => {
@@ -916,6 +1034,32 @@ const RequisitionsPage = () => {
     }
   };
 
+  const handlePmDecisionChange = async (decision: string) => {
+    setPmDecisionAction(decision);
+    if (!viewingRecord) return;
+
+    if (decision === "approve") {
+      await handleApprove();
+      setPmDecisionAction("");
+      return;
+    }
+
+    if (decision === "reject") {
+      if (!canRejectPendingRequisition) {
+        toast({ title: "Unauthorized", description: "Only Project Manager can reject pending requisitions.", variant: "destructive" });
+        setPmDecisionAction("");
+        return;
+      }
+      if (String(viewingRecord.status || "").toLowerCase() !== "pending") {
+        toast({ title: "Invalid Status", description: "Only pending requisitions can be rejected at this stage.", variant: "destructive" });
+        setPmDecisionAction("");
+        return;
+      }
+      setRejectionMessageText("");
+      setIsRejectDialogOpen(true);
+    }
+  };
+
   // --- HR Authorization Handler ---
   const handleAuthorize = async (): Promise<boolean> => {
     if (!viewingRecord) return false;
@@ -979,12 +1123,17 @@ const RequisitionsPage = () => {
 
   const handleRejectRequisition = async () => {
     if (!viewingRecord) return;
-    if (!canRejectRequisition) {
-      toast({ title: "Unauthorized", description: "Only HR or Chief Admin can reject requisitions.", variant: "destructive" });
+    const status = String(viewingRecord.status || "").toLowerCase();
+    if (status !== "pending" && status !== "approved") {
+      toast({ title: "Invalid Status", description: "Only pending or approved requisitions can be rejected.", variant: "destructive" });
       return;
     }
-    if (viewingRecord.status !== "approved") {
-      toast({ title: "Invalid Status", description: "Only approved requisitions can be rejected by HR.", variant: "destructive" });
+    if (status === "pending" && !canRejectPendingRequisition) {
+      toast({ title: "Unauthorized", description: "Only Project Manager can reject pending requisitions.", variant: "destructive" });
+      return;
+    }
+    if (status === "approved" && !canRejectRequisition) {
+      toast({ title: "Unauthorized", description: "Only HR or Chief Admin can reject approved requisitions.", variant: "destructive" });
       return;
     }
 
@@ -1022,6 +1171,7 @@ const RequisitionsPage = () => {
       );
       setIsRejectDialogOpen(false);
       setHrDecisionAction("");
+      setPmDecisionAction("");
       setRejectionMessageText("");
     } catch (error) {
       toast({ title: "Error", description: "Failed to reject requisition.", variant: "destructive" });
@@ -2200,6 +2350,14 @@ const RequisitionsPage = () => {
                         <div className="flex flex-row items-center gap-2"><span className="text-gray-800 text-[17px] ">Current Speedometer Reading :</span><span className="text-gray-800">{viewingRecord.currentReading} km</span></div>
                         <div className="flex flex-row items-center gap-2"><span className="text-gray-800 text-[17px] ">Distance Traveled : </span><span className="text-gray-800">{viewingRecord.distanceTraveled} Km</span></div>
                         <div className="flex flex-row items-center gap-2"><span className="text-gray-800 text-[17px] ">Amount Requested : </span><span className="text-gray-800">KES {viewingRecord.fuelAmount?.toLocaleString()}</span></div>
+                        <div className="flex flex-row items-center gap-2">
+                          <span className="text-gray-800 text-[17px] ">Transacted Amount : </span>
+                          <span className="text-gray-800">
+                            {getTransactedAmount(viewingRecord) !== null
+                              ? `KES ${getTransactedAmount(viewingRecord)?.toLocaleString()}`
+                              : "Pending"}
+                          </span>
+                        </div>
                       </div>
                     </div>
                   ) : (
@@ -2223,6 +2381,15 @@ const RequisitionsPage = () => {
                                 <tr key={idx} className=""><td className="p-2 text-[17px] border-r border-gray-500 w-32">{formatDate(item.date)}</td><td className="p-2 text-[17px] border-r border-gray-500 flex-1">{item.name}</td><td className="p-2 text-[17px] text-right w-32">{item.price.toLocaleString()}</td></tr>
                               )) : <div className="p-4 text-center text-gray-500 italic">No items found.</div>}
                               <tr className=""><td className="p-2 text-[17px] ">Total Amount</td><td></td><td className="p-2 text-[17px] text-right border-l border-gray-800 text-gray-700">{viewingRecord.total?.toLocaleString()}</td></tr>
+                              <tr className="">
+                                <td className="p-2 text-[17px] ">Transacted Amount</td>
+                                <td></td>
+                                <td className="p-2 text-[17px] text-right border-l border-gray-800 text-gray-700">
+                                  {getTransactedAmount(viewingRecord) !== null
+                                    ? getTransactedAmount(viewingRecord)?.toLocaleString()
+                                    : "Pending"}
+                                </td>
+                              </tr>
                             </tbody>
                           </table>
                         </div>
@@ -2309,7 +2476,23 @@ const RequisitionsPage = () => {
               <Button variant="outline" onClick={handleDownload} className="flex-1 sm:flex-none"><Download className="h-4 w-4 mr-2" /> Download</Button>
             </div>
             <div className="flex gap-2 w-full sm:w-auto justify-end">
-              {canApproveRequisition && !viewingRecord?.approvedBy && (
+              {userHasProjectManagerRights &&
+                viewingRecord?.status === "pending" &&
+                !viewingRecord?.approvedBy && (
+                  <div className="w-full sm:w-[260px]">
+                    <Select value={pmDecisionAction} onValueChange={handlePmDecisionChange}>
+                      <SelectTrigger className="h-10 border-emerald-300 bg-emerald-50 text-emerald-900 focus:ring-emerald-500">
+                        <SelectValue placeholder="PM action: approve or reject" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="approve">Approve requisition</SelectItem>
+                        <SelectItem value="reject">Reject requisition</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+
+              {!userHasProjectManagerRights && canApproveRequisition && !viewingRecord?.approvedBy && (
                 <Button onClick={handleApprove} className="bg-green-600 hover:bg-green-700 flex-1 sm:flex-none">
                   <CheckCircle className="h-4 w-4 mr-2" /> Approve Requisition
                 </Button>
@@ -2373,6 +2556,7 @@ const RequisitionsPage = () => {
           setIsRejectDialogOpen(open);
           if (!open) {
             setHrDecisionAction("");
+            setPmDecisionAction("");
             setRejectionMessageText("");
           }
         }}
@@ -2380,10 +2564,10 @@ const RequisitionsPage = () => {
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>Reject Requisition</DialogTitle>
-            <DialogDescription>
-              Enter the SMS message to send to the requester. Only HR or Chief
-              Admin can perform this action.
-            </DialogDescription>
+          <DialogDescription>
+            Enter the SMS message to send to the requester. Only HR or Chief
+            Admin can reject approved requisitions. Project Manager can reject pending requisitions.
+          </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
             <Label htmlFor="rejection-message-text">SMS Message</Label>
@@ -2401,6 +2585,7 @@ const RequisitionsPage = () => {
               onClick={() => {
                 setIsRejectDialogOpen(false);
                 setHrDecisionAction("");
+                setPmDecisionAction("");
                 setRejectionMessageText("");
               }}
             >
@@ -2500,7 +2685,16 @@ const RequisitionsPage = () => {
 
       {/* --- IMAGE VIEWER DIALOG --- */}
       {/* FIXED: Added print-content-wrapper class here to enable printing */}
-      <Dialog open={isImageViewerOpen} onOpenChange={setIsImageViewerOpen}>
+      <Dialog
+        open={isImageViewerOpen}
+        onOpenChange={(open) => {
+          setIsImageViewerOpen(open);
+          if (!open) {
+            setViewingImages([]);
+            setImageRecord(null);
+          }
+        }}
+      >
         <DialogContent className="print-content-wrapper sm:max-w-4xl max-h-[90vh] flex flex-col bg-gray-50">
             <DialogHeader>
                 <DialogTitle className="flex items-center gap-2 no-print">
@@ -2521,11 +2715,37 @@ const RequisitionsPage = () => {
                                     loading="lazy"
                                     />
                                 </div>
-                                <div className="p-3 border-t border-gray-100 flex justify-between items-center">
+                                <div className="p-3 border-t border-gray-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
                                     <span className="text-sm font-medium text-gray-700">Receipt #{idx + 1}</span>
-                                    <a href={url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-800 text-xs flex items-center gap-1 no-print">
-                                        Open Original <ExternalLink className="h-3 w-3"/>
-                                    </a>
+                                    <div className="flex items-center gap-2">
+                                        <a href={url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-800 text-xs flex items-center gap-1 no-print">
+                                            Open Original <ExternalLink className="h-3 w-3"/>
+                                        </a>
+                                        {canManageImages && (
+                                          <>
+                                            <Button
+                                              type="button"
+                                              variant="ghost"
+                                              size="icon"
+                                              className="h-7 w-7 text-gray-600 hover:text-gray-800 no-print"
+                                              onClick={() => openImageEditDialog(idx)}
+                                              disabled={imageActionLoading}
+                                            >
+                                              <Edit className="h-4 w-4" />
+                                            </Button>
+                                            <Button
+                                              type="button"
+                                              variant="ghost"
+                                              size="icon"
+                                              className="h-7 w-7 text-red-600 hover:text-red-700 no-print"
+                                              onClick={() => handleDeleteImage(idx)}
+                                              disabled={imageActionLoading}
+                                            >
+                                              <Trash2 className="h-4 w-4" />
+                                            </Button>
+                                          </>
+                                        )}
+                                    </div>
                                 </div>
                             </div>
                         ))}
@@ -2540,6 +2760,45 @@ const RequisitionsPage = () => {
                     <Printer className="h-4 w-4 mr-2" /> Print Images
                 </Button>
             </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={isImageEditDialogOpen}
+        onOpenChange={(open) => {
+          setIsImageEditDialogOpen(open);
+          if (!open) {
+            setImageEditIndex(null);
+            setImageEditUrl("");
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Edit Receipt Image</DialogTitle>
+            <DialogDescription>Update the image URL for the selected receipt.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="receipt-image-url">Image URL</Label>
+            <Input
+              id="receipt-image-url"
+              value={imageEditUrl}
+              onChange={(event) => setImageEditUrl(event.target.value)}
+              placeholder="https://..."
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setIsImageEditDialogOpen(false)}
+              disabled={imageActionLoading}
+            >
+              Cancel
+            </Button>
+            <Button onClick={handleSaveImageEdit} disabled={imageActionLoading}>
+              {imageActionLoading ? "Saving..." : "Save Image"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

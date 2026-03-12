@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useAuth } from "@/contexts/AuthContext";
+import { getAuth } from "firebase/auth";
 // REALTIME DATABASE IMPORTS
 import {
   ref,
@@ -7,6 +8,10 @@ import {
   update,
   remove,
   get,
+  onValue,
+  query,
+  orderByChild,
+  equalTo,
   Database,
   DatabaseReference
 } from "firebase/database";
@@ -20,7 +25,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Download, Warehouse, Eye, Calendar, Building, DollarSign, Package, Archive, Edit, Save, X, Upload, Trash2, Plus, LandPlot } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { isChiefAdmin } from "@/contexts/authhelper";
+import { canViewAllProgrammes, isChiefAdmin } from "@/contexts/authhelper";
 import { uploadDataWithValidation, formatValidationErrors, UploadResult } from "@/lib/uploads-util";
 import { db } from "@/lib/firebase";
 import { millify} from "millify";
@@ -35,6 +40,7 @@ interface PastureStage {
 
 interface HayStorage {
   id: string;
+  programme?: string;
   date_planted: any; // ISO String or Date object
   location: string;
   county: string;
@@ -96,6 +102,19 @@ interface TableRowProps {
 // --- Constants ---
 const PAGE_LIMIT = 15;
 const SEARCH_DEBOUNCE_DELAY = 300;
+const PROGRAMME_OPTIONS = ["KPMD", "RANGE"] as const;
+type ProgrammeOption = (typeof PROGRAMME_OPTIONS)[number];
+
+const normalizeProgramme = (
+  value: unknown,
+  fallback: ProgrammeOption = "KPMD"
+): ProgrammeOption => {
+  if (typeof value !== "string") return fallback;
+  const normalized = value.trim().toUpperCase();
+  if (normalized === "KPMD" || normalized === "RANGE") return normalized;
+  return fallback;
+};
+
 const PASTURE_STAGES = [
   "land preparation",
   "planting",
@@ -113,7 +132,6 @@ const STORAGE_FACILITIES = [
   "Loosuk"
 ];
 
-const HAY_STORAGE_CACHE_KEY = cacheKey("admin-page", "hay-storage");
 
 // --- Helper Functions ---
 
@@ -264,6 +282,18 @@ const TableRow = ({ record, isSelected, onSelectRecord, onView, onEdit, onDelete
       />
     </td>
     <td className="py-3 px-4">{formatDate(record.date_planted)}</td>
+    <td className="py-3 px-4">
+      <Badge
+        variant="secondary"
+        className={
+          normalizeProgramme(record.programme) === "KPMD"
+            ? "bg-indigo-100 text-indigo-800 w-fit"
+            : "bg-teal-100 text-teal-800 w-fit"
+        }
+      >
+        {normalizeProgramme(record.programme)}
+      </Badge>
+    </td>
   
     <td className="py-3 px-4">{record.land_under_pasture || 0} acres</td>
     
@@ -320,7 +350,7 @@ const TableRow = ({ record, isSelected, onSelectRecord, onView, onEdit, onDelete
 // --- Main Component ---
 
 const HayStoragePage = () => {
-  const { userRole, user } = useAuth();
+  const { userRole, user, userAttribute } = useAuth();
   const { toast } = useToast();
 
   // Ensure 'db' is treated as Realtime Database instance
@@ -330,6 +360,8 @@ const HayStoragePage = () => {
   const [allHayStorage, setAllHayStorage] = useState<HayStorage[]>([]);
   const [filteredHayStorage, setFilteredHayStorage] = useState<HayStorage[]>([]);
   const [rawFilteredHayStorage, setRawFilteredHayStorage] = useState<HayStorage[]>([]);
+  const [activeProgram, setActiveProgram] = useState<string>("");
+  const [availablePrograms, setAvailablePrograms] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [exportLoading, setExportLoading] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
@@ -347,6 +379,7 @@ const HayStoragePage = () => {
   const [viewingRecord, setViewingRecord] = useState<HayStorage | null>(null);
   const [editingRecord, setEditingRecord] = useState<HayStorage | null>(null);
   const [addingRecord, setAddingRecord] = useState<Partial<HayStorage>>({
+    programme: "KPMD",
     date_planted: '',
     location: '',
     county: '',
@@ -407,6 +440,14 @@ const HayStoragePage = () => {
   }, [allHayStorage]);
 
   const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
+  const userCanViewAllProgrammeData = useMemo(
+    () => canViewAllProgrammes(userRole, userAttribute),
+    [userRole, userAttribute]
+  );
+  const hayStorageCacheKey = useMemo(
+    () => cacheKey("admin-page", "hay-storage", activeProgram || "no-program"),
+    [activeProgram]
+  );
   const requireChiefAdmin = () => {
     if (userIsChiefAdmin) return true;
     toast({
@@ -416,6 +457,43 @@ const HayStoragePage = () => {
     });
     return false;
   };
+
+  useEffect(() => {
+    if (userCanViewAllProgrammeData) {
+      setAvailablePrograms(["RANGE", "KPMD"]);
+      setActiveProgram((prev) => (prev ? prev : "RANGE"));
+      return;
+    }
+
+    const uid = getAuth().currentUser?.uid;
+    if (!uid) return;
+
+    const userRef = ref(rtdb, `users/${uid}`);
+    const unsubscribe = onValue(
+      userRef,
+      (snapshot) => {
+        const data = snapshot.val();
+        if (data && data.allowedProgrammes) {
+          const programs = Object.keys(data.allowedProgrammes).filter(
+            (key) => data.allowedProgrammes[key] === true
+          );
+          setAvailablePrograms(programs);
+          setActiveProgram((prev) => {
+            if (programs.length === 0) return "";
+            if (!prev || !programs.includes(prev)) return programs[0];
+            return prev;
+          });
+        } else {
+          setAvailablePrograms([]);
+          setActiveProgram("");
+        }
+      },
+      (error) => {
+        console.error("Error fetching user permissions:", error);
+      }
+    );
+    return () => unsubscribe();
+  }, [rtdb, userCanViewAllProgrammeData]);
 
   // Handlers
   const handleSearch = useCallback((value: string) => {
@@ -466,6 +544,7 @@ const HayStoragePage = () => {
     if (!userIsChiefAdmin) return;
     setEditingRecord({
       ...record,
+      programme: normalizeProgramme(record.programme),
       pasture_stages: [...record.pasture_stages]
     });
     setIsEditDialogOpen(true);
@@ -482,15 +561,25 @@ const HayStoragePage = () => {
 
   // --- REALTIME DATABASE FETCH ---
   const fetchAllData = useCallback(async () => {
+    if (!activeProgram) {
+      setAllHayStorage([]);
+      setLoading(false);
+      return;
+    }
+
     try {
-      const cachedHayStorage = readCachedValue<HayStorage[]>(HAY_STORAGE_CACHE_KEY);
+      const cachedHayStorage = readCachedValue<HayStorage[]>(hayStorageCacheKey);
       if (cachedHayStorage) {
         setAllHayStorage(sortHayStorageByLatest(cachedHayStorage));
         setLoading(false);
       } else {
         setLoading(true);
       }
-      const hayStorageRef = ref(rtdb, "HayStorage");
+      const hayStorageRef = query(
+        ref(rtdb, "HayStorage"),
+        orderByChild("programme"),
+        equalTo(activeProgram)
+      );
       const snapshot = await get(hayStorageRef);
 
       if (snapshot.exists()) {
@@ -499,6 +588,7 @@ const HayStoragePage = () => {
           const item = data[key];
           return {
             id: key,
+            programme: normalizeProgramme(item.programme || item.Programme),
             date_planted: item.date_planted,
             location: item.location || '',
             county: item.county || '',
@@ -517,10 +607,10 @@ const HayStoragePage = () => {
         });
         const sortedHayStorageData = sortHayStorageByLatest(hayStorageData);
         setAllHayStorage(sortedHayStorageData);
-        writeCachedValue(HAY_STORAGE_CACHE_KEY, sortedHayStorageData);
+        writeCachedValue(hayStorageCacheKey, sortedHayStorageData);
       } else {
         setAllHayStorage([]);
-        removeCachedValue(HAY_STORAGE_CACHE_KEY);
+        removeCachedValue(hayStorageCacheKey);
       }
 
     } catch (error) {
@@ -533,7 +623,7 @@ const HayStoragePage = () => {
     } finally {
       setLoading(false);
     }
-  }, [toast, rtdb]);
+  }, [activeProgram, hayStorageCacheKey, rtdb, toast]);
 
   const applyFilters = useCallback(() => {
     if (allHayStorage.length === 0) {
@@ -637,6 +727,7 @@ const HayStoragePage = () => {
       // We always create a new record now.
 
       const payload = {
+        programme: normalizeProgramme(addingRecord.programme),
         date_planted: new Date(addingRecord.date_planted).toISOString(),
         location: addingRecord.location,
         county: addingRecord.county,
@@ -665,6 +756,7 @@ const HayStoragePage = () => {
 
       setIsAddDialogOpen(false);
       setAddingRecord({
+        programme: "KPMD",
         date_planted: '',
         location: '',
         county: '',
@@ -741,6 +833,7 @@ const HayStoragePage = () => {
       const filteredStages = editingRecord.pasture_stages.filter(stage => stage.stage.trim() !== '' && stage.date.trim() !== '');
       const { id, ...updateData } = {
           ...editingRecord,
+          programme: normalizeProgramme(editingRecord.programme),
           pasture_stages: filteredStages,
           date_planted: editingRecord.date_planted ? new Date(editingRecord.date_planted).toISOString() : null,
           date_sold: editingRecord.date_sold ? new Date(editingRecord.date_sold).toISOString() : null
@@ -841,6 +934,7 @@ const HayStoragePage = () => {
         const balance = (record.bales_harvested_stored || 0) - (record.bales_sold || 0);
         return [
           formatDate(record.date_planted),
+          normalizeProgramme(record.programme),
           record.location || 'N/A',
           record.county || 'N/A',
           record.subcounty || 'N/A',
@@ -856,7 +950,7 @@ const HayStoragePage = () => {
         ];
       });
 
-      const headers = ['Date Planted', 'Location', 'County', 'Subcounty', 'Land Ownership', 'Land Under Pasture (acres)', 'Pasture Stages', 'Storage Facility', 'Bales Harvested & Stored', 'Bales Sold', 'Bales Balance', 'Date Sold', 'Revenue Generated'];
+      const headers = ['Date Planted', 'Programme', 'Location', 'County', 'Subcounty', 'Land Ownership', 'Land Under Pasture (acres)', 'Pasture Stages', 'Storage Facility', 'Bales Harvested & Stored', 'Bales Sold', 'Bales Balance', 'Date Sold', 'Revenue Generated'];
       const csvContent = [headers, ...csvData].map(row => row.map(field => `"${field}"`).join(',')).join('\n');
       const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
       const url = window.URL.createObjectURL(blob);
@@ -974,6 +1068,7 @@ const HayStoragePage = () => {
                         />
                       </th>
                       <th className="py-1 text-xs text-left px-6 font-medium text-gray-600">Harvesting Date</th>
+                      <th className="py-1 text-xs text-left px-6 font-medium text-gray-600">Programme</th>
                       
                       <th className="py-1 text-xs text-left px-6 font-medium text-gray-600">No of accres</th>
                      
@@ -1025,6 +1120,26 @@ const HayStoragePage = () => {
               <h3 className="font-semibold text-slate-800 mb-3 flex items-center gap-2"><Building className="h-4 w-4" /> Basic Information *</h3>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2"><Label htmlFor="add-date-planted" className="text-sm font-medium text-slate-600">Date Planted *</Label><Input id="add-date-planted" type="date" value={addingRecord.date_planted as string} onChange={(e) => setAddingRecord(prev => ({ ...prev, date_planted: e.target.value }))} className="border-gray-300 focus:border-blue-500" required /></div>
+                <div className="space-y-2">
+                  <Label htmlFor="add-programme" className="text-sm font-medium text-slate-600">Programme *</Label>
+                  <Select
+                    value={normalizeProgramme(addingRecord.programme)}
+                    onValueChange={(value) =>
+                      setAddingRecord(prev => ({ ...prev, programme: normalizeProgramme(value) }))
+                    }
+                  >
+                    <SelectTrigger id="add-programme" className="border-gray-300 focus:border-blue-500">
+                      <SelectValue placeholder="Select programme" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {PROGRAMME_OPTIONS.map((programme) => (
+                        <SelectItem key={programme} value={programme}>
+                          {programme}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
                 <div className="space-y-2"><Label htmlFor="add-location" className="text-sm font-medium text-slate-600">Location *</Label><Input id="add-location" value={addingRecord.location || ''} onChange={(e) => setAddingRecord(prev => ({ ...prev, location: e.target.value }))} className="border-gray-300 focus:border-blue-500" placeholder="Enter location" required /></div>
                 <div className="space-y-2"><Label htmlFor="add-county" className="text-sm font-medium text-slate-600">County *</Label><Input id="add-county" value={addingRecord.county || ''} onChange={(e) => setAddingRecord(prev => ({ ...prev, county: e.target.value }))} className="border-gray-300 focus:border-blue-500" placeholder="Enter county" required /></div>
                 <div className="space-y-2"><Label htmlFor="add-subcounty" className="text-sm font-medium text-slate-600">Subcounty *</Label><Input id="add-subcounty" value={addingRecord.subcounty || ''} onChange={(e) => setAddingRecord(prev => ({ ...prev, subcounty: e.target.value }))} className="border-gray-300 focus:border-blue-500" placeholder="Enter subcounty" required /></div>
@@ -1113,6 +1228,7 @@ const HayStoragePage = () => {
                 <h3 className="font-semibold text-slate-800 mb-3 flex items-center gap-2"><Building className="h-4 w-4" /> Basic Information</h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div><Label className="text-sm font-medium text-slate-600">Date Planted</Label><p className="text-slate-900 font-medium">{formatDate(viewingRecord.date_planted)}</p></div>
+                  <div><Label className="text-sm font-medium text-slate-600">Programme</Label><p className="text-slate-900 font-medium">{normalizeProgramme(viewingRecord.programme)}</p></div>
                   <div><Label className="text-sm font-medium text-slate-600">Location</Label><p className="text-slate-900 font-medium">{viewingRecord.location || 'N/A'}</p></div>
                   <div><Label className="text-sm font-medium text-slate-600">County</Label><p className="text-slate-900 font-medium">{viewingRecord.county || 'N/A'}</p></div>
                   <div><Label className="text-sm font-medium text-slate-600">Subcounty</Label><p className="text-slate-900 font-medium">{viewingRecord.subcounty || 'N/A'}</p></div>
@@ -1164,6 +1280,24 @@ const HayStoragePage = () => {
                 <h3 className="font-semibold text-slate-800 mb-3 flex items-center gap-2"><Building className="h-4 w-4" /> Basic Information</h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="space-y-2"><Label htmlFor="edit-date-planted" className="text-sm font-medium text-slate-600">Date Planted</Label><Input id="edit-date-planted" type="date" value={formatDateForInput(editingRecord.date_planted)} onChange={(e) => handleEditChange('date_planted', e.target.value)} className="border-gray-300 focus:border-blue-500" /></div>
+                  <div className="space-y-2">
+                    <Label htmlFor="edit-programme" className="text-sm font-medium text-slate-600">Programme</Label>
+                    <Select
+                      value={normalizeProgramme(editingRecord.programme)}
+                      onValueChange={(value) => handleEditChange('programme', normalizeProgramme(value))}
+                    >
+                      <SelectTrigger id="edit-programme" className="border-gray-300 focus:border-blue-500">
+                        <SelectValue placeholder="Select programme" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {PROGRAMME_OPTIONS.map((programme) => (
+                          <SelectItem key={programme} value={programme}>
+                            {programme}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
                   <div className="space-y-2"><Label htmlFor="edit-location" className="text-sm font-medium text-slate-600">Location</Label><Input id="edit-location" value={editingRecord.location || ''} onChange={(e) => handleEditChange('location', e.target.value)} className="border-gray-300 focus:border-blue-500" /></div>
                   <div className="space-y-2"><Label htmlFor="edit-county" className="text-sm font-medium text-slate-600">County</Label><Input id="edit-county" value={editingRecord.county || ''} onChange={(e) => handleEditChange('county', e.target.value)} className="border-gray-300 focus:border-blue-500" /></div>
                   <div className="space-y-2"><Label htmlFor="edit-subcounty" className="text-sm font-medium text-slate-600">Subcounty</Label><Input id="edit-subcounty" value={editingRecord.subcounty || ''} onChange={(e) => handleEditChange('subcounty', e.target.value)} className="border-gray-300 focus:border-blue-500" /></div>

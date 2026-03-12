@@ -123,6 +123,9 @@ interface EditForm {
   sheep: number;
   vaccinated: boolean;
   programme: string;
+  bucksServed: string;
+  maleBreeds: string;
+  femaleBreeds: string;
 }
 
 const PAGE_LIMIT = 15;
@@ -285,7 +288,10 @@ const LivestockFarmersPage = () => {
     goats: 0,
     sheep: 0,
     vaccinated: false,
-    programme: ""
+    programme: "",
+    bucksServed: "",
+    maleBreeds: "",
+    femaleBreeds: ""
   });
 
   const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
@@ -608,7 +614,10 @@ const LivestockFarmersPage = () => {
       goats: goatsVal,
       sheep: sheepVal,
       vaccinated: record.vaccinated,
-      programme: record.programme
+      programme: record.programme,
+      bucksServed: (record.bucksServed ?? "").toString(),
+      maleBreeds: (record.maleBreeds ?? "").toString(),
+      femaleBreeds: (record.femaleBreeds ?? "").toString()
     });
     setIsEditDialogOpen(true);
   }, [userIsChiefAdmin]);
@@ -640,7 +649,10 @@ const LivestockFarmersPage = () => {
         goats: Number(editForm.goats),
         sheep: Number(editForm.sheep),
         vaccinated: editForm.vaccinated,
-        programme: editForm.programme
+        programme: editForm.programme,
+        bucksServed: editForm.bucksServed,
+        maleBreeds: editForm.maleBreeds,
+        femaleBreeds: editForm.femaleBreeds
       });
       toast({ title: "Success", description: "Farmer record updated" });
       setIsEditDialogOpen(false);
@@ -1443,6 +1455,21 @@ const LivestockFarmersPage = () => {
             <div className="space-y-2">
                 <Label>Sheep</Label>
                 <Input type="number" value={editForm.sheep} onChange={e => setEditForm({...editForm, sheep: parseInt(e.target.value) || 0})} />
+            </div>
+            <div className="col-span-1 sm:col-span-2 my-2 border-t pt-2">
+                <h4 className="text-sm font-semibold text-gray-500 uppercase">Breeding</h4>
+            </div>
+            <div className="space-y-2">
+                <Label>Bucks Served</Label>
+                <Input type="number" value={editForm.bucksServed} onChange={e => setEditForm({...editForm, bucksServed: e.target.value})} />
+            </div>
+            <div className="space-y-2">
+                <Label>Male Breeds</Label>
+                <Input type="number" value={editForm.maleBreeds} onChange={e => setEditForm({...editForm, maleBreeds: e.target.value})} />
+            </div>
+            <div className="space-y-2">
+                <Label>Female Breeds</Label>
+                <Input type="number" value={editForm.femaleBreeds} onChange={e => setEditForm({...editForm, femaleBreeds: e.target.value})} />
             </div>
             <div className="col-span-1 sm:col-span-2 my-2 border-t pt-2">
                 <h4 className="text-sm font-semibold text-gray-500 uppercase">Status & PROJECT</h4>

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import { fetchData, db } from "@/lib/firebase";
+import { getAuth } from "firebase/auth";
+import { db } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -11,7 +12,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Download, MapPin, Eye, Droplets, Users, Building, Trash2, Upload, Plus, Edit } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { isChiefAdmin } from "@/contexts/authhelper";
+import { canViewAllProgrammes, isChiefAdmin } from "@/contexts/authhelper";
 import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
 import {millify} from "millify";
 
@@ -22,6 +23,10 @@ import {
   update, 
   remove, 
   get, 
+  onValue,
+  query,
+  orderByChild,
+  equalTo,
   DatabaseReference,
   Database 
 } from "firebase/database";
@@ -30,6 +35,7 @@ import {
 interface Borehole {
   id: string;
   date: any; // Can be ISO string or number
+  programme?: string;
   location?: string;
   county?: string;      // Added County
   subcounty?: string;   // Added Sub-County
@@ -70,8 +76,6 @@ interface FirebaseResult {
   error?: string;
   id?: string;
 }
-
-const BOREHOLE_CACHE_KEY = cacheKey("admin-page", "borehole-storage");
 
 // --- CORRECTED REALTIME DATABASE IMPLEMENTATIONS ---
 
@@ -155,6 +159,18 @@ const deleteData = async (collectionName: string, docIds: string[]): Promise<Fir
 // Constants
 const PAGE_LIMIT = 15;
 const SEARCH_DEBOUNCE_DELAY = 300;
+const PROGRAMME_OPTIONS = ["KPMD", "RANGE"] as const;
+type ProgrammeOption = (typeof PROGRAMME_OPTIONS)[number];
+
+const normalizeProgramme = (
+  value: unknown,
+  fallback: ProgrammeOption = "KPMD"
+): ProgrammeOption => {
+  if (typeof value !== "string") return fallback;
+  const normalized = value.trim().toUpperCase();
+  if (normalized === "KPMD" || normalized === "RANGE") return normalized;
+  return fallback;
+};
 
 // Helper functions
 const parseDate = (date: any): Date | null => {
@@ -342,10 +358,12 @@ const displayPeopleValue = (people: string | number | undefined): string => {
 };
 
 const BoreholePage = () => {
-  const { userRole } = useAuth();
+  const { userRole, userAttribute } = useAuth();
   const { toast } = useToast();
   const [allBoreholes, setAllBoreholes] = useState<Borehole[]>([]);
   const [filteredBoreholes, setFilteredBoreholes] = useState<Borehole[]>([]);
+  const [activeProgram, setActiveProgram] = useState<string>("");
+  const [availablePrograms, setAvailablePrograms] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [exportLoading, setExportLoading] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
@@ -371,11 +389,12 @@ const BoreholePage = () => {
     search: "",
     startDate: currentMonth.startDate,
     endDate: currentMonth.endDate,
-    location: "all"
+    location: "all",
   });
 
   const [newBorehole, setNewBorehole] = useState<Partial<Borehole>>({
     date: formatDateToLocal(new Date()),
+    programme: "KPMD",
     location: "",
     county: "",        // Added County
     subcounty: "",     // Added Sub-County
@@ -406,6 +425,14 @@ const BoreholePage = () => {
   const userIsChiefAdmin = useMemo(() => {
     return isChiefAdmin(userRole);
   }, [userRole]);
+  const userCanViewAllProgrammeData = useMemo(
+    () => canViewAllProgrammes(userRole, userAttribute),
+    [userRole, userAttribute]
+  );
+  const boreholeCacheKey = useMemo(
+    () => cacheKey("admin-page", "borehole-storage", activeProgram || "no-program"),
+    [activeProgram]
+  );
   const requireChiefAdmin = () => {
     if (userIsChiefAdmin) return true;
     toast({
@@ -416,10 +443,54 @@ const BoreholePage = () => {
     return false;
   };
 
+  useEffect(() => {
+    if (userCanViewAllProgrammeData) {
+      setAvailablePrograms(["RANGE", "KPMD"]);
+      setActiveProgram((prev) => (prev ? prev : "RANGE"));
+      return;
+    }
+
+    const uid = getAuth().currentUser?.uid;
+    if (!uid) return;
+
+    const userRef = ref(db as Database, `users/${uid}`);
+    const unsubscribe = onValue(
+      userRef,
+      (snapshot) => {
+        const data = snapshot.val();
+        if (data && data.allowedProgrammes) {
+          const programs = Object.keys(data.allowedProgrammes).filter(
+            (key) => data.allowedProgrammes[key] === true
+          );
+          setAvailablePrograms(programs);
+          setActiveProgram((prev) => {
+            if (programs.length === 0) return "";
+            if (!prev || !programs.includes(prev)) return programs[0];
+            return prev;
+          });
+        } else {
+          setAvailablePrograms([]);
+          setActiveProgram("");
+        }
+      },
+      (error) => {
+        console.error("Error fetching user permissions:", error);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [userCanViewAllProgrammeData]);
+
   // Data fetching from Realtime Database
   const fetchAllData = useCallback(async () => {
+    if (!activeProgram) {
+      setAllBoreholes([]);
+      setLoading(false);
+      return;
+    }
+
     try {
-      const cachedBoreholes = readCachedValue<Borehole[]>(BOREHOLE_CACHE_KEY);
+      const cachedBoreholes = readCachedValue<Borehole[]>(boreholeCacheKey);
       if (cachedBoreholes) {
         setAllBoreholes(sortBoreholesByLatest(cachedBoreholes));
         setLoading(false);
@@ -427,8 +498,12 @@ const BoreholePage = () => {
         setLoading(true);
       }
       console.log("Starting borehole data fetch from Realtime Database...");
-      
-      const boreholeRef = ref(db as Database, 'BoreholeStorage');
+
+      const boreholeRef = query(
+        ref(db as Database, "BoreholeStorage"),
+        orderByChild("programme"),
+        equalTo(activeProgram)
+      );
       const snapshot = await get(boreholeRef);
       
       if (snapshot.exists()) {
@@ -445,6 +520,7 @@ const BoreholePage = () => {
           return {
             id: key,
             ...item,
+            programme: normalizeProgramme(item.programme || item.Programme),
             // Ensure specific field mappings match your RTDB structure
             location: item.BoreholeLocation || item.location || 'No location',
             county: item.County || item.county || '',       // Map County
@@ -460,11 +536,11 @@ const BoreholePage = () => {
         const sortedBoreholeData = sortBoreholesByLatest(boreholeData);
         console.log("Final processed borehole data:", sortedBoreholeData);
         setAllBoreholes(sortedBoreholeData);
-        writeCachedValue(BOREHOLE_CACHE_KEY, sortedBoreholeData);
+        writeCachedValue(boreholeCacheKey, sortedBoreholeData);
       } else {
         console.warn("No BoreholeStorage data found in Realtime Database");
         setAllBoreholes([]);
-        removeCachedValue(BOREHOLE_CACHE_KEY);
+        removeCachedValue(boreholeCacheKey);
       }
       
     } catch (error) {
@@ -477,7 +553,7 @@ const BoreholePage = () => {
     } finally {
       setLoading(false);
     }
-  }, [toast]);
+  }, [activeProgram, boreholeCacheKey, toast]);
 
   // Filter application
   const applyFilters = useCallback(() => {
@@ -574,6 +650,11 @@ const BoreholePage = () => {
   }, [fetchAllData]);
 
   useEffect(() => {
+    if (!activeProgram) return;
+    setNewBorehole((prev) => ({ ...prev, programme: activeProgram }));
+  }, [activeProgram]);
+
+  useEffect(() => {
     applyFilters();
   }, [applyFilters]);
 
@@ -604,6 +685,18 @@ const BoreholePage = () => {
     setPagination(prev => ({ ...prev, page: 1 }));
   }, []);
 
+  const handleProgramChange = useCallback((program: string) => {
+    setActiveProgram(program);
+    setFilters({
+      search: "",
+      startDate: currentMonth.startDate,
+      endDate: currentMonth.endDate,
+      location: "all",
+    });
+    setSelectedRecords([]);
+    setPagination((prev) => ({ ...prev, page: 1 }));
+  }, [currentMonth.endDate, currentMonth.startDate]);
+
   // Create functionality
   const handleCreateBorehole = async () => {
     if (!requireChiefAdmin()) return;
@@ -627,6 +720,9 @@ const BoreholePage = () => {
       });
 
       const boreholeData = {
+        programme: userCanViewAllProgrammeData
+          ? normalizeProgramme(newBorehole.programme)
+          : normalizeProgramme(activeProgram),
         BoreholeLocation: newBorehole.location,
         County: newBorehole.county || "",           // Added County
         SubCounty: newBorehole.subcounty || "",      // Added Sub-County
@@ -652,6 +748,7 @@ const BoreholePage = () => {
         // Reset form and close dialog
         setNewBorehole({
           date: formatDateToLocal(new Date()),
+          programme: activeProgram || "KPMD",
           location: "",
           county: "",
           subcounty: "",
@@ -664,7 +761,7 @@ const BoreholePage = () => {
         setIsCreateDialogOpen(false);
 
         // Refresh data
-        removeCachedValue(BOREHOLE_CACHE_KEY);
+        removeCachedValue(boreholeCacheKey);
         await fetchAllData();
       } else {
         throw new Error(result.error || "Failed to create borehole record");
@@ -707,6 +804,7 @@ const BoreholePage = () => {
       });
 
       const boreholeData = {
+        programme: normalizeProgramme(editingRecord.programme),
         BoreholeLocation: editingRecord.location,
         County: editingRecord.county || "",          // Added County
         SubCounty: editingRecord.subcounty || "",     // Added Sub-County
@@ -734,7 +832,7 @@ const BoreholePage = () => {
         setEditingRecord(null);
 
         // Refresh data
-        removeCachedValue(BOREHOLE_CACHE_KEY);
+        removeCachedValue(boreholeCacheKey);
         await fetchAllData();
       } else {
         throw new Error(result.error || "Failed to update borehole record");
@@ -771,7 +869,7 @@ const BoreholePage = () => {
       const result = await deleteData("BoreholeStorage", selectedRecords);
 
       if (result.success) {
-        removeCachedValue(BOREHOLE_CACHE_KEY);
+        removeCachedValue(boreholeCacheKey);
         // Update local state
         setAllBoreholes(prev => prev.filter(record => !selectedRecords.includes(record.id)));
         setSelectedRecords([]);
@@ -850,7 +948,7 @@ const BoreholePage = () => {
           description: result.message,
         });
         
-        removeCachedValue(BOREHOLE_CACHE_KEY);
+        removeCachedValue(boreholeCacheKey);
         await fetchAllData();
         setIsUploadDialogOpen(false);
         setUploadFile(null);
@@ -903,6 +1001,7 @@ const BoreholePage = () => {
 
         return [
           formatDateForExcel(record.date),
+          normalizeProgramme(record.programme),
           record.location || 'N/A',
           record.county || 'N/A',       // Added County
           record.subcounty || 'N/A',    // Added Sub-County
@@ -912,7 +1011,7 @@ const BoreholePage = () => {
         ];
       });
 
-      const headers = ['Date', 'Borehole Location', 'County', 'Sub-County', 'People Using Water', 'Water Used', 'Status'];
+      const headers = ['Date', 'Programme', 'Borehole Location', 'County', 'Sub-County', 'People Using Water', 'Water Used', 'Status'];
       const csvContent = [
         headers.map(escapeCsvCell).join(','),
         ...csvData.map(row =>
@@ -988,7 +1087,10 @@ const BoreholePage = () => {
 
   const openEditDialog = (record: Borehole) => {
     if (!userIsChiefAdmin) return;
-    setEditingRecord(record);
+    setEditingRecord({
+      ...record,
+      programme: normalizeProgramme(record.programme),
+    });
     setIsEditDialogOpen(true);
   };
 
@@ -1009,7 +1111,7 @@ const BoreholePage = () => {
       search: "",
       startDate: "",
       endDate: "",
-      location: "all"
+      location: "all",
     });
   };
 
@@ -1094,6 +1196,18 @@ const BoreholePage = () => {
           />
         </td>
         <td className="py-2 px-3 text-xs text-gray-500">{formatDate(record.date)}</td>
+        <td className="py-2 px-3">
+          <Badge
+            variant="secondary"
+            className={
+              normalizeProgramme(record.programme) === "KPMD"
+                ? "bg-indigo-100 text-indigo-800 w-fit text-[10px]"
+                : "bg-teal-100 text-teal-800 w-fit text-[10px]"
+            }
+          >
+            {normalizeProgramme(record.programme)}
+          </Badge>
+        </td>
         <td className="py-2 px-3 font-medium text-sm">{record.location || 'N/A'}</td>
         <td className="py-2 px-3 text-xs">{record.county || '-'}</td> {/* Added County */}
         <td className="py-2 px-3 text-xs">{record.subcounty || '-'}</td> {/* Added Sub-County */}
@@ -1165,9 +1279,33 @@ const BoreholePage = () => {
           <h2 className="text-xl font-bold mb-2 bg-gradient-to-r from-blue-600 to-cyan-600 bg-clip-text text-transparent">
             Borehole Data
           </h2>
+          <div className="bg-blue-50 text-blue-700 border-blue-200 text-xs w-fit px-2 py-1 rounded">
+            {activeProgram || "No Access"} PROJECT
+          </div>
         </div>
 
         <div className="flex flex-wrap gap-2">
+          {userCanViewAllProgrammeData && (
+            <div className="w-full sm:w-[180px]">
+              <Select
+                value={activeProgram}
+                onValueChange={handleProgramChange}
+                disabled={availablePrograms.length === 0}
+              >
+                <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white h-9 font-bold w-full">
+                  <SelectValue placeholder="Select Programme" />
+                </SelectTrigger>
+                <SelectContent>
+                  {availablePrograms.map((programme) => (
+                    <SelectItem key={programme} value={programme}>
+                      {programme}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
           <Button 
             variant="outline" 
             size="sm" 
@@ -1274,7 +1412,11 @@ const BoreholePage = () => {
             </div>
           ) : currentPageRecords.length === 0 ? (
             <div className="text-center py-12 text-muted-foreground">
-              {allBoreholes.length === 0 ? "No borehole data found in database" : "No records found matching your criteria"}
+              {!activeProgram
+                ? "You do not have access to any programme data."
+                : allBoreholes.length === 0
+                  ? "No borehole data found in database"
+                  : "No records found matching your criteria"}
             </div>
           ) : (
             <>
@@ -1289,6 +1431,7 @@ const BoreholePage = () => {
                         />
                       </th>
                       <th className="py-3 px-3 font-semibold text-gray-700">Date</th>
+                      <th className="py-3 px-3 font-semibold text-gray-700">Programme</th>
                       <th className="py-3 px-3 font-semibold text-gray-700">Borehole Location</th>
                       <th className="py-3 px-3 font-semibold text-gray-700">County</th> {/* Added Header */}
                       <th className="py-3 px-3 font-semibold text-gray-700">Sub-County</th> {/* Added Header */}
@@ -1361,6 +1504,10 @@ const BoreholePage = () => {
                   <div>
                     <Label className="text-sm font-medium text-slate-600">Date Recorded</Label>
                     <p className="text-slate-900 font-medium">{formatDate(viewingRecord.date)}</p>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-medium text-slate-600">Programme</Label>
+                    <p className="text-slate-900 font-medium">{normalizeProgramme(viewingRecord.programme)}</p>
                   </div>
                   <div>
                     <Label className="text-sm font-medium text-slate-600">Borehole Location</Label>
@@ -1482,6 +1629,27 @@ const BoreholePage = () => {
             </div>
 
             <div className="space-y-2">
+              <Label htmlFor="create-programme" className="font-semibold text-gray-700">Programme</Label>
+              <Select
+                value={normalizeProgramme(newBorehole.programme)}
+                onValueChange={(value) =>
+                  setNewBorehole(prev => ({ ...prev, programme: normalizeProgramme(value) }))
+                }
+              >
+                <SelectTrigger id="create-programme" className="border-gray-300 focus:border-blue-500 focus:ring-blue-500 bg-white">
+                  <SelectValue placeholder="Select programme" />
+                </SelectTrigger>
+                <SelectContent>
+                  {PROGRAMME_OPTIONS.map((programme) => (
+                    <SelectItem key={programme} value={programme}>
+                      {programme}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
               <Label htmlFor="create-location" className="font-semibold text-gray-700">Borehole Location *</Label>
               <Input
                 id="create-location"
@@ -1594,6 +1762,7 @@ const BoreholePage = () => {
                 setIsCreateDialogOpen(false);
                 setNewBorehole({
                   date: formatDateToLocal(new Date()),
+                  programme: activeProgram || "KPMD",
                   location: "",
                   county: "",
                   subcounty: "",
@@ -1643,6 +1812,27 @@ const BoreholePage = () => {
                   onChange={(e) => setEditingRecord(prev => prev ? { ...prev, date: new Date(e.target.value) } : null)}
                   className="border-gray-300 focus:border-blue-500 focus:ring-blue-500 bg-white"
                 />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="edit-programme" className="font-semibold text-gray-700">Programme</Label>
+                <Select
+                  value={normalizeProgramme(editingRecord.programme)}
+                  onValueChange={(value) =>
+                    setEditingRecord(prev => prev ? { ...prev, programme: normalizeProgramme(value) } : null)
+                  }
+                >
+                  <SelectTrigger id="edit-programme" className="border-gray-300 focus:border-blue-500 focus:ring-blue-500 bg-white">
+                    <SelectValue placeholder="Select programme" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {PROGRAMME_OPTIONS.map((programme) => (
+                      <SelectItem key={programme} value={programme}>
+                        {programme}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
 
               <div className="space-y-2">

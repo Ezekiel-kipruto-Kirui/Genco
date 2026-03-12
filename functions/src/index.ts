@@ -670,7 +670,7 @@ const sendHrApprovalRequestEmail = async (
   await sendEmail(hrRecipients, subject, text, html);
 };
 
-const sendProjectManagerNewRequisitionSms = async (
+const sendProjectManagerNewRequisitiond  = async (
   requisitionId: string,
   record: RequisitionRecord,
 ): Promise<void> => {
