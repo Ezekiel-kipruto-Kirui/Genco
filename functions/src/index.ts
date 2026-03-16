@@ -670,7 +670,7 @@ const sendHrApprovalRequestEmail = async (
   await sendEmail(hrRecipients, subject, text, html);
 };
 
-const sendProjectManagerNewRequisitiond  = async (
+const sendProjectManagerNewRequisitionSms = async (
   requisitionId: string,
   record: RequisitionRecord,
 ): Promise<void> => {
@@ -789,17 +789,10 @@ const sendLivestockFarmerRegistrationSms = async (
     return;
   }
 
-  const programme = typeof record.programme === "string" &&
-      record.programme.trim() ?
-    record.programme.trim() :
-    "";
-  const programmeText = programme ? ` under ${programme} programme` : "";
-  const message = [
-    `Hello ${getFarmerName(record)},`,
-    `your livestock farmer registration${programmeText} ` +
-      "has been completed successfully.",
-    "Thank you.",
-  ].join(" ");
+  const message = `Dear ${getFarmerName(record)}, ` +
+    "your registration to the Genco is successful. " +
+    "Welcome aboard as we work together to improve livestock value " +
+    "and markets.";
 
   await sendSms([farmerPhone], message);
 };
