@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { ref, onValue, query, orderByChild, equalTo } from "firebase/database";
+import { ref, onValue } from "firebase/database";
 import { db } from "@/lib/firebase"; // Ensure this is getDatabase()
 import { useAuth } from "@/contexts/AuthContext";
 import { useQuery } from "@tanstack/react-query";
@@ -42,14 +42,16 @@ interface FarmerData {
   county: string;
   subcounty: string;
   location: string;
-  goats: number | { male: number; female: number; total: number }; 
+  goats: number | string | { male?: number | string; female?: number | string; total?: number | string };
   sheep: number | string;
+  programme?: string;
   username?: string;
 }
 
 interface TrainingData {
   id: string;
   startDate?: string;
+  createdAt?: number | string;
   totalFarmers?: number;
   programme?: string;
 }
@@ -116,9 +118,30 @@ const getCurrentMonthDates = () => {
   };
 };
 
+const normalizeProgramme = (value: unknown): string =>
+  typeof value === "string" ? value.trim().toUpperCase() : "";
+
+const parseNumericValue = (value: unknown): number => {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : 0;
+  }
+  if (typeof value === "string") {
+    const normalized = value.replace(/,/g, "").trim();
+    if (!normalized) return 0;
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+};
+
 const getGoatTotal = (goats: any): number => {
-  if (typeof goats === 'number') return goats;
-  if (typeof goats === 'object' && goats !== null && typeof goats.total === 'number') return goats.total;
+  if (typeof goats === "number" || typeof goats === "string") return parseNumericValue(goats);
+  if (typeof goats === "object" && goats !== null) {
+    if (Object.prototype.hasOwnProperty.call(goats, "total")) {
+      return parseNumericValue(goats.total);
+    }
+    return parseNumericValue(goats.male) + parseNumericValue(goats.female);
+  }
   return 0;
 };
 
@@ -142,6 +165,7 @@ const LivestockFarmersAnalytics = () => {
   const [animalCensusData, setAnimalCensusData] = useState<PieDataItem[]>([]); 
   const [weeklyPerformanceData, setWeeklyPerformanceData] = useState<TimeSeriesItem[]>([]); 
   const [subcountyPerformanceData, setSubcountyPerformanceData] = useState<any[]>([]);
+  const [localUserProgressData, setLocalUserProgressData] = useState<UserProgress[]>([]);
   
   const [stats, setStats] = useState({ 
     total: 0, 
@@ -240,6 +264,7 @@ const LivestockFarmersAnalytics = () => {
     if (USE_REMOTE_ANALYTICS) return;
     if (!activeProgram) {
         setAllFarmers([]);
+        setLocalUserProgressData([]);
         setLoading(false);
         return;
     }
@@ -252,8 +277,8 @@ const LivestockFarmersAnalytics = () => {
       setLoading(false);
     }
 
-    const farmersQuery = query(ref(db, 'farmers'), orderByChild('programme'), equalTo(activeProgram));
-    const unsubscribe = onValue(farmersQuery, (snapshot) => {
+    const farmersRef = ref(db, 'farmers');
+    const unsubscribe = onValue(farmersRef, (snapshot) => {
       const data = snapshot.val();
       if (!data) {
         setAllFarmers([]);
@@ -262,26 +287,37 @@ const LivestockFarmersAnalytics = () => {
         return;
       }
 
-      const farmersList = Object.keys(data).map((key) => {
-        const item = data[key];
-        let dateValue = item.createdAt;
-        if (typeof dateValue !== 'number') {
-           dateValue = parseDate(item.registrationDate)?.getTime() || Date.now();
-        }
-        return {
-          id: key,
-          createdAt: dateValue,
-          name: item.name || '',
-          gender: item.gender || '',
-          phone: item.phone || '',
-          county: item.county || '',
-          subcounty: item.subcounty || '',
-          location: item.location || item.subcounty || '',
-          goats: item.goats || 0,
-          sheep: item.sheep || 0,
-          username: item.username || 'Unknown'
-        };
-      });
+      const normalizedActiveProgram = normalizeProgramme(activeProgram);
+      const farmersList = Object.keys(data)
+        .map((key) => {
+          const item = data[key] || {};
+          const programme = normalizeProgramme(item.programme ?? item.Programme);
+          if (normalizedActiveProgram && programme !== normalizedActiveProgram) {
+            return null;
+          }
+
+          const parsedCreatedAt =
+            parseDate(item.createdAt)?.getTime() ||
+            parseDate(item.created_at)?.getTime() ||
+            parseDate(item.registrationDate)?.getTime() ||
+            Date.now();
+
+          return {
+            id: key,
+            createdAt: parsedCreatedAt,
+            name: item.name || item.farmerName || '',
+            gender: item.gender || '',
+            phone: item.phone || item.phoneNumber || '',
+            county: item.county || item.County || '',
+            subcounty: item.subcounty || item.Subcounty || item["Sub County"] || item["Sub-County"] || '',
+            location: item.location || item.Location || item.subcounty || item.Subcounty || '',
+            goats: item.goats ?? item.Goats ?? item.totalGoats ?? 0,
+            sheep: item.sheep ?? item.Sheep ?? 0,
+            programme,
+            username: item.username || item.created_by || item.createdBy || item.fieldOfficer || item.officer || 'Unknown User'
+          };
+        })
+        .filter((item): item is FarmerData => item !== null);
       farmersList.sort((a, b) => (b.createdAt as number) - (a.createdAt as number));
       setAllFarmers(farmersList);
       setLoading(false);
@@ -309,15 +345,31 @@ const LivestockFarmersAnalytics = () => {
     if (cachedTraining && cachedTraining.length > 0) {
         setTrainingRecords(cachedTraining);
     }
-    const trainingQuery = query(ref(db, 'capacityBuilding'), orderByChild('programme'), equalTo(activeProgram));
-    const unsubscribe = onValue(trainingQuery, (snapshot) => {
+    const trainingRef = ref(db, 'capacityBuilding');
+    const unsubscribe = onValue(trainingRef, (snapshot) => {
         const data = snapshot.val();
         if (!data) {
             setTrainingRecords([]);
             localStorage.removeItem(cacheKey);
             return;
         }
-        const records = Object.keys(data).map((key) => ({ id: key, ...data[key] }));
+        const normalizedActiveProgram = normalizeProgramme(activeProgram);
+        const records = Object.keys(data)
+          .map((key) => {
+            const item = data[key] || {};
+            const programme = normalizeProgramme(item.programme ?? item.Programme);
+            if (normalizedActiveProgram && programme !== normalizedActiveProgram) {
+              return null;
+            }
+            return {
+              id: key,
+              ...item,
+              programme,
+              startDate: item.startDate || item.start_date || item.date || item.Date,
+              createdAt: item.createdAt ?? item.created_at ?? item.startDate ?? item.start_date ?? item.date ?? item.Date,
+            };
+          })
+          .filter((item): item is TrainingData => item !== null);
         setTrainingRecords(records);
         try {
             localStorage.setItem(cacheKey, JSON.stringify(records));
@@ -333,9 +385,7 @@ const LivestockFarmersAnalytics = () => {
   // --- 4. Filtering & Analytics Logic ---
   useEffect(() => {
     if (USE_REMOTE_ANALYTICS) return;
-    if (allFarmers.length > 0) {
-      applyFilters();
-    }
+    applyFilters();
   }, [dateRange, allFarmers, trainingRecords]);
 
   const isDateInRange = (date: any, startDate: string, endDate: string): boolean => {
@@ -367,7 +417,13 @@ const LivestockFarmersAnalytics = () => {
     const femaleCount = data.filter(f => String(f.gender).toLowerCase() === 'female').length;
 
     // Training Stats
-    const totalTrainedFromCapacity = trainingRecords.reduce((sum, t) => sum + (Number(t.totalFarmers) || 0), 0);
+    const filteredTrainingRecords = trainingRecords.filter((record) =>
+      isDateInRange(record.startDate || record.createdAt, dateRange.startDate, dateRange.endDate)
+    );
+    const totalTrainedFromCapacity = filteredTrainingRecords.reduce(
+      (sum, t) => sum + parseNumericValue(t.totalFarmers),
+      0
+    );
     
     // Realistic Percentage: trained vs total registered farmers in filter
     // Note: If totalTrainedFromCapacity exceeds data.length (due to repeat attendees or data mismatch), 
@@ -381,7 +437,7 @@ const LivestockFarmersAnalytics = () => {
     data.forEach(farmer => {
       const g = getGoatTotal(farmer.goats);
       totalGoats += g;
-      totalSheep += Number(farmer.sheep || 0);
+      totalSheep += parseNumericValue(farmer.sheep);
     });
 
     const totalAnimals = totalGoats + totalSheep;
@@ -425,7 +481,7 @@ const LivestockFarmersAnalytics = () => {
       const weekNum = Math.ceil(day / 7); 
       if (weekNum >= 1 && weekNum <= 4) {
         weeks[weekNum].farmers++;
-        weeks[weekNum].animals += getGoatTotal(farmer.goats) + Number(farmer.sheep || 0);
+        weeks[weekNum].animals += getGoatTotal(farmer.goats) + parseNumericValue(farmer.sheep);
       }
     });
 
@@ -448,12 +504,47 @@ const LivestockFarmersAnalytics = () => {
       .sort((a, b) => b.value - a.value)
       .slice(0, 15);
     setSubcountyPerformanceData(scData);
+
+    const userStats: Record<string, { count: number; counties: Set<string> }> = {};
+    data.forEach((farmer) => {
+      const officerName = String(farmer.username || "Unknown User").trim() || "Unknown User";
+      if (!userStats[officerName]) {
+        userStats[officerName] = { count: 0, counties: new Set<string>() };
+      }
+      userStats[officerName].count += 1;
+      const county = String(farmer.county || "").trim();
+      if (county) {
+        userStats[officerName].counties.add(county);
+      }
+    });
+
+    const localProgress = Object.entries(userStats)
+      .map(([name, officerData]) => {
+        const progressPercentage = activeTarget > 0 ? (officerData.count / activeTarget) * 100 : 0;
+        let status: UserProgress["status"] = "needs-attention";
+        if (progressPercentage >= 100) status = "achieved";
+        else if (progressPercentage >= 75) status = "on-track";
+        else if (progressPercentage >= 50) status = "behind";
+
+        const counties = [...officerData.counties];
+        return {
+          id: name,
+          name,
+          region: counties.slice(0, 3).join(", ") + (counties.length > 3 ? "..." : ""),
+          farmersRegistered: officerData.count,
+          target: activeTarget,
+          progressPercentage,
+          status,
+        };
+      })
+      .sort((a, b) => b.farmersRegistered - a.farmersRegistered);
+    setLocalUserProgressData(localProgress);
   };
 
   // User Progress with Dynamic Targets
   const userProgressData = useMemo(
-    () => (analyticsQuery.data as any)?.userProgressData || [],
-    [analyticsQuery.data],
+    () => USE_REMOTE_ANALYTICS ? (analyticsQuery.data as any)?.userProgressData || [] : localUserProgressData,
+    [analyticsQuery.data, localUserProgressData],
   );
 
   const handleDateRangeChange = (key: string, value: string) => {

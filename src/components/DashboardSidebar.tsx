@@ -81,8 +81,9 @@ const buildSections = (userRole: string | null, userAttribute: string | null): N
       icon: Beef,
       visible: canAccessFarmerData(userRole, userAttribute),
       items: [
+         { title: "Livestock Dashboard", url: "/dashboard/livestock/analytics", icon: TrendingUp },
         { title: "Livestock Farmers", url: "/dashboard/livestock", icon: Database },
-        { title: "Livestock Farmers Analytics", url: "/dashboard/livestock/analytics", icon: TrendingUp },
+       
         { title: "Fodder Farmers", url: "/dashboard/fodder", icon: Database },
         { title: "Capacity Building", url: "/dashboard/capacity", icon: GraduationCap },
       ],

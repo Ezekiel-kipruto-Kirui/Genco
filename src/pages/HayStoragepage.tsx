@@ -9,9 +9,6 @@ import {
   remove,
   get,
   onValue,
-  query,
-  orderByChild,
-  equalTo,
   Database,
   DatabaseReference
 } from "firebase/database";
@@ -113,6 +110,13 @@ const normalizeProgramme = (
   const normalized = value.trim().toUpperCase();
   if (normalized === "KPMD" || normalized === "RANGE") return normalized;
   return fallback;
+};
+
+const getProgrammeValue = (value: unknown): ProgrammeOption | "" => {
+  if (typeof value !== "string") return "";
+  const normalized = value.trim().toUpperCase();
+  if (normalized === "KPMD" || normalized === "RANGE") return normalized;
+  return "";
 };
 
 const PASTURE_STAGES = [
@@ -410,8 +414,8 @@ const HayStoragePage = () => {
 
   const [filters, setFilters] = useState<Filters>({
     search: "",
-    startDate: currentMonth.startDate,
-    endDate: currentMonth.endDate,
+    startDate: "",
+    endDate: "",
     county: "all",
     subcounty: "all",
   });
@@ -444,6 +448,13 @@ const HayStoragePage = () => {
     () => canViewAllProgrammes(userRole, userAttribute),
     [userRole, userAttribute]
   );
+  const selectableProgrammes = useMemo(() => {
+    const sourceProgrammes = availablePrograms.length > 0 ? availablePrograms : [...PROGRAMME_OPTIONS];
+    const normalizedProgrammes = sourceProgrammes
+      .map((programme) => getProgrammeValue(programme))
+      .filter((programme): programme is ProgrammeOption => Boolean(programme));
+    return Array.from(new Set(normalizedProgrammes));
+  }, [availablePrograms]);
   const hayStorageCacheKey = useMemo(
     () => cacheKey("admin-page", "hay-storage", activeProgram || "no-program"),
     [activeProgram]
@@ -494,6 +505,18 @@ const HayStoragePage = () => {
     );
     return () => unsubscribe();
   }, [rtdb, userCanViewAllProgrammeData]);
+
+  useEffect(() => {
+    const selectedProgramme = getProgrammeValue(activeProgram);
+    if (!selectedProgramme) return;
+    setAddingRecord((prev) => {
+      if (prev.programme === selectedProgramme) return prev;
+      return {
+        ...prev,
+        programme: selectedProgramme,
+      };
+    });
+  }, [activeProgram]);
 
   // Handlers
   const handleSearch = useCallback((value: string) => {
@@ -575,36 +598,42 @@ const HayStoragePage = () => {
       } else {
         setLoading(true);
       }
-      const hayStorageRef = query(
-        ref(rtdb, "HayStorage"),
-        orderByChild("programme"),
-        equalTo(activeProgram)
-      );
+      const hayStorageRef = ref(rtdb, "HayStorage");
       const snapshot = await get(hayStorageRef);
 
       if (snapshot.exists()) {
         const data = snapshot.val();
-        const hayStorageData = Object.keys(data).map((key) => {
-          const item = data[key];
-          return {
-            id: key,
-            programme: normalizeProgramme(item.programme || item.Programme),
-            date_planted: item.date_planted,
-            location: item.location || '',
-            county: item.county || '',
-            subcounty: item.subcounty || '',
-            land_under_pasture: Number(item.land_under_pasture || 0),
-            land_ownership: item.land_ownership || 'N/A', 
-            pasture_stages: item.pasture_stages || [],
-            storage_facility: item.storage_facility || '',
-            bales_harvested_stored: Number(item.bales_harvested_stored || 0),
-            bales_sold: Number(item.bales_sold || 0),
-            date_sold: item.date_sold,
-            revenue_generated: Number(item.revenue_generated || 0),
-            created_at: item.created_at,
-            created_by: item.created_by || 'unknown'
-          };
-        });
+        const normalizedActiveProgram = getProgrammeValue(activeProgram);
+        const hayStorageData = Object.keys(data)
+          .map((key) => {
+            const item = data[key] || {};
+            const programme = getProgrammeValue(item.programme ?? item.Programme);
+            return {
+              id: key,
+              programme,
+              date_planted: item.date_planted ?? item.datePlanted ?? item.Date ?? item.created_at,
+              location: item.location || item.Location || "",
+              county: item.county || item.County || "",
+              subcounty: item.subcounty || item.Subcounty || item["Sub County"] || item["Sub-County"] || "",
+              land_under_pasture: Number(
+                item.land_under_pasture ?? item.landUnderPasture ?? item["Land Under Pasture"] ?? 0
+              ) || 0,
+              land_ownership: item.land_ownership || item.landOwnership || item["Land Ownership"] || "N/A",
+              pasture_stages: Array.isArray(item.pasture_stages) ? item.pasture_stages : [],
+              storage_facility: item.storage_facility || item.storageFacility || item["Storage Facility"] || "",
+              bales_harvested_stored: Number(
+                item.bales_harvested_stored ?? item.balesHarvestedStored ?? item["Bales Harvested Stored"] ?? 0
+              ) || 0,
+              bales_sold: Number(item.bales_sold ?? item.balesSold ?? item["Bales Sold"] ?? 0) || 0,
+              date_sold: item.date_sold ?? item.dateSold ?? item["Date Sold"] ?? null,
+              revenue_generated: Number(
+                item.revenue_generated ?? item.revenueGenerated ?? item["Revenue Generated"] ?? 0
+              ) || 0,
+              created_at: item.created_at ?? item.createdAt ?? item.date_planted ?? item.Date ?? null,
+              created_by: item.created_by || item.createdBy || item.username || "unknown"
+            };
+          })
+          .filter((record) => !normalizedActiveProgram || record.programme === normalizedActiveProgram);
         const sortedHayStorageData = sortHayStorageByLatest(hayStorageData);
         setAllHayStorage(sortedHayStorageData);
         writeCachedValue(hayStorageCacheKey, sortedHayStorageData);
@@ -747,7 +776,7 @@ const HayStoragePage = () => {
       const listRef = ref(rtdb, "HayStorage");
       const newRef: DatabaseReference = push(listRef);
       await update(newRef, payload);
-      removeCachedValue(HAY_STORAGE_CACHE_KEY);
+      removeCachedValue(hayStorageCacheKey);
 
       toast({
         title: "Success",
@@ -756,7 +785,7 @@ const HayStoragePage = () => {
 
       setIsAddDialogOpen(false);
       setAddingRecord({
-        programme: "KPMD",
+        programme: getProgrammeValue(activeProgram) || "KPMD",
         date_planted: '',
         location: '',
         county: '',
@@ -840,7 +869,7 @@ const HayStoragePage = () => {
       };
 
       await update(ref(rtdb, "HayStorage/" + editingRecord.id), updateData);
-      removeCachedValue(HAY_STORAGE_CACHE_KEY);
+      removeCachedValue(hayStorageCacheKey);
 
       await fetchAllData();
 
@@ -862,7 +891,7 @@ const HayStoragePage = () => {
 
       const deletePromises = selectedRecords.map(id => remove(ref(rtdb, "HayStorage/" + id)));
       await Promise.all(deletePromises);
-      removeCachedValue(HAY_STORAGE_CACHE_KEY);
+      removeCachedValue(hayStorageCacheKey);
 
       setAllHayStorage(prev => prev.filter(record => !selectedRecords.includes(record.id)));
       setSelectedRecords([]);
@@ -896,14 +925,14 @@ const HayStoragePage = () => {
       setUploadProgress(0);
       const progressInterval = setInterval(() => setUploadProgress(prev => prev >= 90 ? 90 : prev + 10), 200);
 
-      const result: UploadResult = await uploadDataWithValidation(uploadFile, "hay_storage");
+      const result: UploadResult = await uploadDataWithValidation(uploadFile, "HayStorage");
 
       clearInterval(progressInterval);
       setUploadProgress(100);
 
       if (result.success) {
         toast({ title: "Upload Successful", description: result.message });
-        removeCachedValue(HAY_STORAGE_CACHE_KEY);
+        removeCachedValue(hayStorageCacheKey);
         await fetchAllData();
         setIsUploadDialogOpen(false);
         setUploadFile(null);
@@ -976,6 +1005,13 @@ const HayStoragePage = () => {
   };
 
   const resetToCurrentMonth = () => setFilters(prev => ({ ...prev, ...currentMonth }));
+  const openAddDialog = useCallback(() => {
+    setAddingRecord((prev) => ({
+      ...prev,
+      programme: getProgrammeValue(activeProgram) || normalizeProgramme(prev.programme),
+    }));
+    setIsAddDialogOpen(true);
+  }, [activeProgram]);
 
   // Effects
   useEffect(() => {
@@ -995,9 +1031,23 @@ const HayStoragePage = () => {
          
         </div>
         <div className="flex flex-wrap gap-2 w-full xl:w-auto">
+          {selectableProgrammes.length > 0 && (
+            <Select value={activeProgram} onValueChange={setActiveProgram}>
+              <SelectTrigger className="w-full sm:w-[180px] border-gray-300 focus:border-blue-500 bg-white">
+                <SelectValue placeholder="Select Programme" />
+              </SelectTrigger>
+              <SelectContent>
+                {selectableProgrammes.map((programme) => (
+                  <SelectItem key={programme} value={programme}>
+                    {programme}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
           <Button variant="outline" size="sm" onClick={clearAllFilters} className="text-xs border-gray-300 hover:bg-gray-50">Clear All Filters</Button>
           <Button variant="outline" size="sm" onClick={resetToCurrentMonth} className="text-xs border-gray-300 hover:bg-gray-50">This Month</Button>
-          <Button onClick={() => setIsAddDialogOpen(true)} className="bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white shadow-md text-xs">
+          <Button onClick={openAddDialog} className="bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white shadow-md text-xs">
             <Plus className="h-4 w-4 mr-2" /> Add Record
           </Button>
           {userIsChiefAdmin && (
@@ -1391,7 +1441,7 @@ const HayStoragePage = () => {
         <DialogContent className="sm:max-w-md bg-white rounded-2xl">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-green-600"><Upload className="h-5 w-5" /> Upload</DialogTitle>
-            <DialogDescription>Upload CSV, JSON, or Excel files containing hay storage data.</DialogDescription>
+            <DialogDescription>Upload CSV, JSON, or Excel files containing hay storage data. Include a <strong>Programme</strong> column for each record.</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center">
