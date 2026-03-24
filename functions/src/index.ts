@@ -9,6 +9,8 @@ setGlobalOptions({maxInstances: 10, region: "us-central1"});
 
 admin.initializeApp();
 
+export {getAnalysisSummary} from "./analysis.js";
+
 const DEFAULT_HR_REJECTION_REASON =
   "Rejected by HR because no approval was provided in time.";
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;

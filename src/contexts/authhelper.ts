@@ -119,15 +119,19 @@ export const canAccessReports = (
   const principal = resolvePermissionPrincipal(userRole, userAttribute);
 
   if (
-    isProjectManager(principal) ||
-    isHummanResourceManager(principal) ||
     isFinance(principal) ||
     isOfftakeOfficer(principal)
   ) {
     return false;
   }
 
-  return isChiefAdmin(principal) || isAdmin(principal) || isFullAccessAttribute(principal);
+  return (
+    isChiefAdmin(principal) ||
+    isAdmin(principal) ||
+    isFullAccessAttribute(principal) ||
+    isProjectManager(principal) ||
+    isHummanResourceManager(principal)
+  );
 };
 
 export const canAccessSiteManagement = (
@@ -148,13 +152,100 @@ export const canAccessSiteManagement = (
   return isChiefAdmin(principal) || isAdmin(principal) || isFullAccessAttribute(principal);
 };
 
+export const canAccessFarmerData = (
+  userRole: string | null | undefined,
+  userAttribute?: string | null
+): boolean => {
+  const principal = resolvePermissionPrincipal(userRole, userAttribute);
+  return (
+    isChiefAdmin(principal) ||
+    isAdmin(principal) ||
+    isFullAccessAttribute(principal) ||
+    isProjectManager(principal) ||
+    isMonitoringAndEvaluationOfficer(principal)
+  );
+};
+
+export const canAccessInfrastructure = (
+  userRole: string | null | undefined,
+  userAttribute?: string | null
+): boolean => canAccessFarmerData(userRole, userAttribute);
+
+export const canAccessFieldActivities = (
+  userRole: string | null | undefined,
+  userAttribute?: string | null
+): boolean => {
+  const principal = resolvePermissionPrincipal(userRole, userAttribute);
+  return (
+    isChiefAdmin(principal) ||
+    isAdmin(principal) ||
+    isFullAccessAttribute(principal) ||
+    isProjectManager(principal) ||
+    isHummanResourceManager(principal) ||
+    isFinance(principal) ||
+    isMonitoringAndEvaluationOfficer(principal)
+  );
+};
+
+export const canAccessProjectManagerSection = (
+  userRole: string | null | undefined,
+  userAttribute?: string | null
+): boolean => {
+  const principal = resolvePermissionPrincipal(userRole, userAttribute);
+  return (
+    isProjectManager(principal) ||
+    isChiefAdmin(principal) ||
+    isAdmin(principal) ||
+    isFullAccessAttribute(principal) ||
+    isMonitoringAndEvaluationOfficer(principal)
+  );
+};
+
+export const canAccessHrManagement = (
+  userRole: string | null | undefined,
+  userAttribute?: string | null
+): boolean => {
+  const principal = resolvePermissionPrincipal(userRole, userAttribute);
+  return (
+    isHummanResourceManager(principal) ||
+    isChiefAdmin(principal) ||
+    isAdmin(principal) ||
+    isFullAccessAttribute(principal)
+  );
+};
+
+export const canAccessFinanceSection = (
+  userRole: string | null | undefined,
+  userAttribute?: string | null
+): boolean => {
+  const principal = resolvePermissionPrincipal(userRole, userAttribute);
+  return (
+    isFinance(principal) ||
+    isChiefAdmin(principal) ||
+    isAdmin(principal) ||
+    isFullAccessAttribute(principal)
+  );
+};
+
+export const canAccessOrdersSection = (
+  userRole: string | null | undefined,
+  userAttribute?: string | null
+): boolean => {
+  const principal = resolvePermissionPrincipal(userRole, userAttribute);
+  return (
+    isOfftakeOfficer(principal) ||
+    isChiefAdmin(principal) ||
+    isAdmin(principal) ||
+    isFullAccessAttribute(principal)
+  );
+};
+
 export const getLandingRouteForRole = (
   userRole: string | null | undefined,
   userAttribute?: string | null
 ): string => {
   const principal = resolvePermissionPrincipal(userRole, userAttribute);
 
-  if (isFinance(principal)) return "/dashboard/requisition";
   if (isOfftakeOfficer(principal)) return "/orders";
   if (canAccessDashboard(userRole, userAttribute)) return "/dashboard";
   return "/auth";

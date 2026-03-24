@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useCallback, useMemo, useRef, memo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, memo } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { getAuth } from "firebase/auth";
 import { ref, set, update, remove, onValue, push, query, orderByChild, equalTo, get } from "firebase/database";
@@ -275,7 +275,6 @@ const getFarmerPhoneFromRecord = (record: Record<string, unknown>): string => {
   return "";
 };
 
-// Kept for aggregation export, but removed from main stats calculation
 const getFarmerGroupingKey = (record: OfftakeData): string => {
   const normalizedId = String(record.idNumber || '').trim().toLowerCase();
   return normalizedId ? `id:${normalizedId}` : `record:${record.id}`;
@@ -837,18 +836,20 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
     
     const uniqueRegions = new Set(sortedFiltered.map(f => f.region).filter(Boolean));
 
-    // ==========================================
-    // UPDATED LOGIC: COUNT ALL RECORDS (TRANSACTIONS)
-    // ==========================================
-    
-    // Total Records (Transactions) - Counting every entry, including repeats
-    const totalRecords = sortedFiltered.length;
+    // Count farmers by unique ID number so repeated sessions are treated as one farmer.
+    const uniqueFarmersMap = new Map<string, OfftakeData>();
+    sortedFiltered.forEach((record) => {
+      const farmerKey = getFarmerGroupingKey(record);
+      if (!uniqueFarmersMap.has(farmerKey)) {
+        uniqueFarmersMap.set(farmerKey, record);
+      }
+    });
+    const uniqueFarmers = Array.from(uniqueFarmersMap.values());
+    const totalFarmers = uniqueFarmers.length;
 
     let totalMaleFarmers = 0;
     let totalFemaleFarmers = 0;
-    
-    // Count gender across all records
-    sortedFiltered.forEach(record => {
+    uniqueFarmers.forEach(record => {
       if (record.gender?.toLowerCase() === 'male') totalMaleFarmers++;
       else if (record.gender?.toLowerCase() === 'female') totalFemaleFarmers++;
     });
@@ -868,7 +869,7 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
       averageLiveWeight,
       averageCarcassWeight,
       averageRevenue,
-      totalFarmers: totalRecords, // Now reflects total transaction count
+      totalFarmers,
       totalMaleFarmers,
       totalFemaleFarmers,
       avgPricePerCarcassKg
@@ -913,6 +914,9 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
     setPagination(prev => ({ ...prev, page: 1 }));
     setSelectedRecords([]);
   };
+
+  // No longer needed, handled by useEffect debounce
+  // const handleSearchChange = ... 
 
   const handleFilterChange = useCallback((key: keyof Filters, value: string) => {
     setFilters(prev => ({ ...prev, [key]: value }));
@@ -1218,11 +1222,15 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
       const totalRecords = uploadPreview.length;
       setUploadProgress({ current: 0, total: totalRecords });
 
+      // Larger batch size to reduce HTTP overhead for "millions" of records
+      // 500 records per batch is usually safe for Firebase JSON payload limits
       const BATCH_SIZE = 2000; 
       let processedCount = 0;
 
+      // Recursive function to process batches asynchronously with UI breaks
       const processBatch = async (startIndex: number) => {
         if (startIndex >= totalRecords) {
+          // Finished
           setUploadLoading(false);
           setIsUploadDialogOpen(false);
           setUploadFile(null);
@@ -1272,9 +1280,11 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
           setUploadProgress({ current: processedCount, total: totalRecords });
         }
 
+        // Use setTimeout to allow UI to render progress bar before processing next batch
         setTimeout(() => processBatch(endIndex), 0);
       };
 
+      // Start processing
       processBatch(0);
 
     } catch (error) {
@@ -2250,3 +2260,4 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
   );
 };
 export default LivestockOfftakePage;
+

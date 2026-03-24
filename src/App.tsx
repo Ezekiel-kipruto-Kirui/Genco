@@ -20,10 +20,14 @@ const HayStoragepage = lazy(() => import("./pages/HayStoragepage"));
 const CapacityBuildingPage = lazy(() => import("./pages/CapacityBuildingPage"));
 const LivestockOfftakePage = lazy(() => import("./pages/LivestockOfftakePage"));
 const ActivitiesPage = lazy(() => import("./pages/ActivitiesPage"));
+const FieldTeamPage = lazy(() => import("./pages/FieldTeamPage"));
+const StaffPage = lazy(() => import("./pages/StaffPage"));
 const OnboardingPage = lazy(() => import("./pages/onboardingpage"));
 const AnimalHealthPage = lazy(() => import("./pages/Animalhealth"));
 const FodderOfftakePage = lazy(() => import("./pages/FodderOfftakePage"));
 const SalesReport = lazy(() => import("./pages/salesmetrics"));
+const RequisitionExpensesPage = lazy(() => import("./pages/RequisitionExpensesPage"));
+const RequisitionTrendsPage = lazy(() => import("./pages/RequisitionTrendsPage"));
 const UserManagementPage = lazy(() => import("./pages/UserManagementPage"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 const RequsitionPage = lazy(() => import("./pages/requisitionpage"));
@@ -31,20 +35,35 @@ const OrdersPage = lazy(() => import("./pages/OrdersPage"));
 
 const queryClient = new QueryClient();
 const FULL_ACCESS_IDENTITIES = ["admin", "chief-admin", "ceo", "chief operational manager", "mne officer"];
-const DASHBOARD_ALLOWED_IDENTITIES = [
-  ...FULL_ACCESS_IDENTITIES,
-  "finance",
-  "project manager",
-  "humman resource manager",
-  "humman resource manger",
+const PROJECT_MANAGER_IDENTITIES = ["project manager"];
+const FINANCE_IDENTITIES = ["finance"];
+const HR_IDENTITIES = [
   "human resource manager",
+  "humman resource manager",
   "human resource manger",
+  "humman resource manger",
   "hr",
 ];
-const REPORT_ALLOWED_IDENTITIES = [...FULL_ACCESS_IDENTITIES];
+const DASHBOARD_ALLOWED_IDENTITIES = [
+  ...FULL_ACCESS_IDENTITIES,
+  ...FINANCE_IDENTITIES,
+  ...PROJECT_MANAGER_IDENTITIES,
+  ...HR_IDENTITIES,
+];
+const PROJECT_MANAGER_ALLOWED_IDENTITIES = [...FULL_ACCESS_IDENTITIES, ...PROJECT_MANAGER_IDENTITIES];
+const REPORT_ALLOWED_IDENTITIES = [...FULL_ACCESS_IDENTITIES, ...HR_IDENTITIES];
+const STAFF_ALLOWED_IDENTITIES = [...FULL_ACCESS_IDENTITIES, ...HR_IDENTITIES];
+const FIELD_TEAM_ALLOWED_IDENTITIES = PROJECT_MANAGER_ALLOWED_IDENTITIES;
+const LIVESTOCK_ANALYTICS_ALLOWED_IDENTITIES = [...FULL_ACCESS_IDENTITIES, ...HR_IDENTITIES];
+const SALES_REPORT_ALLOWED_IDENTITIES = [...FULL_ACCESS_IDENTITIES, ...FINANCE_IDENTITIES];
+const FIELD_ACTIVITIES_ALLOWED_IDENTITIES = [...FULL_ACCESS_IDENTITIES, ...PROJECT_MANAGER_IDENTITIES, ...HR_IDENTITIES, ...FINANCE_IDENTITIES];
 const SITE_MANAGEMENT_ALLOWED_IDENTITIES = [...FULL_ACCESS_IDENTITIES];
-const REQUISITION_ONLY_IDENTITIES = ["finance"];
-const ORDERS_ONLY_IDENTITIES = ["offtake officer"];
+const REQUISITION_ALLOWED_IDENTITIES = [
+  ...FULL_ACCESS_IDENTITIES,
+  ...FINANCE_IDENTITIES,
+  ...HR_IDENTITIES,
+];
+const ORDERS_ALLOWED_IDENTITIES = [...FULL_ACCESS_IDENTITIES, "offtake officer"];
 
 const PageLoader = () => (
   <div className="flex h-screen w-screen items-center justify-center">
@@ -70,7 +89,7 @@ const App = () => (
               <Route
                 path="/requisition"
                 element={
-                  <ProtectedRoute allowedRoles={REQUISITION_ONLY_IDENTITIES}>
+                  <ProtectedRoute allowedRoles={REQUISITION_ALLOWED_IDENTITIES}>
                     <Navigate to="/dashboard/requisition" replace />
                   </ProtectedRoute>
                 }
@@ -78,7 +97,7 @@ const App = () => (
               <Route
                 path="/orders"
                 element={
-                  <ProtectedRoute allowedRoles={ORDERS_ONLY_IDENTITIES}>
+                  <ProtectedRoute allowedRoles={ORDERS_ALLOWED_IDENTITIES}>
                     <div className="min-h-screen bg-slate-50/80 p-4 md:p-6 lg:p-8 pb-20">
                       <OrdersPage />
                     </div>
@@ -98,7 +117,14 @@ const App = () => (
               >
                 {/* Nested routes under DashboardLayout */}
                 <Route index element={<DashboardOverview />} />
-                
+                <Route
+                  path="field-team"
+                  element={
+                    <ProtectedRoute allowedRoles={FIELD_TEAM_ALLOWED_IDENTITIES}>
+                      <FieldTeamPage />
+                    </ProtectedRoute>
+                  }
+                />
                 <Route
                   path="reports"
                   element={
@@ -110,33 +136,127 @@ const App = () => (
                 <Route
                   path="salesreport"
                   element={
-                    <ProtectedRoute allowedRoles={REPORT_ALLOWED_IDENTITIES}>
+                    <ProtectedRoute allowedRoles={SALES_REPORT_ALLOWED_IDENTITIES}>
                       <SalesReport />
                     </ProtectedRoute>
                   }
                 />
-                
+                <Route
+                  path="staff"
+                  element={
+                    <ProtectedRoute allowedRoles={STAFF_ALLOWED_IDENTITIES}>
+                      <StaffPage />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="requisition-expenses"
+                  element={
+                    <ProtectedRoute allowedRoles={SITE_MANAGEMENT_ALLOWED_IDENTITIES}>
+                      <RequisitionExpensesPage />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="requisition-trends"
+                  element={
+                    <ProtectedRoute allowedRoles={SITE_MANAGEMENT_ALLOWED_IDENTITIES}>
+                      <RequisitionTrendsPage />
+                    </ProtectedRoute>
+                  }
+                />
                 <Route path="livestock">
-                  <Route index element={<LivestockFarmersPage />} />
-                  <Route path="analytics" element={<LivestockFarmersAnalytics />} />
+                  <Route
+                    index
+                    element={
+                      <ProtectedRoute allowedRoles={SITE_MANAGEMENT_ALLOWED_IDENTITIES}>
+                        <LivestockFarmersPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="analytics"
+                    element={
+                      <ProtectedRoute allowedRoles={LIVESTOCK_ANALYTICS_ALLOWED_IDENTITIES}>
+                        <LivestockFarmersAnalytics />
+                      </ProtectedRoute>
+                    }
+                  />
                 </Route>
-                
-                <Route path="fodder" element={<FodderFarmersPage />} />
-                
+                <Route
+                  path="fodder"
+                  element={
+                    <ProtectedRoute allowedRoles={SITE_MANAGEMENT_ALLOWED_IDENTITIES}>
+                      <FodderFarmersPage />
+                    </ProtectedRoute>
+                  }
+                />
                 {/* Infrastructure Routes */}
-                <Route path="hay-storage" element={<HayStoragepage />} />
-                <Route path="borehole" element={<InfrastructurePage />} />
-                
-                <Route path="capacity" element={<CapacityBuildingPage />} />
-                
+                <Route
+                  path="hay-storage"
+                  element={
+                    <ProtectedRoute allowedRoles={SITE_MANAGEMENT_ALLOWED_IDENTITIES}>
+                      <HayStoragepage />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="borehole"
+                  element={
+                    <ProtectedRoute allowedRoles={SITE_MANAGEMENT_ALLOWED_IDENTITIES}>
+                      <InfrastructurePage />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="capacity"
+                  element={
+                    <ProtectedRoute allowedRoles={SITE_MANAGEMENT_ALLOWED_IDENTITIES}>
+                      <CapacityBuildingPage />
+                    </ProtectedRoute>
+                  }
+                />
                 {/* Offtake Routes */}
-                <Route path="livestock-offtake" element={<LivestockOfftakePage />} />
-                <Route path="fodder-offtake" element={<FodderOfftakePage />} />
-                
-                <Route path="activities" element={<ActivitiesPage />} />
-                <Route path="onboarding" element={<OnboardingPage />} />
-                <Route path="animalhealth" element={<AnimalHealthPage />} />
-
+                <Route
+                  path="livestock-offtake"
+                  element={
+                    <ProtectedRoute allowedRoles={PROJECT_MANAGER_ALLOWED_IDENTITIES}>
+                      <LivestockOfftakePage />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="fodder-offtake"
+                  element={
+                    <ProtectedRoute allowedRoles={SITE_MANAGEMENT_ALLOWED_IDENTITIES}>
+                      <FodderOfftakePage />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="activities"
+                  element={
+                    <ProtectedRoute allowedRoles={FIELD_ACTIVITIES_ALLOWED_IDENTITIES}>
+                      <ActivitiesPage />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="onboarding"
+                  element={
+                    <ProtectedRoute allowedRoles={FIELD_ACTIVITIES_ALLOWED_IDENTITIES}>
+                      <OnboardingPage />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="animalhealth"
+                  element={
+                    <ProtectedRoute allowedRoles={FIELD_ACTIVITIES_ALLOWED_IDENTITIES}>
+                      <AnimalHealthPage />
+                    </ProtectedRoute>
+                  }
+                />
                 {/* Admin Only Routes */}
                 <Route
                   path="users"
@@ -149,8 +269,22 @@ const App = () => (
                 
                 {/* Note: Admins can still access requisition inside the dashboard via sidebar if needed, 
                     or we can remove this if requisition is strictly HR-only. */}
-                <Route path="requisition" element={<RequsitionPage />} />
-                <Route path="orders" element={<OrdersPage />} />
+                <Route
+                  path="requisition"
+                  element={
+                    <ProtectedRoute allowedRoles={REQUISITION_ALLOWED_IDENTITIES}>
+                      <RequsitionPage />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="orders"
+                  element={
+                    <ProtectedRoute allowedRoles={ORDERS_ALLOWED_IDENTITIES}>
+                      <OrdersPage />
+                    </ProtectedRoute>
+                  }
+                />
                 
               </Route>
 

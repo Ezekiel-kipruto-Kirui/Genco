@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { canViewAllProgrammes } from "@/contexts/authhelper";
 import { getAuth } from "firebase/auth";
-import { ref, onValue, query, orderByChild, equalTo, off } from "firebase/database";
+import { ref, onValue } from "firebase/database";
 import { db } from "@/lib/firebase";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { 
@@ -26,6 +27,7 @@ import {
 } from "@/components/ui/dropdown-menu"; 
 import { useToast } from "@/hooks/use-toast";
 import { millify} from "millify";
+import { fetchAnalysisSummary } from "@/lib/analysis";
 
 // --- Constants ---
 const COLORS = {
@@ -73,6 +75,33 @@ interface SalesInputs {
   expenses: number;
 }
 
+interface SalesAnalyticsPayload {
+  filteredCount: number;
+  stats: {
+    totalPurchaseCost: number;
+    totalRevenue: number;
+    costPerGoat: number;
+    totalAnimals: number;
+    totalGoats: number;
+    totalSheep: number;
+    totalCattle: number;
+    totalLiveWeight: number;
+    avgLiveWeight: number;
+    totalCarcassWeight: number;
+    avgCarcassWeight: number;
+    pricePerKg: number;
+    expenses: number;
+    netProfit: number;
+    avgCostPerKgCarcass: number;
+  };
+  genderData: Array<{ name: string; value: number }>;
+  countyData: Array<{ name: string; count: number }>;
+  topLocations: Array<{ name: string; count: number }>;
+  topFarmers: Array<{ name: string; revenue: number; animals: number; county: string }>;
+  monthlyTrend: Array<{ month: string; revenue: number; volume: number }>;
+  top3Months: Array<{ month: string; revenue: number; volume: number }>;
+}
+
 // --- Optimized Data Cache Manager ---
 class DataCache {
   private cache = new Map<string, { data: OfftakeData[], timestamp: number }>();
@@ -100,6 +129,8 @@ class DataCache {
 }
 
 const dataCache = new DataCache();
+const USE_REMOTE_ANALYTICS =
+  typeof window !== "undefined" && !["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
 
 // --- Helper Functions ---
 
@@ -162,6 +193,14 @@ const getCurrentMonthDates = () => {
   return { startDate: formatDateToLocal(startOfMonth), endDate: formatDateToLocal(endOfMonth) };
 };
 
+const getCurrentYearDates = () => {
+  const now = new Date();
+  return {
+    startDate: `${now.getFullYear()}-01-01`,
+    endDate: `${now.getFullYear()}-12-31`,
+  };
+};
+
 const getQDates = (year: number, quarter: 1 | 2 | 3 | 4) => {
   const start = `${year}-${(quarter - 1) * 3 + 1}-01`;
   let endMonth = quarter * 3;
@@ -171,202 +210,230 @@ const getQDates = (year: number, quarter: 1 | 2 | 3 | 4) => {
   return { startDate: start, endDate: `${endYear}-${String(endMonth).padStart(2,'0')}-${endDay}` };
 };
 
-// --- Custom Hook for Offtake Data Processing ---
-const useOfftakeData = (
-  offtakeData: OfftakeData[], 
+const normalizeProgrammeToken = (value: string | null | undefined): string =>
+  (value || "").trim().toUpperCase();
+
+const parseNumber = (value: unknown): number => {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number(value.replace(/,/g, "").trim());
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return 0;
+};
+
+const createEmptySalesAnalytics = (salesInputs: SalesInputs): SalesAnalyticsPayload => ({
+  filteredCount: 0,
+  stats: {
+    totalPurchaseCost: 0,
+    totalRevenue: 0,
+    costPerGoat: 0,
+    totalAnimals: 0,
+    totalGoats: 0,
+    totalSheep: 0,
+    totalCattle: 0,
+    totalLiveWeight: 0,
+    avgLiveWeight: 0,
+    totalCarcassWeight: 0,
+    avgCarcassWeight: 0,
+    pricePerKg: salesInputs.pricePerKg,
+    expenses: salesInputs.expenses,
+    netProfit: -salesInputs.expenses,
+    avgCostPerKgCarcass: 0,
+  },
+  genderData: [],
+  countyData: [],
+  topLocations: [],
+  topFarmers: [],
+  monthlyTrend: [],
+  top3Months: [],
+});
+
+const buildLocalSalesAnalytics = (
+  records: OfftakeData[],
   dateRange: { startDate: string; endDate: string },
   selectedProgramme: string | null,
-  salesInputs: SalesInputs
-) => {
-  return useMemo(() => {
-    if (offtakeData.length === 0) {
-      return {
-        filteredData: [],
-        stats: {
-          totalPurchaseCost: 0,
-          totalRevenue: 0,
-          costPerGoat: 0,
-          totalAnimals: 0,
-          totalGoats: 0,
-          totalSheep: 0,
-          totalCattle: 0,
-          totalLiveWeight: 0,
-          avgLiveWeight: 0,
-          totalCarcassWeight: 0,
-          avgCarcassWeight: 0,
-          pricePerKg: salesInputs.pricePerKg,
-          expenses: salesInputs.expenses,
-          netProfit: -salesInputs.expenses,
-          avgCostPerKgCarcass: 0
-        },
-        genderData: [],
-        countyData: [],
-        topLocations: [],
-        topFarmers: [],
-        monthlyTrend: [],
-        top3Months: [] 
-      };
+  salesInputs: SalesInputs,
+): SalesAnalyticsPayload => {
+  const emptyState = createEmptySalesAnalytics(salesInputs);
+  if (records.length === 0) return emptyState;
+
+  const targetProgramme = normalizeProgrammeToken(selectedProgramme);
+  const filteredData = records.filter((record) => {
+    const recordProgramme = normalizeProgrammeToken(record.programme);
+    const matchesProgramme = !targetProgramme || !recordProgramme || recordProgramme === targetProgramme;
+    return matchesProgramme && isDateInRange(record.date, dateRange.startDate, dateRange.endDate);
+  });
+
+  if (filteredData.length === 0) return emptyState;
+
+  let totalPurchaseCost = 0;
+  let totalRevenue = 0;
+  let totalGoats = 0;
+  let totalSheep = 0;
+  let totalCattle = 0;
+  let totalLiveWeight = 0;
+  let totalCarcassWeight = 0;
+  let totalAnimalsCount = 0;
+  const genderCounts: Record<string, number> = { Male: 0, Female: 0 };
+  const countySales: Record<string, number> = {};
+  const locationSales: Record<string, number> = {};
+  const farmerSales: Record<string, { name: string; revenue: number; animals: number; county: string }> = {};
+  const monthlyData: Record<string, { monthName: string; revenue: number; volume: number }> = {};
+
+  for (const record of filteredData) {
+    const goatsArr = Array.isArray(record.goats) ? record.goats : [];
+    const sheepArr = Array.isArray(record.sheep) ? record.sheep : [];
+    const cattleArr = Array.isArray(record.cattle) ? record.cattle : [];
+    const txGoats = parseNumber(record.totalGoats) || goatsArr.length;
+    const txSheep = sheepArr.length;
+    const txCattle = cattleArr.length;
+    const txCost = parseNumber(record.totalPrice);
+
+    totalPurchaseCost += txCost;
+    totalGoats += txGoats;
+    totalSheep += txSheep;
+    totalCattle += txCattle;
+    totalAnimalsCount += txGoats + txSheep + txCattle;
+
+    const allAnimals = [...goatsArr, ...sheepArr, ...cattleArr];
+    let txCarcassWeight = 0;
+
+    for (const animal of allAnimals) {
+      const liveWeight = parseNumber(animal?.live);
+      const carcassWeight = parseNumber(animal?.carcass);
+      totalLiveWeight += liveWeight;
+      totalCarcassWeight += carcassWeight;
+      txCarcassWeight += carcassWeight;
     }
 
-    const filteredData = offtakeData.filter(record => {
-      return isDateInRange(record.date, dateRange.startDate, dateRange.endDate) &&
-             (selectedProgramme ? record.programme === selectedProgramme : true);
-    });
+    totalRevenue += txCarcassWeight * salesInputs.pricePerKg;
 
-    let totalPurchaseCost = 0;
-    let totalRevenue = 0;
-    let totalGoats = 0;
-    let totalSheep = 0;
-    let totalCattle = 0;
-    let totalLiveWeight = 0;
-    let totalCarcassWeight = 0;
-    let totalAnimalsCount = 0;
-
-    const genderCounts: Record<string, number> = { Male: 0, Female: 0 };
-    const countySales: Record<string, number> = {};
-    const locationSales: Record<string, number> = {};
-    const farmerSales: Record<string, { name: string; revenue: number; animals: number; county: string }> = {};
-    const monthlyData: Record<string, { monthName: string; revenue: number; volume: number; monthIndex: number }> = {};
-
-    for (const record of filteredData) {
-      const txCost = Number(record.totalPrice) || 0;
-      totalPurchaseCost += txCost;
-
-      const goatsArr = record.goats || [];
-      const sheepArr = record.sheep || [];
-      const cattleArr = record.cattle || [];
-      
-      const txGoats = Number(record.totalGoats) || goatsArr.length;
-      const txSheep = sheepArr.length;
-      const txCattle = cattleArr.length;
-      
-      totalGoats += txGoats;
-      totalSheep += txSheep;
-      totalCattle += txCattle;
-      totalAnimalsCount += (txGoats + txSheep + txCattle);
-
-      const allAnimals = [...goatsArr, ...sheepArr, ...cattleArr];
-      let txCarcassWeight = 0;
-      for(const animal of allAnimals) {
-        totalLiveWeight += Number(animal.live) || 0;
-        const carcass = Number(animal.carcass) || 0;
-        totalCarcassWeight += carcass;
-        txCarcassWeight += carcass;
-      }
-      const txRevenue = txCarcassWeight * salesInputs.pricePerKg;
-      totalRevenue += txRevenue;
-
-      if (record.gender) {
-        const g = record.gender.charAt(0).toUpperCase() + record.gender.slice(1).toLowerCase();
-        if (genderCounts[g] !== undefined) genderCounts[g]++;
-      }
-
-      const county = record.county || "Unknown";
-      countySales[county] = (countySales[county] || 0) + txGoats;
-
-      const loc = record.location || "Unknown";
-      locationSales[loc] = (locationSales[loc] || 0) + (txGoats + txSheep + txCattle);
-
-      const fName = record.farmerName || "Unknown";
-      if (!farmerSales[fName]) {
-        farmerSales[fName] = { name: fName, revenue: 0, animals: 0, county: county };
-      } else {
-        if (county !== "Unknown") {
-             farmerSales[fName].county = county;
-        }
-      }
-      farmerSales[fName].revenue += txRevenue;
-      farmerSales[fName].animals += (txGoats + txSheep + txCattle);
-
-      const d = parseDate(record.date);
-      if (d) {
-        const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-        const monthName = d.toLocaleString('default', { month: 'short' });
-        
-        if (!monthlyData[monthKey]) {
-          monthlyData[monthKey] = { 
-            monthName: monthName, 
-            revenue: 0, 
-            volume: 0,
-            monthIndex: d.getMonth()
-          };
-        }
-        monthlyData[monthKey].revenue += txRevenue;
-        monthlyData[monthKey].volume += (txGoats + txSheep + txCattle);
-      }
+    if (record.gender) {
+      const gender = record.gender.charAt(0).toUpperCase() + record.gender.slice(1).toLowerCase();
+      if (genderCounts[gender] !== undefined) genderCounts[gender] += 1;
     }
 
-    const costPerGoat = totalGoats > 0 ? totalPurchaseCost / totalGoats : 0;
-    const avgLiveWeight = totalAnimalsCount > 0 ? totalLiveWeight / totalAnimalsCount : 0;
-    const avgCarcassWeight = totalAnimalsCount > 0 ? totalCarcassWeight / totalAnimalsCount : 0;
-    const netProfit = totalRevenue - totalPurchaseCost - salesInputs.expenses;
-    const avgCostPerKgCarcass = totalCarcassWeight > 0 ? totalPurchaseCost / totalCarcassWeight : 0;
+    const county = String(record.county || "Unknown").trim() || "Unknown";
+    const location = String(record.location || "Unknown").trim() || "Unknown";
+    const farmerName = String(record.farmerName || record.username || "Unknown").trim() || "Unknown";
+    const txAnimals = txGoats + txSheep + txCattle;
 
-    const genderData = [
-      { name: 'Male', value: genderCounts.Male },
-      { name: 'Female', value: genderCounts.Female }
-    ].filter(d => d.value > 0);
+    countySales[county] = (countySales[county] || 0) + txGoats;
+    locationSales[location] = (locationSales[location] || 0) + txAnimals;
 
-    const countyData = Object.entries(countySales)
+    if (!farmerSales[farmerName]) {
+      farmerSales[farmerName] = { name: farmerName, revenue: 0, animals: 0, county };
+    } else if (county !== "Unknown") {
+      farmerSales[farmerName].county = county;
+    }
+    farmerSales[farmerName].revenue += txCarcassWeight * salesInputs.pricePerKg;
+    farmerSales[farmerName].animals += txAnimals;
+
+    const date = parseDate(record.date);
+    if (date) {
+      const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+      const monthName = date.toLocaleString("default", { month: "short" });
+      if (!monthlyData[monthKey]) {
+        monthlyData[monthKey] = { monthName, revenue: 0, volume: 0 };
+      }
+      monthlyData[monthKey].revenue += txCarcassWeight * salesInputs.pricePerKg;
+      monthlyData[monthKey].volume += txAnimals;
+    }
+  }
+
+  const costPerGoat = totalGoats > 0 ? totalPurchaseCost / totalGoats : 0;
+  const avgLiveWeight = totalAnimalsCount > 0 ? totalLiveWeight / totalAnimalsCount : 0;
+  const avgCarcassWeight = totalAnimalsCount > 0 ? totalCarcassWeight / totalAnimalsCount : 0;
+  const netProfit = totalRevenue - totalPurchaseCost - salesInputs.expenses;
+  const avgCostPerKgCarcass = totalCarcassWeight > 0 ? totalPurchaseCost / totalCarcassWeight : 0;
+
+  return {
+    filteredCount: filteredData.length,
+    stats: {
+      totalPurchaseCost,
+      totalRevenue,
+      costPerGoat,
+      totalAnimals: totalAnimalsCount,
+      totalGoats,
+      totalSheep,
+      totalCattle,
+      totalLiveWeight,
+      avgLiveWeight,
+      totalCarcassWeight,
+      avgCarcassWeight,
+      pricePerKg: salesInputs.pricePerKg,
+      expenses: salesInputs.expenses,
+      netProfit,
+      avgCostPerKgCarcass,
+    },
+    genderData: [
+      { name: "Male", value: genderCounts.Male },
+      { name: "Female", value: genderCounts.Female },
+    ].filter((item) => item.value > 0),
+    countyData: Object.entries(countySales)
       .map(([name, count]) => ({ name, count }))
-      .sort((a, b) => b.count - a.count);
-
-    const topLocationsData = Object.entries(locationSales)
+      .sort((a, b) => b.count - a.count),
+    topLocations: Object.entries(locationSales)
       .map(([name, count]) => ({ name, count }))
       .sort((a, b) => b.count - a.count)
-      .slice(0, 10);
-
-    const topFarmersList = Object.values(farmerSales)
+      .slice(0, 10),
+    topFarmers: Object.values(farmerSales)
       .sort((a, b) => b.revenue - a.revenue)
-      .slice(0, 5);
-
-    const ALL_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-    
-    const monthlyTrendData = ALL_MONTHS.map(monthName => {
-      const existingData = Object.values(monthlyData).find(d => d.monthName === monthName);
-      return {
-        month: monthName,
-        revenue: existingData ? existingData.revenue : 0,
-        volume: existingData ? existingData.volume : 0
-      };
-    });
-
-    const top3Months = Object.values(monthlyData)
+      .slice(0, 5),
+    monthlyTrend: ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"].map((month) => {
+      const match = Object.values(monthlyData).find((entry) => entry.monthName === month);
+      return { month, revenue: match ? match.revenue : 0, volume: match ? match.volume : 0 };
+    }),
+    top3Months: Object.values(monthlyData)
       .sort((a, b) => b.revenue - a.revenue)
       .slice(0, 3)
-      .map(m => ({
-        month: m.monthName,
-        revenue: m.revenue,
-        volume: m.volume
-      }));
+      .map((entry) => ({
+        month: entry.monthName,
+        revenue: entry.revenue,
+        volume: entry.volume,
+      })),
+  };
+};
 
-    return {
-      filteredData,
-      stats: {
-        totalPurchaseCost,
-        totalRevenue,
-        costPerGoat,
-        totalAnimals: totalAnimalsCount,
-        totalGoats,
-        totalSheep,
-        totalCattle,
-        totalLiveWeight,
-        avgLiveWeight,
-        totalCarcassWeight,
-        avgCarcassWeight,
-        pricePerKg: salesInputs.pricePerKg,
-        expenses: salesInputs.expenses,
-        netProfit,
-        avgCostPerKgCarcass
-      },
-      genderData,
-      countyData,
-      topLocations: topLocationsData,
-      topFarmers: topFarmersList,
-      monthlyTrend: monthlyTrendData,
-      top3Months
-    };
-  }, [offtakeData, dateRange, selectedProgramme, salesInputs.expenses, salesInputs.pricePerKg]);
+// --- Custom Hook for Offtake Data Processing ---
+const useOfftakeData = (
+  offtakeData: OfftakeData[],
+  dateRange: { startDate: string; endDate: string },
+  selectedProgramme: string | null,
+  salesInputs: SalesInputs,
+) => {
+  const localData = useMemo(
+    () => buildLocalSalesAnalytics(offtakeData, dateRange, selectedProgramme, salesInputs),
+    [offtakeData, dateRange.endDate, dateRange.startDate, salesInputs, selectedProgramme]
+  );
+
+  const queryResult = useQuery({
+    queryKey: [
+      "sales-report",
+      selectedProgramme,
+      dateRange.startDate,
+      dateRange.endDate,
+      salesInputs.pricePerKg,
+      salesInputs.expenses,
+    ],
+    queryFn: () =>
+      fetchAnalysisSummary({
+        scope: "sales-report",
+        programme: selectedProgramme,
+        dateRange,
+        salesInputs,
+      }),
+    enabled: USE_REMOTE_ANALYTICS && !!selectedProgramme,
+    staleTime: 2 * 60 * 1000,
+  });
+
+  const data = USE_REMOTE_ANALYTICS ? (queryResult.data ?? localData) : localData;
+
+  return {
+    ...data,
+    isLoading: USE_REMOTE_ANALYTICS ? queryResult.isLoading || queryResult.isFetching : false,
+  };
 };
 
 // --- Sub Components ---
@@ -436,7 +503,7 @@ const SalesReport = () => {
   const { userRole, userAttribute } = useAuth();
   const { toast } = useToast();
   const auth = getAuth();
-  const currentMonthDates = useMemo(() => getCurrentMonthDates(), []);
+  const currentYearDates = useMemo(() => getCurrentYearDates(), []);
   
   const [loading, setLoading] = useState(true);
   const [offtakeData, setOfftakeData] = useState<OfftakeData[]>([]);
@@ -444,11 +511,11 @@ const SalesReport = () => {
   
   const currentYear = new Date().getFullYear();
   const [selectedYear, setSelectedYear] = useState<string>(String(currentYear));
-  const [timeFrame, setTimeFrame] = useState<'weekly' | 'monthly' | 'yearly'>('monthly');
+  const [timeFrame, setTimeFrame] = useState<'weekly' | 'monthly' | 'yearly'>('yearly');
   
   const [dateRange, setDateRange] = useState({
-    startDate: currentMonthDates.startDate,
-    endDate: currentMonthDates.endDate,
+    startDate: currentYearDates.startDate,
+    endDate: currentYearDates.endDate,
   });
   const [selectedProgramme, setSelectedProgramme] = useState<string | null>(null);
   
@@ -472,9 +539,10 @@ const SalesReport = () => {
     pricePerKg: "0",
     expenses: "0",
   });
+  const analysisProgramme = selectedProgramme || activeProgram || null;
 
-  const { stats, genderData, countyData, topLocations, topFarmers, monthlyTrend, filteredData, top3Months } =
-    useOfftakeData(offtakeData, dateRange, selectedProgramme, salesInputs);
+  const { stats, genderData, countyData, topLocations, topFarmers, monthlyTrend, filteredCount, top3Months, isLoading: analysisLoading } =
+    useOfftakeData(offtakeData, dateRange, analysisProgramme, salesInputs);
 
   const unsubscribeRef = useRef<(() => void) | null>(null);
 
@@ -512,8 +580,10 @@ const SalesReport = () => {
         setAllowedProgrammes(programmesList);
         if (!userCanViewAllProgrammeData && programmesList.length > 0) {
            setActiveProgram(programmesList[0]);
+           setSelectedProgramme(programmesList[0]);
         } else if (userCanViewAllProgrammeData && !activeProgram) {
           setActiveProgram("KPMD");
+          setSelectedProgramme("KPMD");
         }
       }
       setUserPermissionsLoading(false);
@@ -542,7 +612,7 @@ const SalesReport = () => {
       setIsCacheHit(false);
     }
 
-    const dbRef = query(ref(db, 'offtakes'), orderByChild('programme'), equalTo(activeProgram));
+    const dbRef = ref(db, 'offtakes');
     
     const unsubscribe = onValue(dbRef, (snapshot) => {
       const data = snapshot.val();
@@ -554,7 +624,7 @@ const SalesReport = () => {
 
       const offtakeList = Object.keys(data).map((key) => {
         const item = data[key];
-        let dateValue = item.date; 
+        let dateValue = item.date ?? item.Date ?? item.createdAt; 
         if (typeof dateValue === 'number') dateValue = new Date(dateValue);
         else if (typeof dateValue === 'string') {
            const d = new Date(dateValue);
@@ -564,15 +634,25 @@ const SalesReport = () => {
         const sheepArr = Array.isArray(item.sheep) ? item.sheep : [];
         const cattleArr = Array.isArray(item.cattle) ? item.cattle : [];
         return {
-          id: key, date: dateValue, farmerName: item.name || '', gender: item.gender || '',
-          idNumber: item.idNumber || '', location: item.location || '', county: item.county || '',
-          programme: item.programme || activeProgram, phone: item.phone || '', username: item.username || '',
+          id: key,
+          date: dateValue,
+          farmerName: item.farmerName || item.name || '',
+          gender: item.gender || '',
+          idNumber: item.idNumber || '',
+          location: item.location || item.Location || '',
+          county: item.county || item.region || item.County || '',
+          programme: item.programme || item.Programme || '',
+          phone: item.phone || item.phoneNumber || '',
+          username: item.username || item.offtakeUserId || '',
           goats: goatsArr,
           sheep: sheepArr,
           cattle: cattleArr,
           totalGoats: Number(item.totalGoats) || goatsArr.length,
-          totalPrice: Number(item.totalPrice) || 0
+          totalPrice: Number(item.totalPrice ?? item.totalprice ?? 0) || 0
         };
+      }).filter((record) => {
+        const recordProgramme = normalizeProgrammeToken(record.programme || activeProgram);
+        return !recordProgramme || recordProgramme === normalizeProgrammeToken(activeProgram);
       });
 
       dataCache.set(activeProgram, offtakeList);
@@ -654,7 +734,7 @@ const SalesReport = () => {
   const sheepPct = stats.totalAnimals > 0 ? ((stats.totalSheep / stats.totalAnimals) * 100).toFixed(1) : 0;
   const hasConfiguredSalesInputs = salesInputs.pricePerKg > 0 || salesInputs.expenses > 0;
 
-  if (loading || userPermissionsLoading) {
+  if (loading || analysisLoading || userPermissionsLoading) {
     return (
       <div className="flex flex-col justify-center items-center h-96 space-y-4">
         <Loader2 className="h-12 w-12 animate-spin text-blue-600" />
@@ -771,6 +851,12 @@ const SalesReport = () => {
             <p><span className="font-semibold">Carcass Weight:</span> {millify(stats.totalCarcassWeight)} kg</p>
             <p><span className="font-semibold">Expenses:</span> {formatCurrency(stats.expenses)}</p>
           </div>
+
+          {filteredCount === 0 && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              No offtake records matched the current programme and date range. Try changing the programme or widening the dates.
+            </div>
+          )}
         </div>
 
         {/* --- SECTION 1: PURCHASES --- */}
@@ -827,7 +913,7 @@ const SalesReport = () => {
                     </PieChart>
                   </ResponsiveContainer>
                   <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none mt-3">
-                     <span className="text-2xl font-bold text-gray-800">{filteredData.length}</span>
+                     <span className="text-2xl font-bold text-gray-800">{filteredCount}</span>
                   </div>
                 </div>
               </CardContent>

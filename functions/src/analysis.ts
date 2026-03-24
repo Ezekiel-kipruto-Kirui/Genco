@@ -1,0 +1,1060 @@
+import * as admin from "firebase-admin";
+import {onCall, HttpsError} from "firebase-functions/v2/https";
+
+const PROGRAMME_OPTIONS = ["KPMD", "RANGE"] as const;
+const CACHE_TTL_MS = 2 * 60 * 1000;
+const FULL_ACCESS_IDENTIFIERS = new Set([
+  "chief-admin",
+  "admin",
+  "ceo",
+  "chief operational manager",
+  "chief operatons manger",
+  "mne officer",
+  "m&e officer",
+]);
+const HR_IDENTIFIERS = new Set([
+  "hr",
+  "human resource manager",
+  "humman resource manager",
+  "human resource manger",
+  "humman resource manger",
+]);
+const PROJECT_MANAGER_IDENTIFIERS = new Set(["project manager"]);
+const FINANCE_IDENTIFIERS = new Set(["finance"]);
+
+type AnalysisScope =
+  | "overview"
+  | "livestock-analytics"
+  | "performance-report"
+  | "sales-report";
+
+interface AnalysisRequest {
+  scope?: AnalysisScope | string;
+  programme?: string | null;
+  dateRange?: {startDate?: string; endDate?: string} | null;
+  timeFrame?: "weekly" | "monthly" | "yearly" | string | null;
+  selectedYear?: number | string | null;
+  target?: number | null;
+  salesInputs?: {pricePerKg?: number | string | null; expenses?: number | string | null} | null;
+}
+
+interface AnalysisProfile {
+  uid: string;
+  role: string;
+  userAttribute: string;
+  allowedProgrammes: string[];
+}
+
+interface CacheEntry {
+  expiresAt: number;
+  value: any;
+}
+
+const cache = new Map<string, CacheEntry>();
+
+const normalize = (value: unknown): string =>
+  typeof value === "string" ? value.trim().toLowerCase() : "";
+
+const toProgramme = (value: unknown): string => {
+  const normalized = normalize(value);
+  if (!normalized) return "";
+  if (normalized === "all") return "ALL";
+  return normalized.toUpperCase();
+};
+
+const parseNumber = (value: unknown): number => {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return 0;
+};
+
+const parseDate = (value: unknown): Date | null => {
+  if (!value) return null;
+
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const parsed = new Date(trimmed);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+
+  if (typeof value === "object" && value !== null) {
+    const maybeDate = value as {seconds?: number; toDate?: () => Date};
+    if (typeof maybeDate.toDate === "function") {
+      const parsed = maybeDate.toDate();
+      return Number.isNaN(parsed.getTime()) ? null : parsed;
+    }
+    if (typeof maybeDate.seconds === "number" && Number.isFinite(maybeDate.seconds)) {
+      const parsed = new Date(maybeDate.seconds * 1000);
+      return Number.isNaN(parsed.getTime()) ? null : parsed;
+    }
+  }
+
+  return null;
+};
+
+const dateInRange = (
+  value: unknown,
+  startDate?: string,
+  endDate?: string,
+): boolean => {
+  if (!startDate && !endDate) return true;
+  const parsed = parseDate(value);
+  if (!parsed) return false;
+
+  const current = new Date(parsed);
+  current.setHours(0, 0, 0, 0);
+
+  const start = startDate ? new Date(startDate) : null;
+  const end = endDate ? new Date(endDate) : null;
+  if (start) start.setHours(0, 0, 0, 0);
+  if (end) end.setHours(23, 59, 59, 999);
+
+  if (start && current < start) return false;
+  if (end && current > end) return false;
+  return true;
+};
+
+const getGoatTotal = (goats: unknown): number => {
+  if (typeof goats === "number") return goats;
+  if (typeof goats === "object" && goats !== null) {
+    const record = goats as {total?: number};
+    if (typeof record.total === "number") return record.total;
+  }
+  return 0;
+};
+
+const getFieldNumber = (record: Record<string, unknown>, ...fields: string[]): number => {
+  for (const field of fields) {
+    const value = record[field];
+    if (value === undefined || value === null || value === "") continue;
+    const parsed = parseNumber(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return 0;
+};
+
+const snapshotToArray = (snapshot: admin.database.DataSnapshot): any[] => {
+  if (!snapshot.exists()) return [];
+  const value = snapshot.val();
+  if (!value || typeof value !== "object") return [];
+  return Object.entries(value as Record<string, any>).map(([id, record]) => ({
+    id,
+    ...(record as Record<string, any>),
+  }));
+};
+
+const mergeUniqueRecords = (records: any[]): any[] => {
+  const merged = new Map<string, any>();
+
+  for (const record of records) {
+    const id = typeof record?.id === "string" ? record.id : "";
+    if (!id) continue;
+    const previous = merged.get(id) || {};
+    merged.set(id, {
+      ...previous,
+      ...record,
+    });
+  }
+
+  return [...merged.values()];
+};
+
+const fetchCollectionByProgrammes = async (
+  collectionPath: string,
+  programmes: string[],
+): Promise<any[]> => {
+  const uniqueProgrammes = [...new Set(
+    programmes.map((programme) => toProgramme(programme)).filter((programme) => programme && programme !== "ALL"),
+  )];
+
+  if (uniqueProgrammes.length === 0) return [];
+
+  const snapshots = await Promise.all(
+    uniqueProgrammes.map(async (programme) => {
+      const [lowercaseSnapshot, uppercaseSnapshot] = await Promise.all([
+        admin
+          .database()
+          .ref(collectionPath)
+          .orderByChild("programme")
+          .equalTo(programme)
+          .get(),
+        admin
+          .database()
+          .ref(collectionPath)
+          .orderByChild("Programme")
+          .equalTo(programme)
+          .get(),
+      ]);
+
+      return mergeUniqueRecords([
+        ...snapshotToArray(lowercaseSnapshot),
+        ...snapshotToArray(uppercaseSnapshot),
+      ]);
+    }),
+  );
+
+  return mergeUniqueRecords(
+    snapshots.reduce<any[]>((accumulator, current) => accumulator.concat(current), []),
+  );
+};
+
+const getPrincipal = (user: any): string => {
+  const customAttribute = normalize(user?.accessControl?.customAttribute);
+  if (customAttribute) return customAttribute;
+  return normalize(user?.role);
+};
+
+const getAllowedProgrammes = (user: any): string[] => {
+  const allowedProgrammes = user?.allowedProgrammes;
+  if (!allowedProgrammes || typeof allowedProgrammes !== "object") return [];
+
+  return Object.entries(allowedProgrammes)
+    .filter(([, allowed]) => allowed === true)
+    .map(([programme]) => toProgramme(programme))
+    .filter((programme) => programme && programme !== "ALL");
+};
+
+const canViewAllProgrammes = (user: any): boolean => {
+  const principal = getPrincipal(user);
+  if (
+    HR_IDENTIFIERS.has(principal) ||
+    PROJECT_MANAGER_IDENTIFIERS.has(principal) ||
+    FINANCE_IDENTIFIERS.has(principal)
+  ) {
+    return false;
+  }
+
+  return FULL_ACCESS_IDENTIFIERS.has(principal);
+};
+
+const loadProfile = async (uid: string): Promise<AnalysisProfile | null> => {
+  const directSnapshot = await admin.database().ref(`users/${uid}`).get();
+  let userData = directSnapshot.exists() ? directSnapshot.val() : null;
+
+  if (!userData) {
+    const fallbackSnapshot = await admin
+      .database()
+      .ref("users")
+      .orderByChild("uid")
+      .equalTo(uid)
+      .limitToFirst(1)
+      .get();
+
+    if (fallbackSnapshot.exists()) {
+      const fallbackData = fallbackSnapshot.val() as Record<string, any>;
+      userData = Object.values(fallbackData)[0] || null;
+    }
+  }
+
+  if (!userData) return null;
+
+  return {
+    uid,
+    role: normalize(userData.role),
+    userAttribute: normalize(userData.accessControl?.customAttribute),
+    allowedProgrammes: getAllowedProgrammes(userData),
+  };
+};
+
+const resolveProgrammes = (
+  profile: AnalysisProfile,
+  requestedProgramme?: string | null,
+): string[] => {
+  const requested = toProgramme(requestedProgramme);
+  const principalProfile = {
+    role: profile.role,
+    accessControl: {customAttribute: profile.userAttribute},
+    allowedProgrammes: profile.allowedProgrammes.reduce<Record<string, boolean>>((accumulator, programme) => {
+      accumulator[programme] = true;
+      return accumulator;
+    }, {}),
+  };
+  const fullAccess = canViewAllProgrammes(principalProfile);
+  const allowed = profile.allowedProgrammes
+    .map((programme) => toProgramme(programme))
+    .filter((programme) => programme && programme !== "ALL");
+
+  if (fullAccess) {
+    if (requested && requested !== "ALL") {
+      return PROGRAMME_OPTIONS.includes(requested as (typeof PROGRAMME_OPTIONS)[number]) ?
+        [requested] :
+        [...PROGRAMME_OPTIONS];
+    }
+    return [...PROGRAMME_OPTIONS];
+  }
+
+  if (allowed.length === 0) return [];
+  if (requested && requested !== "ALL") {
+    return allowed.includes(requested) ? [requested] : [];
+  }
+  return allowed;
+};
+
+const cacheKey = (uid: string, request: AnalysisRequest): string => {
+  const programme = toProgramme(request.programme) || "ALL";
+  const startDate = request.dateRange?.startDate || "";
+  const endDate = request.dateRange?.endDate || "";
+  const timeFrame = request.timeFrame || "";
+  const selectedYear = request.selectedYear ?? "";
+  const target = request.target ?? "";
+  const pricePerKg = request.salesInputs?.pricePerKg ?? "";
+  const expenses = request.salesInputs?.expenses ?? "";
+
+  return [
+    uid,
+    request.scope || "",
+    programme,
+    startDate,
+    endDate,
+    timeFrame,
+    selectedYear,
+    target,
+    pricePerKg,
+    expenses,
+  ].join("|");
+};
+
+const getCached = (key: string): any | null => {
+  const cached = cache.get(key);
+  if (!cached) return null;
+  if (cached.expiresAt <= Date.now()) {
+    cache.delete(key);
+    return null;
+  }
+  return cached.value;
+};
+
+const setCached = (key: string, value: any): void => {
+  cache.set(key, {
+    expiresAt: Date.now() + CACHE_TTL_MS,
+    value,
+  });
+};
+
+const emptyOverview = () => ({
+  scope: "overview",
+  resolvedProgrammes: [],
+  stats: {
+    totalFarmers: 0,
+    maleFarmers: 0,
+    femaleFarmers: 0,
+    trainedFarmers: 0,
+    maleGoats: 0,
+    femaleGoats: 0,
+    totalGoats: 0,
+    totalSheep: 0,
+    totalCattle: 0,
+    regionsVisited: 0,
+  },
+  topRegions: [],
+  recentActivities: [],
+  pendingActivitiesCount: 0,
+});
+
+const emptyLivestock = () => ({
+  scope: "livestock-analytics",
+  resolvedProgrammes: [],
+  total: 0,
+  trained: 0,
+  totalAnimals: 0,
+  trainingRate: 0,
+  maleFarmers: 0,
+  femaleFarmers: 0,
+  totalTrainedFromCapacity: 0,
+  genderData: [],
+  animalCensusData: [],
+  weeklyPerformanceData: [],
+  subcountyPerformanceData: [],
+  userProgressData: [],
+});
+
+const emptyPerformance = () => ({
+  scope: "performance-report",
+  resolvedProgrammes: [],
+  totalFarmers: 0,
+  maleFarmers: 0,
+  femaleFarmers: 0,
+  malePercentage: "0.0",
+  femalePercentage: "0.0",
+  totalAnimals: 0,
+  totalGoats: 0,
+  totalSheep: 0,
+  goatsPercentage: "0.0",
+  sheepPercentage: "0.0",
+  totalTrainedFarmers: 0,
+  countyPerformanceData: [],
+  registrationTrendData: [],
+  topLocations: [],
+  topCustomers: [],
+  uniqueCounties: 0,
+  totalBreedsDistributed: 0,
+  breedsMale: 0,
+  breedsFemale: 0,
+  breedsMalePercentage: "0.0",
+  breedsFemalePercentage: "0.0",
+  vaccinationRate: "0.0",
+  vaccinatedAnimals: 0,
+  vaccinatedFarmersCount: 0,
+  breedsByCountyData: [],
+  breedsBySubcountyData: [],
+  vaccinationByCountyData: [],
+  vaccinationBySubcountyData: [],
+});
+
+const emptySales = () => ({
+  scope: "sales-report",
+  resolvedProgrammes: [],
+  filteredCount: 0,
+  stats: {
+    totalPurchaseCost: 0,
+    totalRevenue: 0,
+    costPerGoat: 0,
+    totalAnimals: 0,
+    totalGoats: 0,
+    totalSheep: 0,
+    totalCattle: 0,
+    totalLiveWeight: 0,
+    avgLiveWeight: 0,
+    totalCarcassWeight: 0,
+    avgCarcassWeight: 0,
+    pricePerKg: 0,
+    expenses: 0,
+    netProfit: 0,
+    avgCostPerKgCarcass: 0,
+  },
+  genderData: [],
+  countyData: [],
+  topLocations: [],
+  topFarmers: [],
+  monthlyTrend: [],
+  top3Months: [],
+});
+
+const createOverview = async (
+  profile: AnalysisProfile,
+  requestedProgramme?: string | null,
+) => {
+  const programmes = resolveProgrammes(profile, requestedProgramme);
+  if (programmes.length === 0) return emptyOverview();
+
+  const [farmers, activities, capacity] = await Promise.all([
+    fetchCollectionByProgrammes("farmers", programmes),
+    fetchCollectionByProgrammes("Recent Activities", programmes),
+    fetchCollectionByProgrammes("capacityBuilding", programmes),
+  ]);
+
+  const filteredFarmers = farmers.filter((record) => {
+    const programme = toProgramme(record.programme);
+    return !programme || programmes.includes(programme);
+  });
+  const filteredActivities = activities.filter((record) => {
+    const programme = toProgramme(record.programme);
+    return !programme || programmes.includes(programme);
+  });
+  const filteredCapacity = capacity.filter((record) => {
+    const programme = toProgramme(record.programme);
+    return !programme || programmes.includes(programme);
+  });
+
+  let maleFarmers = 0;
+  let femaleFarmers = 0;
+  let totalGoats = 0;
+  let maleGoats = 0;
+  let femaleGoats = 0;
+  let totalSheep = 0;
+  let totalCattle = 0;
+  const regionMap: Record<string, number> = {};
+
+  for (const farmer of filteredFarmers) {
+    const gender = String(farmer.gender || "").trim().toLowerCase();
+    if (gender === "male") maleFarmers += 1;
+    else if (gender === "female") femaleFarmers += 1;
+
+    const goats = getGoatTotal(farmer.goats);
+    totalGoats += goats;
+    if (farmer.goats && typeof farmer.goats === "object") {
+      const goatRecord = farmer.goats as {male?: number; female?: number};
+      maleGoats += parseNumber(goatRecord.male);
+      femaleGoats += parseNumber(goatRecord.female);
+    }
+    totalSheep += getFieldNumber(farmer, "sheep");
+    totalCattle += getFieldNumber(farmer, "cattle");
+
+    const region = String(farmer.region || farmer.county || "").trim();
+    if (region) regionMap[region] = (regionMap[region] || 0) + 1;
+  }
+
+  const topRegions = Object.entries(regionMap)
+    .map(([name, farmerCount]) => ({name, farmerCount}))
+    .sort((a, b) => b.farmerCount - a.farmerCount)
+    .slice(0, 4);
+
+  const recentActivities = [...filteredActivities]
+    .sort((a, b) => (parseDate(b.date)?.getTime() || 0) - (parseDate(a.date)?.getTime() || 0))
+    .slice(0, 3)
+    .map((record) => ({
+      id: record.id,
+      activityName: String(record.activityName || ""),
+      date: record.date || "",
+      status: String(record.status || "pending"),
+      location: String(record.location || ""),
+      numberOfPersons: parseNumber(record.numberOfPersons),
+      county: String(record.county || ""),
+      programme: toProgramme(record.programme),
+    }));
+
+  const pendingActivitiesCount = filteredActivities.filter((record) =>
+    String(record.status || "").trim().toLowerCase() === "pending",
+  ).length;
+  const trainedFarmers = filteredCapacity.reduce(
+    (sum, record) => sum + parseNumber(record.totalFarmers),
+    0,
+  );
+
+  return {
+    scope: "overview",
+    resolvedProgrammes: programmes,
+    stats: {
+      totalFarmers: filteredFarmers.length,
+      maleFarmers,
+      femaleFarmers,
+      trainedFarmers,
+      maleGoats,
+      femaleGoats,
+      totalGoats,
+      totalSheep,
+      totalCattle,
+      regionsVisited: topRegions.length,
+    },
+    topRegions,
+    recentActivities,
+    pendingActivitiesCount,
+  };
+};
+
+const createLivestockAnalytics = async (
+  profile: AnalysisProfile,
+  requestedProgramme?: string | null,
+  dateRange?: {startDate?: string; endDate?: string} | null,
+  target?: number | null,
+) => {
+  const programmes = resolveProgrammes(profile, requestedProgramme);
+  if (programmes.length === 0) return emptyLivestock();
+
+  const [farmers, training] = await Promise.all([
+    fetchCollectionByProgrammes("farmers", programmes),
+    fetchCollectionByProgrammes("capacityBuilding", programmes),
+  ]);
+
+  const filteredFarmers = farmers.filter((farmer) => {
+    const programme = toProgramme(farmer.programme);
+    const farmerDate = farmer.createdAt || farmer.registrationDate;
+    return (!programme || programmes.includes(programme)) &&
+      dateInRange(farmerDate, dateRange?.startDate, dateRange?.endDate);
+  });
+  const filteredTraining = training.filter((record) => {
+    const programme = toProgramme(record.programme);
+    const recordDate = record.createdAt || record.startDate;
+    return (!programme || programmes.includes(programme)) &&
+      dateInRange(recordDate, dateRange?.startDate, dateRange?.endDate);
+  });
+
+  let maleFarmers = 0;
+  let femaleFarmers = 0;
+  let totalGoats = 0;
+  let totalSheep = 0;
+  const weeklyBuckets: Record<number, {farmers: number; animals: number}> = {
+    1: {farmers: 0, animals: 0},
+    2: {farmers: 0, animals: 0},
+    3: {farmers: 0, animals: 0},
+    4: {farmers: 0, animals: 0},
+  };
+  const subcountyMap: Record<string, number> = {};
+  const userMap: Record<string, {count: number; counties: Set<string>}> = {};
+
+  for (const farmer of filteredFarmers) {
+    const gender = String(farmer.gender || "").trim().toLowerCase();
+    if (gender === "male") maleFarmers += 1;
+    else if (gender === "female") femaleFarmers += 1;
+
+    const goats = getGoatTotal(farmer.goats);
+    const sheep = getFieldNumber(farmer, "sheep");
+    totalGoats += goats;
+    totalSheep += sheep;
+
+    const date = parseDate(farmer.createdAt || farmer.registrationDate);
+    if (date) {
+      const week = Math.ceil(date.getDate() / 7);
+      if (week >= 1 && week <= 4) {
+        weeklyBuckets[week].farmers += 1;
+        weeklyBuckets[week].animals += goats + sheep;
+      }
+    }
+
+    const subcounty = String(farmer.subcounty || "Unknown").trim() || "Unknown";
+    subcountyMap[subcounty] = (subcountyMap[subcounty] || 0) + 1;
+
+    const username = String(farmer.username || "Unknown User").trim() || "Unknown User";
+    if (!userMap[username]) {
+      userMap[username] = {count: 0, counties: new Set<string>()};
+    }
+    userMap[username].count += 1;
+    const county = String(farmer.county || "").trim();
+    if (county) userMap[username].counties.add(county);
+  }
+
+  const totalTrainedFromCapacity = filteredTraining.reduce(
+    (sum, record) => sum + parseNumber(record.totalFarmers),
+    0,
+  );
+  const targetValue = typeof target === "number" && Number.isFinite(target) ? target : 117;
+  const totalAnimals = totalGoats + totalSheep;
+
+  const genderData = [
+    {name: "Male", value: maleFarmers},
+    {name: "Female", value: femaleFarmers},
+  ].filter((item) => item.value > 0);
+  const animalCensusData = [
+    {name: "Goats", value: totalGoats},
+    {name: "Sheep", value: totalSheep},
+  ].filter((item) => item.value > 0);
+  const weeklyPerformanceData = [
+    {name: "Week 1", farmers: weeklyBuckets[1].farmers, animals: weeklyBuckets[1].animals},
+    {name: "Week 2", farmers: weeklyBuckets[2].farmers, animals: weeklyBuckets[2].animals},
+    {name: "Week 3", farmers: weeklyBuckets[3].farmers, animals: weeklyBuckets[3].animals},
+    {name: "Week 4", farmers: weeklyBuckets[4].farmers, animals: weeklyBuckets[4].animals},
+  ];
+  const subcountyPerformanceData = Object.entries(subcountyMap)
+    .map(([name, value]) => ({name, value}))
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 15);
+  const userProgressData = Object.entries(userMap)
+    .map(([name, data]) => {
+      const progressPercentage = targetValue > 0 ? (data.count / targetValue) * 100 : 0;
+      let status: "achieved" | "on-track" | "behind" | "needs-attention" = "needs-attention";
+      if (progressPercentage >= 100) status = "achieved";
+      else if (progressPercentage >= 75) status = "on-track";
+      else if (progressPercentage >= 50) status = "behind";
+      const counties = [...data.counties];
+      return {
+        id: name,
+        name,
+        region: counties.slice(0, 3).join(", ") + (counties.length > 3 ? "..." : ""),
+        farmersRegistered: data.count,
+        target: targetValue,
+        progressPercentage,
+        status,
+      };
+    })
+    .sort((a, b) => b.farmersRegistered - a.farmersRegistered);
+
+  return {
+    scope: "livestock-analytics",
+    resolvedProgrammes: programmes,
+    total: filteredFarmers.length,
+    trained: totalTrainedFromCapacity,
+    totalAnimals,
+    trainingRate: filteredFarmers.length > 0 ? (totalTrainedFromCapacity / filteredFarmers.length) * 100 : 0,
+    maleFarmers,
+    femaleFarmers,
+    totalTrainedFromCapacity,
+    genderData,
+    animalCensusData,
+    weeklyPerformanceData,
+    subcountyPerformanceData,
+    userProgressData,
+  };
+};
+
+const createPerformanceReport = async (
+  profile: AnalysisProfile,
+  requestedProgramme?: string | null,
+  dateRange?: {startDate?: string; endDate?: string} | null,
+  timeFrame?: "weekly" | "monthly" | "yearly" | string | null,
+  selectedYear?: number | string | null,
+) => {
+  const programmes = resolveProgrammes(profile, requestedProgramme);
+  if (programmes.length === 0) return emptyPerformance();
+
+  const [farmers, training] = await Promise.all([
+    fetchCollectionByProgrammes("farmers", programmes),
+    fetchCollectionByProgrammes("capacityBuilding", programmes),
+  ]);
+
+  const filteredFarmers = farmers.filter((farmer) => {
+    const programme = toProgramme(farmer.programme);
+    const farmerDate = farmer.createdAt || farmer.registrationDate;
+    return (!programme || programmes.includes(programme)) &&
+      dateInRange(farmerDate, dateRange?.startDate, dateRange?.endDate);
+  });
+  const filteredTraining = training.filter((record) => {
+    const programme = toProgramme(record.programme);
+    const recordDate = record.createdAt || record.startDate;
+    return (!programme || programmes.includes(programme)) &&
+      dateInRange(recordDate, dateRange?.startDate, dateRange?.endDate);
+  });
+
+  let maleFarmers = 0;
+  let femaleFarmers = 0;
+  let totalGoats = 0;
+  let totalSheep = 0;
+  let totalCattle = 0;
+  let totalVaccinatedAnimals = 0;
+  let vaccinatedFarmersCount = 0;
+  let breedsMale = 0;
+  let breedsFemale = 0;
+  const countyMap: Record<string, number> = {};
+  const locationMap: Record<string, number> = {};
+  const topCustomersMap: Record<string, {name: string; value: number; county: string}> = {};
+  const breedsByCountyMap: Record<string, number> = {};
+  const breedsBySubcountyMap: Record<string, number> = {};
+  const vaccinationByCountyMap: Record<string, number> = {};
+  const vaccinationBySubcountyMap: Record<string, number> = {};
+  const selectedYearNumber = typeof selectedYear === "string" ? Number.parseInt(selectedYear, 10) : (typeof selectedYear === "number" ? selectedYear : null);
+  const currentYear = new Date().getFullYear();
+  const trendYear = selectedYearNumber && !Number.isNaN(selectedYearNumber) ? selectedYearNumber : null;
+
+  for (const farmer of filteredFarmers) {
+    const gender = String(farmer.gender || "").trim().toLowerCase();
+    if (gender === "male") maleFarmers += 1;
+    else if (gender === "female") femaleFarmers += 1;
+
+    const goats = getGoatTotal(farmer.goats);
+    const sheep = getFieldNumber(farmer, "sheep");
+    const cattle = getFieldNumber(farmer, "cattle");
+    const totalAnimalsForFarmer = goats + sheep + cattle;
+    totalGoats += goats;
+    totalSheep += sheep;
+    totalCattle += cattle;
+
+    const maleBreedCount = getFieldNumber(farmer, "maleBreeds");
+    const femaleBreedCount = getFieldNumber(farmer, "femaleBreeds");
+    breedsMale += maleBreedCount;
+    breedsFemale += femaleBreedCount;
+
+    const county = String(farmer.county || "Unknown").trim() || "Unknown";
+    const location = String(farmer.location || "Unknown").trim() || "Unknown";
+    countyMap[county] = (countyMap[county] || 0) + 1;
+    locationMap[location] = (locationMap[location] || 0) + 1;
+
+    const farmerName = String(farmer.name || farmer.farmerName || farmer.farmerId || farmer.id || "Unknown").trim() || "Unknown";
+    const currentTop = topCustomersMap[farmerName] || {name: farmerName, value: 0, county};
+    currentTop.value += totalAnimalsForFarmer;
+    if (county !== "Unknown") currentTop.county = county;
+    topCustomersMap[farmerName] = currentTop;
+
+    if (farmer.vaccinated === true) {
+      totalVaccinatedAnimals += totalAnimalsForFarmer;
+      vaccinatedFarmersCount += 1;
+      vaccinationByCountyMap[county] = (vaccinationByCountyMap[county] || 0) + totalAnimalsForFarmer;
+      const subcounty = String(farmer.subcounty || "Unknown").trim() || "Unknown";
+      vaccinationBySubcountyMap[subcounty] = (vaccinationBySubcountyMap[subcounty] || 0) + totalAnimalsForFarmer;
+    }
+
+    if (maleBreedCount + femaleBreedCount > 0) {
+      breedsByCountyMap[county] = (breedsByCountyMap[county] || 0) + maleBreedCount + femaleBreedCount;
+      const subcounty = String(farmer.subcounty || "Unknown").trim() || "Unknown";
+      breedsBySubcountyMap[subcounty] = (breedsBySubcountyMap[subcounty] || 0) + maleBreedCount + femaleBreedCount;
+    }
+  }
+
+  const totalAnimals = totalGoats + totalSheep + totalCattle;
+  const totalTrainedFarmers = filteredTraining.reduce((sum, record) => sum + parseNumber(record.totalFarmers), 0);
+  const countyPerformanceData = Object.entries(countyMap).map(([name, value]) => ({name, value})).sort((a, b) => b.value - a.value);
+  const topLocations = Object.entries(locationMap).map(([name, value]) => ({name, value})).sort((a, b) => b.value - a.value).slice(0, 5);
+  const topCustomers = Object.values(topCustomersMap).sort((a, b) => b.value - a.value).slice(0, 5);
+  const registrationTrendData = (() => {
+    const trendData: Array<{name: string; registrations: number}> = [];
+    const frame = String(timeFrame || "").toLowerCase();
+    if (frame === "weekly") {
+      for (let offset = 3; offset >= 0; offset -= 1) {
+        const weekStart = new Date();
+        weekStart.setDate(weekStart.getDate() - (offset * 7) - weekStart.getDay());
+        const weekEnd = new Date(weekStart);
+        weekEnd.setDate(weekStart.getDate() + 6);
+        const count = filteredFarmers.filter((farmer) => {
+          const date = parseDate(farmer.createdAt || farmer.registrationDate);
+          return !!date && date >= weekStart && date <= weekEnd;
+        }).length;
+        trendData.push({name: `Week ${4 - offset}`, registrations: count});
+      }
+      return trendData;
+    }
+    if (frame === "monthly") {
+      const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+      months.forEach((monthName, index) => {
+        const count = filteredFarmers.filter((farmer) => {
+          const date = parseDate(farmer.createdAt || farmer.registrationDate);
+          if (!date) return false;
+          if (trendYear === null) return date.getMonth() === index;
+          const monthStart = new Date(trendYear, index, 1);
+          const monthEnd = new Date(trendYear, index + 1, 0);
+          return date >= monthStart && date <= monthEnd;
+        }).length;
+        trendData.push({name: monthName, registrations: count});
+      });
+      return trendData;
+    }
+    const baseYear = trendYear ?? currentYear;
+    for (let year = baseYear - 4; year <= baseYear; year += 1) {
+      const yearStart = new Date(year, 0, 1);
+      const yearEnd = new Date(year, 11, 31);
+      const count = filteredFarmers.filter((farmer) => {
+        const date = parseDate(farmer.createdAt || farmer.registrationDate);
+        return !!date && date >= yearStart && date <= yearEnd;
+      }).length;
+      trendData.push({name: String(year), registrations: count});
+    }
+    return trendData;
+  })();
+  const uniqueCounties = new Set(filteredFarmers.map((farmer) => String(farmer.county || "").trim()).filter(Boolean)).size;
+  const totalBreedsDistributed = breedsMale + breedsFemale;
+  const breedsByCountyData = Object.entries(breedsByCountyMap).map(([name, value]) => ({name, value})).sort((a, b) => b.value - a.value);
+  const breedsBySubcountyData = Object.entries(breedsBySubcountyMap).map(([name, value]) => ({name, value})).sort((a, b) => b.value - a.value).slice(0, 10);
+  const vaccinationByCountyData = Object.entries(vaccinationByCountyMap).map(([name, value]) => ({name, value})).sort((a, b) => b.value - a.value);
+  const vaccinationBySubcountyData = Object.entries(vaccinationBySubcountyMap).map(([name, value]) => ({name, value})).sort((a, b) => b.value - a.value).slice(0, 10);
+
+  return {
+    scope: "performance-report",
+    resolvedProgrammes: programmes,
+    totalFarmers: filteredFarmers.length,
+    maleFarmers,
+    femaleFarmers,
+    malePercentage: filteredFarmers.length > 0 ? ((maleFarmers / filteredFarmers.length) * 100).toFixed(1) : "0.0",
+    femalePercentage: filteredFarmers.length > 0 ? ((femaleFarmers / filteredFarmers.length) * 100).toFixed(1) : "0.0",
+    totalAnimals,
+    totalGoats,
+    totalSheep,
+    goatsPercentage: totalAnimals > 0 ? ((totalGoats / totalAnimals) * 100).toFixed(1) : "0.0",
+    sheepPercentage: totalAnimals > 0 ? ((totalSheep / totalAnimals) * 100).toFixed(1) : "0.0",
+    totalTrainedFarmers,
+    countyPerformanceData,
+    registrationTrendData,
+    topLocations,
+    topCustomers,
+    uniqueCounties,
+    totalBreedsDistributed,
+    breedsMale,
+    breedsFemale,
+    breedsMalePercentage: totalBreedsDistributed > 0 ? ((breedsMale / totalBreedsDistributed) * 100).toFixed(1) : "0.0",
+    breedsFemalePercentage: totalBreedsDistributed > 0 ? ((breedsFemale / totalBreedsDistributed) * 100).toFixed(1) : "0.0",
+    vaccinationRate: totalAnimals > 0 ? ((totalVaccinatedAnimals / totalAnimals) * 100).toFixed(1) : "0.0",
+    vaccinatedAnimals: totalVaccinatedAnimals,
+    vaccinatedFarmersCount,
+    breedsByCountyData,
+    breedsBySubcountyData,
+    vaccinationByCountyData,
+    vaccinationBySubcountyData,
+  };
+};
+
+const createSalesReport = async (
+  profile: AnalysisProfile,
+  requestedProgramme?: string | null,
+  dateRange?: {startDate?: string; endDate?: string} | null,
+  salesInputs?: {pricePerKg?: number | string | null; expenses?: number | string | null} | null,
+) => {
+  const programmes = resolveProgrammes(profile, requestedProgramme);
+  if (programmes.length === 0) return emptySales();
+
+  const offtakes = await fetchCollectionByProgrammes("offtakes", programmes);
+  const filteredData = offtakes.filter((record) => {
+    const programme = toProgramme(record.programme || record.Programme);
+    return (!programme || programmes.includes(programme)) &&
+      dateInRange(record.date || record.Date || record.createdAt, dateRange?.startDate, dateRange?.endDate);
+  });
+
+  let totalPurchaseCost = 0;
+  let totalRevenue = 0;
+  let totalGoats = 0;
+  let totalSheep = 0;
+  let totalCattle = 0;
+  let totalLiveWeight = 0;
+  let totalCarcassWeight = 0;
+  let totalAnimalsCount = 0;
+  const genderCounts: Record<string, number> = {Male: 0, Female: 0};
+  const countySales: Record<string, number> = {};
+  const locationSales: Record<string, number> = {};
+  const farmerSales: Record<string, {name: string; revenue: number; animals: number; county: string}> = {};
+  const monthlyData: Record<string, {monthName: string; revenue: number; volume: number}> = {};
+  const pricePerKg = parseNumber(salesInputs?.pricePerKg);
+  const expenses = parseNumber(salesInputs?.expenses);
+
+  for (const record of filteredData) {
+    const txCost = parseNumber(record.totalPrice ?? record.totalprice);
+    totalPurchaseCost += txCost;
+
+    const goatsArr = Array.isArray(record.goats) ? record.goats : (Array.isArray(record.Goats) ? record.Goats : []);
+    const sheepArr = Array.isArray(record.sheep) ? record.sheep : (Array.isArray(record.Sheep) ? record.Sheep : []);
+    const cattleArr = Array.isArray(record.cattle) ? record.cattle : (Array.isArray(record.Cattle) ? record.Cattle : []);
+    const txGoats = parseNumber(record.totalGoats) || goatsArr.length;
+    const txSheep = sheepArr.length;
+    const txCattle = cattleArr.length;
+
+    totalGoats += txGoats;
+    totalSheep += txSheep;
+    totalCattle += txCattle;
+    totalAnimalsCount += txGoats + txSheep + txCattle;
+
+    const allAnimals = [...goatsArr, ...sheepArr, ...cattleArr];
+    let txCarcassWeight = 0;
+    for (const animal of allAnimals) {
+      const liveWeight = parseNumber(animal.live);
+      const carcassWeight = parseNumber(animal.carcass);
+      totalLiveWeight += liveWeight;
+      totalCarcassWeight += carcassWeight;
+      txCarcassWeight += carcassWeight;
+    }
+    totalRevenue += txCarcassWeight * pricePerKg;
+
+    if (record.gender) {
+      const gender = record.gender.charAt(0).toUpperCase() + record.gender.slice(1).toLowerCase();
+      if (genderCounts[gender] !== undefined) genderCounts[gender] += 1;
+    }
+
+    const county = String(record.county || record.region || record.County || "Unknown").trim() || "Unknown";
+    countySales[county] = (countySales[county] || 0) + txGoats;
+
+    const location = String(record.location || record.Location || "Unknown").trim() || "Unknown";
+    locationSales[location] = (locationSales[location] || 0) + (txGoats + txSheep + txCattle);
+
+    const farmerName = String(record.farmerName || record.name || record.username || "Unknown").trim() || "Unknown";
+    if (!farmerSales[farmerName]) {
+      farmerSales[farmerName] = {name: farmerName, revenue: 0, animals: 0, county};
+    } else if (county !== "Unknown") {
+      farmerSales[farmerName].county = county;
+    }
+    farmerSales[farmerName].revenue += txCarcassWeight * pricePerKg;
+    farmerSales[farmerName].animals += txGoats + txSheep + txCattle;
+
+    const date = parseDate(record.date || record.Date || record.createdAt);
+    if (date) {
+      const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+      const monthName = date.toLocaleString("default", {month: "short"});
+      if (!monthlyData[monthKey]) {
+        monthlyData[monthKey] = {monthName, revenue: 0, volume: 0};
+      }
+      monthlyData[monthKey].revenue += txCarcassWeight * pricePerKg;
+      monthlyData[monthKey].volume += txGoats + txSheep + txCattle;
+    }
+  }
+
+  const costPerGoat = totalGoats > 0 ? totalPurchaseCost / totalGoats : 0;
+  const avgLiveWeight = totalAnimalsCount > 0 ? totalLiveWeight / totalAnimalsCount : 0;
+  const avgCarcassWeight = totalAnimalsCount > 0 ? totalCarcassWeight / totalAnimalsCount : 0;
+  const netProfit = totalRevenue - totalPurchaseCost - expenses;
+  const avgCostPerKgCarcass = totalCarcassWeight > 0 ? totalPurchaseCost / totalCarcassWeight : 0;
+  const genderData = [
+    {name: "Male", value: genderCounts.Male},
+    {name: "Female", value: genderCounts.Female},
+  ].filter((item) => item.value > 0);
+  const countyData = Object.entries(countySales)
+    .map(([name, count]) => ({name, count}))
+    .sort((a, b) => b.count - a.count);
+  const topLocations = Object.entries(locationSales)
+    .map(([name, count]) => ({name, count}))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 10);
+  const topFarmers = Object.values(farmerSales)
+    .sort((a, b) => b.revenue - a.revenue)
+    .slice(0, 5);
+  const monthlyTrend = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"].map((month) => {
+    const match = Object.values(monthlyData).find((entry) => entry.monthName === month);
+    return {month, revenue: match ? match.revenue : 0, volume: match ? match.volume : 0};
+  });
+  const top3Months = Object.values(monthlyData)
+    .sort((a, b) => b.revenue - a.revenue)
+    .slice(0, 3)
+    .map((entry) => ({
+      month: entry.monthName,
+      revenue: entry.revenue,
+      volume: entry.volume,
+    }));
+
+  return {
+    scope: "sales-report",
+    resolvedProgrammes: programmes,
+    filteredCount: filteredData.length,
+    stats: {
+      totalPurchaseCost,
+      totalRevenue,
+      costPerGoat,
+      totalAnimals: totalAnimalsCount,
+      totalGoats,
+      totalSheep,
+      totalCattle,
+      totalLiveWeight,
+      avgLiveWeight,
+      totalCarcassWeight,
+      avgCarcassWeight,
+      pricePerKg,
+      expenses,
+      netProfit,
+      avgCostPerKgCarcass,
+    },
+    genderData,
+    countyData,
+    topLocations,
+    topFarmers,
+    monthlyTrend,
+    top3Months,
+  };
+};
+
+export const getAnalysisSummary = onCall(async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new HttpsError("unauthenticated", "You must be signed in to view analytics.");
+  }
+
+  const payload = (request.data || {}) as AnalysisRequest;
+  const scope = payload.scope;
+  if (!scope || !["overview", "livestock-analytics", "performance-report", "sales-report"].includes(scope)) {
+    throw new HttpsError("invalid-argument", "A valid analysis scope is required.");
+  }
+
+  const profile = await loadProfile(uid);
+  if (!profile) {
+    return {scope, resolvedProgrammes: []};
+  }
+
+  const key = cacheKey(uid, payload);
+  const cached = getCached(key);
+  if (cached) return cached;
+
+  let response: any;
+  switch (scope) {
+    case "overview":
+      response = await createOverview(profile, payload.programme);
+      break;
+    case "livestock-analytics":
+      response = await createLivestockAnalytics(profile, payload.programme, payload.dateRange, payload.target);
+      break;
+    case "performance-report":
+      response = await createPerformanceReport(
+        profile,
+        payload.programme,
+        payload.dateRange,
+        payload.timeFrame,
+        payload.selectedYear,
+      );
+      break;
+    case "sales-report":
+      response = await createSalesReport(profile, payload.programme, payload.dateRange, payload.salesInputs);
+      break;
+    default:
+      throw new HttpsError("invalid-argument", "Unsupported analysis scope.");
+  }
+
+  setCached(key, response);
+  return response;
+});

@@ -24,9 +24,6 @@ import {
   remove, 
   get, 
   onValue,
-  query,
-  orderByChild,
-  equalTo,
   DatabaseReference,
   Database 
 } from "firebase/database";
@@ -336,6 +333,9 @@ const normalizeStatusFlags = (record: Pick<Borehole, "drilled" | "equipped" | "r
   };
 };
 
+const pickFirstDefined = <T,>(...values: T[]): T | undefined =>
+  values.find((value) => value !== undefined && value !== null);
+
 const getRecordStatuses = (record: Borehole): Array<{ key: string; label: string; className: string }> => {
   const statuses: Array<{ key: string; label: string; className: string }> = [];
 
@@ -387,8 +387,8 @@ const BoreholePage = () => {
 
   const [filters, setFilters] = useState<Filters>({
     search: "",
-    startDate: currentMonth.startDate,
-    endDate: currentMonth.endDate,
+    startDate: "",
+    endDate: "",
     location: "all",
   });
 
@@ -499,39 +499,38 @@ const BoreholePage = () => {
       }
       console.log("Starting borehole data fetch from Realtime Database...");
 
-      const boreholeRef = query(
-        ref(db as Database, "BoreholeStorage"),
-        orderByChild("programme"),
-        equalTo(activeProgram)
-      );
+      const boreholeRef = ref(db as Database, "BoreholeStorage");
       const snapshot = await get(boreholeRef);
       
       if (snapshot.exists()) {
         const data = snapshot.val();
         // Transform object from RTDB to array
-        const boreholeData = Object.keys(data).map((key) => {
+        const boreholeData = Object.keys(data)
+          .map((key) => {
           const item = data[key];
           const status = normalizeStatusFlags({
-            drilled: toBoolean(item.drilled),
-            rehabilitated: toBoolean(item.rehabilitated),
-            equipped: toBoolean(item.equipped),
+            drilled: toBoolean(pickFirstDefined(item.drilled, item.Drilled)),
+            rehabilitated: toBoolean(pickFirstDefined(item.rehabilitated, item.Rehabilitated)),
+            equipped: toBoolean(pickFirstDefined(item.equipped, item.Equipped)),
           });
 
           return {
             id: key,
             ...item,
+            date: pickFirstDefined(item.date, item.Date, item.created_at, item.createdAt),
             programme: normalizeProgramme(item.programme || item.Programme),
             // Ensure specific field mappings match your RTDB structure
-            location: item.BoreholeLocation || item.location || 'No location',
+            location: pickFirstDefined(item.BoreholeLocation, item["Borehole Location"], item.location) || 'No location',
             county: item.County || item.county || '',       // Map County
-            subcounty: item.SubCounty || item.subcounty || '', // Map SubCounty
-            people: item.PeopleUsingBorehole || item.people || 0,
-            waterUsed: safeWaterToInteger(item.WaterUsed ?? item.waterUsed),
+            subcounty: pickFirstDefined(item.SubCounty, item["Sub-County"], item.subcounty) || '', // Map SubCounty
+            people: pickFirstDefined(item.PeopleUsingBorehole, item["People Using Borehole"], item.people) || 0,
+            waterUsed: safeWaterToInteger(pickFirstDefined(item.WaterUsed, item["Water Used"], item.waterUsed)),
             drilled: status.drilled,
             equipped: status.equipped, // Map Equipped
             rehabilitated: status.rehabilitated // Map Rehabilitated
           };
-        });
+        })
+          .filter((item) => normalizeProgramme(item.programme) === normalizeProgramme(activeProgram));
         
         const sortedBoreholeData = sortBoreholesByLatest(boreholeData);
         console.log("Final processed borehole data:", sortedBoreholeData);
@@ -689,13 +688,13 @@ const BoreholePage = () => {
     setActiveProgram(program);
     setFilters({
       search: "",
-      startDate: currentMonth.startDate,
-      endDate: currentMonth.endDate,
+      startDate: "",
+      endDate: "",
       location: "all",
     });
     setSelectedRecords([]);
     setPagination((prev) => ({ ...prev, page: 1 }));
-  }, [currentMonth.endDate, currentMonth.startDate]);
+  }, []);
 
   // Create functionality
   const handleCreateBorehole = async () => {
@@ -1189,84 +1188,86 @@ const BoreholePage = () => {
 
     return (
       <tr className="border-b hover:bg-blue-50 transition-colors group">
-        <td className="py-2 px-3">
-          <Checkbox
-            checked={selectedRecords.includes(record.id)}
-            onCheckedChange={() => handleSelectRecord(record.id)}
-          />
-        </td>
-        <td className="py-2 px-3 text-xs text-gray-500">{formatDate(record.date)}</td>
-        <td className="py-2 px-3">
-          <Badge
-            variant="secondary"
-            className={
-              normalizeProgramme(record.programme) === "KPMD"
-                ? "bg-indigo-100 text-indigo-800 w-fit text-[10px]"
-                : "bg-teal-100 text-teal-800 w-fit text-[10px]"
-            }
-          >
-            {normalizeProgramme(record.programme)}
-          </Badge>
-        </td>
-        <td className="py-2 px-3 font-medium text-sm">{record.location || 'N/A'}</td>
-        <td className="py-2 px-3 text-xs">{record.county || '-'}</td> {/* Added County */}
-        <td className="py-2 px-3 text-xs">{record.subcounty || '-'}</td> {/* Added Sub-County */}
-        <td className="py-2 px-3">
-          <span className="text-xs font-semibold text-blue-700">{displayPeopleValue(record.people)}</span>
-        </td>
-        <td className="py-2 px-3">
-          <span className="text-xs font-semibold text-cyan-700">{safeWaterToInteger(record.waterUsed)} L</span>
-        </td>
-        <td className="py-2 px-3">
-          <div className="flex flex-wrap gap-1">
-            {statuses.length > 0 ? (
-              statuses.map(status => (
-                <Badge key={status.key} variant="secondary" className={`${status.className} w-fit text-[10px]`}>
-                  {status.label}
-                </Badge>
-              ))
-            ) : (
-              <Badge variant="secondary" className="bg-gray-100 text-gray-800 w-fit text-[10px]">
-                N/A
-              </Badge>
-            )}
-          </div>
-        </td>
-        <td className="py-2 px-3">
-          <div className="flex gap-1">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => openViewDialog(record)}
-              className="h-7 w-7 text-green-600 hover:bg-green-50"
+        {[
+          <td key="select" className="py-2 px-3">
+            <Checkbox
+              checked={selectedRecords.includes(record.id)}
+              onCheckedChange={() => handleSelectRecord(record.id)}
+            />
+          </td>,
+          <td key="date" className="py-2 px-3 text-xs text-gray-500">{formatDate(record.date)}</td>,
+          <td key="programme" className="py-2 px-3">
+            <Badge
+              variant="secondary"
+              className={
+                normalizeProgramme(record.programme) === "KPMD"
+                  ? "bg-indigo-100 text-indigo-800 w-fit text-[10px]"
+                  : "bg-teal-100 text-teal-800 w-fit text-[10px]"
+              }
             >
-              <Eye className="h-3.5 w-3.5" />
-            </Button>
-            {userIsChiefAdmin && (
-              <>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => openEditDialog(record)}
-                  className="h-7 w-7 text-blue-600 hover:bg-blue-50"
-                >
-                  <Edit className="h-3.5 w-3.5" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => {
-                    setSelectedRecords([record.id]);
-                    setIsDeleteDialogOpen(true);
-                  }}
-                  className="h-7 w-7 text-red-600 hover:bg-red-50"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </Button>
-              </>
-            )}
-          </div>
-        </td>
+              {normalizeProgramme(record.programme)}
+            </Badge>
+          </td>,
+          <td key="location" className="py-2 px-3 font-medium text-sm">{record.location || "N/A"}</td>,
+          <td key="county" className="py-2 px-3 text-xs">{record.county || "-"}</td>,
+          <td key="subcounty" className="py-2 px-3 text-xs">{record.subcounty || "-"}</td>,
+          <td key="people" className="py-2 px-3">
+            <span className="text-xs font-semibold text-blue-700">{displayPeopleValue(record.people)}</span>
+          </td>,
+          <td key="waterUsed" className="py-2 px-3">
+            <span className="text-xs font-semibold text-cyan-700">{safeWaterToInteger(record.waterUsed)} L</span>
+          </td>,
+          <td key="status" className="py-2 px-3">
+            <div className="flex flex-wrap gap-1">
+              {statuses.length > 0 ? (
+                statuses.map(status => (
+                  <Badge key={status.key} variant="secondary" className={`${status.className} w-fit text-[10px]`}>
+                    {status.label}
+                  </Badge>
+                ))
+              ) : (
+                <Badge variant="secondary" className="bg-gray-100 text-gray-800 w-fit text-[10px]">
+                  N/A
+                </Badge>
+              )}
+            </div>
+          </td>,
+          <td key="actions" className="py-2 px-3">
+            <div className="flex gap-1">
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => openViewDialog(record)}
+                className="h-7 w-7 text-green-600 hover:bg-green-50"
+              >
+                <Eye className="h-3.5 w-3.5" />
+              </Button>
+              {userIsChiefAdmin && (
+                <>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => openEditDialog(record)}
+                    className="h-7 w-7 text-blue-600 hover:bg-blue-50"
+                  >
+                    <Edit className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => {
+                      setSelectedRecords([record.id]);
+                      setIsDeleteDialogOpen(true);
+                    }}
+                    className="h-7 w-7 text-red-600 hover:bg-red-50"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </>
+              )}
+            </div>
+          </td>,
+        ]}
       </tr>
     );
   }, [selectedRecords, handleSelectRecord, openViewDialog, openEditDialog, userIsChiefAdmin]);
@@ -1415,8 +1416,8 @@ const BoreholePage = () => {
               {!activeProgram
                 ? "You do not have access to any programme data."
                 : allBoreholes.length === 0
-                  ? "No borehole data found in database"
-                  : "No records found matching your criteria"}
+                  ? `No borehole data found for ${activeProgram}. Try switching programme if your records belong to another one.`
+                  : "No records found matching your current filters. Try Clear All Filters to show all borehole records."}
             </div>
           ) : (
             <>
@@ -1424,21 +1425,23 @@ const BoreholePage = () => {
                 <table className="w-full border-collapse border border-gray-300 text-sm text-left whitespace-nowrap">
                   <thead>
                     <tr className="bg-blue-50 text-xs">
-                      <th className="py-3 px-3">
-                        <Checkbox
-                          checked={selectedRecords.length === currentPageRecords.length && currentPageRecords.length > 0}
-                          onCheckedChange={handleSelectAll}
-                        />
-                      </th>
-                      <th className="py-3 px-3 font-semibold text-gray-700">Date</th>
-                      <th className="py-3 px-3 font-semibold text-gray-700">Programme</th>
-                      <th className="py-3 px-3 font-semibold text-gray-700">Borehole Location</th>
-                      <th className="py-3 px-3 font-semibold text-gray-700">County</th> {/* Added Header */}
-                      <th className="py-3 px-3 font-semibold text-gray-700">Sub-County</th> {/* Added Header */}
-                      <th className="py-3 px-3 font-semibold text-gray-700">People</th>
-                      <th className="py-3 px-3 font-semibold text-gray-700">Water Used</th>
-                      <th className="py-3 px-3 font-semibold text-gray-700">Status</th>
-                      <th className="py-3 px-3 font-semibold text-gray-700">Actions</th>
+                      {[
+                        <th key="select" className="py-3 px-3">
+                          <Checkbox
+                            checked={selectedRecords.length === currentPageRecords.length && currentPageRecords.length > 0}
+                            onCheckedChange={handleSelectAll}
+                          />
+                        </th>,
+                        <th key="date" className="py-3 px-3 font-semibold text-gray-700">Date</th>,
+                        <th key="programme" className="py-3 px-3 font-semibold text-gray-700">Programme</th>,
+                        <th key="location" className="py-3 px-3 font-semibold text-gray-700">Borehole Location</th>,
+                        <th key="county" className="py-3 px-3 font-semibold text-gray-700">County</th>,
+                        <th key="subcounty" className="py-3 px-3 font-semibold text-gray-700">Sub-County</th>,
+                        <th key="people" className="py-3 px-3 font-semibold text-gray-700">People</th>,
+                        <th key="waterUsed" className="py-3 px-3 font-semibold text-gray-700">Water Used</th>,
+                        <th key="status" className="py-3 px-3 font-semibold text-gray-700">Status</th>,
+                        <th key="actions" className="py-3 px-3 font-semibold text-gray-700">Actions</th>,
+                      ]}
                     </tr>
                   </thead>
                   <tbody>

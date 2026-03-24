@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { ref, onValue, query, orderByChild, equalTo } from "firebase/database";
 import { db } from "@/lib/firebase"; // Ensure this is getDatabase()
 import { useAuth } from "@/contexts/AuthContext";
+import { useQuery } from "@tanstack/react-query";
+import { fetchAnalysisSummary } from "@/lib/analysis";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { 
   PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip, 
@@ -120,6 +122,9 @@ const getGoatTotal = (goats: any): number => {
   return 0;
 };
 
+const USE_REMOTE_ANALYTICS =
+  typeof window !== "undefined" && !["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
+
 const LivestockFarmersAnalytics = () => {
   const { user, userRole, userAttribute } = useAuth();
   const [loading, setLoading] = useState(true);
@@ -153,6 +158,48 @@ const LivestockFarmersAnalytics = () => {
     () => canViewAllProgrammes(userRole, userAttribute),
     [userRole, userAttribute]
   );
+
+  const analyticsQuery = useQuery({
+    queryKey: [
+      "livestock-analytics",
+      user?.uid,
+      userRole,
+      userAttribute,
+      activeProgram,
+      dateRange.startDate,
+      dateRange.endDate,
+      activeTarget,
+    ],
+    queryFn: () =>
+      fetchAnalysisSummary({
+        scope: "livestock-analytics",
+        programme: activeProgram || null,
+        dateRange,
+        target: activeTarget,
+      }),
+    enabled: USE_REMOTE_ANALYTICS && !!activeProgram,
+    staleTime: 2 * 60 * 1000,
+  });
+
+  useEffect(() => {
+    const analysis = analyticsQuery.data as any;
+    if (!analysis) return;
+
+    setStats({
+      total: analysis.total || 0,
+      trained: analysis.trained || 0,
+      totalAnimals: analysis.totalAnimals || 0,
+      trainingRate: analysis.trainingRate || 0,
+      maleFarmers: analysis.maleFarmers || 0,
+      femaleFarmers: analysis.femaleFarmers || 0,
+      totalTrainedFromCapacity: analysis.totalTrainedFromCapacity || 0,
+    });
+    setGenderData(analysis.genderData || []);
+    setAnimalCensusData(analysis.animalCensusData || []);
+    setWeeklyPerformanceData(analysis.weeklyPerformanceData || []);
+    setSubcountyPerformanceData(analysis.subcountyPerformanceData || []);
+    setFilteredData([]);
+  }, [analyticsQuery.data]);
 
   // --- 1. Fetch User Permissions ---
   useEffect(() => {
@@ -190,6 +237,7 @@ const LivestockFarmersAnalytics = () => {
 
   // --- 2. Data Fetching (Farmers) ---
   useEffect(() => {
+    if (USE_REMOTE_ANALYTICS) return;
     if (!activeProgram) {
         setAllFarmers([]);
         setLoading(false);
@@ -251,6 +299,7 @@ const LivestockFarmersAnalytics = () => {
 
   // --- 3. Data Fetching (Capacity Building) ---
   useEffect(() => {
+    if (USE_REMOTE_ANALYTICS) return;
     if (!activeProgram) {
         setTrainingRecords([]);
         return;
@@ -283,6 +332,7 @@ const LivestockFarmersAnalytics = () => {
 
   // --- 4. Filtering & Analytics Logic ---
   useEffect(() => {
+    if (USE_REMOTE_ANALYTICS) return;
     if (allFarmers.length > 0) {
       applyFilters();
     }
@@ -401,40 +451,10 @@ const LivestockFarmersAnalytics = () => {
   };
 
   // User Progress with Dynamic Targets
-  const userProgressData = useMemo(() => {
-    const userStats: Record<string, { count: number; counties: Set<string> }> = {};
-    filteredData.forEach(farmer => {
-      const username = farmer.username || "Unknown User";
-      if (!userStats[username]) {
-        userStats[username] = { count: 0, counties: new Set() };
-      }
-      userStats[username].count++;
-      const county = farmer.county;
-      if (county) {
-        userStats[username].counties.add(county);
-      }
-    });
-
-    return Object.entries(userStats).map(([username, data]) => {
-      const target = activeTarget; // Use the state-controlled target
-      const progressPercentage = (data.count / target) * 100;
-      
-      let status: UserProgress['status'] = 'needs-attention';
-      if (progressPercentage >= 100) status = 'achieved';
-      else if (progressPercentage >= 75) status = 'on-track';
-      else if (progressPercentage >= 50) status = 'behind';
-
-      return {
-        id: username,
-        name: username,
-        region: Array.from(data.counties).slice(0, 3).join(', ') + (data.counties.size > 3 ? '...' : ''),
-        farmersRegistered: data.count,
-        target: target,
-        progressPercentage,
-        status
-      };
-    }).sort((a, b) => b.farmersRegistered - a.farmersRegistered);
-  }, [filteredData, activeTarget]);
+  const userProgressData = useMemo(
+    () => (analyticsQuery.data as any)?.userProgressData || [],
+    [analyticsQuery.data],
+  );
 
   const handleDateRangeChange = (key: string, value: string) => {
     setDateRange(prev => ({ ...prev, [key]: value }));
@@ -537,7 +557,7 @@ const LivestockFarmersAnalytics = () => {
     </Card>
   );
 
-  if (loading) {
+  if (analyticsQuery.isLoading || analyticsQuery.isFetching) {
     return (
       <div className="flex justify-center items-center h-64">
         <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent"></div>
@@ -546,7 +566,7 @@ const LivestockFarmersAnalytics = () => {
     );
   }
 
-  if (!loading && allFarmers.length === 0) {
+  if (stats.total === 0) {
     return (
       <div className="flex flex-col items-center justify-center h-full p-8 space-y-4">
         <Card className="w-full max-w-2xl border-red-200 bg-red-50">

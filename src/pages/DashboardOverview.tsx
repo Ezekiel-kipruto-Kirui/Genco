@@ -16,6 +16,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Link } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { useQuery, useQueryClient } from "@tanstack/react-query"; // Import React Query
+import { fetchAnalysisSummary } from "@/lib/analysis";
 import { Calendar } from "@/components/ui/calendar";
 import { canViewAllProgrammes } from "@/contexts/authhelper";
 
@@ -59,10 +60,83 @@ interface RegionStats {
   femaleFarmers: number;
 }
 
+interface OverviewSummaryData {
+  stats: {
+    totalFarmers: number;
+    maleFarmers: number;
+    femaleFarmers: number;
+    trainedFarmers: number;
+    maleGoats: number;
+    femaleGoats: number;
+    totalGoats: number;
+    totalSheep: number;
+    totalCattle: number;
+    regionsVisited: number;
+  };
+  topRegions: RegionStats[];
+  recentActivities: Activity[];
+  pendingActivitiesCount: number;
+}
+
 // --- Helper Functions ---
 const getGoatTotal = (goats: any): number => {
   if (typeof goats === 'number') return goats;
   if (typeof goats === 'object' && goats !== null && typeof goats.total === 'number') return goats.total;
+  return 0;
+};
+
+const LOCALHOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
+const USE_REMOTE_ANALYTICS =
+  typeof window !== "undefined" && !LOCALHOSTS.has(window.location.hostname);
+
+const EMPTY_OVERVIEW_DATA: OverviewSummaryData = {
+  stats: {
+    totalFarmers: 0,
+    maleFarmers: 0,
+    femaleFarmers: 0,
+    trainedFarmers: 0,
+    maleGoats: 0,
+    femaleGoats: 0,
+    totalGoats: 0,
+    totalSheep: 0,
+    totalCattle: 0,
+    regionsVisited: 0,
+  },
+  topRegions: [],
+  recentActivities: [],
+  pendingActivitiesCount: 0,
+};
+
+const parseDate = (date: any): Date | null => {
+  if (!date) return null;
+
+  try {
+    if (date?.toDate && typeof date.toDate === "function") return date.toDate();
+    if (date instanceof Date) return date;
+    if (typeof date === "number") return new Date(date);
+    if (typeof date === "string") {
+      const parsed = new Date(date);
+      if (!Number.isNaN(parsed.getTime())) return parsed;
+    }
+    if (date?.seconds) return new Date(date.seconds * 1000);
+  } catch (error) {
+    console.error("Error parsing date:", error, date);
+  }
+
+  return null;
+};
+
+const normalizeProgramme = (value: unknown): string =>
+  typeof value === "string" ? value.trim().toUpperCase() : "";
+
+const getNumberField = (obj: Record<string, any>, ...fieldNames: string[]): number => {
+  for (const fieldName of fieldNames) {
+    const value = obj[fieldName];
+    if (value !== undefined && value !== null && value !== "") {
+      const num = Number(value);
+      return Number.isNaN(num) ? 0 : num;
+    }
+  }
   return 0;
 };
 
@@ -189,161 +263,187 @@ const DashboardOverview = () => {
     return Object.keys(allowedProgrammes).filter((programme) => allowedProgrammes[programme] === true);
   }, [userCanViewAllProgrammeData, allowedProgrammes]);
 
-  // --- Optimized Data Fetching with React Query ---
+  const [localOverviewData, setLocalOverviewData] = useState<OverviewSummaryData | null>(null);
+  const [localOverviewLoading, setLocalOverviewLoading] = useState(false);
 
-  const toArray = (snapshot: any): any[] => {
-    if (!snapshot.exists()) return [];
-    const data = snapshot.val();
-    return Object.keys(data).map((key) => ({ id: key, ...data[key] }));
-  };
-
-  const fetchByProgramme = async (nodePath: string, programme: string): Promise<any[]> => {
-    try {
-      const programmeQuery = query(ref(db, nodePath), orderByChild("programme"), equalTo(programme));
-      const snapshot = await get(programmeQuery);
-      return toArray(snapshot);
-    } catch (error) {
-      console.warn(`Index query failed for ${nodePath}, falling back to client filter.`, error);
-      const snapshot = await get(ref(db, nodePath));
-      return toArray(snapshot).filter((item: any) => item.programme === programme);
-    }
-  };
-
-  // 1. Fetch only data needed for the selected programme to avoid heavy startup work.
-  const fetchSecureCollection = async (nodePath: string, programmeFilter: string): Promise<any[]> => {
-    if (!user?.uid || !(userRole || userAttribute)) return [];
-
-    if (userCanViewAllProgrammeData) {
-      if (!programmeFilter || programmeFilter === "All") {
-        const snapshot = await get(ref(db, nodePath));
-        return toArray(snapshot);
-      }
-      return fetchByProgramme(nodePath, programmeFilter);
-    }
-
-    if (programmeOptions.length === 0) return [];
-
-    if (programmeFilter && programmeFilter !== "All") {
-      if (!programmeOptions.includes(programmeFilter)) return [];
-      return fetchByProgramme(nodePath, programmeFilter);
-    }
-
-    const chunks = await Promise.all(programmeOptions.map((programme) => fetchByProgramme(nodePath, programme)));
-    return chunks.flat();
-  };
-
-  // 2. React Query Hooks
-  const programmeKey = programmeOptions.join("|");
-  const canLoadCollections = !!(userRole || userAttribute) && !loading && !!selectedProgramme;
-
-  const { data: rawFarmers = [], isLoading: isLoadingFarmers } = useQuery({
-    queryKey: ["farmers", userRole, userAttribute, programmeKey, selectedProgramme],
-    queryFn: () => fetchSecureCollection("farmers", selectedProgramme || "All"),
-    enabled: canLoadCollections,
-    staleTime: 5 * 60 * 1000, // 5 minutes
-    gcTime: 10 * 60 * 1000, // Cache in memory for 10 mins
+  const overviewQuery = useQuery({
+    queryKey: ["overview-analysis", user?.uid, userRole, userAttribute, selectedProgramme],
+    queryFn: () =>
+      fetchAnalysisSummary({
+        scope: "overview",
+        programme: selectedProgramme === "All" ? "All" : selectedProgramme || null,
+      }),
+    enabled: USE_REMOTE_ANALYTICS && !!selectedProgramme && !loading,
+    staleTime: 2 * 60 * 1000,
   });
 
-  const { data: rawActivities = [], isLoading: isLoadingActivities } = useQuery({
-    queryKey: ["activities", userRole, userAttribute, programmeKey, selectedProgramme],
-    queryFn: () => fetchSecureCollection("Recent Activities", selectedProgramme || "All"),
-    enabled: canLoadCollections,
-    staleTime: 2 * 60 * 1000, // 2 minutes
-  });
-
-  const { data: rawCapacityData = [], isLoading: isLoadingCapacity } = useQuery({
-    queryKey: ["capacityBuilding", userRole, userAttribute, programmeKey, selectedProgramme],
-    queryFn: () => fetchSecureCollection("capacityBuilding", selectedProgramme || "All"),
-    enabled: canLoadCollections,
-    staleTime: 10 * 60 * 1000, // 10 minutes
-  });
-
-  // Combined loading state
-  const isLoadingData = loading || isLoadingFarmers || isLoadingActivities || isLoadingCapacity;
-
-  // --- Filters & Stats ---
-
-  const filteredFarmers = useMemo(() => {
-    if (!selectedProgramme) return [];
-    if (selectedProgramme === "All") return rawFarmers;
-    return rawFarmers.filter((f: FarmerData) => f.programme === selectedProgramme);
-  }, [rawFarmers, selectedProgramme]);
-
-  const filteredActivities = useMemo(() => {
-    const activities =
-      selectedProgramme === "All"
-        ? rawActivities
-        : rawActivities.filter((a: Activity) => a.programme === selectedProgramme);
-
-    // Clone before sorting to avoid mutating React Query cache data.
-    return [...activities].sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  }, [rawActivities, selectedProgramme]);
-
-  const filteredCapacityData = useMemo(() => {
-    if (selectedProgramme !== "All") {
-      return rawCapacityData.filter((c: any) => c.programme === selectedProgramme);
+  useEffect(() => {
+    if (USE_REMOTE_ANALYTICS) return;
+    if (!selectedProgramme) {
+      setLocalOverviewData(EMPTY_OVERVIEW_DATA);
+      setLocalOverviewLoading(true);
+      return;
     }
-    return rawCapacityData;
-  }, [rawCapacityData, selectedProgramme]);
 
-  const stats = useMemo(() => {
-    const data = filteredFarmers;
-    const maleFarmers = data.filter((f: FarmerData) => String(f.gender || f.Gender).toLowerCase() === 'male').length;
-    const femaleFarmers = data.filter((f: FarmerData) => String(f.gender || f.Gender).toLowerCase() === 'female').length;
+    let cancelled = false;
 
-    return {
-      totalFarmers: data.length,
-      maleFarmers,
-      femaleFarmers,
-      trainedFarmers: 0, 
-      trainedMale: 0,
-      trainedFemale: 0,
-    };
-  }, [filteredFarmers]);
+    const fetchLocalOverview = async () => {
+      setLocalOverviewLoading(true);
+      try {
+        const [farmersSnap, activitiesSnap, capacitySnap] = await Promise.all([
+          get(ref(db, "farmers")),
+          get(ref(db, "Recent Activities")),
+          get(ref(db, "capacityBuilding")),
+        ]);
 
-  const regionStats = useMemo(() => {
-    const regionMap: Record<string, RegionStats> = {};
-    filteredFarmers.forEach((farmer: FarmerData) => {
-      const region = farmer.region || farmer.Region || farmer.county || farmer.County;
-      if (region) {
-        const regionName = String(region).trim();
-        if (!regionMap[regionName]) {
-          regionMap[regionName] = { name: regionName, farmerCount: 0, maleFarmers: 0, femaleFarmers: 0 };
+        if (cancelled) return;
+
+        const requestedProgramme = normalizeProgramme(selectedProgramme);
+        const includeAllProgrammes = !requestedProgramme || requestedProgramme === "ALL";
+
+        const farmers = farmersSnap.exists()
+          ? Object.entries(farmersSnap.val() as Record<string, any>).map(([id, record]) => ({ id, ...record }))
+          : [];
+        const activities = activitiesSnap.exists()
+          ? Object.entries(activitiesSnap.val() as Record<string, any>).map(([id, record]) => ({ id, ...record }))
+          : [];
+        const capacity = capacitySnap.exists()
+          ? Object.entries(capacitySnap.val() as Record<string, any>).map(([id, record]) => ({ id, ...record }))
+          : [];
+
+        const filteredFarmers = farmers.filter((farmer) => {
+          const programme = normalizeProgramme(farmer.programme);
+          return includeAllProgrammes || !programme || programme === requestedProgramme;
+        });
+        const filteredActivities = activities.filter((activity) => {
+          const programme = normalizeProgramme(activity.programme);
+          return includeAllProgrammes || !programme || programme === requestedProgramme;
+        });
+        const filteredCapacity = capacity.filter((record) => {
+          const programme = normalizeProgramme(record.programme);
+          return includeAllProgrammes || !programme || programme === requestedProgramme;
+        });
+
+        let maleFarmers = 0;
+        let femaleFarmers = 0;
+        let maleGoats = 0;
+        let femaleGoats = 0;
+        let totalGoats = 0;
+        let totalSheep = 0;
+        let totalCattle = 0;
+        const regionMap: Record<string, number> = {};
+
+        for (const farmer of filteredFarmers) {
+          const gender = String(farmer.gender || "").trim().toLowerCase();
+          if (gender === "male") maleFarmers += 1;
+          else if (gender === "female") femaleFarmers += 1;
+
+          totalGoats += getGoatTotal(farmer.goats);
+          if (farmer.goats && typeof farmer.goats === "object") {
+            const goatRecord = farmer.goats as Record<string, any>;
+            maleGoats += getNumberField(goatRecord, "male");
+            femaleGoats += getNumberField(goatRecord, "female");
+          }
+          totalSheep += getNumberField(farmer as Record<string, any>, "sheep");
+          totalCattle += getNumberField(farmer as Record<string, any>, "cattle");
+
+          const region = String(farmer.region || farmer.county || "Unknown").trim() || "Unknown";
+          regionMap[region] = (regionMap[region] || 0) + 1;
         }
-        regionMap[regionName].farmerCount++;
-        const gender = String(farmer.gender || farmer.Gender).toLowerCase();
-        if (gender === 'male') regionMap[regionName].maleFarmers++;
-        else if (gender === 'female') regionMap[regionName].femaleFarmers++;
+
+        const topRegions = Object.entries(regionMap)
+          .map(([name, farmerCount]) => ({ name, farmerCount, maleFarmers: 0, femaleFarmers: 0 }))
+          .sort((a, b) => b.farmerCount - a.farmerCount)
+          .slice(0, 4);
+
+        const recentActivities = [...filteredActivities]
+          .sort((a, b) => (parseDate(b.date)?.getTime() || 0) - (parseDate(a.date)?.getTime() || 0))
+          .slice(0, 3)
+          .map((record) => {
+            const rawStatus = String(record.status || "pending").trim().toLowerCase();
+            const status: Activity["status"] = ["pending", "in-progress", "completed", "cancelled"].includes(rawStatus)
+              ? (rawStatus as Activity["status"])
+              : "pending";
+
+            return {
+              id: String(record.id || ""),
+              activityName: String(record.activityName || ""),
+              date: String(record.date || record.createdAt || ""),
+              numberOfPersons: getNumberField(record as Record<string, any>, "numberOfPersons") ||
+                (Array.isArray(record.participants) ? record.participants.length : 0),
+              county: String(record.county || ""),
+              location: String(record.location || ""),
+              participants: Array.isArray(record.participants) ? record.participants : [],
+              subcounty: String(record.subcounty || ""),
+              createdAt: record.createdAt || record.date || "",
+              status,
+              programme: record.programme ? normalizeProgramme(record.programme) : undefined,
+              totalFarmers: getNumberField(record as Record<string, any>, "totalFarmers"),
+            };
+          });
+
+        const pendingActivitiesCount = filteredActivities.filter(
+          (activity) => String(activity.status || "").trim().toLowerCase() === "pending",
+        ).length;
+        const trainedFarmers = filteredCapacity.reduce(
+          (sum, record) => sum + getNumberField(record as Record<string, any>, "totalFarmers", "trainedFarmers"),
+          0,
+        );
+
+        if (!cancelled) {
+          setLocalOverviewData({
+            stats: {
+              totalFarmers: filteredFarmers.length,
+              maleFarmers,
+              femaleFarmers,
+              trainedFarmers,
+              maleGoats,
+              femaleGoats,
+              totalGoats,
+              totalSheep,
+              totalCattle,
+              regionsVisited: Object.keys(regionMap).length,
+            },
+            topRegions,
+            recentActivities,
+            pendingActivitiesCount,
+          });
+        }
+      } catch (error) {
+        console.error("Error building local overview data:", error);
+        if (!cancelled) setLocalOverviewData(EMPTY_OVERVIEW_DATA);
+      } finally {
+        if (!cancelled) setLocalOverviewLoading(false);
       }
-    });
-    return Object.values(regionMap).sort((a, b) => b.farmerCount - a.farmerCount);
-  }, [filteredFarmers]);
+    };
 
-  const animalStats = useMemo(() => {
-    let totalGoats = 0, maleGoats = 0, femaleGoats = 0, totalSheep = 0, totalCattle = 0;
-    filteredFarmers.forEach((farmer: FarmerData) => {
-      const g = getGoatTotal(farmer.goats);
-      totalGoats += g;
-      if (farmer.goats && typeof farmer.goats === 'object') {
-        maleGoats += Number(farmer.goats.male || 0);
-        femaleGoats += Number(farmer.goats.female || 0);
-      }
-      totalSheep += Number(farmer.sheep || 0);
-      totalCattle += Number(farmer.cattle || 0);
-    });
-    return { totalGoats, maleGoats, femaleGoats, totalSheep, totalCattle, regionsVisited: regionStats.length };
-  }, [filteredFarmers, regionStats.length]);
+    void fetchLocalOverview();
 
-  const finalStats = useMemo(() => ({ ...stats, ...animalStats }), [stats, animalStats]);
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedProgramme]);
 
-  const calculatedStats = useMemo(() => {
-    const totalTrained = filteredCapacityData.reduce((sum: number, t: any) => sum + (Number(t.totalFarmers) || 0), 0);
+  const overviewData =
+    (overviewQuery.data as OverviewSummaryData | undefined) ?? localOverviewData ?? EMPTY_OVERVIEW_DATA;
 
-    return { ...finalStats, trainedFarmers: totalTrained };
-  }, [filteredCapacityData, finalStats]); 
+  const calculatedStats = {
+    totalFarmers: overviewData?.stats?.totalFarmers || 0,
+    maleFarmers: overviewData?.stats?.maleFarmers || 0,
+    femaleFarmers: overviewData?.stats?.femaleFarmers || 0,
+    trainedFarmers: overviewData?.stats?.trainedFarmers || 0,
+    maleGoats: overviewData?.stats?.maleGoats || 0,
+    femaleGoats: overviewData?.stats?.femaleGoats || 0,
+    totalGoats: overviewData?.stats?.totalGoats || 0,
+    totalSheep: overviewData?.stats?.totalSheep || 0,
+    totalCattle: overviewData?.stats?.totalCattle || 0,
+    regionsVisited: overviewData?.stats?.regionsVisited || 0,
+  };
 
-  const recentActivities = useMemo(() => filteredActivities.slice(0, 3), [filteredActivities]);
-  const pendingActivitiesCount = useMemo(() => filteredActivities.filter((a: Activity) => a.status === 'pending').length, [filteredActivities]);
+  const regionStats = overviewData?.topRegions || [];
+  const recentActivities = overviewData?.recentActivities || [];
+  const pendingActivitiesCount = overviewData?.pendingActivitiesCount || 0;
+  const isLoadingData = overviewQuery.isLoading || overviewQuery.isFetching || localOverviewLoading;
 
 
   // --- Effects & Handlers ---
@@ -415,7 +515,7 @@ const DashboardOverview = () => {
       setIsAddDialogOpen(false);
       
       // Invalidate queries to trigger a refetch
-      queryClient.invalidateQueries({ queryKey: ['activities'] });
+      queryClient.invalidateQueries({ queryKey: ["overview-analysis"] });
     } catch (error) {
       toast({ title: "Error", description: "Failed to schedule activity.", variant: "destructive" });
     }
