@@ -227,6 +227,20 @@ export const canAccessFinanceSection = (
   );
 };
 
+export const canAccessRequisition = (
+  userRole: string | null | undefined,
+  userAttribute?: string | null
+): boolean => {
+  const principal = resolvePermissionPrincipal(userRole, userAttribute);
+  return (
+    isChiefAdmin(principal) ||
+    isAdmin(principal) ||
+    isFullAccessAttribute(principal) ||
+    isHummanResourceManager(principal) ||
+    isFinance(principal)
+  );
+};
+
 export const canAccessOrdersSection = (
   userRole: string | null | undefined,
   userAttribute?: string | null

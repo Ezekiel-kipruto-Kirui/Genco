@@ -1,3 +1,4 @@
+/* eslint-disable max-len */
 import * as admin from "firebase-admin";
 import {onCall, HttpsError} from "firebase-functions/v2/https";
 
@@ -1033,26 +1034,26 @@ export const getAnalysisSummary = onCall(async (request) => {
 
   let response: any;
   switch (scope) {
-    case "overview":
-      response = await createOverview(profile, payload.programme);
-      break;
-    case "livestock-analytics":
-      response = await createLivestockAnalytics(profile, payload.programme, payload.dateRange, payload.target);
-      break;
-    case "performance-report":
-      response = await createPerformanceReport(
-        profile,
-        payload.programme,
-        payload.dateRange,
-        payload.timeFrame,
-        payload.selectedYear,
-      );
-      break;
-    case "sales-report":
-      response = await createSalesReport(profile, payload.programme, payload.dateRange, payload.salesInputs);
-      break;
-    default:
-      throw new HttpsError("invalid-argument", "Unsupported analysis scope.");
+  case "overview":
+    response = await createOverview(profile, payload.programme);
+    break;
+  case "livestock-analytics":
+    response = await createLivestockAnalytics(profile, payload.programme, payload.dateRange, payload.target);
+    break;
+  case "performance-report":
+    response = await createPerformanceReport(
+      profile,
+      payload.programme,
+      payload.dateRange,
+      payload.timeFrame,
+      payload.selectedYear,
+    );
+    break;
+  case "sales-report":
+    response = await createSalesReport(profile, payload.programme, payload.dateRange, payload.salesInputs);
+    break;
+  default:
+    throw new HttpsError("invalid-argument", "Unsupported analysis scope.");
   }
 
   setCached(key, response);

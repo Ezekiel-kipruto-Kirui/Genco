@@ -265,6 +265,7 @@ const DashboardOverview = () => {
 
   const [localOverviewData, setLocalOverviewData] = useState<OverviewSummaryData | null>(null);
   const [localOverviewLoading, setLocalOverviewLoading] = useState(false);
+  const remoteOverviewEnabled = USE_REMOTE_ANALYTICS && !!selectedProgramme && !loading;
 
   const overviewQuery = useQuery({
     queryKey: ["overview-analysis", user?.uid, userRole, userAttribute, selectedProgramme],
@@ -273,15 +274,22 @@ const DashboardOverview = () => {
         scope: "overview",
         programme: selectedProgramme === "All" ? "All" : selectedProgramme || null,
       }),
-    enabled: USE_REMOTE_ANALYTICS && !!selectedProgramme && !loading,
+    enabled: remoteOverviewEnabled,
+    retry: 0,
     staleTime: 2 * 60 * 1000,
   });
 
+  const shouldFetchLocalOverview = !!selectedProgramme && (!remoteOverviewEnabled || overviewQuery.isError);
+
   useEffect(() => {
-    if (USE_REMOTE_ANALYTICS) return;
     if (!selectedProgramme) {
       setLocalOverviewData(EMPTY_OVERVIEW_DATA);
-      setLocalOverviewLoading(true);
+      setLocalOverviewLoading(false);
+      return;
+    }
+
+    if (!shouldFetchLocalOverview) {
+      setLocalOverviewLoading(false);
       return;
     }
 
@@ -289,6 +297,7 @@ const DashboardOverview = () => {
 
     const fetchLocalOverview = async () => {
       setLocalOverviewLoading(true);
+      setLocalOverviewData(null);
       try {
         const [farmersSnap, activitiesSnap, capacitySnap] = await Promise.all([
           get(ref(db, "farmers")),
@@ -422,7 +431,7 @@ const DashboardOverview = () => {
     return () => {
       cancelled = true;
     };
-  }, [selectedProgramme]);
+  }, [selectedProgramme, shouldFetchLocalOverview]);
 
   const overviewData =
     (overviewQuery.data as OverviewSummaryData | undefined) ?? localOverviewData ?? EMPTY_OVERVIEW_DATA;
@@ -443,7 +452,11 @@ const DashboardOverview = () => {
   const regionStats = overviewData?.topRegions || [];
   const recentActivities = overviewData?.recentActivities || [];
   const pendingActivitiesCount = overviewData?.pendingActivitiesCount || 0;
-  const isLoadingData = overviewQuery.isLoading || overviewQuery.isFetching || localOverviewLoading;
+  const isLoadingRemoteOverview =
+    remoteOverviewEnabled &&
+    !overviewQuery.isError &&
+    (overviewQuery.isLoading || overviewQuery.isFetching);
+  const isLoadingData = isLoadingRemoteOverview || localOverviewLoading;
 
 
   // --- Effects & Handlers ---

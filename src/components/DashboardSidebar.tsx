@@ -41,6 +41,7 @@ import {
   canAccessInfrastructure,
   canAccessOrdersSection,
   canAccessProjectManagerSection,
+  canAccessRequisition,
   canAccessReports,
   isFinance,
   isHummanResourceManager,
@@ -152,7 +153,6 @@ const buildRoleMenuItems = (userRole: string | null, userAttribute: string | nul
       { title: "Dashboard Overview", url: "/dashboard", icon: TrendingUp },
       { title: "Report", url: "/dashboard/reports", icon: LineChart },
       { title: "Staff", url: "/dashboard/staff", icon: Users },
-      { title: "Requisition", url: "/dashboard/requisition", icon: ClipboardList },
     ];
   }
 
@@ -160,7 +160,6 @@ const buildRoleMenuItems = (userRole: string | null, userAttribute: string | nul
     return [
       { title: "Dashboard Overview", url: "/dashboard", icon: TrendingUp },
       { title: "Sales Metrics", url: "/dashboard/salesreport", icon: TrendingUp },
-      { title: "Requisition", url: "/dashboard/requisition", icon: ClipboardList },
     ];
   }
 
@@ -182,6 +181,7 @@ export function DashboardSidebar() {
       ? sections
       : [];
   const showStandaloneDashboard = roleMenuItems.length === 0 && canAccessDashboard(userRole, userAttribute);
+  const showBottomRequisition = canAccessRequisition(userRole, userAttribute);
 
   return (
     <Sidebar className={`${collapsed ? "w-14" : "w-64"} bg-green-700 text-white`} collapsible="icon">
@@ -235,6 +235,7 @@ export function DashboardSidebar() {
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               ))}
+
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
@@ -301,6 +302,27 @@ export function DashboardSidebar() {
                     >
                       <ShoppingCart className="h-4 w-4" />
                       {!collapsed && <span>Orders</span>}
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
+
+        {showBottomRequisition && (
+          <SidebarGroup>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild>
+                    <NavLink
+                      to="/dashboard/requisition"
+                      className="text-green-50 transition-colors hover:bg-green-600"
+                      activeClassName="bg-white font-bold text-green-700 shadow-sm"
+                    >
+                      <ClipboardList className="h-4 w-4" />
+                      {!collapsed && <span>Requisition</span>}
                     </NavLink>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
