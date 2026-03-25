@@ -17,6 +17,7 @@ import { Download, Users, MapPin, Eye, Calendar, Scale, Phone, CreditCard, Edit,
 import { toast, useToast } from "@/hooks/use-toast";
 import { canViewAllProgrammes, isChiefAdmin } from "@/contexts/authhelper";
 import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
+import { resolveAccessibleProgrammes, resolveActiveProgramme } from "@/lib/programme-access";
 
 // Types
 interface OfftakeData {
@@ -282,7 +283,7 @@ const getFarmerGroupingKey = (record: OfftakeData): string => {
 };
 
 const LivestockOfftakePage = () => {
-  const { userRole, userAttribute } = useAuth();
+  const { userRole, userAttribute, allowedProgrammes } = useAuth();
   const { toast } = useToast();
   const auth = getAuth();
   
@@ -294,11 +295,8 @@ const LivestockOfftakePage = () => {
   const [localSearchInput, setLocalSearchInput] = useState("");
   
   // User Permissions State
-  const [allowedProgrammes, setAllowedProgrammes] = useState<string[]>([]);
-  const [userPermissionsLoading, setUserPermissionsLoading] = useState(true);
-  
-  // Logic: Admin can switch, User restricted to allowed
-  const [activeProgram, setActiveProgram] = useState<string>("KPMD"); 
+  // Logic: Admin can switch, User restricted to assigned programmes
+  const [activeProgram, setActiveProgram] = useState<string>("");
   
   const [loading, setLoading] = useState(true);
   const [exportLoading, setExportLoading] = useState(false);
@@ -378,6 +376,10 @@ const LivestockOfftakePage = () => {
   const userCanViewAllProgrammeData = useMemo(
     () => canViewAllProgrammes(userRole, userAttribute),
     [userRole, userAttribute]
+  );
+  const accessibleProgrammes = useMemo(
+    () => resolveAccessibleProgrammes(userCanViewAllProgrammeData, allowedProgrammes),
+    [allowedProgrammes, userCanViewAllProgrammeData]
   );
   const requireChiefAdmin = () => {
     if (userIsChiefAdmin) return true;
@@ -649,46 +651,17 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
 });
 
 
-  // --- Fetch User Permissions ---
   useEffect(() => {
-    const uid = auth.currentUser?.uid;
-    if (!uid) {
-      setUserPermissionsLoading(false);
-      return;
-    }
-
-    const userRef = ref(db, `users/${uid}`);
-    
-    const unsubscribe = onValue(userRef, (snapshot) => {
-      const data = snapshot.val();
-      if (data) {
-        const programmesObj = data.allowedProgrammes || {};
-        const programmesList = Object.keys(programmesObj).filter(key => programmesObj[key] === true);
-        
-        setAllowedProgrammes(programmesList);
-
-        if (!userCanViewAllProgrammeData) {
-          if (programmesList.length > 0) {
-             if (!programmesList.includes(activeProgram)) {
-               setActiveProgram(programmesList[0]);
-             }
-          } else {
-            console.warn("User has no allowed programmes assigned.");
-          }
-        }
-      }
-      setUserPermissionsLoading(false);
-    }, (error) => {
-      console.error("Error fetching user permissions:", error);
-      setUserPermissionsLoading(false);
-    });
-
-    return () => unsubscribe();
-  }, [auth.currentUser?.uid, userCanViewAllProgrammeData, activeProgram]);
+    setActiveProgram((prev) => resolveActiveProgramme(prev, accessibleProgrammes));
+  }, [accessibleProgrammes]);
 
   // Data fetching
   useEffect(() => {
-    if (userPermissionsLoading) return;
+    if (!activeProgram) {
+      setAllOfftake([]);
+      setLoading(false);
+      return;
+    }
 
     const cachedOfftakes = readCachedValue<OfftakeData[]>(offtakeCacheKey);
     if (cachedOfftakes) {
@@ -763,7 +736,7 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
     return () => {
        if(typeof unsubscribe === 'function') unsubscribe();
     };
-  }, [activeProgram, userPermissionsLoading, toast, offtakeCacheKey]);
+  }, [activeProgram, toast, offtakeCacheKey]);
 
   // Filter application
   useEffect(() => {
@@ -1636,11 +1609,9 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
   }, []);
 
   const availableProgramsForSelect = useMemo(() => {
-    if (userCanViewAllProgrammeData) {
-      return AVAILABLE_PROGRAMS;
-    }
-    return allowedProgrammes.length > 0 ? allowedProgrammes : [];
-  }, [userCanViewAllProgrammeData, allowedProgrammes]);
+    if (userCanViewAllProgrammeData) return AVAILABLE_PROGRAMS;
+    return accessibleProgrammes;
+  }, [accessibleProgrammes, userCanViewAllProgrammeData]);
 
   const StatsCard = useMemo(() => ({ title, value, icon: Icon, description, subValue }: any) => (
     <Card className="bg-white text-slate-900 shadow-lg border border-gray-200 relative overflow-hidden">
@@ -1727,11 +1698,11 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
         </div>
         
         <div className="flex flex-wrap gap-2 items-center w-full xl:w-auto">
-            {availableProgramsForSelect.length > 0 && (
+            {userIsChiefAdmin && availableProgramsForSelect.length > 0 && (
                 <div className="mr-4">
-                    <Select value={activeProgram} onValueChange={handleProgramChange} disabled={userPermissionsLoading || (!userCanViewAllProgrammeData && availableProgramsForSelect.length === 1)}>
+                    <Select value={activeProgram} onValueChange={handleProgramChange} disabled={availableProgramsForSelect.length <= 1}>
                         <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white w-full sm:w-[140px]">
-                            {userPermissionsLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <SelectValue />}
+                            <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
                             {availableProgramsForSelect.map(p => (
@@ -1819,7 +1790,7 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
 
       <Card className="shadow-lg border-0 bg-white">
         <CardContent className="p-0">
-          {loading || userPermissionsLoading ? (
+          {loading ? (
             <div className="text-center py-12">
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
               <p className="text-muted-foreground mt-2">Loading data...</p>

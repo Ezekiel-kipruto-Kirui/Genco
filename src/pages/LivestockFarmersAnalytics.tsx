@@ -14,8 +14,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { canViewAllProgrammes } from "@/contexts/authhelper";
-import { getAuth } from "firebase/auth";
+import { canViewAllProgrammes, isChiefAdmin } from "@/contexts/authhelper";
+import { resolveAccessibleProgrammes, resolveActiveProgramme } from "@/lib/programme-access";
 
 // --- Constants ---
 const COLORS = {
@@ -149,7 +149,7 @@ const USE_REMOTE_ANALYTICS =
   typeof window !== "undefined" && !["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
 
 const LivestockFarmersAnalytics = () => {
-  const { user, userRole, userAttribute } = useAuth();
+  const { user, userRole, userAttribute, allowedProgrammes } = useAuth();
   const [loading, setLoading] = useState(true);
   const [allFarmers, setAllFarmers] = useState<FarmerData[]>([]);
   const [trainingRecords, setTrainingRecords] = useState<TrainingData[]>([]);
@@ -181,6 +181,11 @@ const LivestockFarmersAnalytics = () => {
   const userCanViewAllProgrammeData = useMemo(
     () => canViewAllProgrammes(userRole, userAttribute),
     [userRole, userAttribute]
+  );
+  const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
+  const accessibleProgrammes = useMemo(
+    () => resolveAccessibleProgrammes(userCanViewAllProgrammeData, allowedProgrammes),
+    [allowedProgrammes, userCanViewAllProgrammeData]
   );
 
   const analyticsQuery = useQuery({
@@ -227,37 +232,9 @@ const LivestockFarmersAnalytics = () => {
 
   // --- 1. Fetch User Permissions ---
   useEffect(() => {
-    if (userCanViewAllProgrammeData) {
-      setAvailablePrograms(["RANGE", "KPMD"]);
-      if (!activeProgram) setActiveProgram("RANGE");
-      return;
-    }
-
-    const auth = getAuth();
-    const uid = auth.currentUser?.uid;
-    if (!uid) return;
-
-    const userRef = ref(db, `users/${uid}`);
-    const unsubscribe = onValue(userRef, (snapshot) => {
-      const data = snapshot.val();
-      if (data && data.allowedProgrammes) {
-        const programs = Object.keys(data.allowedProgrammes).filter(
-          key => data.allowedProgrammes[key] === true
-        );
-        setAvailablePrograms(programs);
-        if (programs.length > 0 && !programs.includes(activeProgram)) {
-          setActiveProgram(programs[0]);
-        } else if (programs.length === 0) {
-            setActiveProgram("");
-        }
-      } else {
-        setAvailablePrograms([]);
-      }
-    }, (error) => {
-        console.error("Error fetching user permissions:", error);
-    });
-    return () => unsubscribe();
-  }, [userRole, activeProgram, userCanViewAllProgrammeData]);
+    setAvailablePrograms(accessibleProgrammes);
+    setActiveProgram((prev) => resolveActiveProgramme(prev, accessibleProgrammes));
+  }, [accessibleProgrammes]);
 
   // --- 2. Data Fetching (Farmers) ---
   useEffect(() => {
@@ -719,7 +696,7 @@ const LivestockFarmersAnalytics = () => {
                     Clear
                   </Button>
                 
-                 {availablePrograms.length > 0 && (
+                 {userIsChiefAdmin && availablePrograms.length > 0 && (
             <Select value={activeProgram} onValueChange={setActiveProgram}>
               <SelectTrigger className="w-full lg:w-[180px] h-10">
                 <SelectValue placeholder="Select Programme" />

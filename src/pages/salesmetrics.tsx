@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { canViewAllProgrammes } from "@/contexts/authhelper";
-import { getAuth } from "firebase/auth";
 import { ref, onValue } from "firebase/database";
 import { db } from "@/lib/firebase";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -28,6 +27,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { millify} from "millify";
 import { fetchAnalysisSummary } from "@/lib/analysis";
+import { resolveAccessibleProgrammes, resolveActiveProgramme } from "@/lib/programme-access";
 
 // --- Constants ---
 const COLORS = {
@@ -261,7 +261,7 @@ const buildLocalSalesAnalytics = (
   const targetProgramme = normalizeProgrammeToken(selectedProgramme);
   const filteredData = records.filter((record) => {
     const recordProgramme = normalizeProgrammeToken(record.programme);
-    const matchesProgramme = !targetProgramme || !recordProgramme || recordProgramme === targetProgramme;
+    const matchesProgramme = !targetProgramme || recordProgramme === targetProgramme;
     return matchesProgramme && isDateInRange(record.date, dateRange.startDate, dateRange.endDate);
   });
 
@@ -500,9 +500,8 @@ const renderCenterLabel = ({ viewBox }: { viewBox?: { cx?: number; cy?: number }
 // --- Main Component ---
 
 const SalesReport = () => {
-  const { userRole, userAttribute } = useAuth();
+  const { userRole, userAttribute, allowedProgrammes } = useAuth();
   const { toast } = useToast();
-  const auth = getAuth();
   const currentYearDates = useMemo(() => getCurrentYearDates(), []);
   
   const [loading, setLoading] = useState(true);
@@ -525,11 +524,13 @@ const SalesReport = () => {
     return years;
   }, [currentYear]);
 
-  const [allowedProgrammes, setAllowedProgrammes] = useState<string[]>([]);
-  const [userPermissionsLoading, setUserPermissionsLoading] = useState(true);
   const userCanViewAllProgrammeData = useMemo(
     () => canViewAllProgrammes(userRole, userAttribute),
     [userRole, userAttribute]
+  );
+  const accessibleProgrammes = useMemo(
+    () => resolveAccessibleProgrammes(userCanViewAllProgrammeData, allowedProgrammes),
+    [allowedProgrammes, userCanViewAllProgrammeData]
   );
   const [activeProgram, setActiveProgram] = useState<string>(""); 
   const showProgrammeFilter = userCanViewAllProgrammeData;
@@ -568,31 +569,15 @@ const SalesReport = () => {
   }, [salesInputs]);
 
   useEffect(() => {
-    const uid = auth.currentUser?.uid;
-    if (!uid) { setUserPermissionsLoading(false); return; }
+    if (userCanViewAllProgrammeData) {
+      setActiveProgram((prev) => (prev === "KPMD" || prev === "RANGE" ? prev : "KPMD"));
+      setSelectedProgramme((prev) => (prev === "KPMD" || prev === "RANGE" ? prev : "KPMD"));
+      return;
+    }
 
-    const userRef = ref(db, `users/${uid}`);
-    const unsubscribe = onValue(userRef, (snapshot) => {
-      const data = snapshot.val();
-      if (data) {
-        const programmesObj = data.allowedProgrammes || {};
-        const programmesList = Object.keys(programmesObj).filter(key => programmesObj[key] === true);
-        setAllowedProgrammes(programmesList);
-        if (!userCanViewAllProgrammeData && programmesList.length > 0) {
-           setActiveProgram(programmesList[0]);
-           setSelectedProgramme(programmesList[0]);
-        } else if (userCanViewAllProgrammeData && !activeProgram) {
-          setActiveProgram("KPMD");
-          setSelectedProgramme("KPMD");
-        }
-      }
-      setUserPermissionsLoading(false);
-    }, (error) => {
-      console.error("Error fetching user permissions:", error);
-      setUserPermissionsLoading(false);
-    });
-    return () => unsubscribe();
-  }, [auth.currentUser?.uid, userCanViewAllProgrammeData, activeProgram]);
+    setActiveProgram((prev) => resolveActiveProgramme(prev, accessibleProgrammes));
+    setSelectedProgramme((prev) => resolveActiveProgramme(prev, accessibleProgrammes));
+  }, [accessibleProgrammes, userCanViewAllProgrammeData]);
 
   useEffect(() => {
     if (unsubscribeRef.current) {
@@ -600,7 +585,7 @@ const SalesReport = () => {
       unsubscribeRef.current = null;
     }
 
-    if (userPermissionsLoading || !activeProgram) { setLoading(false); return; }
+    if (!activeProgram) { setOfftakeData([]); setLoading(false); return; }
 
     const cachedData = dataCache.get(activeProgram);
     if (cachedData) {
@@ -652,7 +637,7 @@ const SalesReport = () => {
         };
       }).filter((record) => {
         const recordProgramme = normalizeProgrammeToken(record.programme || activeProgram);
-        return !recordProgramme || recordProgramme === normalizeProgrammeToken(activeProgram);
+        return recordProgramme === normalizeProgrammeToken(activeProgram);
       });
 
       dataCache.set(activeProgram, offtakeList);
@@ -668,7 +653,7 @@ const SalesReport = () => {
 
     unsubscribeRef.current = unsubscribe;
     return () => { if(unsubscribe) unsubscribe(); };
-  }, [activeProgram, userPermissionsLoading, toast]);
+  }, [activeProgram, toast]);
 
   const handleDateRangeChange = useCallback((key: string, value: string) => setDateRange(prev => ({ ...prev, [key]: value })), []);
 
@@ -734,7 +719,7 @@ const SalesReport = () => {
   const sheepPct = stats.totalAnimals > 0 ? ((stats.totalSheep / stats.totalAnimals) * 100).toFixed(1) : 0;
   const hasConfiguredSalesInputs = salesInputs.pricePerKg > 0 || salesInputs.expenses > 0;
 
-  if (loading || analysisLoading || userPermissionsLoading) {
+  if (loading || analysisLoading) {
     return (
       <div className="flex flex-col justify-center items-center h-96 space-y-4">
         <Loader2 className="h-12 w-12 animate-spin text-blue-600" />

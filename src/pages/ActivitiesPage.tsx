@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 // REALTIME DATABASE IMPORTS
 import { ref, get, push, update, remove } from "firebase/database";
 import { db } from "@/lib/firebase";
@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { isChiefAdmin } from "@/contexts/authhelper";
+import { canViewAllProgrammes, isChiefAdmin } from "@/contexts/authhelper";
 
 import { 
   Users, 
@@ -61,7 +61,6 @@ interface ActivityForm {
   location: string;
 }
 
-const ACTIVITIES_CACHE_KEY = cacheKey("admin-page", "activities", "recent");
 const PROGRAMME_OPTIONS = ["KPMD", "RANGE"] as const;
 const UNASSIGNED_PROGRAMME_LABEL = "Unassigned";
 
@@ -86,6 +85,25 @@ const getActivityTimestamp = (activity: Partial<Activity> | null | undefined): n
 const sortActivitiesByLatest = (records: Activity[]): Activity[] =>
   [...records].sort((a, b) => getActivityTimestamp(b) - getActivityTimestamp(a));
 
+const getAssignedProgrammes = (
+  allowedProgrammes: Record<string, boolean> | null | undefined
+): string[] => PROGRAMME_OPTIONS.filter((programme) => allowedProgrammes?.[programme] === true);
+
+const filterActivitiesByProgrammeAccess = (
+  records: Activity[],
+  allowedProgrammes: string[],
+  canViewAllProgrammeData: boolean
+): Activity[] => {
+  if (canViewAllProgrammeData) return records;
+  if (allowedProgrammes.length === 0) return [];
+
+  const allowedProgrammeSet = new Set(allowedProgrammes);
+  return records.filter((activity) => {
+    const programme = normalizeProgramme(activity.programme);
+    return Boolean(programme) && allowedProgrammeSet.has(programme);
+  });
+};
+
 const ActivitiesPage = () => {
   const [activities, setActivities] = useState<Activity[]>([]);
   const [loading, setLoading] = useState(true);
@@ -105,13 +123,32 @@ const ActivitiesPage = () => {
     subcounty: "",
     location: "",
   });
-  const { userRole } = useAuth();
+  const { user, userRole, userAttribute, allowedProgrammes } = useAuth();
   const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
+  const userCanViewAllProgrammeData = useMemo(
+    () => canViewAllProgrammes(userRole, userAttribute),
+    [userRole, userAttribute]
+  );
+  const accessibleProgrammes = useMemo(
+    () => userCanViewAllProgrammeData ? [...PROGRAMME_OPTIONS] : getAssignedProgrammes(allowedProgrammes),
+    [allowedProgrammes, userCanViewAllProgrammeData]
+  );
+  const hasProgrammeAccess = userCanViewAllProgrammeData || accessibleProgrammes.length > 0;
+  const defaultProgrammeFilter = userCanViewAllProgrammeData ? "all" : accessibleProgrammes[0] || "all";
+  const activitiesCacheKey = useMemo(
+    () =>
+      cacheKey(
+        "admin-page",
+        "activities",
+        user?.uid || "anonymous",
+        userCanViewAllProgrammeData ? "all" : accessibleProgrammes.join("|") || "no-programme",
+      ),
+    [accessibleProgrammes, user?.uid, userCanViewAllProgrammeData]
+  );
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [filterProgramme, setFilterProgramme] = useState<string>("all");
   const [searchTerm, setSearchTerm] = useState("");
   const { toast } = useToast();
-  const { user } = useAuth();
 
   const requireChiefAdmin = () => {
     if (userIsChiefAdmin) return true;
@@ -124,15 +161,35 @@ const ActivitiesPage = () => {
   };
 
   useEffect(() => {
-    fetchActivities();
-  }, []);
+    setFilterProgramme((prev) => {
+      if (userCanViewAllProgrammeData) {
+        return prev === "all" || accessibleProgrammes.includes(prev) ? prev : "all";
+      }
+      return accessibleProgrammes.includes(prev) ? prev : defaultProgrammeFilter;
+    });
+  }, [accessibleProgrammes, defaultProgrammeFilter, userCanViewAllProgrammeData]);
 
   // --- REALTIME DATABASE FETCH ---
-  const fetchActivities = async () => {
+  const fetchActivities = useCallback(async () => {
     try {
-      const cachedActivities = readCachedValue<Activity[]>(ACTIVITIES_CACHE_KEY);
+      if (!hasProgrammeAccess) {
+        setActivities([]);
+        setLoading(false);
+        removeCachedValue(activitiesCacheKey);
+        return;
+      }
+
+      const cachedActivities = readCachedValue<Activity[]>(activitiesCacheKey);
       if (cachedActivities) {
-        setActivities(sortActivitiesByLatest(cachedActivities));
+        setActivities(
+          sortActivitiesByLatest(
+            filterActivitiesByProgrammeAccess(
+              cachedActivities,
+              accessibleProgrammes,
+              userCanViewAllProgrammeData,
+            ),
+          ),
+        );
         setLoading(false);
       } else {
         setLoading(true);
@@ -150,12 +207,18 @@ const ActivitiesPage = () => {
           programme: normalizeProgramme(data[key]?.programme),
         })) as Activity[];
 
-        const sortedActivitiesData = sortActivitiesByLatest(activitiesData);
+        const sortedActivitiesData = sortActivitiesByLatest(
+          filterActivitiesByProgrammeAccess(
+            activitiesData,
+            accessibleProgrammes,
+            userCanViewAllProgrammeData,
+          ),
+        );
         setActivities(sortedActivitiesData);
-        writeCachedValue(ACTIVITIES_CACHE_KEY, sortedActivitiesData);
+        writeCachedValue(activitiesCacheKey, sortedActivitiesData);
       } else {
         setActivities([]);
-        removeCachedValue(ACTIVITIES_CACHE_KEY);
+        removeCachedValue(activitiesCacheKey);
       }
     } catch (error) {
       console.error("Error fetching activities:", error);
@@ -167,7 +230,11 @@ const ActivitiesPage = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [accessibleProgrammes, activitiesCacheKey, hasProgrammeAccess, toast, userCanViewAllProgrammeData]);
+
+  useEffect(() => {
+    void fetchActivities();
+  }, [fetchActivities]);
 
   const handleAddParticipant = () => {
     if (participantForm.name.trim() && participantForm.role.trim()) {
@@ -228,7 +295,7 @@ const ActivitiesPage = () => {
       });
       setParticipants([]);
       setIsAddDialogOpen(false);
-      removeCachedValue(ACTIVITIES_CACHE_KEY);
+      removeCachedValue(activitiesCacheKey);
       fetchActivities();
     } catch (error) {
       console.error("Error adding activity:", error);
@@ -269,7 +336,7 @@ const ActivitiesPage = () => {
         location: "",
       });
       setParticipants([]);
-      removeCachedValue(ACTIVITIES_CACHE_KEY);
+      removeCachedValue(activitiesCacheKey);
       fetchActivities();
     } catch (error) {
       console.error("Error updating activity:", error);
@@ -291,7 +358,7 @@ const ActivitiesPage = () => {
         description: "Activity deleted successfully.",
         className: "bg-white text-slate-900 border border-slate-200"
       });
-      removeCachedValue(ACTIVITIES_CACHE_KEY);
+      removeCachedValue(activitiesCacheKey);
       fetchActivities();
     } catch (error) {
       console.error("Error deleting activity:", error);
@@ -314,7 +381,7 @@ const ActivitiesPage = () => {
         description: `Activity marked as ${newStatus}`,
         className: "bg-white text-slate-900 border border-slate-200"
       });
-      removeCachedValue(ACTIVITIES_CACHE_KEY);
+      removeCachedValue(activitiesCacheKey);
       fetchActivities();
     } catch (error) {
       console.error("Error updating activity status:", error);
@@ -630,16 +697,24 @@ const ActivitiesPage = () => {
               />
             </div>
           </div>
-          <Select value={filterProgramme} onValueChange={setFilterProgramme}>
-            <SelectTrigger className="w-full md:w-44 bg-white rounded-xl">
-              <SelectValue placeholder="Filter by programme" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Programmes</SelectItem>
-              <SelectItem value="KPMD">KPMD</SelectItem>
-              <SelectItem value="RANGE">RANGE</SelectItem>
-            </SelectContent>
-          </Select>
+          {userIsChiefAdmin && hasProgrammeAccess && (
+            <Select value={filterProgramme} onValueChange={setFilterProgramme}>
+              <SelectTrigger
+                className="w-full md:w-44 bg-white rounded-xl"
+                disabled={!userCanViewAllProgrammeData && accessibleProgrammes.length <= 1}
+              >
+                <SelectValue placeholder="Filter by programme" />
+              </SelectTrigger>
+              <SelectContent>
+                {userCanViewAllProgrammeData && <SelectItem value="all">All Programmes</SelectItem>}
+                {accessibleProgrammes.map((programmeOption) => (
+                  <SelectItem key={programmeOption} value={programmeOption}>
+                    {programmeOption}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
           <Select value={filterStatus} onValueChange={setFilterStatus}>
             <SelectTrigger className="w-full md:w-40 bg-white rounded-xl">
               <SelectValue placeholder="Filter by status" />
@@ -757,26 +832,28 @@ const ActivitiesPage = () => {
                   <Search className="h-8 w-8 text-white" />
                 </div>
                 <h4 className="text-xl font-bold text-slate-800 mb-2">
-                  No activities found
+                  {hasProgrammeAccess ? "No activities found" : "No programme access"}
                 </h4>
                 <p className="text-slate-600 mb-4">
-                  {searchTerm || filterStatus !== 'all' || filterProgramme !== 'all'
-                    ? "Try adjusting your search or filter criteria"
-                    : "Get started by scheduling your first activity"
+                  {!hasProgrammeAccess
+                    ? "You are not assigned to any programme data."
+                    : searchTerm || filterStatus !== 'all' || filterProgramme !== defaultProgrammeFilter
+                      ? "Try adjusting your search or filter criteria"
+                      : "Get started by scheduling your first activity"
                   }
                 </p>
-                {(searchTerm || filterStatus !== 'all' || filterProgramme !== 'all') ? (
+                {hasProgrammeAccess && (searchTerm || filterStatus !== 'all' || filterProgramme !== defaultProgrammeFilter) ? (
                   <Button 
                     variant="outline"
                     onClick={() => {
                       setSearchTerm("");
                       setFilterStatus("all");
-                      setFilterProgramme("all");
+                      setFilterProgramme(defaultProgrammeFilter);
                     }}
                   >
                     Clear Filters
                   </Button>
-                ) : (
+                ) : hasProgrammeAccess ? (
                   <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
                     <DialogTrigger asChild>
                       {userIsChiefAdmin ? <Button className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white">
@@ -785,7 +862,7 @@ const ActivitiesPage = () => {
                       </Button> : <span className="hidden" />}
                     </DialogTrigger>
                   </Dialog>
-                )}
+                ) : null}
               </div>
             )}
           </CardContent>

@@ -1404,20 +1404,22 @@ const OrdersPage = () => {
               </Select>
             </div>
 
-            <div className="space-y-2">
-              <Select value={activeProgram} onValueChange={setActiveProgram} disabled={availablePrograms.length === 0}>
-                <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white">
-                  <SelectValue placeholder="Select programme" />
-                </SelectTrigger>
-                <SelectContent>
-                  {availablePrograms.map((programme) => (
-                    <SelectItem key={programme} value={programme}>
-                      {programme}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            {userIsChiefAdmin && (
+              <div className="space-y-2">
+                <Select value={activeProgram} onValueChange={setActiveProgram} disabled={availablePrograms.length === 0}>
+                  <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white">
+                    <SelectValue placeholder="Select programme" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {availablePrograms.map((programme) => (
+                      <SelectItem key={programme} value={programme}>
+                        {programme}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
              <div className="space-y-2">
             <Button variant="outline" onClick={clearFilters}>
               Clear Filters

@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef, ChangeEvent, memo } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import { getAuth } from "firebase/auth";
 import { ref, set, update, remove, push, onValue, query, orderByChild, equalTo } from "firebase/database";
 import { db } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
@@ -15,6 +14,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { Download, Users, MapPin, Eye, Calendar, Scale, Phone, CreditCard, Edit, Trash2, ShieldCheck, Activity, ChevronRight, Upload, GraduationCap } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { canViewAllProgrammes, isChiefAdmin } from "@/contexts/authhelper";
+import { resolveAccessibleProgrammes, resolveActiveProgramme } from "@/lib/programme-access";
 
 // --- Types ---
 
@@ -218,7 +218,7 @@ const getAcreTotal = (item: Record<string, any>): number => {
 };
 
 const LivestockFarmersPage = () => {
-  const { user, userRole, userAttribute, userName } = useAuth();
+  const { user, userRole, userAttribute, userName, allowedProgrammes } = useAuth();
   const { toast } = useToast();
   
   const [allFarmers, setAllFarmers] = useState<FarmerData[]>([]);
@@ -302,6 +302,10 @@ const LivestockFarmersPage = () => {
     () => canViewAllProgrammes(userRole, userAttribute),
     [userRole, userAttribute]
   );
+  const accessibleProgrammes = useMemo(
+    () => resolveAccessibleProgrammes(userCanViewAllProgrammeData, allowedProgrammes),
+    [allowedProgrammes, userCanViewAllProgrammeData]
+  );
   const requireChiefAdmin = () => {
     if (userIsChiefAdmin) return true;
     toast({
@@ -323,39 +327,9 @@ const LivestockFarmersPage = () => {
   };
 
   useEffect(() => {
-    if (userCanViewAllProgrammeData) {
-      setAvailablePrograms(["RANGE", "KPMD"]);
-      setActiveProgram((prev) => (prev ? prev : "RANGE"));
-      return;
-    }
-
-    const auth = getAuth();
-    const uid = auth.currentUser?.uid;
-    
-    if (!uid) return;
-
-    const userRef = ref(db, `users/${uid}`);
-    const unsubscribe = onValue(userRef, (snapshot) => {
-      const data = snapshot.val();
-      if (data && data.allowedProgrammes) {
-        const programs = Object.keys(data.allowedProgrammes).filter(
-          key => data.allowedProgrammes[key] === true
-        );
-        setAvailablePrograms(programs);
-        setActiveProgram((prev) => {
-          if (programs.length === 0) return "";
-          if (!prev || !programs.includes(prev)) return programs[0];
-          return prev;
-        });
-      } else {
-        setAvailablePrograms([]);
-        setActiveProgram("");
-      }
-    }, (error) => {
-        console.error("Error fetching user permissions:", error);
-    });
-    return () => unsubscribe();
-  }, [userRole, userCanViewAllProgrammeData]);
+    setAvailablePrograms(accessibleProgrammes);
+    setActiveProgram((prev) => resolveActiveProgramme(prev, accessibleProgrammes));
+  }, [accessibleProgrammes]);
 
   useEffect(() => {
     if (!activeProgram) {

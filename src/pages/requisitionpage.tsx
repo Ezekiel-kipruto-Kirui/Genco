@@ -20,6 +20,7 @@ import html2canvas from "html2canvas";
 import { jsPDF } from "jspdf";
 import { millify } from "millify";
 import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
+import { resolveAccessibleProgrammes, resolveActiveProgramme } from "@/lib/programme-access";
 
 // --- Types ---
 interface PerdiemItem {
@@ -250,7 +251,7 @@ const logHistory = async (recordId: string, action: string, details: string) => 
 // --- Main Component ---
 
 const RequisitionsPage = () => {
-  const { user, userRole, userAttribute, userName } = useAuth();
+  const { user, userRole, userAttribute, userName, allowedProgrammes } = useAuth();
   const { toast } = useToast();
   
   // List State
@@ -354,8 +355,12 @@ const RequisitionsPage = () => {
     [userRole, userAttribute]
   );
   const canViewAllRequisitionProgrammes = useMemo(
-    () => userCanViewAllProgrammes || userHasHrLikeViewRights || userHasProjectManagerRights,
-    [userCanViewAllProgrammes, userHasHrLikeViewRights, userHasProjectManagerRights]
+    () => userCanViewAllProgrammes,
+    [userCanViewAllProgrammes]
+  );
+  const accessibleProgrammes = useMemo(
+    () => resolveAccessibleProgrammes(canViewAllRequisitionProgrammes, allowedProgrammes),
+    [allowedProgrammes, canViewAllRequisitionProgrammes]
   );
   const canApproveRequisition =
     isAdmin(permissionPrincipal) ||
@@ -422,31 +427,9 @@ const RequisitionsPage = () => {
       setActiveProgram("ALL");
       return;
     }
-
-    const auth = getAuth();
-    const uid = auth.currentUser?.uid;
-    if (!uid) return;
-
-    const userRef = ref(db, `users/${uid}`);
-    const unsubscribe = onValue(userRef, (snapshot) => {
-      const data = snapshot.val();
-      if (data && data.allowedProgrammes) {
-        const programs = Object.keys(data.allowedProgrammes).filter(
-          key => data.allowedProgrammes[key] === true
-        );
-        setAvailablePrograms(programs);
-        setActiveProgram((prev) => {
-          if (programs.length === 0) return "";
-          if (!prev || prev === "ALL" || !programs.includes(prev)) return programs[0];
-          return prev;
-        });
-      } else {
-        setAvailablePrograms([]);
-        setActiveProgram("");
-      }
-    }, (error) => { console.error("Error fetching user permissions:", error); });
-    return () => unsubscribe();
-  }, [userRole, canViewAllRequisitionProgrammes]);
+    setAvailablePrograms(accessibleProgrammes);
+    setActiveProgram((prev) => resolveActiveProgramme(prev === "ALL" ? "" : prev, accessibleProgrammes));
+  }, [accessibleProgrammes, canViewAllRequisitionProgrammes]);
 
   // --- 2. Data Fetching ---
   useEffect(() => {
@@ -1903,7 +1886,7 @@ const RequisitionsPage = () => {
                 </div>
             </div>
             
-            {userIsChiefAdmin && !userHasHrLikeViewRights && (
+            {userIsChiefAdmin && availablePrograms.length > 1 && (
                 <div className="space-y-2 w-full lg:w-[180px]">
                     <Select value={activeProgram} onValueChange={handleProgramChange} disabled={availablePrograms.length === 0}>
                         <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white h-9 font-bold w-full">
@@ -1969,7 +1952,7 @@ const RequisitionsPage = () => {
                 </div>
             </div>
             
-            {userIsChiefAdmin && !userHasHrLikeViewRights && (
+            {userIsChiefAdmin && availablePrograms.length > 1 && (
                 <div className="space-y-2 w-full lg:w-[180px]">
                     <Select value={activeProgram} onValueChange={handleProgramChange} disabled={availablePrograms.length === 0}>
                         <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white h-9 font-bold w-full">

@@ -879,7 +879,7 @@ const OnboardingPage = () => {
           <Button variant="outline" size="sm" onClick={clearAllFilters}>Clear Filters</Button>
           <Button variant="outline" size="sm" onClick={resetToCurrentMonth}>This Month</Button>
            {/* Programme Selector - Visible to Chief Admin or if user has multiple programmes */}
-          {(userIsChiefAdmin || availablePrograms.length > 1) && (
+          {userIsChiefAdmin && (
              <div className="flex justify-end">
                 <Select value={activeProgram} onValueChange={handleProgramChange}>
                     <SelectTrigger className="w-full sm:w-[200px] border-gray-300 focus:border-blue-500 bg-white">

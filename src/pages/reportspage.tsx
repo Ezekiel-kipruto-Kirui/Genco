@@ -2,9 +2,13 @@ import * as React from "react";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
-import { canViewAllProgrammes } from "@/contexts/authhelper";
-import { getAuth } from "firebase/auth";
-import { ref, onValue, get } from "firebase/database";
+import {
+  canViewAllProgrammes,
+  isHummanResourceManager,
+  isProjectManager,
+  resolvePermissionPrincipal,
+} from "@/contexts/authhelper";
+import { ref, get } from "firebase/database";
 import { db } from "@/lib/firebase";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { 
@@ -20,6 +24,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { fetchAnalysisSummary } from "@/lib/analysis";
+import { resolveAccessibleProgrammes, resolveActiveProgramme } from "@/lib/programme-access";
 
 // --- Constants ---
 const COLORS = {
@@ -83,6 +88,33 @@ interface TrainingRecord {
   username?: string;
 }
 
+interface OfftakeRecord {
+  id: string;
+  date?: string | number | Date;
+  Date?: string | number | Date;
+  createdAt?: string | number;
+  programme?: string;
+  totalGoats?: number | string;
+  goatsBought?: number | string;
+  goats?: unknown;
+  Goats?: unknown;
+}
+
+interface AnimalHealthVaccine {
+  type?: string;
+  doses?: number | string;
+}
+
+interface AnimalHealthRecord {
+  id: string;
+  date?: string;
+  createdAt?: string | number;
+  programme?: string;
+  vaccines?: AnimalHealthVaccine[];
+  vaccinetype?: string;
+  number_doses?: number | string;
+}
+
 // --- Helper Functions ---
 const parseDate = (date: any): Date | null => {
   if (!date) return null;
@@ -119,10 +151,38 @@ const getNumberField = (obj: any, ...fieldNames: string[]): number => {
   return 0;
 };
 
+const getArrayLikeSize = (value: unknown): number => {
+  if (Array.isArray(value)) return value.length;
+  if (value && typeof value === "object") return Object.keys(value as Record<string, unknown>).length;
+  return 0;
+};
+
+const getLeaderName = (value: unknown, fallback: string): string => {
+  if (typeof value === "string" && value.trim()) return value.trim();
+  return fallback;
+};
+
 const getGoatTotal = (goats: any): number => {
   if (typeof goats === "number") return goats;
   if (typeof goats === "object" && goats !== null && typeof goats.total === "number") return goats.total;
   return 0;
+};
+
+const getOfftakeGoatsTotal = (record: OfftakeRecord): number =>
+  Math.max(
+    getNumberField(record, "totalGoats"),
+    getNumberField(record, "goatsBought"),
+    getNumberField(record, "goats"),
+    getArrayLikeSize(record.goats),
+    getArrayLikeSize(record.Goats),
+    0,
+  );
+
+const getAnimalHealthTotalDoses = (record: AnimalHealthRecord): number => {
+  if (Array.isArray(record.vaccines)) {
+    return record.vaccines.reduce((sum, vaccine) => sum + (Number(vaccine?.doses) || 0), 0);
+  }
+  return getNumberField(record, "number_doses");
 };
 
 const isDateInRange = (date: any, startDate: string, endDate: string): boolean => {
@@ -203,6 +263,10 @@ type PerformanceReportData = {
   registrationTrendData: Array<{ name: string; registrations: number }>;
   topLocations: Array<{ name: string; value: number }>;
   topCustomers: Array<{ name: string; value: number; county: string }>;
+  totalGoatsPurchased: number;
+  topFieldOfficers: Array<{ name: string; value: number }>;
+  topStaffAwarded: Array<{ name: string; value: number }>;
+  totalDosesGivenOut: number;
   uniqueCounties: number;
   totalBreedsDistributed: number;
   breedsMale: number;
@@ -236,6 +300,10 @@ const EMPTY_PERFORMANCE_DATA: PerformanceReportData = {
   registrationTrendData: [],
   topLocations: [],
   topCustomers: [],
+  totalGoatsPurchased: 0,
+  topFieldOfficers: [],
+  topStaffAwarded: [],
+  totalDosesGivenOut: 0,
   uniqueCounties: 0,
   totalBreedsDistributed: 0,
   breedsMale: 0,
@@ -257,6 +325,8 @@ const normalizeProgramme = (value: unknown): string =>
 function computeLocalPerformanceReportData(
   farmers: Farmer[],
   trainingRecords: TrainingRecord[],
+  animalHealthActivities: AnimalHealthRecord[],
+  offtakeRecords: OfftakeRecord[],
   dateRange: { startDate: string; endDate: string },
   timeFrame: "weekly" | "monthly" | "yearly",
   selectedProgramme: string | null,
@@ -269,14 +339,26 @@ function computeLocalPerformanceReportData(
   const filteredFarmers = farmers.filter((farmer) => {
     const programme = normalizeProgramme(farmer.programme);
     const farmerDate = farmer.createdAt || farmer.registrationDate;
-    return (includeAllProgrammes || !programme || programme === requestedProgramme) &&
+    return (includeAllProgrammes || programme === requestedProgramme) &&
       isDateInRange(farmerDate, dateRange.startDate, dateRange.endDate);
   });
 
   const filteredTraining = trainingRecords.filter((record) => {
     const programme = normalizeProgramme(record.programme);
     const recordDate = record.createdAt || record.startDate;
-    return (includeAllProgrammes || !programme || programme === requestedProgramme) &&
+    return (includeAllProgrammes || programme === requestedProgramme) &&
+      isDateInRange(recordDate, dateRange.startDate, dateRange.endDate);
+  });
+  const filteredAnimalHealthActivities = animalHealthActivities.filter((record) => {
+    const programme = normalizeProgramme(record.programme);
+    const recordDate = record.createdAt || record.date;
+    return (includeAllProgrammes || programme === requestedProgramme) &&
+      isDateInRange(recordDate, dateRange.startDate, dateRange.endDate);
+  });
+  const filteredOfftakeRecords = offtakeRecords.filter((record) => {
+    const programme = normalizeProgramme(record.programme);
+    const recordDate = record.date || record.Date || record.createdAt;
+    return (includeAllProgrammes || programme === requestedProgramme) &&
       isDateInRange(recordDate, dateRange.startDate, dateRange.endDate);
   });
 
@@ -285,6 +367,8 @@ function computeLocalPerformanceReportData(
   let totalGoats = 0;
   let totalSheep = 0;
   let totalCattle = 0;
+  let totalGoatsPurchased = 0;
+  let totalDosesGivenOut = 0;
   let totalVaccinatedAnimals = 0;
   let vaccinatedFarmersCount = 0;
   let breedsMale = 0;
@@ -292,6 +376,8 @@ function computeLocalPerformanceReportData(
   const countyMap: Record<string, number> = {};
   const locationMap: Record<string, number> = {};
   const topCustomersMap: Record<string, { name: string; value: number; county: string }> = {};
+  const topFieldOfficersMap: Record<string, number> = {};
+  const topStaffAwardedMap: Record<string, number> = {};
   const breedsByCountyMap: Record<string, number> = {};
   const breedsBySubcountyMap: Record<string, number> = {};
   const vaccinationByCountyMap: Record<string, number> = {};
@@ -329,6 +415,11 @@ function computeLocalPerformanceReportData(
     if (county !== "Unknown") currentTop.county = county;
     topCustomersMap[farmerName] = currentTop;
 
+    const fieldOfficerName = typeof farmer.username === "string" ? farmer.username.trim() : "";
+    if (fieldOfficerName) {
+      topFieldOfficersMap[fieldOfficerName] = (topFieldOfficersMap[fieldOfficerName] || 0) + 1;
+    }
+
     if (farmer.vaccinated === true) {
       totalVaccinatedAnimals += totalAnimalsForFarmer;
       vaccinatedFarmersCount += 1;
@@ -344,6 +435,21 @@ function computeLocalPerformanceReportData(
     }
   }
 
+  filteredTraining.forEach((record) => {
+    const staffName = getLeaderName(record.fieldOfficer || record.username, "");
+    const farmersReached = getNumberField(record, "totalFarmers");
+    if (!staffName || farmersReached <= 0) return;
+    topStaffAwardedMap[staffName] = (topStaffAwardedMap[staffName] || 0) + farmersReached;
+  });
+
+  filteredAnimalHealthActivities.forEach((record) => {
+    totalDosesGivenOut += getAnimalHealthTotalDoses(record);
+  });
+
+  filteredOfftakeRecords.forEach((record) => {
+    totalGoatsPurchased += getOfftakeGoatsTotal(record);
+  });
+
   const totalAnimals = totalGoats + totalSheep + totalCattle;
   const totalTrainedFarmers = filteredTraining.reduce((sum, record) => sum + getNumberField(record, "totalFarmers"), 0);
   const countyPerformanceData = Object.entries(countyMap)
@@ -354,6 +460,14 @@ function computeLocalPerformanceReportData(
     .sort((a, b) => b.value - a.value)
     .slice(0, 5);
   const topCustomers = Object.values(topCustomersMap)
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 5);
+  const topFieldOfficers = Object.entries(topFieldOfficersMap)
+    .map(([name, value]) => ({ name, value }))
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 5);
+  const topStaffAwarded = Object.entries(topStaffAwardedMap)
+    .map(([name, value]) => ({ name, value }))
     .sort((a, b) => b.value - a.value)
     .slice(0, 5);
   const registrationTrendData = (() => {
@@ -438,6 +552,10 @@ function computeLocalPerformanceReportData(
     registrationTrendData,
     topLocations,
     topCustomers,
+    totalGoatsPurchased,
+    topFieldOfficers,
+    topStaffAwarded,
+    totalDosesGivenOut,
     uniqueCounties,
     totalBreedsDistributed,
     breedsMale,
@@ -458,6 +576,8 @@ function computeLocalPerformanceReportData(
 const useProcessedData = (
   _allFarmers: Farmer[],
   _trainingRecords: TrainingRecord[],
+  _animalHealthActivities: AnimalHealthRecord[],
+  _offtakeRecords: OfftakeRecord[],
   dateRange: { startDate: string; endDate: string },
   timeFrame: 'weekly' | 'monthly' | 'yearly',
   selectedProgramme: string | null,
@@ -491,12 +611,14 @@ const useProcessedData = (
         : computeLocalPerformanceReportData(
             _allFarmers,
             _trainingRecords,
+            _animalHealthActivities,
+            _offtakeRecords,
             dateRange,
             timeFrame,
             selectedProgramme,
             selectedYear,
           ),
-    [_allFarmers, _trainingRecords, dateRange, timeFrame, selectedProgramme, selectedYear],
+    [_allFarmers, _trainingRecords, _animalHealthActivities, _offtakeRecords, dateRange, timeFrame, selectedProgramme, selectedYear],
   );
 
   return {
@@ -554,23 +676,58 @@ const SectionHeader = React.memo(({ title }: { title: string }) => (
   </h2>
 ));
 
+type ReportAudience = "hr" | "project-manager" | "default";
+type ReportSectionId =
+  | "hr-summary"
+  | "hr-rankings"
+  | "hr-distribution"
+  | "default-registration"
+  | "default-animal-health";
+
+const REPORT_VIEW_PROFILES: Record<ReportAudience, { title: string; sections: ReportSectionId[] }> = {
+  hr: {
+    title: "HR Performance Dashboard",
+    sections: ["hr-summary", "hr-rankings", "hr-distribution"],
+  },
+  "project-manager": {
+    title: "Performance Dashboard",
+    sections: ["default-registration", "default-animal-health"],
+  },
+  default: {
+    title: "Performance Dashboard",
+    sections: ["default-registration", "default-animal-health"],
+  },
+};
+
+const resolveReportAudience = (
+  userRole: string | null | undefined,
+  userAttribute?: string | null,
+): ReportAudience => {
+  const principal = resolvePermissionPrincipal(userRole, userAttribute);
+  if (isHummanResourceManager(principal)) return "hr";
+  if (isProjectManager(principal)) return "project-manager";
+  return "default";
+};
+
 // --- Main Component ---
 
 const PerformanceReport = () => {
-  const { userRole, userAttribute } = useAuth();
-  const auth = getAuth();
+  const { userRole, userAttribute, allowedProgrammes } = useAuth();
   const currentMonthDates = useMemo(() => getCurrentMonthDates(), []);
   
   const cacheRef = useRef<{
     farmers: Farmer[] | null;
     training: TrainingRecord[] | null;
+    animalHealth: AnimalHealthRecord[] | null;
+    offtakes: OfftakeRecord[] | null;
     timestamp: number;
-  }>({ farmers: null, training: null, timestamp: 0 });
+  }>({ farmers: null, training: null, animalHealth: null, offtakes: null, timestamp: 0 });
   
   const [loading, setLoading] = useState(true);
-  const [userPermissionsLoading, setUserPermissionsLoading] = useState(true);
   const [allFarmers, setAllFarmers] = useState<Farmer[]>([]);
   const [trainingRecords, setTrainingRecords] = useState<TrainingRecord[]>([]);
+  const [animalHealthActivities, setAnimalHealthActivities] = useState<AnimalHealthRecord[]>([]);
+  const [offtakeRecords, setOfftakeRecords] = useState<OfftakeRecord[]>([]);
   
   const [dateRange, setDateRange] = useState({
     startDate: currentMonthDates.startDate,
@@ -590,11 +747,23 @@ const PerformanceReport = () => {
     return years;
   }, [currentYear]);
 
-  const [allowedProgrammes, setAllowedProgrammes] = useState<string[]>([]);
   const [activeProgram, setActiveProgram] = useState<string>(""); 
   const userCanViewAllProgrammeData = useMemo(
     () => canViewAllProgrammes(userRole, userAttribute),
     [userRole, userAttribute]
+  );
+  const accessibleProgrammes = useMemo(
+    () => resolveAccessibleProgrammes(userCanViewAllProgrammeData, allowedProgrammes),
+    [allowedProgrammes, userCanViewAllProgrammeData]
+  );
+  const reportAudience = useMemo(
+    () => resolveReportAudience(userRole, userAttribute),
+    [userRole, userAttribute]
+  );
+  const reportViewProfile = REPORT_VIEW_PROFILES[reportAudience];
+  const hasSection = useCallback(
+    (section: ReportSectionId) => reportViewProfile.sections.includes(section),
+    [reportViewProfile.sections]
   );
   const showProgrammeFilter = userCanViewAllProgrammeData;
   
@@ -606,6 +775,8 @@ const PerformanceReport = () => {
   const { data, isLoading: analysisLoading } = useProcessedData(
     allFarmers,
     trainingRecords,
+    animalHealthActivities,
+    offtakeRecords,
     dateRange,
     timeFrame,
     activeProgram || null,
@@ -623,13 +794,19 @@ const PerformanceReport = () => {
       const now = Date.now();
       let farmersList: Farmer[] = [];
       let trainingList: TrainingRecord[] = [];
+      let animalHealthList: AnimalHealthRecord[] = [];
+      let offtakeList: OfftakeRecord[] = [];
 
       if (cacheRef.current.farmers && 
           cacheRef.current.training && 
+          cacheRef.current.animalHealth &&
+          cacheRef.current.offtakes &&
           (now - cacheRef.current.timestamp < CACHE_DURATION)) {
         console.log("Using cached data");
         farmersList = cacheRef.current.farmers;
         trainingList = cacheRef.current.training;
+        animalHealthList = cacheRef.current.animalHealth;
+        offtakeList = cacheRef.current.offtakes;
       } else {
         console.log("Fetching new data");
         const farmersRef = ref(db, 'farmers');
@@ -668,15 +845,57 @@ const PerformanceReport = () => {
           });
         }
 
+        const animalHealthRef = ref(db, 'AnimalHealthActivities');
+        const animalHealthSnap = await get(animalHealthRef);
+
+        if (animalHealthSnap.exists()) {
+          animalHealthSnap.forEach((childSnapshot) => {
+            const activity = childSnapshot.val();
+            animalHealthList.push({
+              id: childSnapshot.key || '',
+              date: activity.date || '',
+              createdAt: activity.createdAt,
+              programme: activity.programme || undefined,
+              vaccines: Array.isArray(activity.vaccines) ? activity.vaccines : undefined,
+              vaccinetype: activity.vaccinetype || undefined,
+              number_doses: activity.number_doses,
+            });
+          });
+        }
+
+        const offtakesRef = ref(db, 'offtakes');
+        const offtakesSnap = await get(offtakesRef);
+
+        if (offtakesSnap.exists()) {
+          offtakesSnap.forEach((childSnapshot) => {
+            const record = childSnapshot.val();
+            offtakeList.push({
+              id: childSnapshot.key || '',
+              date: record.date,
+              Date: record.Date,
+              createdAt: record.createdAt,
+              programme: record.programme || record.Programme || undefined,
+              totalGoats: record.totalGoats,
+              goatsBought: record.goatsBought,
+              goats: record.goats,
+              Goats: record.Goats,
+            });
+          });
+        }
+
         cacheRef.current = {
           farmers: farmersList,
           training: trainingList,
+          animalHealth: animalHealthList,
+          offtakes: offtakeList,
           timestamp: now
         };
       }
 
       setAllFarmers(farmersList);
       setTrainingRecords(trainingList);
+      setAnimalHealthActivities(animalHealthList);
+      setOfftakeRecords(offtakeList);
       
     } catch (error) {
       console.error("Error fetching data:", error);
@@ -692,38 +911,12 @@ const PerformanceReport = () => {
   }, []);
 
   useEffect(() => {
-    const uid = auth.currentUser?.uid;
-    if (!uid) {
-      setUserPermissionsLoading(false);
+    if (userCanViewAllProgrammeData) {
+      setActiveProgram((prev) => (prev === "KPMD" || prev === "RANGE" ? prev : "KPMD"));
       return;
     }
-
-    const userRef = ref(db, `users/${uid}`);
-    
-    const unsubscribe = onValue(userRef, (snapshot) => {
-      const uData = snapshot.val();
-      if (uData) {
-        const programmesObj = uData.allowedProgrammes || {};
-        const programmesList = Object.keys(programmesObj).filter(key => programmesObj[key] === true);
-        
-        setAllowedProgrammes(programmesList);
-
-        if (!userCanViewAllProgrammeData) {
-          if (programmesList.length > 0) {
-             setActiveProgram(programmesList[0]);
-          }
-        } else {
-          if (!activeProgram) setActiveProgram("KPMD");
-        }
-      }
-      setUserPermissionsLoading(false);
-    }, (error) => {
-      console.error("Error fetching user permissions:", error);
-      setUserPermissionsLoading(false);
-    });
-
-    return () => unsubscribe();
-  }, [auth.currentUser?.uid, userCanViewAllProgrammeData]);
+    setActiveProgram((prev) => resolveActiveProgramme(prev, accessibleProgrammes));
+  }, [accessibleProgrammes, userCanViewAllProgrammeData]);
 
   const handleDateRangeChange = useCallback((key: string, value: string) => {
     setDateRange(prev => ({ ...prev, [key]: value }));
@@ -814,7 +1007,7 @@ const PerformanceReport = () => {
     );
   }, []);
 
-  if (analysisLoading || userPermissionsLoading || loading) {
+  if (analysisLoading || loading) {
     return (
       <div className="flex flex-col justify-center items-center h-96 space-y-4">
         <Loader2 className="h-12 w-12 animate-spin text-blue-600" />
@@ -827,7 +1020,7 @@ const PerformanceReport = () => {
     <div className="space-y-8 p-1 bg-gray-50/50 min-h-screen pb-10">
       <div className="flex flex-col gap-2">
         <div>
-          <h1 className="text-xl font-semibold text-gray-900">Performance Dashboard</h1>
+          <h1 className="text-xl font-semibold text-gray-900">{reportViewProfile.title}</h1>
         </div>
 
         <Card className="w-full md:w-auto border-0 shadow-lg bg-white">
@@ -918,7 +1111,183 @@ const PerformanceReport = () => {
         </Card>
       </div>
 
-      {/* SECTION 1: FARMER REGISTRATION & OVERVIEW */}
+      {hasSection("hr-summary") && (
+        <section>
+          <SectionHeader title="HR Summary" />
+
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5 mb-6">
+            <StatsCard
+              title="Total Goats Purchased"
+              value={data.totalGoatsPurchased.toLocaleString()}
+              icon={Beef}
+              subtext="Goats purchased in the selected period"
+              color="orange"
+            />
+
+            <StatsCard
+              title="Total Registered Farmers"
+              value={data.totalFarmers.toLocaleString()}
+              icon={Users}
+              subtext="Farmer registrations in the selected period"
+              color="blue"
+            />
+
+            <StatsCard
+              title="Total Trained Farmers"
+              value={data.totalTrainedFarmers.toLocaleString()}
+              icon={GraduationCap}
+              subtext="Farmers reached through training"
+              color="yellow"
+            />
+
+            <StatsCard
+              title="Total Breeds Distributed"
+              value={data.totalBreedsDistributed.toLocaleString()}
+              icon={TargetIcon}
+              subtext={`Male: ${data.breedsMale} | Female: ${data.breedsFemale}`}
+              color="teal"
+            />
+
+            <StatsCard
+              title="Total Doses Given Out"
+              value={data.totalDosesGivenOut.toLocaleString()}
+              icon={Syringe}
+              subtext="Animal health doses recorded in the selected period"
+              color="red"
+            />
+          </div>
+        </section>
+      )}
+
+      {hasSection("hr-rankings") && (
+        <section>
+          <SectionHeader title="HR Rankings" />
+
+          <div className="grid gap-6 md:grid-cols-2 mb-6">
+            <Card className="border-0 shadow-lg bg-white">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm flex items-center gap-2 text-gray-800">
+                  <Users className="h-4 w-4 text-blue-600" />
+                  Top Field Officers (Mobile Users)
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <ResponsiveContainer width="100%" height={250}>
+                  <BarChart data={data.topFieldOfficers} layout="vertical" margin={{ top: 5, right: 30, left: 80, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f3f4f6" />
+                    <XAxis type="number" axisLine={false} tickLine={false} />
+                    <YAxis type="category" dataKey="name" width={90} axisLine={false} tickLine={false} tick={{fontSize: 11}} />
+                    <Tooltip />
+                    <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={12} fill={COLORS.darkBlue} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
+
+            <Card className="border-0 shadow-lg bg-white">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm flex items-center gap-2 text-gray-800">
+                  <Award className="h-4 w-4 text-yellow-600" />
+                  Top Staff Awarded
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <ResponsiveContainer width="100%" height={250}>
+                  <BarChart data={data.topStaffAwarded} layout="vertical" margin={{ top: 5, right: 30, left: 80, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f3f4f6" />
+                    <XAxis type="number" axisLine={false} tickLine={false} />
+                    <YAxis type="category" dataKey="name" width={90} axisLine={false} tickLine={false} tick={{fontSize: 11}} />
+                    <Tooltip />
+                    <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={12} fill={COLORS.yellow} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
+          </div>
+        </section>
+      )}
+
+      {hasSection("hr-distribution") && (
+        <section>
+          <SectionHeader title="Distribution And Registration" />
+
+          <div className="grid gap-6 md:grid-cols-2 mb-6">
+            <Card className="border-0 shadow-lg bg-white">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm flex items-center gap-2 text-gray-800">
+                  <MapPin className="h-4 w-4 text-green-600" />
+                  Top Location In Registration
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <ResponsiveContainer width="100%" height={250}>
+                  <BarChart data={data.topLocations} layout="vertical" margin={{ top: 5, right: 30, left: 80, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f3f4f6" />
+                    <XAxis type="number" axisLine={false} tickLine={false} />
+                    <YAxis type="category" dataKey="name" width={90} axisLine={false} tickLine={false} tick={{fontSize: 11}} />
+                    <Tooltip />
+                    <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={12} fill={COLORS.green} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
+
+            <Card className="border-0 shadow-lg bg-white h-[350px]">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm flex items-center gap-2 text-gray-800">
+                  <Award className="h-4 w-4 text-teal-600" />
+                  Breeds Distributed By County
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <ResponsiveContainer width="100%" height={280}>
+                  <PieChart>
+                    <Pie
+                      data={data.breedsByCountyData}
+                      cx="50%"
+                      cy="50%"
+                      outerRadius={90}
+                      innerRadius={50}
+                      paddingAngle={2}
+                      dataKey="value"
+                      label={renderCustomizedLabel}
+                      labelLine={false}
+                    >
+                      {data.breedsByCountyData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={BAR_COLORS[index % BAR_COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip />
+                    <Legend verticalAlign="bottom" height={36} iconType="circle" />
+                  </PieChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card className="border-0 shadow-lg bg-white">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm flex items-center gap-2 text-gray-800">
+                <TrendingUp className="h-4 w-4 text-teal-600" />
+                Breeds Distributed Per Subcounty
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={280}>
+                <BarChart data={data.breedsBySubcountyData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
+                  <XAxis dataKey="name" angle={-45} textAnchor="end" height={70} interval={0} tick={{fontSize: 10}} />
+                  <YAxis />
+                  <Tooltip />
+                  <Bar dataKey="value" radius={[4, 4, 0, 0]} barSize={20} fill={COLORS.teal} />
+                </BarChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+        </section>
+      )}
+
+      {hasSection("default-registration") && (
       <section>
         <SectionHeader title="Farmer Registration" />
         
@@ -1073,8 +1442,9 @@ const PerformanceReport = () => {
           </Card>
         </div>
       </section>
+      )}
 
-      {/* SECTION 2: ANIMAL HEALTH */}
+      {hasSection("default-animal-health") && (
       <section>
         <SectionHeader title="Animal Health" />
 
@@ -1200,6 +1570,7 @@ const PerformanceReport = () => {
           </Card>
         </div>
       </section>
+      )}
     </div>
   );
 };

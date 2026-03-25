@@ -1,4 +1,5 @@
 ﻿import { useState, useEffect, useMemo, useRef } from "react";
+import { useCallback } from "react";
 // REALTIME DATABASE IMPORTS
 import { ref, get, push, remove, update } from "firebase/database";
 import { db } from "@/lib/firebase";
@@ -9,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
-import { isChiefAdmin } from "@/contexts/authhelper";
+import { canViewAllProgrammes, isChiefAdmin } from "@/contexts/authhelper";
 import { 
   Users, 
   MapPin, 
@@ -91,8 +92,6 @@ interface AnimalHealthActivity {
   status: 'completed';
 }
 
-const ANIMAL_HEALTH_CACHE_KEY = cacheKey("admin-page", "animal-health", "activities");
-
 const getAnimalHealthTimestamp = (
   activity: Partial<AnimalHealthActivity> | null | undefined
 ): number => {
@@ -114,6 +113,29 @@ const VACCINE_OPTIONS = [
 const PROGRAMME_OPTIONS = ["KPMD", "RANGE"];
 type ProgrammeView = "ALL" | "KPMD" | "RANGE";
 const FARMERS_PER_PAGE = 20;
+
+const normalizeProgramme = (programme: string | null | undefined): string => {
+  if (!programme) return "";
+  const normalized = programme.trim().toUpperCase();
+  if (normalized === "KPMD" || normalized === "RANGE") return normalized;
+  return programme.trim();
+};
+
+const getAssignedProgrammes = (
+  allowedProgrammes: Record<string, boolean> | null | undefined
+): string[] => PROGRAMME_OPTIONS.filter((programme) => allowedProgrammes?.[programme] === true);
+
+const filterActivitiesByProgrammeAccess = (
+  records: AnimalHealthActivity[],
+  allowedProgrammes: string[],
+  canViewAllProgrammeData: boolean
+): AnimalHealthActivity[] => {
+  if (canViewAllProgrammeData) return records;
+  if (allowedProgrammes.length === 0) return [];
+
+  const allowedProgrammeSet = new Set(allowedProgrammes);
+  return records.filter((activity) => allowedProgrammeSet.has(normalizeProgramme(activity.programme)));
+};
 
 const toFarmerArray = (records: unknown): Record<string, unknown>[] => {
   if (Array.isArray(records)) {
@@ -217,8 +239,31 @@ const AnimalHealthPage = () => {
     malebeneficiaries: "", femalebeneficiaries: "", comment: "", programme: "RANGE",
   });
   
-  const { userRole } = useAuth();
+  const { user, userRole, userAttribute, allowedProgrammes } = useAuth();
   const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
+  const userCanViewAllProgrammeData = useMemo(
+    () => canViewAllProgrammes(userRole, userAttribute),
+    [userRole, userAttribute]
+  );
+  const accessibleProgrammes = useMemo(
+    () => userCanViewAllProgrammeData ? [...PROGRAMME_OPTIONS] : getAssignedProgrammes(allowedProgrammes),
+    [allowedProgrammes, userCanViewAllProgrammeData]
+  );
+  const hasProgrammeAccess = userCanViewAllProgrammeData || accessibleProgrammes.length > 0;
+  const defaultProgrammeView = useMemo<ProgrammeView>(() => {
+    if (userCanViewAllProgrammeData) return "KPMD";
+    return (accessibleProgrammes[0] || "KPMD") as Exclude<ProgrammeView, "ALL">;
+  }, [accessibleProgrammes, userCanViewAllProgrammeData]);
+  const animalHealthCacheKey = useMemo(
+    () =>
+      cacheKey(
+        "admin-page",
+        "animal-health",
+        user?.uid || "anonymous",
+        userCanViewAllProgrammeData ? "all" : accessibleProgrammes.join("|") || "no-programme",
+      ),
+    [accessibleProgrammes, user?.uid, userCanViewAllProgrammeData]
+  );
   const [searchTerm, setSearchTerm] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
@@ -226,7 +271,6 @@ const AnimalHealthPage = () => {
   const [selectedActivities, setSelectedActivities] = useState<string[]>([]);
   const [isSelecting, setIsSelecting] = useState(false);
   const { toast } = useToast();
-  const { user } = useAuth();
   const requireChiefAdmin = () => {
     if (userIsChiefAdmin) return true;
     toast({
@@ -247,13 +291,35 @@ const AnimalHealthPage = () => {
     }));
   }, [beneficiaries]);
 
-  useEffect(() => { fetchActivities(); }, []);
+  useEffect(() => {
+    setProgrammeView((prev) => {
+      if (userCanViewAllProgrammeData) {
+        return prev === "ALL" || accessibleProgrammes.includes(prev) ? prev : defaultProgrammeView;
+      }
+      return accessibleProgrammes.includes(prev) ? prev : defaultProgrammeView;
+    });
+  }, [accessibleProgrammes, defaultProgrammeView, userCanViewAllProgrammeData]);
 
-  const fetchActivities = async () => {
+  const fetchActivities = useCallback(async () => {
     try {
-      const cachedActivities = readCachedValue<AnimalHealthActivity[]>(ANIMAL_HEALTH_CACHE_KEY);
+      if (!hasProgrammeAccess) {
+        setActivities([]);
+        setLoading(false);
+        removeCachedValue(animalHealthCacheKey);
+        return;
+      }
+
+      const cachedActivities = readCachedValue<AnimalHealthActivity[]>(animalHealthCacheKey);
       if (cachedActivities) {
-        setActivities(sortAnimalHealthByLatest(cachedActivities));
+        setActivities(
+          sortAnimalHealthByLatest(
+            filterActivitiesByProgrammeAccess(
+              cachedActivities,
+              accessibleProgrammes,
+              userCanViewAllProgrammeData,
+            ),
+          ),
+        );
         setLoading(false);
       } else {
         setLoading(true);
@@ -292,19 +358,25 @@ const AnimalHealthPage = () => {
             fieldofficers: (item.fieldofficers && Array.isArray(item.fieldofficers)) ? item.fieldofficers : [],
             issues: (item.issues && Array.isArray(item.issues)) ? item.issues : [],
             beneficiaries: beneficiariesForView,
-            programme: item.programme || 'N/A',
+            programme: normalizeProgramme(item.programme),
             createdAt: item.createdAt,
             createdBy: item.createdBy || 'unknown',
             status: item.status || 'completed'
           } as AnimalHealthActivity;
         });
         
-        const sortedActivitiesData = sortAnimalHealthByLatest(activitiesData);
+        const sortedActivitiesData = sortAnimalHealthByLatest(
+          filterActivitiesByProgrammeAccess(
+            activitiesData,
+            accessibleProgrammes,
+            userCanViewAllProgrammeData,
+          ),
+        );
         setActivities(sortedActivitiesData);
-        writeCachedValue(ANIMAL_HEALTH_CACHE_KEY, sortedActivitiesData);
+        writeCachedValue(animalHealthCacheKey, sortedActivitiesData);
       } else {
         setActivities([]);
-        removeCachedValue(ANIMAL_HEALTH_CACHE_KEY);
+        removeCachedValue(animalHealthCacheKey);
       }
     } catch (error) {
       console.error("Error fetching:", error);
@@ -312,7 +384,11 @@ const AnimalHealthPage = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [accessibleProgrammes, animalHealthCacheKey, hasProgrammeAccess, toast, userCanViewAllProgrammeData]);
+
+  useEffect(() => {
+    void fetchActivities();
+  }, [fetchActivities]);
 
   const getActivityVaccines = (activity: AnimalHealthActivity): Vaccine[] => activity.vaccines || [];
   const getActivityTotalDoses = (activity: AnimalHealthActivity): number => 
@@ -466,7 +542,7 @@ const AnimalHealthPage = () => {
       toast({ title: "Success", description: "Activity recorded.", className: "bg-green-50 text-green-800" });
       setIsAddDialogOpen(false);
       resetForms();
-      removeCachedValue(ANIMAL_HEALTH_CACHE_KEY);
+      removeCachedValue(animalHealthCacheKey);
       fetchActivities();
     } catch (error) {
       console.error(error);
@@ -489,7 +565,7 @@ const AnimalHealthPage = () => {
       toast({ title: "Success", description: "Activity updated.", className: "bg-green-50 text-green-800" });
       setIsEditDialogOpen(false);
       resetForms();
-      removeCachedValue(ANIMAL_HEALTH_CACHE_KEY);
+      removeCachedValue(animalHealthCacheKey);
       fetchActivities();
     } catch (error) {
       console.error(error);
@@ -499,7 +575,7 @@ const AnimalHealthPage = () => {
 
   const handleDeleteActivity = async (activityId: string) => {
     if (!requireChiefAdmin()) return;
-    try { await remove(ref(db, "AnimalHealthActivities/" + activityId)); toast({ title: "Success", description: "Deleted." }); removeCachedValue(ANIMAL_HEALTH_CACHE_KEY); fetchActivities(); } 
+    try { await remove(ref(db, "AnimalHealthActivities/" + activityId)); toast({ title: "Success", description: "Deleted." }); removeCachedValue(animalHealthCacheKey); fetchActivities(); } 
     catch (error) { toast({ title: "Error", description: "Failed.", variant: "destructive" }); }
   };
 
@@ -509,7 +585,7 @@ const AnimalHealthPage = () => {
     try {
       await Promise.all(selectedActivities.map(id => remove(ref(db, "AnimalHealthActivities/" + id))));
       toast({ title: "Success", description: `${selectedActivities.length} deleted.` });
-      removeCachedValue(ANIMAL_HEALTH_CACHE_KEY);
+      removeCachedValue(animalHealthCacheKey);
       setSelectedActivities([]); setIsSelecting(false); fetchActivities();
     } catch (error) { toast({ title: "Error", description: "Failed.", variant: "destructive" }); }
   };
@@ -885,19 +961,29 @@ const AnimalHealthPage = () => {
                 <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="w-full sm:max-w-[160px]" />
             </div>
 
-            <div className="w-full sm:w-[280px] space-y-1">
-                <Label className="text-xs text-slate-600">Programme View</Label>
-                <Select value={programmeView} onValueChange={(value) => setProgrammeView(value as ProgrammeView)}>
-                    <SelectTrigger className="h-9">
-                        <SelectValue placeholder="Select programme" />
-                    </SelectTrigger>
-                    <SelectContent>
-                        <SelectItem value="KPMD">KPMD ({activitiesByProgramme.KPMD.length})</SelectItem>
-                        <SelectItem value="RANGE">RANGE ({activitiesByProgramme.RANGE.length})</SelectItem>
-                        <SelectItem value="ALL">ALL ({filteredActivities.length})</SelectItem>
-                    </SelectContent>
-                </Select>
-            </div>
+            {userIsChiefAdmin && hasProgrammeAccess && (
+              <div className="w-full sm:w-[280px] space-y-1">
+                  <Label className="text-xs text-slate-600">Programme View</Label>
+                  <Select value={programmeView} onValueChange={(value) => setProgrammeView(value as ProgrammeView)}>
+                      <SelectTrigger
+                        className="h-9"
+                        disabled={!userCanViewAllProgrammeData && accessibleProgrammes.length <= 1}
+                      >
+                          <SelectValue placeholder="Select programme" />
+                      </SelectTrigger>
+                      <SelectContent>
+                          {accessibleProgrammes.map((programmeOption) => (
+                            <SelectItem key={programmeOption} value={programmeOption}>
+                              {programmeOption} ({activitiesByProgramme[programmeOption as keyof typeof activitiesByProgramme].length})
+                            </SelectItem>
+                          ))}
+                          {userCanViewAllProgrammeData && (
+                            <SelectItem value="ALL">ALL ({filteredActivities.length})</SelectItem>
+                          )}
+                      </SelectContent>
+                  </Select>
+              </div>
+            )}
             
             <div className="flex flex-wrap items-center gap-2">
                 {isSelecting && selectedActivities.length > 0 && (
@@ -944,7 +1030,11 @@ const AnimalHealthPage = () => {
                 {loading ? (
                   <tr><td colSpan={8} className="text-center py-10"><Skeleton className="h-8 w-full" /></td></tr>
                 ) : displayedActivities.length === 0 ? (
-                  <tr><td colSpan={8} className="text-center py-10 text-slate-500">No activities found.</td></tr>
+                  <tr>
+                    <td colSpan={8} className="text-center py-10 text-slate-500">
+                      {hasProgrammeAccess ? "No activities found." : "You do not have access to any programme data."}
+                    </td>
+                  </tr>
                 ) : (
                   displayedActivities.map((activity) => (
                     <tr key={activity.id} className="border-b border-slate-100 hover:bg-slate-50/50 transition-colors">

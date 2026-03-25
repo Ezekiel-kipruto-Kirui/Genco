@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import { getAuth } from "firebase/auth";
 // REALTIME DATABASE IMPORTS
 import {
   ref,
@@ -8,7 +7,6 @@ import {
   update,
   remove,
   get,
-  onValue,
   Database,
   DatabaseReference
 } from "firebase/database";
@@ -27,6 +25,7 @@ import { uploadDataWithValidation, formatValidationErrors, UploadResult } from "
 import { db } from "@/lib/firebase";
 import { millify} from "millify";
 import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
+import { resolveAccessibleProgrammes, resolveActiveProgramme } from "@/lib/programme-access";
 
 // --- Types ---
 
@@ -133,7 +132,7 @@ const fromProgrammeSelectValue = (value: string): ProgrammeOption | "" =>
 const matchesProgrammeFilter = (
   recordProgramme: ProgrammeOption | "",
   activeProgramme: ProgrammeOption | ""
-): boolean => !activeProgramme || !recordProgramme || recordProgramme === activeProgramme;
+): boolean => Boolean(activeProgramme) && Boolean(recordProgramme) && recordProgramme === activeProgramme;
 
 const PASTURE_STAGES = [
   "land preparation",
@@ -374,7 +373,7 @@ const TableRow = ({ record, isSelected, onSelectRecord, onView, onEdit, onDelete
 // --- Main Component ---
 
 const HayStoragePage = () => {
-  const { userRole, user, userAttribute } = useAuth();
+  const { userRole, user, userAttribute, allowedProgrammes } = useAuth();
   const { toast } = useToast();
 
   // Ensure 'db' is treated as Realtime Database instance
@@ -468,9 +467,12 @@ const HayStoragePage = () => {
     () => canViewAllProgrammes(userRole, userAttribute),
     [userRole, userAttribute]
   );
+  const accessibleProgrammes = useMemo(
+    () => resolveAccessibleProgrammes(userCanViewAllProgrammeData, allowedProgrammes),
+    [allowedProgrammes, userCanViewAllProgrammeData]
+  );
   const selectableProgrammes = useMemo(() => {
-    const sourceProgrammes = availablePrograms.length > 0 ? availablePrograms : [...PROGRAMME_OPTIONS];
-    const normalizedProgrammes = sourceProgrammes
+    const normalizedProgrammes = availablePrograms
       .map((programme) => getProgrammeValue(programme))
       .filter((programme): programme is ProgrammeOption => Boolean(programme));
     return Array.from(new Set(normalizedProgrammes));
@@ -490,41 +492,9 @@ const HayStoragePage = () => {
   };
 
   useEffect(() => {
-    if (userCanViewAllProgrammeData) {
-      setAvailablePrograms(["RANGE", "KPMD"]);
-      setActiveProgram((prev) => (prev ? prev : "RANGE"));
-      return;
-    }
-
-    const uid = getAuth().currentUser?.uid;
-    if (!uid) return;
-
-    const userRef = ref(rtdb, `users/${uid}`);
-    const unsubscribe = onValue(
-      userRef,
-      (snapshot) => {
-        const data = snapshot.val();
-        if (data && data.allowedProgrammes) {
-          const programs = Object.keys(data.allowedProgrammes).filter(
-            (key) => data.allowedProgrammes[key] === true
-          );
-          setAvailablePrograms(programs);
-          setActiveProgram((prev) => {
-            if (programs.length === 0) return "";
-            if (!prev || !programs.includes(prev)) return programs[0];
-            return prev;
-          });
-        } else {
-          setAvailablePrograms([]);
-          setActiveProgram("");
-        }
-      },
-      (error) => {
-        console.error("Error fetching user permissions:", error);
-      }
-    );
-    return () => unsubscribe();
-  }, [rtdb, userCanViewAllProgrammeData]);
+    setAvailablePrograms(accessibleProgrammes);
+    setActiveProgram((prev) => resolveActiveProgramme(prev, accessibleProgrammes));
+  }, [accessibleProgrammes]);
 
   useEffect(() => {
     const selectedProgramme = getProgrammeValue(activeProgram);
@@ -1051,7 +1021,7 @@ const HayStoragePage = () => {
          
         </div>
         <div className="flex flex-wrap gap-2 w-full xl:w-auto">
-          {selectableProgrammes.length > 0 && (
+          {userIsChiefAdmin && selectableProgrammes.length > 0 && (
             <Select value={activeProgram} onValueChange={setActiveProgram}>
               <SelectTrigger className="w-full sm:w-[180px] border-gray-300 focus:border-blue-500 bg-white">
                 <SelectValue placeholder="Select Programme" />

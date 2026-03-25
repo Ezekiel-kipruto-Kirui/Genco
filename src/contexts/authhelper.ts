@@ -82,18 +82,8 @@ export const canViewAllProgrammes = (
   userRole: string | null | undefined,
   userAttribute?: string | null
 ): boolean => {
-  const principal = resolvePermissionPrincipal(userRole, userAttribute);
-
-  if (
-    isFinance(principal) ||
-    isOfftakeOfficer(principal) ||
-    isProjectManager(principal) ||
-    isHummanResourceManager(principal)
-  ) {
-    return false;
-  }
-
-  return isChiefAdmin(principal) || isAdmin(principal) || isFullAccessAttribute(principal);
+  void userAttribute;
+  return isChiefAdmin(userRole);
 };
 
 export const canAccessDashboard = (

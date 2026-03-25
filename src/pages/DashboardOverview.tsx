@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { 
   Users, GraduationCap, Beef, MapPin, Plus, Activity, Eye, Bell, ArrowRight, Trash2, Loader2
 } from "lucide-react";
@@ -128,6 +128,10 @@ const parseDate = (date: any): Date | null => {
 
 const normalizeProgramme = (value: unknown): string =>
   typeof value === "string" ? value.trim().toUpperCase() : "";
+
+const getAssignedProgrammes = (
+  allowedProgrammes: Record<string, boolean> | null | undefined,
+): string[] => PROGRAMME_OPTIONS.filter((programme) => allowedProgrammes?.[programme] === true);
 
 const getNumberField = (obj: Record<string, any>, ...fieldNames: string[]): number => {
   for (const fieldName of fieldNames) {
@@ -257,11 +261,15 @@ const DashboardOverview = () => {
     activityName: "", date: "", county: "", subcounty: "", location: "",
   });
 
-  const programmeOptions = useMemo(() => {
-    if (userCanViewAllProgrammeData) return PROGRAMME_OPTIONS;
-    if (!allowedProgrammes) return [];
-    return Object.keys(allowedProgrammes).filter((programme) => allowedProgrammes[programme] === true);
-  }, [userCanViewAllProgrammeData, allowedProgrammes]);
+  const assignedProgrammeOptions = useMemo(
+    () => getAssignedProgrammes(allowedProgrammes),
+    [allowedProgrammes]
+  );
+  const programmeOptions = useMemo(
+    () => userIsChiefAdmin ? PROGRAMME_OPTIONS : assignedProgrammeOptions,
+    [assignedProgrammeOptions, userIsChiefAdmin]
+  );
+  const showOverviewProgrammeSelector = userIsChiefAdmin && programmeOptions.length > 0;
 
   const [localOverviewData, setLocalOverviewData] = useState<OverviewSummaryData | null>(null);
   const [localOverviewLoading, setLocalOverviewLoading] = useState(false);
@@ -322,15 +330,15 @@ const DashboardOverview = () => {
 
         const filteredFarmers = farmers.filter((farmer) => {
           const programme = normalizeProgramme(farmer.programme);
-          return includeAllProgrammes || !programme || programme === requestedProgramme;
+          return includeAllProgrammes || programme === requestedProgramme;
         });
         const filteredActivities = activities.filter((activity) => {
           const programme = normalizeProgramme(activity.programme);
-          return includeAllProgrammes || !programme || programme === requestedProgramme;
+          return includeAllProgrammes || programme === requestedProgramme;
         });
         const filteredCapacity = capacity.filter((record) => {
           const programme = normalizeProgramme(record.programme);
-          return includeAllProgrammes || !programme || programme === requestedProgramme;
+          return includeAllProgrammes || programme === requestedProgramme;
         });
 
         let maleFarmers = 0;
@@ -467,18 +475,20 @@ const DashboardOverview = () => {
       return;
     }
 
-    if (userCanViewAllProgrammeData) {
-      setSelectedProgramme((prev) => (prev ? prev : PROGRAMME_OPTIONS[0]));
+    if (userIsChiefAdmin && userCanViewAllProgrammeData) {
+      setSelectedProgramme((prev) => (
+        prev === "All" || PROGRAMME_OPTIONS.includes(prev) ? prev : "All"
+      ));
       return;
     }
 
-    if (programmeOptions.length === 0) {
+    if (assignedProgrammeOptions.length === 0) {
       setSelectedProgramme("");
       return;
     }
 
-    setSelectedProgramme((prev) => (prev && programmeOptions.includes(prev) ? prev : programmeOptions[0]));
-  }, [userRole, programmeOptions, userCanViewAllProgrammeData]);
+    setSelectedProgramme(assignedProgrammeOptions[0]);
+  }, [assignedProgrammeOptions, userCanViewAllProgrammeData, userIsChiefAdmin, userRole]);
 
   const handleAddParticipant = () => {
     if (participantForm.name.trim() && participantForm.role.trim()) {
@@ -535,14 +545,14 @@ const DashboardOverview = () => {
   };
 
   useEffect(() => {
-    if (selectedProgramme && selectedProgramme !== "All") {
+    if (selectedProgramme && selectedProgramme !== "All" && PROGRAMME_OPTIONS.includes(selectedProgramme)) {
       setActiveProgrammeForAdd(selectedProgramme);
-    } else if (programmeOptions.length > 0) {
-      setActiveProgrammeForAdd(programmeOptions[0]);
+    } else if (PROGRAMME_OPTIONS.length > 0) {
+      setActiveProgrammeForAdd(PROGRAMME_OPTIONS[0]);
     } else {
       setActiveProgrammeForAdd("");
     }
-  }, [selectedProgramme, programmeOptions]);
+  }, [selectedProgramme]);
 
   const LoadingSkeleton = () => (
     <div className="space-y-8">
@@ -575,7 +585,7 @@ const DashboardOverview = () => {
     );
   }
 
-  if (userRole !== 'chief-admin' && programmeOptions.length === 0) {
+  if (!userIsChiefAdmin && assignedProgrammeOptions.length === 0) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100/80 p-4 sm:p-6">
         <Card className="max-w-md mx-auto mt-20"><CardHeader><CardTitle>No Access</CardTitle></CardHeader><CardContent><p>You are not assigned to any programmes.</p></CardContent></Card>
@@ -590,9 +600,9 @@ const DashboardOverview = () => {
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-md font-bold text-slate-900">Dashboard Overview</h1>
-            {userRole !== 'chief-admin' && (
+            {!userIsChiefAdmin && selectedProgramme && (
                <div className="flex gap-2 mt-2">
-                 {programmeOptions.map(p => (<Badge key={p} variant="outline" className="text-xs">{p}</Badge>))}
+                 <Badge variant="outline" className="text-xs">{selectedProgramme}</Badge>
                </div>
             )}
           </div>
@@ -610,20 +620,28 @@ const DashboardOverview = () => {
           <LoadingSkeleton />
         ) : (
           <>
-            {/* Tabs */}
-            {programmeOptions.length > 1 && (
-               <div className="flex justify-center mb-6">
-                 <Tabs value={selectedProgramme} onValueChange={setSelectedProgramme} className="bg-white p-1 rounded-xl shadow-sm border border-slate-200">
-                   <TabsList className="bg-transparent w-auto p-0">
-                     {userRole === 'chief-admin' && (
-                       <TabsTrigger value="All" className="data-[state=active]:bg-slate-900 data-[state=active]:text-white text-slate-600 rounded-lg px-6">All</TabsTrigger>
-                     )}
-                     {programmeOptions.map(prog => (
-                       <TabsTrigger key={prog} value={prog} className="data-[state=active]:bg-blue-600 data-[state=active]:text-white text-slate-600 rounded-lg px-6">{prog}</TabsTrigger>
-                     ))}
-                   </TabsList>
-                 </Tabs>
-               </div>
+            {/* Programme Selector */}
+            {showOverviewProgrammeSelector && (
+              <div className="flex justify-center mb-6">
+                <div className="w-full max-w-xs space-y-2">
+                  <Label htmlFor="dashboard-overview-programme" className="text-sm font-medium text-slate-700">
+                    Programme
+                  </Label>
+                  <Select value={selectedProgramme} onValueChange={setSelectedProgramme}>
+                    <SelectTrigger id="dashboard-overview-programme" className="bg-white rounded-xl border border-slate-200 shadow-sm">
+                      <SelectValue placeholder="Select programme" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="All">All Programmes</SelectItem>
+                      {programmeOptions.map((programme) => (
+                        <SelectItem key={programme} value={programme}>
+                          {programme}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
             )}
 
             {/* Stats Grid */}
@@ -687,12 +705,21 @@ const DashboardOverview = () => {
                             <DialogContent className="sm:max-w-[700px] bg-white rounded-2xl border-0 shadow-2xl max-h-[90vh] overflow-y-auto">
                             <DialogHeader><DialogTitle className="text-xl font-semibold text-slate-900">Schedule New Activity</DialogTitle></DialogHeader>
                             <div className="grid gap-6 py-4">
-                              {userRole !== 'chief-admin' && programmeOptions.length > 1 && (
+                              {userIsChiefAdmin && (
                                 <div className="space-y-2">
-                                  <Label htmlFor="programmeSelect">Programme</Label>
-                                  <select id="programmeSelect" value={activeProgrammeForAdd} onChange={(e) => setActiveProgrammeForAdd(e.target.value)} className="flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm ring-offset-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-950">
-                                    {programmeOptions.map(p => (<option key={p} value={p}>{p}</option>))}
-                                  </select>
+                                  <Label htmlFor="schedule-programme-select">Programme</Label>
+                                  <Select value={activeProgrammeForAdd} onValueChange={setActiveProgrammeForAdd}>
+                                    <SelectTrigger id="schedule-programme-select" className="bg-white rounded-xl border border-slate-300">
+                                      <SelectValue placeholder="Select programme" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {PROGRAMME_OPTIONS.map((programme) => (
+                                        <SelectItem key={programme} value={programme}>
+                                          {programme}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
                                 </div>
                               )}
                               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import { getAuth } from "firebase/auth";
 import { db } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,6 +14,7 @@ import { useToast } from "@/hooks/use-toast";
 import { canViewAllProgrammes, isChiefAdmin } from "@/contexts/authhelper";
 import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
 import {millify} from "millify";
+import { resolveAccessibleProgrammes, resolveActiveProgramme } from "@/lib/programme-access";
 
 // REALTIME DATABASE IMPORTS ONLY
 import { 
@@ -358,7 +358,7 @@ const displayPeopleValue = (people: string | number | undefined): string => {
 };
 
 const BoreholePage = () => {
-  const { userRole, userAttribute } = useAuth();
+  const { userRole, userAttribute, allowedProgrammes } = useAuth();
   const { toast } = useToast();
   const [allBoreholes, setAllBoreholes] = useState<Borehole[]>([]);
   const [filteredBoreholes, setFilteredBoreholes] = useState<Borehole[]>([]);
@@ -429,6 +429,10 @@ const BoreholePage = () => {
     () => canViewAllProgrammes(userRole, userAttribute),
     [userRole, userAttribute]
   );
+  const accessibleProgrammes = useMemo(
+    () => resolveAccessibleProgrammes(userCanViewAllProgrammeData, allowedProgrammes),
+    [allowedProgrammes, userCanViewAllProgrammeData]
+  );
   const boreholeCacheKey = useMemo(
     () => cacheKey("admin-page", "borehole-storage", activeProgram || "no-program"),
     [activeProgram]
@@ -444,42 +448,9 @@ const BoreholePage = () => {
   };
 
   useEffect(() => {
-    if (userCanViewAllProgrammeData) {
-      setAvailablePrograms(["RANGE", "KPMD"]);
-      setActiveProgram((prev) => (prev ? prev : "RANGE"));
-      return;
-    }
-
-    const uid = getAuth().currentUser?.uid;
-    if (!uid) return;
-
-    const userRef = ref(db as Database, `users/${uid}`);
-    const unsubscribe = onValue(
-      userRef,
-      (snapshot) => {
-        const data = snapshot.val();
-        if (data && data.allowedProgrammes) {
-          const programs = Object.keys(data.allowedProgrammes).filter(
-            (key) => data.allowedProgrammes[key] === true
-          );
-          setAvailablePrograms(programs);
-          setActiveProgram((prev) => {
-            if (programs.length === 0) return "";
-            if (!prev || !programs.includes(prev)) return programs[0];
-            return prev;
-          });
-        } else {
-          setAvailablePrograms([]);
-          setActiveProgram("");
-        }
-      },
-      (error) => {
-        console.error("Error fetching user permissions:", error);
-      }
-    );
-
-    return () => unsubscribe();
-  }, [userCanViewAllProgrammeData]);
+    setAvailablePrograms(accessibleProgrammes);
+    setActiveProgram((prev) => resolveActiveProgramme(prev, accessibleProgrammes));
+  }, [accessibleProgrammes]);
 
   // Data fetching from Realtime Database
   const fetchAllData = useCallback(async () => {

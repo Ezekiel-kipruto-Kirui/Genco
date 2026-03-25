@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef, ChangeEvent } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import { getAuth } from "firebase/auth";
 import { ref, set, update, remove, push, onValue, query, orderByChild, equalTo } from "firebase/database";
 import { db } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
@@ -15,6 +14,7 @@ import { Download, Users, BookOpen, Edit, Trash2, Calendar, Eye, MapPin, Graduat
 import { useToast } from "@/hooks/use-toast";
 import { canViewAllProgrammes, isChiefAdmin } from "@/contexts/authhelper";
 import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
+import { resolveAccessibleProgrammes, resolveActiveProgramme } from "@/lib/programme-access";
 
 // --- Types ---
 interface TrainingRecord {
@@ -161,7 +161,7 @@ const useDebounce = (value: string, delay: number) => {
 
 // --- Main Component ---
 const CapacityBuildingPage = () => {
-  const { user, userRole, userAttribute } = useAuth();
+  const { user, userRole, userAttribute, allowedProgrammes } = useAuth();
   const { toast } = useToast();
   
   // State
@@ -192,6 +192,10 @@ const CapacityBuildingPage = () => {
   const userCanViewAllProgrammeData = useMemo(
     () => canViewAllProgrammes(userRole, userAttribute),
     [userRole, userAttribute]
+  );
+  const accessibleProgrammes = useMemo(
+    () => resolveAccessibleProgrammes(userCanViewAllProgrammeData, allowedProgrammes),
+    [allowedProgrammes, userCanViewAllProgrammeData]
   );
   const requireChiefAdmin = () => {
     if (userIsChiefAdmin) return true;
@@ -248,42 +252,9 @@ const CapacityBuildingPage = () => {
 
   // --- 1. Fetch User Permissions & Determine Available Programmes ---
   useEffect(() => {
-    if (!userRole) return;
-
-    if (userCanViewAllProgrammeData) {
-      setAvailablePrograms(["RANGE", "KPMD"]);
-      if (!activeProgram) setActiveProgram("KPMD");
-      return;
-    }
-
-    const auth = getAuth();
-    const uid = auth.currentUser?.uid;
-    
-    if (!uid) return;
-
-    const userRef = ref(db, `users/${uid}`);
-    const unsubscribe = onValue(userRef, (snapshot) => {
-      const data = snapshot.val();
-      if (data && data.allowedProgrammes) {
-        const programs = Object.keys(data.allowedProgrammes).filter(
-          key => data.allowedProgrammes[key] === true
-        );
-        setAvailablePrograms(programs);
-        
-        if (programs.length > 0 && !programs.includes(activeProgram)) {
-          setActiveProgram(programs[0]);
-        } else if (programs.length === 0) {
-            setActiveProgram("");
-        }
-      } else {
-        setAvailablePrograms([]);
-      }
-    }, (error) => {
-        console.error("Error fetching user permissions:", error);
-    });
-
-    return () => unsubscribe();
-  }, [userRole, activeProgram, userCanViewAllProgrammeData]);
+    setAvailablePrograms(accessibleProgrammes);
+    setActiveProgram((prev) => resolveActiveProgramme(prev, accessibleProgrammes));
+  }, [accessibleProgrammes]);
 
   // --- 2. Data Fetching ---
   useEffect(() => {
