@@ -169,7 +169,10 @@ export const canAccessFarmerData = (
 export const canAccessInfrastructure = (
   userRole: string | null | undefined,
   userAttribute?: string | null
-): boolean => canAccessFarmerData(userRole, userAttribute);
+): boolean => {
+  const principal = resolvePermissionPrincipal(userRole, userAttribute);
+  return canAccessFarmerData(userRole, userAttribute) || isHummanResourceManager(principal);
+};
 
 export const canAccessFieldActivities = (
   userRole: string | null | undefined,

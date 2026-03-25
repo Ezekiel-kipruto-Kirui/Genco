@@ -100,7 +100,9 @@ interface TableRowProps {
 const PAGE_LIMIT = 15;
 const SEARCH_DEBOUNCE_DELAY = 300;
 const PROGRAMME_OPTIONS = ["KPMD", "RANGE"] as const;
+const UNASSIGNED_PROGRAMME = "UNASSIGNED" as const;
 type ProgrammeOption = (typeof PROGRAMME_OPTIONS)[number];
+type ProgrammeSelectValue = ProgrammeOption | typeof UNASSIGNED_PROGRAMME;
 
 const normalizeProgramme = (
   value: unknown,
@@ -118,6 +120,20 @@ const getProgrammeValue = (value: unknown): ProgrammeOption | "" => {
   if (normalized === "KPMD" || normalized === "RANGE") return normalized;
   return "";
 };
+
+const getProgrammeDisplayValue = (value: unknown): string =>
+  getProgrammeValue(value) || "Unassigned";
+
+const getProgrammeSelectValue = (value: unknown): ProgrammeSelectValue =>
+  getProgrammeValue(value) || UNASSIGNED_PROGRAMME;
+
+const fromProgrammeSelectValue = (value: string): ProgrammeOption | "" =>
+  value === UNASSIGNED_PROGRAMME ? "" : getProgrammeValue(value);
+
+const matchesProgrammeFilter = (
+  recordProgramme: ProgrammeOption | "",
+  activeProgramme: ProgrammeOption | ""
+): boolean => !activeProgramme || !recordProgramme || recordProgramme === activeProgramme;
 
 const PASTURE_STAGES = [
   "land preparation",
@@ -276,6 +292,8 @@ const TableRow = ({ record, isSelected, onSelectRecord, onView, onEdit, onDelete
   // Calculate Balance
   const balance = (record.bales_harvested_stored || 0) - (record.bales_sold || 0);
   const balanceColor = balance >= 0 ? "text-green-600" : "text-red-600";
+  const programmeValue = getProgrammeValue(record.programme);
+  const programmeLabel = getProgrammeDisplayValue(record.programme);
 
   return (
   <tr className="border-b hover:bg-blue-50 transition-colors duration-200 group text-sm whitespace-nowrap">
@@ -290,12 +308,14 @@ const TableRow = ({ record, isSelected, onSelectRecord, onView, onEdit, onDelete
       <Badge
         variant="secondary"
         className={
-          normalizeProgramme(record.programme) === "KPMD"
+          !programmeValue
+            ? "bg-slate-100 text-slate-700 w-fit"
+            : programmeValue === "KPMD"
             ? "bg-indigo-100 text-indigo-800 w-fit"
             : "bg-teal-100 text-teal-800 w-fit"
         }
       >
-        {normalizeProgramme(record.programme)}
+        {programmeLabel}
       </Badge>
     </td>
   
@@ -567,7 +587,7 @@ const HayStoragePage = () => {
     if (!userIsChiefAdmin) return;
     setEditingRecord({
       ...record,
-      programme: normalizeProgramme(record.programme),
+      programme: getProgrammeValue(record.programme),
       pasture_stages: [...record.pasture_stages]
     });
     setIsEditDialogOpen(true);
@@ -633,7 +653,7 @@ const HayStoragePage = () => {
               created_by: item.created_by || item.createdBy || item.username || "unknown"
             };
           })
-          .filter((record) => !normalizedActiveProgram || record.programme === normalizedActiveProgram);
+          .filter((record) => matchesProgrammeFilter(record.programme, normalizedActiveProgram));
         const sortedHayStorageData = sortHayStorageByLatest(hayStorageData);
         setAllHayStorage(sortedHayStorageData);
         writeCachedValue(hayStorageCacheKey, sortedHayStorageData);
@@ -862,7 +882,7 @@ const HayStoragePage = () => {
       const filteredStages = editingRecord.pasture_stages.filter(stage => stage.stage.trim() !== '' && stage.date.trim() !== '');
       const { id, ...updateData } = {
           ...editingRecord,
-          programme: normalizeProgramme(editingRecord.programme),
+          programme: getProgrammeValue(editingRecord.programme) || "",
           pasture_stages: filteredStages,
           date_planted: editingRecord.date_planted ? new Date(editingRecord.date_planted).toISOString() : null,
           date_sold: editingRecord.date_sold ? new Date(editingRecord.date_sold).toISOString() : null
@@ -963,7 +983,7 @@ const HayStoragePage = () => {
         const balance = (record.bales_harvested_stored || 0) - (record.bales_sold || 0);
         return [
           formatDate(record.date_planted),
-          normalizeProgramme(record.programme),
+          getProgrammeDisplayValue(record.programme),
           record.location || 'N/A',
           record.county || 'N/A',
           record.subcounty || 'N/A',
@@ -1278,7 +1298,7 @@ const HayStoragePage = () => {
                 <h3 className="font-semibold text-slate-800 mb-3 flex items-center gap-2"><Building className="h-4 w-4" /> Basic Information</h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div><Label className="text-sm font-medium text-slate-600">Date Planted</Label><p className="text-slate-900 font-medium">{formatDate(viewingRecord.date_planted)}</p></div>
-                  <div><Label className="text-sm font-medium text-slate-600">Programme</Label><p className="text-slate-900 font-medium">{normalizeProgramme(viewingRecord.programme)}</p></div>
+                  <div><Label className="text-sm font-medium text-slate-600">Programme</Label><p className="text-slate-900 font-medium">{getProgrammeDisplayValue(viewingRecord.programme)}</p></div>
                   <div><Label className="text-sm font-medium text-slate-600">Location</Label><p className="text-slate-900 font-medium">{viewingRecord.location || 'N/A'}</p></div>
                   <div><Label className="text-sm font-medium text-slate-600">County</Label><p className="text-slate-900 font-medium">{viewingRecord.county || 'N/A'}</p></div>
                   <div><Label className="text-sm font-medium text-slate-600">Subcounty</Label><p className="text-slate-900 font-medium">{viewingRecord.subcounty || 'N/A'}</p></div>
@@ -1333,13 +1353,16 @@ const HayStoragePage = () => {
                   <div className="space-y-2">
                     <Label htmlFor="edit-programme" className="text-sm font-medium text-slate-600">Programme</Label>
                     <Select
-                      value={normalizeProgramme(editingRecord.programme)}
-                      onValueChange={(value) => handleEditChange('programme', normalizeProgramme(value))}
+                      value={getProgrammeSelectValue(editingRecord.programme)}
+                      onValueChange={(value) => handleEditChange('programme', fromProgrammeSelectValue(value))}
                     >
                       <SelectTrigger id="edit-programme" className="border-gray-300 focus:border-blue-500">
                         <SelectValue placeholder="Select programme" />
                       </SelectTrigger>
                       <SelectContent>
+                        <SelectItem value={UNASSIGNED_PROGRAMME}>
+                          Unassigned
+                        </SelectItem>
                         {PROGRAMME_OPTIONS.map((programme) => (
                           <SelectItem key={programme} value={programme}>
                             {programme}

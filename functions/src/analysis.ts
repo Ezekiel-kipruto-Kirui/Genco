@@ -29,6 +29,13 @@ type AnalysisScope =
   | "performance-report"
   | "sales-report";
 
+const VALID_SCOPES = new Set<AnalysisScope>([
+  "overview",
+  "livestock-analytics",
+  "performance-report",
+  "sales-report",
+]);
+
 interface AnalysisRequest {
   scope?: AnalysisScope | string;
   programme?: string | null;
@@ -143,6 +150,17 @@ const getFieldNumber = (record: Record<string, unknown>, ...fields: string[]): n
   return 0;
 };
 
+const getRecordProgramme = (record: Record<string, unknown>): string =>
+  toProgramme(record.programme ?? record.Programme);
+
+const filterRecordsByDateRange = <T extends Record<string, unknown>>(
+  records: T[],
+  getDateValue: (record: T) => unknown,
+  dateRange?: {startDate?: string; endDate?: string} | null,
+): T[] => records.filter((record) =>
+    dateInRange(getDateValue(record), dateRange?.startDate, dateRange?.endDate),
+  );
+
 const snapshotToArray = (snapshot: admin.database.DataSnapshot): any[] => {
   if (!snapshot.exists()) return [];
   const value = snapshot.val();
@@ -151,22 +169,6 @@ const snapshotToArray = (snapshot: admin.database.DataSnapshot): any[] => {
     id,
     ...(record as Record<string, any>),
   }));
-};
-
-const mergeUniqueRecords = (records: any[]): any[] => {
-  const merged = new Map<string, any>();
-
-  for (const record of records) {
-    const id = typeof record?.id === "string" ? record.id : "";
-    if (!id) continue;
-    const previous = merged.get(id) || {};
-    merged.set(id, {
-      ...previous,
-      ...record,
-    });
-  }
-
-  return [...merged.values()];
 };
 
 const fetchCollectionByProgrammes = async (
@@ -179,33 +181,11 @@ const fetchCollectionByProgrammes = async (
 
   if (uniqueProgrammes.length === 0) return [];
 
-  const snapshots = await Promise.all(
-    uniqueProgrammes.map(async (programme) => {
-      const [lowercaseSnapshot, uppercaseSnapshot] = await Promise.all([
-        admin
-          .database()
-          .ref(collectionPath)
-          .orderByChild("programme")
-          .equalTo(programme)
-          .get(),
-        admin
-          .database()
-          .ref(collectionPath)
-          .orderByChild("Programme")
-          .equalTo(programme)
-          .get(),
-      ]);
-
-      return mergeUniqueRecords([
-        ...snapshotToArray(lowercaseSnapshot),
-        ...snapshotToArray(uppercaseSnapshot),
-      ]);
-    }),
-  );
-
-  return mergeUniqueRecords(
-    snapshots.reduce<any[]>((accumulator, current) => accumulator.concat(current), []),
-  );
+  const records = await getCollectionRecords(collectionPath);
+  return records.filter((record) => {
+    const programme = getRecordProgramme(record);
+    return !programme || uniqueProgrammes.includes(programme);
+  });
 };
 
 const getPrincipal = (user: any): string => {
@@ -238,6 +218,9 @@ const canViewAllProgrammes = (user: any): boolean => {
 };
 
 const loadProfile = async (uid: string): Promise<AnalysisProfile | null> => {
+  const cachedProfile = getCached(profileCacheKey(uid));
+  if (cachedProfile) return cachedProfile as AnalysisProfile;
+
   const directSnapshot = await admin.database().ref(`users/${uid}`).get();
   let userData = directSnapshot.exists() ? directSnapshot.val() : null;
 
@@ -258,12 +241,14 @@ const loadProfile = async (uid: string): Promise<AnalysisProfile | null> => {
 
   if (!userData) return null;
 
-  return {
+  const profile = {
     uid,
     role: normalize(userData.role),
     userAttribute: normalize(userData.accessControl?.customAttribute),
     allowedProgrammes: getAllowedProgrammes(userData),
   };
+  setCached(profileCacheKey(uid), profile);
+  return profile;
 };
 
 const resolveProgrammes = (
@@ -324,6 +309,11 @@ const cacheKey = (uid: string, request: AnalysisRequest): string => {
   ].join("|");
 };
 
+const profileCacheKey = (uid: string): string => `profile|${uid}`;
+
+const collectionCacheKey = (collectionPath: string): string =>
+  `collection|${collectionPath}`;
+
 const getCached = (key: string): any | null => {
   const cached = cache.get(key);
   if (!cached) return null;
@@ -339,6 +329,17 @@ const setCached = (key: string, value: any): void => {
     expiresAt: Date.now() + CACHE_TTL_MS,
     value,
   });
+};
+
+const getCollectionRecords = async (collectionPath: string): Promise<any[]> => {
+  const key = collectionCacheKey(collectionPath);
+  const cachedRecords = getCached(key);
+  if (cachedRecords) return cachedRecords as any[];
+
+  const snapshot = await admin.database().ref(collectionPath).get();
+  const records = snapshotToArray(snapshot);
+  setCached(key, records);
+  return records;
 };
 
 const emptyOverview = () => ({
@@ -453,19 +454,6 @@ const createOverview = async (
     fetchCollectionByProgrammes("capacityBuilding", programmes),
   ]);
 
-  const filteredFarmers = farmers.filter((record) => {
-    const programme = toProgramme(record.programme);
-    return !programme || programmes.includes(programme);
-  });
-  const filteredActivities = activities.filter((record) => {
-    const programme = toProgramme(record.programme);
-    return !programme || programmes.includes(programme);
-  });
-  const filteredCapacity = capacity.filter((record) => {
-    const programme = toProgramme(record.programme);
-    return !programme || programmes.includes(programme);
-  });
-
   let maleFarmers = 0;
   let femaleFarmers = 0;
   let totalGoats = 0;
@@ -475,7 +463,7 @@ const createOverview = async (
   let totalCattle = 0;
   const regionMap: Record<string, number> = {};
 
-  for (const farmer of filteredFarmers) {
+  for (const farmer of farmers) {
     const gender = String(farmer.gender || "").trim().toLowerCase();
     if (gender === "male") maleFarmers += 1;
     else if (gender === "female") femaleFarmers += 1;
@@ -499,7 +487,7 @@ const createOverview = async (
     .sort((a, b) => b.farmerCount - a.farmerCount)
     .slice(0, 4);
 
-  const recentActivities = [...filteredActivities]
+  const recentActivities = [...activities]
     .sort((a, b) => (parseDate(b.date)?.getTime() || 0) - (parseDate(a.date)?.getTime() || 0))
     .slice(0, 3)
     .map((record) => ({
@@ -510,13 +498,13 @@ const createOverview = async (
       location: String(record.location || ""),
       numberOfPersons: parseNumber(record.numberOfPersons),
       county: String(record.county || ""),
-      programme: toProgramme(record.programme),
+      programme: getRecordProgramme(record),
     }));
 
-  const pendingActivitiesCount = filteredActivities.filter((record) =>
+  const pendingActivitiesCount = activities.filter((record) =>
     String(record.status || "").trim().toLowerCase() === "pending",
   ).length;
-  const trainedFarmers = filteredCapacity.reduce(
+  const trainedFarmers = capacity.reduce(
     (sum, record) => sum + parseNumber(record.totalFarmers),
     0,
   );
@@ -525,7 +513,7 @@ const createOverview = async (
     scope: "overview",
     resolvedProgrammes: programmes,
     stats: {
-      totalFarmers: filteredFarmers.length,
+      totalFarmers: farmers.length,
       maleFarmers,
       femaleFarmers,
       trainedFarmers,
@@ -534,7 +522,7 @@ const createOverview = async (
       totalGoats,
       totalSheep,
       totalCattle,
-      regionsVisited: topRegions.length,
+      regionsVisited: Object.keys(regionMap).length,
     },
     topRegions,
     recentActivities,
@@ -556,18 +544,16 @@ const createLivestockAnalytics = async (
     fetchCollectionByProgrammes("capacityBuilding", programmes),
   ]);
 
-  const filteredFarmers = farmers.filter((farmer) => {
-    const programme = toProgramme(farmer.programme);
-    const farmerDate = farmer.createdAt || farmer.registrationDate;
-    return (!programme || programmes.includes(programme)) &&
-      dateInRange(farmerDate, dateRange?.startDate, dateRange?.endDate);
-  });
-  const filteredTraining = training.filter((record) => {
-    const programme = toProgramme(record.programme);
-    const recordDate = record.createdAt || record.startDate;
-    return (!programme || programmes.includes(programme)) &&
-      dateInRange(recordDate, dateRange?.startDate, dateRange?.endDate);
-  });
+  const filteredFarmers = filterRecordsByDateRange(
+    farmers,
+    (farmer) => farmer.createdAt || farmer.registrationDate,
+    dateRange,
+  );
+  const filteredTraining = filterRecordsByDateRange(
+    training,
+    (record) => record.createdAt || record.startDate,
+    dateRange,
+  );
 
   let maleFarmers = 0;
   let femaleFarmers = 0;
@@ -691,18 +677,16 @@ const createPerformanceReport = async (
     fetchCollectionByProgrammes("capacityBuilding", programmes),
   ]);
 
-  const filteredFarmers = farmers.filter((farmer) => {
-    const programme = toProgramme(farmer.programme);
-    const farmerDate = farmer.createdAt || farmer.registrationDate;
-    return (!programme || programmes.includes(programme)) &&
-      dateInRange(farmerDate, dateRange?.startDate, dateRange?.endDate);
-  });
-  const filteredTraining = training.filter((record) => {
-    const programme = toProgramme(record.programme);
-    const recordDate = record.createdAt || record.startDate;
-    return (!programme || programmes.includes(programme)) &&
-      dateInRange(recordDate, dateRange?.startDate, dateRange?.endDate);
-  });
+  const filteredFarmers = filterRecordsByDateRange(
+    farmers,
+    (farmer) => farmer.createdAt || farmer.registrationDate,
+    dateRange,
+  );
+  const filteredTraining = filterRecordsByDateRange(
+    training,
+    (record) => record.createdAt || record.startDate,
+    dateRange,
+  );
 
   let maleFarmers = 0;
   let femaleFarmers = 0;
@@ -868,11 +852,11 @@ const createSalesReport = async (
   if (programmes.length === 0) return emptySales();
 
   const offtakes = await fetchCollectionByProgrammes("offtakes", programmes);
-  const filteredData = offtakes.filter((record) => {
-    const programme = toProgramme(record.programme || record.Programme);
-    return (!programme || programmes.includes(programme)) &&
-      dateInRange(record.date || record.Date || record.createdAt, dateRange?.startDate, dateRange?.endDate);
-  });
+  const filteredData = filterRecordsByDateRange(
+    offtakes,
+    (record) => record.date || record.Date || record.createdAt,
+    dateRange,
+  );
 
   let totalPurchaseCost = 0;
   let totalRevenue = 0;
@@ -1019,7 +1003,7 @@ export const getAnalysisSummary = onCall(async (request) => {
 
   const payload = (request.data || {}) as AnalysisRequest;
   const scope = payload.scope;
-  if (!scope || !["overview", "livestock-analytics", "performance-report", "sales-report"].includes(scope)) {
+  if (!scope || !VALID_SCOPES.has(scope as AnalysisScope)) {
     throw new HttpsError("invalid-argument", "A valid analysis scope is required.");
   }
 

@@ -57,6 +57,7 @@ const FIELD_TEAM_ALLOWED_IDENTITIES = PROJECT_MANAGER_ALLOWED_IDENTITIES;
 const LIVESTOCK_ANALYTICS_ALLOWED_IDENTITIES = [...FULL_ACCESS_IDENTITIES, ...HR_IDENTITIES];
 const SALES_REPORT_ALLOWED_IDENTITIES = [...FULL_ACCESS_IDENTITIES, ...FINANCE_IDENTITIES];
 const FIELD_ACTIVITIES_ALLOWED_IDENTITIES = [...FULL_ACCESS_IDENTITIES, ...PROJECT_MANAGER_IDENTITIES, ...HR_IDENTITIES, ...FINANCE_IDENTITIES];
+const INFRASTRUCTURE_ALLOWED_IDENTITIES = [...FULL_ACCESS_IDENTITIES, ...PROJECT_MANAGER_IDENTITIES, ...HR_IDENTITIES];
 const SITE_MANAGEMENT_ALLOWED_IDENTITIES = [...FULL_ACCESS_IDENTITIES];
 const REQUISITION_ALLOWED_IDENTITIES = [
   ...FULL_ACCESS_IDENTITIES,
@@ -195,7 +196,7 @@ const App = () => (
                 <Route
                   path="hay-storage"
                   element={
-                    <ProtectedRoute allowedRoles={SITE_MANAGEMENT_ALLOWED_IDENTITIES}>
+                    <ProtectedRoute allowedRoles={INFRASTRUCTURE_ALLOWED_IDENTITIES}>
                       <HayStoragepage />
                     </ProtectedRoute>
                   }
@@ -203,7 +204,7 @@ const App = () => (
                 <Route
                   path="borehole"
                   element={
-                    <ProtectedRoute allowedRoles={SITE_MANAGEMENT_ALLOWED_IDENTITIES}>
+                    <ProtectedRoute allowedRoles={INFRASTRUCTURE_ALLOWED_IDENTITIES}>
                       <InfrastructurePage />
                     </ProtectedRoute>
                   }

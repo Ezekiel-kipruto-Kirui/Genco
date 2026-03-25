@@ -97,9 +97,6 @@ const buildSections = (userRole: string | null, userAttribute: string | null): N
         ...(canAccessLivestockOfftake
           ? [{ title: "Livestock Offtake", url: "/dashboard/livestock-offtake", icon: Beef }]
           : []),
-        ...(canAccessFodderOfftake
-          ? [{ title: "Fodder Offtake", url: "/dashboard/fodder-offtake", icon: ShoppingCart }]
-          : []),
       ],
     },
     {
@@ -182,6 +179,8 @@ export function DashboardSidebar() {
       : [];
   const showStandaloneDashboard = roleMenuItems.length === 0 && canAccessDashboard(userRole, userAttribute);
   const showBottomRequisition = canAccessRequisition(userRole, userAttribute);
+  const sidebarItemClassName = "h-8 gap-2 px-2 py-1.5";
+  const sidebarSubItemClassName = "h-6 gap-2 px-1.5";
 
   return (
     <Sidebar className={`${collapsed ? "w-14" : "w-64"} bg-green-700 text-white`} collapsible="icon">
@@ -206,7 +205,7 @@ export function DashboardSidebar() {
             <SidebarMenu>
               {showStandaloneDashboard && (
                 <SidebarMenuItem>
-                  <SidebarMenuButton asChild>
+                  <SidebarMenuButton asChild className={sidebarItemClassName}>
                     <NavLink
                       to="/dashboard"
                       end
@@ -222,7 +221,7 @@ export function DashboardSidebar() {
 
               {roleMenuItems.map((item) => (
                 <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton asChild>
+                  <SidebarMenuButton asChild className={sidebarItemClassName}>
                     <NavLink
                       to={item.url}
                       end={item.url === "/dashboard"}
@@ -250,7 +249,7 @@ export function DashboardSidebar() {
                   <Collapsible defaultOpen className="group/collapsible">
                     <SidebarMenuItem>
                       <CollapsibleTrigger asChild>
-                        <SidebarMenuButton className="text-green-50 transition-colors hover:bg-green-600">
+                        <SidebarMenuButton className={`${sidebarItemClassName} text-green-50 transition-colors hover:bg-green-600`}>
                           <section.icon className="h-4 w-4" />
                           {!collapsed && (
                             <>
@@ -266,7 +265,7 @@ export function DashboardSidebar() {
                           <SidebarMenuSub>
                             {section.items.map((item) => (
                               <SidebarMenuSubItem key={item.title}>
-                                <SidebarMenuSubButton asChild>
+                                <SidebarMenuSubButton asChild className={sidebarSubItemClassName}>
                                   <NavLink
                                     to={item.url}
                                     className="text-green-100/70 transition-colors hover:bg-green-600"
@@ -294,7 +293,7 @@ export function DashboardSidebar() {
             <SidebarGroupContent>
               <SidebarMenu>
                 <SidebarMenuItem>
-                  <SidebarMenuButton asChild>
+                  <SidebarMenuButton asChild className={sidebarItemClassName}>
                     <NavLink
                       to="/dashboard/orders"
                       className="text-green-50 transition-colors hover:bg-green-600"
@@ -315,7 +314,7 @@ export function DashboardSidebar() {
             <SidebarGroupContent>
               <SidebarMenu>
                 <SidebarMenuItem>
-                  <SidebarMenuButton asChild>
+                  <SidebarMenuButton asChild className={sidebarItemClassName}>
                     <NavLink
                       to="/dashboard/requisition"
                       className="text-green-50 transition-colors hover:bg-green-600"
@@ -338,7 +337,7 @@ export function DashboardSidebar() {
         <SidebarMenu>
           {canAccessSiteManagement(userRole, userAttribute) && (
             <SidebarMenuItem>
-              <SidebarMenuButton asChild>
+              <SidebarMenuButton asChild className={sidebarItemClassName}>
                 <NavLink
                   to="/dashboard/users"
                   className="text-green-50 transition-colors hover:bg-green-600"
@@ -352,7 +351,10 @@ export function DashboardSidebar() {
           )}
 
           <SidebarMenuItem>
-            <SidebarMenuButton onClick={signOutUser} className="text-green-50 transition-colors hover:bg-green-600">
+            <SidebarMenuButton
+              onClick={signOutUser}
+              className={`${sidebarItemClassName} text-green-50 transition-colors hover:bg-green-600`}
+            >
               <LogOut className="h-4 w-4" />
               {!collapsed && <span>Logout</span>}
             </SidebarMenuButton>
