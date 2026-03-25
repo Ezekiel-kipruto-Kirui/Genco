@@ -21,7 +21,6 @@ const CapacityBuildingPage = lazy(() => import("./pages/CapacityBuildingPage"));
 const LivestockOfftakePage = lazy(() => import("./pages/LivestockOfftakePage"));
 const ActivitiesPage = lazy(() => import("./pages/ActivitiesPage"));
 const FieldTeamPage = lazy(() => import("./pages/FieldTeamPage"));
-const StaffPage = lazy(() => import("./pages/StaffPage"));
 const OnboardingPage = lazy(() => import("./pages/onboardingpage"));
 const AnimalHealthPage = lazy(() => import("./pages/Animalhealth"));
 const FodderOfftakePage = lazy(() => import("./pages/FodderOfftakePage"));
@@ -52,7 +51,6 @@ const DASHBOARD_ALLOWED_IDENTITIES = [
 ];
 const PROJECT_MANAGER_ALLOWED_IDENTITIES = [...FULL_ACCESS_IDENTITIES, ...PROJECT_MANAGER_IDENTITIES];
 const REPORT_ALLOWED_IDENTITIES = [...FULL_ACCESS_IDENTITIES, ...HR_IDENTITIES];
-const STAFF_ALLOWED_IDENTITIES = [...FULL_ACCESS_IDENTITIES, ...HR_IDENTITIES];
 const FIELD_TEAM_ALLOWED_IDENTITIES = PROJECT_MANAGER_ALLOWED_IDENTITIES;
 const LIVESTOCK_ANALYTICS_ALLOWED_IDENTITIES = [...FULL_ACCESS_IDENTITIES, ...HR_IDENTITIES];
 const SALES_REPORT_ALLOWED_IDENTITIES = [...FULL_ACCESS_IDENTITIES, ...FINANCE_IDENTITIES];
@@ -139,14 +137,6 @@ const App = () => (
                   element={
                     <ProtectedRoute allowedRoles={SALES_REPORT_ALLOWED_IDENTITIES}>
                       <SalesReport />
-                    </ProtectedRoute>
-                  }
-                />
-                <Route
-                  path="staff"
-                  element={
-                    <ProtectedRoute allowedRoles={STAFF_ALLOWED_IDENTITIES}>
-                      <StaffPage />
                     </ProtectedRoute>
                   }
                 />

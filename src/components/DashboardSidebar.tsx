@@ -12,7 +12,6 @@ import {
   Settings,
   ShoppingCart,
   TrendingUp,
-  Users,
 } from "lucide-react";
 
 import { NavLink } from "@/components/NavLink";
@@ -149,7 +148,6 @@ const buildRoleMenuItems = (userRole: string | null, userAttribute: string | nul
     return [
       { title: "Dashboard Overview", url: "/dashboard", icon: TrendingUp },
       { title: "Report", url: "/dashboard/reports", icon: LineChart },
-      { title: "Staff", url: "/dashboard/staff", icon: Users },
     ];
   }
 

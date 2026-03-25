@@ -57,6 +57,7 @@ interface FarmerData {
   bucksServed?: string;
   femaleBreeds?: string;
   maleBreeds?: string;
+  tugNumber?: string;
   dewormed?: boolean;
   dewormingDate?: string;
   vaccinationDate?: string;
@@ -126,6 +127,7 @@ interface EditForm {
   bucksServed: string;
   maleBreeds: string;
   femaleBreeds: string;
+  tugNumber: string;
 }
 
 const PAGE_LIMIT = 15;
@@ -291,7 +293,8 @@ const LivestockFarmersPage = () => {
     programme: "",
     bucksServed: "",
     maleBreeds: "",
-    femaleBreeds: ""
+    femaleBreeds: "",
+    tugNumber: ""
   });
 
   const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
@@ -409,6 +412,7 @@ const LivestockFarmersPage = () => {
           bucksServed: item.bucksServed || '0',
           femaleBreeds: item.femaleBreeds || '0',
           maleBreeds: item.maleBreeds || '0',
+          tugNumber: item.tugNumber || item.tagNumber || '',
           dewormed: !!item.dewormed,
           dewormingDate: item.dewormingDate || null,
           vaccinationDate: item.vaccinationDate || null,
@@ -617,7 +621,8 @@ const LivestockFarmersPage = () => {
       programme: record.programme,
       bucksServed: (record.bucksServed ?? "").toString(),
       maleBreeds: (record.maleBreeds ?? "").toString(),
-      femaleBreeds: (record.femaleBreeds ?? "").toString()
+      femaleBreeds: (record.femaleBreeds ?? "").toString(),
+      tugNumber: (record.tugNumber ?? "").toString()
     });
     setIsEditDialogOpen(true);
   }, [userIsChiefAdmin]);
@@ -652,7 +657,8 @@ const LivestockFarmersPage = () => {
         programme: editForm.programme,
         bucksServed: editForm.bucksServed,
         maleBreeds: editForm.maleBreeds,
-        femaleBreeds: editForm.femaleBreeds
+        femaleBreeds: editForm.femaleBreeds,
+        tugNumber: editForm.tugNumber
       });
       toast({ title: "Success", description: "Farmer record updated" });
       setIsEditDialogOpen(false);
@@ -944,7 +950,7 @@ const LivestockFarmersPage = () => {
         'Vaccinated', 'Traceability', 'Vaccines', 
         'Programme', 'Field Officer', 'Created By', 'Registration Date',
         'Dewormed', 'Deworming Date', 'Vaccination Date',
-        'Aggregation Group', 'Bucks Served', 'Female Breeds', 'Male Breeds',
+        'Aggregation Group', 'Bucks Served', 'Female Breeds', 'Male Breeds', 'Tug Number',
         'Age 1-4', 'Age 5-8', 'Age 8+'
       ];
 
@@ -967,6 +973,7 @@ const LivestockFarmersPage = () => {
         f.bucksServed || '',
         f.femaleBreeds || '',
         f.maleBreeds || '',
+        f.tugNumber || '',
         f.ageDistribution?.['1-4'] || '',
         f.ageDistribution?.['5-8'] || '',
         f.ageDistribution?.['8+'] || ''
@@ -1385,6 +1392,15 @@ const LivestockFarmersPage = () => {
                 </div>
               </div>
               <div className="col-span-1 sm:col-span-2 border-t pt-4">
+                <h4 className="font-semibold text-gray-700 mb-3 flex items-center gap-2"><Scale className="h-4 w-4"/>Breeding</h4>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <DetailRow label="Bucks Served" value={viewingRecord.bucksServed || 'N/A'} />
+                    <DetailRow label="Male Breeds" value={viewingRecord.maleBreeds || 'N/A'} />
+                    <DetailRow label="Female Breeds" value={viewingRecord.femaleBreeds || 'N/A'} />
+                    <DetailRow label="Tug Number" value={viewingRecord.tugNumber || 'N/A'} />
+                </div>
+              </div>
+              <div className="col-span-1 sm:col-span-2 border-t pt-4">
                  <div className="p-4 border rounded flex items-center gap-3">
                    <Activity className={`h-5 w-5 ${viewingRecord.traceability ? 'text-blue-600' : 'text-gray-300'}`} />
                    <div>
@@ -1470,6 +1486,10 @@ const LivestockFarmersPage = () => {
             <div className="space-y-2">
                 <Label>Female Breeds</Label>
                 <Input type="number" value={editForm.femaleBreeds} onChange={e => setEditForm({...editForm, femaleBreeds: e.target.value})} />
+            </div>
+            <div className="space-y-2">
+                <Label>Tug Number</Label>
+                <Input value={editForm.tugNumber} onChange={e => setEditForm({...editForm, tugNumber: e.target.value})} />
             </div>
             <div className="col-span-1 sm:col-span-2 my-2 border-t pt-2">
                 <h4 className="text-sm font-semibold text-gray-500 uppercase">Status & PROJECT</h4>
