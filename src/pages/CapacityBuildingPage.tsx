@@ -754,21 +754,22 @@ const CapacityBuildingPage = () => {
           <Button variant="outline" size="sm" onClick={() => { setFilters({...filters, ...currentMonth}); }}>
             This Month
           </Button>
-          {userCanViewAllProgrammeData && (
+          {availablePrograms.length > 1 && (
+            <div className="flex justify-end">
+              <Select value={activeProgram} onValueChange={handleProgramChange}>
+                <SelectTrigger className="w-full sm:w-[200px] border-gray-300 focus:border-blue-500 bg-white">
+                  <SelectValue placeholder="Select Programme" />
+                </SelectTrigger>
+                <SelectContent>
+                  {availablePrograms.map(p => (
+                    <SelectItem key={p} value={p}>{p}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+          {userIsChiefAdmin && (
             <>
-               {/* Programme Selector - ONLY Visible to Chief Admin */}
-               <div className="flex justify-end">
-                  <Select value={activeProgram} onValueChange={handleProgramChange}>
-                      <SelectTrigger className="w-full sm:w-[200px] border-gray-300 focus:border-blue-500 bg-white">
-                          <SelectValue placeholder="Select Programme" />
-                      </SelectTrigger>
-                      <SelectContent>
-                          {availablePrograms.map(p => (
-                              <SelectItem key={p} value={p}>{p}</SelectItem>
-                          ))}
-                      </SelectContent>
-                  </Select>
-               </div>
                <Button variant="outline" size="sm" onClick={() => setIsUploadDialogOpen(true)} className="border-green-300 text-green-700">
                 <Upload className="h-4 w-4 mr-2" /> Upload
               </Button>

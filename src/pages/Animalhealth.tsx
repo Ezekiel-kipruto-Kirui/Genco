@@ -986,14 +986,16 @@ const AnimalHealthPage = () => {
             )}
             
             <div className="flex flex-wrap items-center gap-2">
-                {isSelecting && selectedActivities.length > 0 && (
+                {userIsChiefAdmin && isSelecting && selectedActivities.length > 0 && (
                     <Button variant="destructive" size="sm" onClick={handleDeleteMultipleActivities}>
                         <Trash2 className="h-4 w-4 mr-1" /> Delete Selected ({selectedActivities.length})
                     </Button>
                 )}
-                <Button variant="outline" size="sm" onClick={() => { setIsSelecting(!isSelecting); setSelectedActivities([]); }}>
-                    {isSelecting ? "Cancel Selection" : <><CheckSquare className="h-4 w-4 mr-1" /> Select</>}
-                </Button>
+                {userIsChiefAdmin && (
+                  <Button variant="outline" size="sm" onClick={() => { setIsSelecting(!isSelecting); setSelectedActivities([]); }}>
+                      {isSelecting ? "Cancel Selection" : <><CheckSquare className="h-4 w-4 mr-1" /> Select</>}
+                  </Button>
+                )}
                 <Button variant="outline" size="sm" onClick={exportToCSV}>
                     <Download className="h-4 w-4 mr-1" /> Export
                 </Button>

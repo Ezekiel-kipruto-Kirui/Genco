@@ -26,6 +26,30 @@ const FULL_ACCESS_ATTRIBUTE_IDENTIFIERS = new Set([
   "m&e officer",
   "mne officer",
 ]);
+const DISPLAY_NAME_MAP: Record<string, string> = {
+  admin: "Admin",
+  "chief-admin": "Chief Admin",
+  "chief admin": "Chief Admin",
+  mobile: "Mobile User",
+  user: "User",
+  ceo: "CEO",
+  cio: "CEO",
+  "project manager": "Project Manager",
+  "humman resource manager": "Human Resource Manager",
+  "human resource manager": "Human Resource Manager",
+  "humman resource manger": "Human Resource Manager",
+  "human resource manger": "Human Resource Manager",
+  finance: "Finance",
+  "offtake officer": "Offtake Officer",
+  "chief operations manager": "Chief Operations Manager",
+  "chief operational manager": "Chief Operations Manager",
+  "chief operatons manger": "Chief Operations Manager",
+  "m&e officer": "M&E Officer",
+  "mne officer": "M&E Officer",
+  "me officer": "M&E Officer",
+  "monitoring and evaluation officer": "M&E Officer",
+  "monitoring & evaluation officer": "M&E Officer",
+};
 
 const toTitleCase = (value: string): string =>
   value
@@ -35,6 +59,18 @@ const toTitleCase = (value: string): string =>
     .filter(Boolean)
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(" ");
+
+const formatDisplayName = (value: string): string => {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+
+  const normalized = normalizeText(trimmed);
+  const mappedDisplayName = DISPLAY_NAME_MAP[normalized];
+  if (mappedDisplayName) return mappedDisplayName;
+
+  if (/[A-Z]/.test(trimmed)) return trimmed;
+  return toTitleCase(normalized);
+};
 
 export const normalizeRole = (userRole: string | null | undefined): string => {
   if (!userRole) return "";
@@ -229,6 +265,7 @@ export const canAccessRequisition = (
     isChiefAdmin(principal) ||
     isAdmin(principal) ||
     isFullAccessAttribute(principal) ||
+    isProjectManager(principal) ||
     isHummanResourceManager(principal) ||
     isFinance(principal)
   );
@@ -281,10 +318,10 @@ export const getRoleDisplayName = (
   userRole: string | null | undefined,
   userAttribute?: string | null
 ): string => {
-  const attribute = normalizeAttribute(userAttribute);
-  if (attribute) return toTitleCase(attribute);
+  const attribute = typeof userAttribute === "string" ? userAttribute.trim() : "";
+  if (attribute) return formatDisplayName(attribute);
 
-  const role = normalizeRole(userRole);
+  const role = typeof userRole === "string" ? userRole.trim() : "";
   if (!role) return "User";
-  return toTitleCase(role);
+  return formatDisplayName(role);
 };

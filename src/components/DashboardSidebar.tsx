@@ -81,7 +81,7 @@ const buildSections = (userRole: string | null, userAttribute: string | null): N
       icon: Beef,
       visible: canAccessFarmerData(userRole, userAttribute),
       items: [
-         { title: "Livestock Dashboard", url: "/dashboard/livestock/analytics", icon: TrendingUp },
+         { title: "Progress Dashboard", url: "/dashboard/livestock/analytics", icon: TrendingUp },
         { title: "Livestock Farmers", url: "/dashboard/livestock", icon: Database },
        
         { title: "Fodder Farmers", url: "/dashboard/fodder", icon: Database },
@@ -122,8 +122,27 @@ const buildSections = (userRole: string | null, userAttribute: string | null): N
 
 const buildHrSections = (userRole: string | null, userAttribute: string | null): NavSection[] => {
   return buildSections(userRole, userAttribute).filter((section) =>
-    section.title === "Farmer Data" || section.title === "Field Activities"
+    section.title === "Farmer Data" ||
+    section.title === "Field Activities" ||
+    section.title === "Infrastructure"
   );
+};
+
+const buildProjectManagerSections = (userRole: string | null, userAttribute: string | null): NavSection[] => {
+  return buildSections(userRole, userAttribute)
+    .filter((section) =>
+      section.title === "Farmer Data" ||
+      section.title === "Field Activities" ||
+      section.title === "Infrastructure"
+    )
+    .map((section) =>
+      section.title === "Farmer Data"
+        ? {
+            ...section,
+            items: section.items.filter((item) => item.url === "/dashboard/livestock/analytics"),
+          }
+        : section
+    );
 };
 
 const buildFinanceSections = (userRole: string | null, userAttribute: string | null): NavSection[] => {
@@ -137,10 +156,8 @@ const buildRoleMenuItems = (userRole: string | null, userAttribute: string | nul
     return [
       { title: "Dashboard Overview", url: "/dashboard", icon: TrendingUp },
       { title: "Field Team Page", url: "/dashboard/field-team", icon: ClipboardList },
-      { title: "Field Activities", url: "/dashboard/activities", icon: Activity },
+      { title: "Report", url: "/dashboard/reports", icon: LineChart },
       { title: "Livestock Offtake", url: "/dashboard/livestock-offtake", icon: Beef },
-      { title: "Animal Health", url: "/dashboard/animalhealth", icon: HeartPulse },
-      { title: "Onboarding", url: "/dashboard/onboarding", icon: GraduationCap },
     ];
   }
 
@@ -168,22 +185,24 @@ export function DashboardSidebar() {
   const principal = resolvePermissionPrincipal(userRole, userAttribute);
   const sections = buildSections(userRole, userAttribute);
   const roleMenuItems = buildRoleMenuItems(userRole, userAttribute);
-  const roleMenuSections = isHummanResourceManager(principal)
-    ? buildHrSections(userRole, userAttribute)
-    : isFinance(principal)
-      ? buildFinanceSections(userRole, userAttribute)
-    : roleMenuItems.length === 0
-      ? sections
-      : [];
+  const roleMenuSections = isProjectManager(principal)
+    ? buildProjectManagerSections(userRole, userAttribute)
+    : isHummanResourceManager(principal)
+      ? buildHrSections(userRole, userAttribute)
+      : isFinance(principal)
+        ? buildFinanceSections(userRole, userAttribute)
+        : roleMenuItems.length === 0
+          ? sections
+          : [];
   const showStandaloneDashboard = roleMenuItems.length === 0 && canAccessDashboard(userRole, userAttribute);
   const showBottomRequisition = canAccessRequisition(userRole, userAttribute);
-  const sidebarItemClassName = "h-8 gap-2 px-2 py-1.5";
-  const sidebarSubItemClassName = "h-6 gap-2 px-1.5";
+  const sidebarItemClassName = "h-8 gap-2 px-1.5 py-1";
+  const sidebarSubItemClassName = "h-6 gap-1.5 px-1";
 
   return (
     <Sidebar className={`${collapsed ? "w-14" : "w-64"} bg-green-700 text-white`} collapsible="icon">
-      <SidebarHeader className="bg-green-700 pb-4">
-        <div className="flex items-center gap-2 p-2">
+      <SidebarHeader className="bg-green-700 pb-3">
+        <div className="flex items-center gap-2 p-1.5">
           <div className="flex h-8 w-8 items-center justify-center rounded-full bg-white/20 shadow backdrop-blur">
             <img src="/img/logo.png" className="h-8 w-8 rounded-full object-cover" alt="GenCo Logo" />
           </div>
@@ -319,7 +338,7 @@ export function DashboardSidebar() {
                       activeClassName="bg-white font-bold text-green-700 shadow-sm"
                     >
                       <ClipboardList className="h-4 w-4" />
-                      {!collapsed && <span>Requisition</span>}
+                      {!collapsed && <span>Requisitions</span>}
                     </NavLink>
                   </SidebarMenuButton>
                 </SidebarMenuItem>

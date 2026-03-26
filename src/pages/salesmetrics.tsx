@@ -533,7 +533,7 @@ const SalesReport = () => {
     [allowedProgrammes, userCanViewAllProgrammeData]
   );
   const [activeProgram, setActiveProgram] = useState<string>(""); 
-  const showProgrammeFilter = userCanViewAllProgrammeData;
+  const showProgrammeFilter = accessibleProgrammes.length > 1;
   const [salesInputs, setSalesInputs] = useState<SalesInputs>({ pricePerKg: 0, expenses: 0 });
   const [isSalesInputsDialogOpen, setIsSalesInputsDialogOpen] = useState(false);
   const [salesInputsForm, setSalesInputsForm] = useState<{ pricePerKg: string; expenses: string }>({

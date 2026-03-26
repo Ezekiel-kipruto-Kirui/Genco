@@ -1698,7 +1698,7 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
         </div>
         
         <div className="flex flex-wrap gap-2 items-center w-full xl:w-auto">
-            {userIsChiefAdmin && availableProgramsForSelect.length > 0 && (
+            {availableProgramsForSelect.length > 1 && (
                 <div className="mr-4">
                     <Select value={activeProgram} onValueChange={handleProgramChange} disabled={availableProgramsForSelect.length <= 1}>
                         <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white w-full sm:w-[140px]">

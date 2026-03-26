@@ -769,7 +769,7 @@ const FodderFarmersPage = () => {
             This Month
           </Button>
 
-          {userCanViewAllProgrammeData ? (
+          {availablePrograms.length > 1 ? (
              <div className="flex justify-end w-full sm:w-auto">
                <Select value={activeProgram} onValueChange={handleProgramChange}>
                   <SelectTrigger className="w-full sm:w-[200px] border-gray-300 focus:border-green-500 bg-white">

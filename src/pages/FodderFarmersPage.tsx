@@ -732,7 +732,7 @@ const FodderFarmersPage = () => {
           <Button variant="outline" size="sm" onClick={clearAllFilters} className="text-xs border-gray-300 hover:bg-gray-50">Clear All Filters</Button>
           <Button variant="outline" size="sm" onClick={resetToCurrentMonth} className="text-xs border-gray-300 hover:bg-gray-50">This Month</Button>
 
-          {userCanViewAllProgrammeData ? (
+          {availablePrograms.length > 1 ? (
              <div className="flex justify-end w-full sm:w-auto">
                <Select value={activeProgram} onValueChange={handleProgramChange}>
                   <SelectTrigger className="w-full sm:w-[200px] border-gray-300 focus:border-green-500 bg-white"><SelectValue placeholder="Select Programme" /></SelectTrigger>

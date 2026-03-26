@@ -21,7 +21,8 @@ import { resolveAccessibleProgrammes, resolveActiveProgramme } from "@/lib/progr
 const COLORS = {
   navy: "#1e3a8a",
   orange: "#f97316", 
-  yellow: "#f59e0b"
+  yellow: "#f59e0b",
+  maroon: "#7f1d1d"
 };
 const BAR_COLORS = [COLORS.navy, COLORS.orange, COLORS.yellow];
 
@@ -77,6 +78,39 @@ interface TimeSeriesItem {
   farmers: any;
   animals: any;
 }
+
+const getGenderColor = (label: string): string => {
+  const normalized = label.trim().toLowerCase();
+  if (normalized === "male") return COLORS.navy;
+  if (normalized === "female") return COLORS.orange;
+  return COLORS.yellow;
+};
+
+const getAnimalCensusColor = (label: string): string => {
+  const normalized = label.trim().toLowerCase();
+  if (normalized === "goats") return COLORS.maroon;
+  if (normalized === "sheep") return COLORS.orange;
+  return COLORS.navy;
+};
+
+const normalizePieChartData = (
+  data: Array<Partial<PieDataItem>> | undefined,
+  chartType: "gender" | "animal",
+): PieDataItem[] =>
+  (data || [])
+    .map((item) => {
+      const value = typeof item?.value === "number" ? item.value : Number(item?.value || 0);
+      return {
+        name: typeof item?.name === "string" ? item.name : "",
+        value: Number.isFinite(value) ? value : 0,
+      };
+    })
+    .filter((item) => item.name && item.value > 0)
+    .map((item) => ({
+      name: item.name,
+      value: item.value,
+      color: chartType === "gender" ? getGenderColor(item.name) : getAnimalCensusColor(item.name),
+    }));
 
 // --- Helper Functions ---
 
@@ -223,8 +257,8 @@ const LivestockFarmersAnalytics = () => {
       femaleFarmers: analysis.femaleFarmers || 0,
       totalTrainedFromCapacity: analysis.totalTrainedFromCapacity || 0,
     });
-    setGenderData(analysis.genderData || []);
-    setAnimalCensusData(analysis.animalCensusData || []);
+    setGenderData(normalizePieChartData(analysis.genderData, "gender"));
+    setAnimalCensusData(normalizePieChartData(analysis.animalCensusData, "animal"));
     setWeeklyPerformanceData(analysis.weeklyPerformanceData || []);
     setSubcountyPerformanceData(analysis.subcountyPerformanceData || []);
     setFilteredData([]);
@@ -402,10 +436,10 @@ const LivestockFarmersAnalytics = () => {
       0
     );
     
-    // Realistic Percentage: trained vs total registered farmers in filter
-    // Note: If totalTrainedFromCapacity exceeds data.length (due to repeat attendees or data mismatch), 
-    // we cap visual representation or show >100%. Here we calculate raw ratio.
-    const trainingRate = data.length > 0 ? (totalTrainedFromCapacity / data.length) * 100 : 0;
+    // Capacity-building totals can include repeat attendees, so keep coverage bounded to registered farmers.
+    const trainingRate = data.length > 0 ?
+      (Math.min(totalTrainedFromCapacity, data.length) / data.length) * 100 :
+      0;
 
     // Animal Census
     let totalGoats = 0;
@@ -432,15 +466,15 @@ const LivestockFarmersAnalytics = () => {
 
     // 1. Gender Data
     const genderChartData: PieDataItem[] = [
-      { name: "Male", value: Number(maleCount), color: COLORS.navy },
-      { name: "Female", value: Number(femaleCount), color: COLORS.orange },
+      { name: "Male", value: Number(maleCount), color: getGenderColor("Male") },
+      { name: "Female", value: Number(femaleCount), color: getGenderColor("Female") },
     ];
     setGenderData(genderChartData);
 
     // 2. Animal Census Data
     const animalChartData: PieDataItem[] = [
-      { name: "Goats", value: Number(totalGoats), color: COLORS.navy },
-      { name: "Sheep", value: Number(totalSheep), color: COLORS.yellow },
+      { name: "Goats", value: Number(totalGoats), color: getAnimalCensusColor("Goats") },
+      { name: "Sheep", value: Number(totalSheep), color: getAnimalCensusColor("Sheep") },
     ];
     setAnimalCensusData(animalChartData);
 
@@ -696,7 +730,7 @@ const LivestockFarmersAnalytics = () => {
                     Clear
                   </Button>
                 
-                 {userIsChiefAdmin && availablePrograms.length > 0 && (
+                 {availablePrograms.length > 1 && (
             <Select value={activeProgram} onValueChange={setActiveProgram}>
               <SelectTrigger className="w-full lg:w-[180px] h-10">
                 <SelectValue placeholder="Select Programme" />
@@ -861,8 +895,8 @@ const LivestockFarmersAnalytics = () => {
         <Card className="border-0 shadow-lg bg-white">
           <CardHeader className="pb-2">
             <CardTitle className="text-md flex items-center gap-2 text-gray-800">
-              <Beef className="h-5 w-5 text-orange-600" />
-              Animal Census (Goats vs Sheep)
+              <Beef className="h-5 w-5 text-red-900" />
+              Animal Census
             </CardTitle>
           </CardHeader>
           <CardContent>

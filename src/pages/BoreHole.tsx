@@ -1257,7 +1257,7 @@ const BoreholePage = () => {
         </div>
 
         <div className="flex flex-wrap gap-2">
-          {userCanViewAllProgrammeData && (
+          {availablePrograms.length > 1 && (
             <div className="w-full sm:w-[180px]">
               <Select
                 value={activeProgram}

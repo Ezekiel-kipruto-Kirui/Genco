@@ -8,7 +8,7 @@ import {
   isProjectManager,
   resolvePermissionPrincipal,
 } from "@/contexts/authhelper";
-import { ref, get } from "firebase/database";
+import { ref, get, push, update } from "firebase/database";
 import { db } from "@/lib/firebase";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { 
@@ -23,6 +23,24 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { useToast } from "@/hooks/use-toast";
 import { fetchAnalysisSummary } from "@/lib/analysis";
 import { resolveAccessibleProgrammes, resolveActiveProgramme } from "@/lib/programme-access";
 
@@ -43,6 +61,9 @@ const BAR_COLORS = [
   COLORS.purple, COLORS.teal, COLORS.maroon
 ];
 
+const HORIZONTAL_BAR_CHART_MARGIN = { top: 0, right: 12, left: 48, bottom: 0 };
+const HORIZONTAL_BAR_CHART_Y_AXIS_WIDTH = 68;
+
 // Cache duration: 5 minutes
 const CACHE_DURATION = 5 * 60 * 1000; 
 
@@ -50,6 +71,7 @@ const CACHE_DURATION = 5 * 60 * 1000;
 interface Farmer {
   id: string;
   name: string;
+  farmerName?: string;
   gender: string;
   phone: string;
   county: string;
@@ -110,12 +132,102 @@ interface AnimalHealthRecord {
   date?: string;
   createdAt?: string | number;
   programme?: string;
+  county?: string;
+  subcounty?: string;
+  location?: string;
   vaccines?: AnimalHealthVaccine[];
   vaccinetype?: string;
   number_doses?: number | string;
 }
 
+interface StaffMarkRecord {
+  id: string;
+  staffName?: string;
+  staff?: string;
+  name?: string;
+  marks?: number | string;
+  note?: string;
+  programme?: string;
+  dateAwarded?: string;
+  createdAt?: number | string;
+  awardedBy?: string;
+  periodStart?: string;
+  periodEnd?: string;
+}
+
+interface StaffDirectoryRecord {
+  id: string;
+  staffName?: string;
+  role?: string;
+  county?: string;
+  phone?: string;
+  notes?: string;
+  programme?: string;
+  status?: string;
+  createdAt?: number | string;
+  createdBy?: string;
+  updatedAt?: number | string;
+  updatedBy?: string;
+}
+
+type StaffManagementRow = {
+  id: string;
+  staffName: string;
+  role: string;
+  county: string;
+  phone: string;
+  programme: string;
+  status: string;
+  notes: string;
+  totalMarks: number;
+  awardCount: number;
+  lastAwardDate: string;
+  lastAwardNote: string;
+  managedInDirectory: boolean;
+};
+
+type CreateStaffFormState = {
+  staffName: string;
+  role: string;
+  county: string;
+  phone: string;
+  notes: string;
+};
+
+type StaffMarkFormState = {
+  staffName: string;
+  marks: string;
+  note: string;
+  dateAwarded: string;
+};
+
+const createDefaultStaffForm = (): CreateStaffFormState => ({
+  staffName: "",
+  role: "",
+  county: "",
+  phone: "",
+  notes: "",
+});
+
+const createDefaultStaffMarkForm = (): StaffMarkFormState => ({
+  staffName: "",
+  marks: "",
+  note: "",
+  dateAwarded: formatDateToLocal(new Date()),
+});
+
 // --- Helper Functions ---
+const parseNumericValue = (value: unknown): number => {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const normalized = value.replace(/,/g, "").trim();
+    if (!normalized) return 0;
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+};
+
 const parseDate = (date: any): Date | null => {
   if (!date) return null;
   try {
@@ -144,7 +256,7 @@ const getNumberField = (obj: any, ...fieldNames: string[]): number => {
   for (const fieldName of fieldNames) {
     const value = obj[fieldName];
     if (value !== undefined && value !== null && value !== '') {
-      const num = Number(value);
+      const num = parseNumericValue(value);
       return isNaN(num) ? 0 : num;
     }
   }
@@ -162,10 +274,28 @@ const getLeaderName = (value: unknown, fallback: string): string => {
   return fallback;
 };
 
+const normalizeStaffName = (value: unknown): string =>
+  typeof value === "string" ? value.trim().toLowerCase() : "";
+
 const getGoatTotal = (goats: any): number => {
-  if (typeof goats === "number") return goats;
-  if (typeof goats === "object" && goats !== null && typeof goats.total === "number") return goats.total;
+  if (typeof goats === "number" || typeof goats === "string") return parseNumericValue(goats);
+  if (typeof goats === "object" && goats !== null) {
+    if (Object.prototype.hasOwnProperty.call(goats, "total")) {
+      return parseNumericValue(goats.total);
+    }
+    return parseNumericValue(goats.male) + parseNumericValue(goats.female);
+  }
   return 0;
+};
+
+const formatDisplayDate = (value: unknown): string => {
+  const parsed = parseDate(value);
+  if (!parsed) return "N/A";
+  return parsed.toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
 };
 
 const getOfftakeGoatsTotal = (record: OfftakeRecord): number =>
@@ -260,6 +390,7 @@ type PerformanceReportData = {
   sheepPercentage: string;
   totalTrainedFarmers: number;
   countyPerformanceData: Array<{ name: string; value: number }>;
+  subcountyPerformanceData: Array<{ name: string; value: number }>;
   registrationTrendData: Array<{ name: string; registrations: number }>;
   topLocations: Array<{ name: string; value: number }>;
   topCustomers: Array<{ name: string; value: number; county: string }>;
@@ -273,13 +404,16 @@ type PerformanceReportData = {
   breedsFemale: number;
   breedsMalePercentage: string;
   breedsFemalePercentage: string;
+  farmersWithBreedData: number;
   vaccinationRate: string;
   vaccinatedAnimals: number;
   vaccinatedFarmersCount: number;
   breedsByCountyData: Array<{ name: string; value: number }>;
   breedsBySubcountyData: Array<{ name: string; value: number }>;
+  breedsByLocationData: Array<{ name: string; value: number }>;
   vaccinationByCountyData: Array<{ name: string; value: number }>;
   vaccinationBySubcountyData: Array<{ name: string; value: number }>;
+  dosesByLocationData: Array<{ name: string; value: number }>;
 };
 
 const EMPTY_PERFORMANCE_DATA: PerformanceReportData = {
@@ -297,6 +431,7 @@ const EMPTY_PERFORMANCE_DATA: PerformanceReportData = {
   sheepPercentage: "0.0",
   totalTrainedFarmers: 0,
   countyPerformanceData: [],
+  subcountyPerformanceData: [],
   registrationTrendData: [],
   topLocations: [],
   topCustomers: [],
@@ -310,13 +445,16 @@ const EMPTY_PERFORMANCE_DATA: PerformanceReportData = {
   breedsFemale: 0,
   breedsMalePercentage: "0.0",
   breedsFemalePercentage: "0.0",
+  farmersWithBreedData: 0,
   vaccinationRate: "0.0",
   vaccinatedAnimals: 0,
   vaccinatedFarmersCount: 0,
   breedsByCountyData: [],
   breedsBySubcountyData: [],
+  breedsByLocationData: [],
   vaccinationByCountyData: [],
   vaccinationBySubcountyData: [],
+  dosesByLocationData: [],
 };
 
 const normalizeProgramme = (value: unknown): string =>
@@ -327,6 +465,7 @@ function computeLocalPerformanceReportData(
   trainingRecords: TrainingRecord[],
   animalHealthActivities: AnimalHealthRecord[],
   offtakeRecords: OfftakeRecord[],
+  staffMarkRecords: StaffMarkRecord[],
   dateRange: { startDate: string; endDate: string },
   timeFrame: "weekly" | "monthly" | "yearly",
   selectedProgramme: string | null,
@@ -361,6 +500,12 @@ function computeLocalPerformanceReportData(
     return (includeAllProgrammes || programme === requestedProgramme) &&
       isDateInRange(recordDate, dateRange.startDate, dateRange.endDate);
   });
+  const filteredStaffMarks = staffMarkRecords.filter((record) => {
+    const programme = normalizeProgramme(record.programme);
+    const recordDate = record.dateAwarded || record.createdAt;
+    return (includeAllProgrammes || programme === requestedProgramme) &&
+      isDateInRange(recordDate, dateRange.startDate, dateRange.endDate);
+  });
 
   let maleFarmers = 0;
   let femaleFarmers = 0;
@@ -373,15 +518,19 @@ function computeLocalPerformanceReportData(
   let vaccinatedFarmersCount = 0;
   let breedsMale = 0;
   let breedsFemale = 0;
+  let farmersWithBreedData = 0;
   const countyMap: Record<string, number> = {};
+  const subcountyMap: Record<string, number> = {};
   const locationMap: Record<string, number> = {};
   const topCustomersMap: Record<string, { name: string; value: number; county: string }> = {};
   const topFieldOfficersMap: Record<string, number> = {};
   const topStaffAwardedMap: Record<string, number> = {};
   const breedsByCountyMap: Record<string, number> = {};
   const breedsBySubcountyMap: Record<string, number> = {};
+  const breedsByLocationMap: Record<string, number> = {};
   const vaccinationByCountyMap: Record<string, number> = {};
   const vaccinationBySubcountyMap: Record<string, number> = {};
+  const dosesByLocationMap: Record<string, number> = {};
   const selectedYearNumber = selectedYear && Number.isFinite(selectedYear) ? selectedYear : null;
   const currentYear = new Date().getFullYear();
   const trendYear = selectedYearNumber ?? null;
@@ -405,8 +554,10 @@ function computeLocalPerformanceReportData(
     breedsFemale += femaleBreedCount;
 
     const county = String(farmer.county || "Unknown").trim() || "Unknown";
+    const subcounty = String(farmer.subcounty || "Unknown").trim() || "Unknown";
     const location = String(farmer.location || "Unknown").trim() || "Unknown";
     countyMap[county] = (countyMap[county] || 0) + 1;
+    subcountyMap[subcounty] = (subcountyMap[subcounty] || 0) + 1;
     locationMap[location] = (locationMap[location] || 0) + 1;
 
     const farmerName = String(farmer.name || farmer.farmerName || farmer.farmerId || farmer.id || "Unknown").trim() || "Unknown";
@@ -424,26 +575,34 @@ function computeLocalPerformanceReportData(
       totalVaccinatedAnimals += totalAnimalsForFarmer;
       vaccinatedFarmersCount += 1;
       vaccinationByCountyMap[county] = (vaccinationByCountyMap[county] || 0) + totalAnimalsForFarmer;
-      const subcounty = String(farmer.subcounty || "Unknown").trim() || "Unknown";
       vaccinationBySubcountyMap[subcounty] = (vaccinationBySubcountyMap[subcounty] || 0) + totalAnimalsForFarmer;
     }
 
     if (maleBreedCount + femaleBreedCount > 0) {
+      farmersWithBreedData += 1;
       breedsByCountyMap[county] = (breedsByCountyMap[county] || 0) + maleBreedCount + femaleBreedCount;
-      const subcounty = String(farmer.subcounty || "Unknown").trim() || "Unknown";
       breedsBySubcountyMap[subcounty] = (breedsBySubcountyMap[subcounty] || 0) + maleBreedCount + femaleBreedCount;
+      breedsByLocationMap[location] = (breedsByLocationMap[location] || 0) + maleBreedCount + femaleBreedCount;
     }
   }
 
-  filteredTraining.forEach((record) => {
-    const staffName = getLeaderName(record.fieldOfficer || record.username, "");
-    const farmersReached = getNumberField(record, "totalFarmers");
-    if (!staffName || farmersReached <= 0) return;
-    topStaffAwardedMap[staffName] = (topStaffAwardedMap[staffName] || 0) + farmersReached;
+  filteredStaffMarks.forEach((record) => {
+    const staffName = getLeaderName(
+      record.staffName || record.staff || record.name,
+      "",
+    );
+    const awardedMarks = getNumberField(record, "marks", "score", "awardedMarks");
+    if (!staffName || awardedMarks <= 0) return;
+    topStaffAwardedMap[staffName] = (topStaffAwardedMap[staffName] || 0) + awardedMarks;
   });
 
   filteredAnimalHealthActivities.forEach((record) => {
-    totalDosesGivenOut += getAnimalHealthTotalDoses(record);
+    const doses = getAnimalHealthTotalDoses(record);
+    totalDosesGivenOut += doses;
+    const location = String(record.location || "Unknown").trim() || "Unknown";
+    if (doses > 0) {
+      dosesByLocationMap[location] = (dosesByLocationMap[location] || 0) + doses;
+    }
   });
 
   filteredOfftakeRecords.forEach((record) => {
@@ -455,6 +614,10 @@ function computeLocalPerformanceReportData(
   const countyPerformanceData = Object.entries(countyMap)
     .map(([name, value]) => ({ name, value }))
     .sort((a, b) => b.value - a.value);
+  const subcountyPerformanceData = Object.entries(subcountyMap)
+    .map(([name, value]) => ({ name, value }))
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 10);
   const topLocations = Object.entries(locationMap)
     .map(([name, value]) => ({ name, value }))
     .sort((a, b) => b.value - a.value)
@@ -526,10 +689,18 @@ function computeLocalPerformanceReportData(
     .map(([name, value]) => ({ name, value }))
     .sort((a, b) => b.value - a.value)
     .slice(0, 10);
+  const breedsByLocationData = Object.entries(breedsByLocationMap)
+    .map(([name, value]) => ({ name, value }))
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 10);
   const vaccinationByCountyData = Object.entries(vaccinationByCountyMap)
     .map(([name, value]) => ({ name, value }))
     .sort((a, b) => b.value - a.value);
   const vaccinationBySubcountyData = Object.entries(vaccinationBySubcountyMap)
+    .map(([name, value]) => ({ name, value }))
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 10);
+  const dosesByLocationData = Object.entries(dosesByLocationMap)
     .map(([name, value]) => ({ name, value }))
     .sort((a, b) => b.value - a.value)
     .slice(0, 10);
@@ -549,6 +720,7 @@ function computeLocalPerformanceReportData(
     sheepPercentage: totalAnimals > 0 ? ((totalSheep / totalAnimals) * 100).toFixed(1) : "0.0",
     totalTrainedFarmers,
     countyPerformanceData,
+    subcountyPerformanceData,
     registrationTrendData,
     topLocations,
     topCustomers,
@@ -562,13 +734,16 @@ function computeLocalPerformanceReportData(
     breedsFemale,
     breedsMalePercentage: totalBreedsDistributed > 0 ? ((breedsMale / totalBreedsDistributed) * 100).toFixed(1) : "0.0",
     breedsFemalePercentage: totalBreedsDistributed > 0 ? ((breedsFemale / totalBreedsDistributed) * 100).toFixed(1) : "0.0",
+    farmersWithBreedData,
     vaccinationRate: totalAnimals > 0 ? ((totalVaccinatedAnimals / totalAnimals) * 100).toFixed(1) : "0.0",
     vaccinatedAnimals: totalVaccinatedAnimals,
     vaccinatedFarmersCount,
     breedsByCountyData,
     breedsBySubcountyData,
+    breedsByLocationData,
     vaccinationByCountyData,
     vaccinationBySubcountyData,
+    dosesByLocationData,
   };
 }
 
@@ -578,6 +753,7 @@ const useProcessedData = (
   _trainingRecords: TrainingRecord[],
   _animalHealthActivities: AnimalHealthRecord[],
   _offtakeRecords: OfftakeRecord[],
+  _staffMarkRecords: StaffMarkRecord[],
   dateRange: { startDate: string; endDate: string },
   timeFrame: 'weekly' | 'monthly' | 'yearly',
   selectedProgramme: string | null,
@@ -613,16 +789,19 @@ const useProcessedData = (
             _trainingRecords,
             _animalHealthActivities,
             _offtakeRecords,
+            _staffMarkRecords,
             dateRange,
             timeFrame,
             selectedProgramme,
             selectedYear,
           ),
-    [_allFarmers, _trainingRecords, _animalHealthActivities, _offtakeRecords, dateRange, timeFrame, selectedProgramme, selectedYear],
+    [_allFarmers, _trainingRecords, _animalHealthActivities, _offtakeRecords, _staffMarkRecords, dateRange, timeFrame, selectedProgramme, selectedYear],
   );
 
   return {
-    data: (queryResult.data as PerformanceReportData | undefined) ?? localData ?? EMPTY_PERFORMANCE_DATA,
+    data: USE_REMOTE_ANALYTICS ?
+      { ...EMPTY_PERFORMANCE_DATA, ...(queryResult.data as Partial<PerformanceReportData> | undefined) } :
+      localData ?? EMPTY_PERFORMANCE_DATA,
     isLoading: queryResult.isLoading || queryResult.isFetching,
   };
 };
@@ -681,6 +860,7 @@ type ReportSectionId =
   | "hr-summary"
   | "hr-rankings"
   | "hr-distribution"
+  | "project-manager-report"
   | "default-registration"
   | "default-animal-health";
 
@@ -690,8 +870,8 @@ const REPORT_VIEW_PROFILES: Record<ReportAudience, { title: string; sections: Re
     sections: ["hr-summary", "hr-rankings", "hr-distribution"],
   },
   "project-manager": {
-    title: "Performance Dashboard",
-    sections: ["default-registration", "default-animal-health"],
+    title: "Project Manager Report",
+    sections: ["project-manager-report"],
   },
   default: {
     title: "Performance Dashboard",
@@ -712,7 +892,8 @@ const resolveReportAudience = (
 // --- Main Component ---
 
 const PerformanceReport = () => {
-  const { userRole, userAttribute, allowedProgrammes } = useAuth();
+  const { userRole, userAttribute, userName, allowedProgrammes } = useAuth();
+  const { toast } = useToast();
   const currentMonthDates = useMemo(() => getCurrentMonthDates(), []);
   
   const cacheRef = useRef<{
@@ -728,6 +909,16 @@ const PerformanceReport = () => {
   const [trainingRecords, setTrainingRecords] = useState<TrainingRecord[]>([]);
   const [animalHealthActivities, setAnimalHealthActivities] = useState<AnimalHealthRecord[]>([]);
   const [offtakeRecords, setOfftakeRecords] = useState<OfftakeRecord[]>([]);
+  const [staffDirectoryRecords, setStaffDirectoryRecords] = useState<StaffDirectoryRecord[]>([]);
+  const [staffMarkRecords, setStaffMarkRecords] = useState<StaffMarkRecord[]>([]);
+  const [createStaffForm, setCreateStaffForm] = useState<CreateStaffFormState>(createDefaultStaffForm);
+  const [staffMarkForm, setStaffMarkForm] = useState<StaffMarkFormState>(createDefaultStaffMarkForm);
+  const [isCreateStaffOpen, setIsCreateStaffOpen] = useState(false);
+  const [isStaffManagementOpen, setIsStaffManagementOpen] = useState(false);
+  const [isAwardDialogOpen, setIsAwardDialogOpen] = useState(false);
+  const [selectedStaffRow, setSelectedStaffRow] = useState<StaffManagementRow | null>(null);
+  const [isSavingStaffDirectory, setIsSavingStaffDirectory] = useState(false);
+  const [isSavingStaffMark, setIsSavingStaffMark] = useState(false);
   
   const [dateRange, setDateRange] = useState({
     startDate: currentMonthDates.startDate,
@@ -765,7 +956,7 @@ const PerformanceReport = () => {
     (section: ReportSectionId) => reportViewProfile.sections.includes(section),
     [reportViewProfile.sections]
   );
-  const showProgrammeFilter = userCanViewAllProgrammeData;
+  const showProgrammeFilter = accessibleProgrammes.length > 1;
   
   const selectedYearNum = useMemo(() => {
     const parsed = parseInt(selectedYear, 10);
@@ -777,6 +968,7 @@ const PerformanceReport = () => {
     trainingRecords,
     animalHealthActivities,
     offtakeRecords,
+    staffMarkRecords,
     dateRange,
     timeFrame,
     activeProgram || null,
@@ -904,11 +1096,397 @@ const PerformanceReport = () => {
     }
   };
 
+  const fetchStaffDirectory = useCallback(async () => {
+    try {
+      const staffDirectorySnap = await get(ref(db, "hrStaffDirectory"));
+      if (!staffDirectorySnap.exists()) {
+        setStaffDirectoryRecords([]);
+        return;
+      }
+
+      const allowedProgrammeSet = userCanViewAllProgrammeData ?
+        null :
+        new Set(accessibleProgrammes.map((programme) => normalizeProgramme(programme)));
+
+      const staffDirectory = Object.entries(staffDirectorySnap.val() as Record<string, StaffDirectoryRecord>)
+        .map(([id, record]) => ({
+          id,
+          ...record,
+        }))
+        .filter((record) => {
+          if (!allowedProgrammeSet) return true;
+          const programme = normalizeProgramme(record.programme);
+          return !programme || allowedProgrammeSet.has(programme);
+        })
+        .sort((first, second) => {
+          const firstDate = parseDate(second.createdAt || second.updatedAt)?.getTime() || 0;
+          const secondDate = parseDate(first.createdAt || first.updatedAt)?.getTime() || 0;
+          return firstDate - secondDate;
+        });
+
+      setStaffDirectoryRecords(staffDirectory);
+    } catch (error) {
+      console.error("Error fetching HR staff directory:", error);
+      toast({
+        title: "Error",
+        description: "Unable to load the HR staff list at the moment.",
+        variant: "destructive",
+      });
+    }
+  }, [accessibleProgrammes, toast, userCanViewAllProgrammeData]);
+
+  const fetchStaffMarks = useCallback(async () => {
+    try {
+      const staffMarksSnap = await get(ref(db, "hrStaffMarks"));
+      if (!staffMarksSnap.exists()) {
+        setStaffMarkRecords([]);
+        return;
+      }
+
+      const allowedProgrammeSet = userCanViewAllProgrammeData ?
+        null :
+        new Set(accessibleProgrammes.map((programme) => normalizeProgramme(programme)));
+
+      const marks = Object.entries(staffMarksSnap.val() as Record<string, StaffMarkRecord>)
+        .map(([id, record]) => ({
+          id,
+          ...record,
+        }))
+        .filter((record) => {
+          if (!allowedProgrammeSet) return true;
+          const programme = normalizeProgramme(record.programme);
+          return allowedProgrammeSet.has(programme);
+        })
+        .sort((a, b) => {
+          const first = parseDate(b.dateAwarded || b.createdAt)?.getTime() || 0;
+          const second = parseDate(a.dateAwarded || a.createdAt)?.getTime() || 0;
+          return first - second;
+        });
+
+      setStaffMarkRecords(marks);
+    } catch (error) {
+      console.error("Error fetching HR staff marks:", error);
+      toast({
+        title: "Error",
+        description: "Unable to load staff marks at the moment.",
+        variant: "destructive",
+      });
+    }
+  }, [accessibleProgrammes, toast, userCanViewAllProgrammeData]);
+
+  const filteredStaffMarkRecords = useMemo(
+    () =>
+      staffMarkRecords.filter((record) => {
+        const programme = normalizeProgramme(record.programme);
+        const recordDate = record.dateAwarded || record.createdAt;
+        return (!activeProgram || programme === normalizeProgramme(activeProgram)) &&
+          isDateInRange(recordDate, dateRange.startDate, dateRange.endDate);
+      }),
+    [activeProgram, dateRange.endDate, dateRange.startDate, staffMarkRecords],
+  );
+
+  const filteredStaffDirectoryRecords = useMemo(
+    () =>
+      staffDirectoryRecords.filter((record) => {
+        const programme = normalizeProgramme(record.programme);
+        return !activeProgram || !programme || programme === normalizeProgramme(activeProgram);
+      }),
+    [activeProgram, staffDirectoryRecords],
+  );
+
+  const staffManagementRows = useMemo(() => {
+    const rows = new Map<string, StaffManagementRow>();
+    const marksByStaff = new Map<string, {
+      totalMarks: number;
+      awardCount: number;
+      lastAwardDate: string;
+      lastAwardTimestamp: number;
+      lastAwardNote: string;
+      displayName: string;
+    }>();
+
+    filteredStaffMarkRecords.forEach((record) => {
+      const staffName = getLeaderName(record.staffName, "");
+      const normalizedName = normalizeStaffName(staffName);
+      if (!normalizedName) return;
+
+      const marks = getNumberField(record, "marks", "score", "awardedMarks");
+      const awardTimestamp = parseDate(record.dateAwarded || record.createdAt)?.getTime() || 0;
+      const current = marksByStaff.get(normalizedName) || {
+        totalMarks: 0,
+        awardCount: 0,
+        lastAwardDate: "N/A",
+        lastAwardTimestamp: 0,
+        lastAwardNote: "",
+        displayName: staffName,
+      };
+
+      current.totalMarks += marks;
+      current.awardCount += 1;
+      if (awardTimestamp >= current.lastAwardTimestamp) {
+        current.lastAwardTimestamp = awardTimestamp;
+        current.lastAwardDate = formatDisplayDate(record.dateAwarded || record.createdAt);
+        current.lastAwardNote = record.note?.trim() || "";
+        current.displayName = staffName || current.displayName;
+      }
+      marksByStaff.set(normalizedName, current);
+    });
+
+    filteredStaffDirectoryRecords.forEach((record) => {
+      const staffName = getLeaderName(record.staffName, "Unnamed staff");
+      const normalizedName = normalizeStaffName(staffName);
+      const markSummary = marksByStaff.get(normalizedName);
+      rows.set(normalizedName || record.id, {
+        id: record.id,
+        staffName,
+        role: record.role?.trim() || "Not assigned",
+        county: record.county?.trim() || "N/A",
+        phone: record.phone?.trim() || "N/A",
+        programme: record.programme?.trim() || activeProgram || "N/A",
+        status: record.status?.trim() || "active",
+        notes: record.notes?.trim() || "",
+        totalMarks: markSummary?.totalMarks || 0,
+        awardCount: markSummary?.awardCount || 0,
+        lastAwardDate: markSummary?.lastAwardDate || "Not awarded",
+        lastAwardNote: markSummary?.lastAwardNote || "",
+        managedInDirectory: true,
+      });
+    });
+
+    marksByStaff.forEach((markSummary, normalizedName) => {
+      if (rows.has(normalizedName)) return;
+      rows.set(normalizedName, {
+        id: `marks-${normalizedName}`,
+        staffName: markSummary.displayName || "Unlisted staff",
+        role: "Not in staff list",
+        county: "N/A",
+        phone: "N/A",
+        programme: activeProgram || "N/A",
+        status: "marks-only",
+        notes: "",
+        totalMarks: markSummary.totalMarks,
+        awardCount: markSummary.awardCount,
+        lastAwardDate: markSummary.lastAwardDate,
+        lastAwardNote: markSummary.lastAwardNote,
+        managedInDirectory: false,
+      });
+    });
+
+    return [...rows.values()].sort((first, second) => {
+      if (first.managedInDirectory !== second.managedInDirectory) {
+        return first.managedInDirectory ? -1 : 1;
+      }
+      if (first.status !== second.status) {
+        return first.status === "active" ? -1 : 1;
+      }
+      if (second.totalMarks !== first.totalMarks) {
+        return second.totalMarks - first.totalMarks;
+      }
+      return first.staffName.localeCompare(second.staffName);
+    });
+  }, [activeProgram, filteredStaffDirectoryRecords, filteredStaffMarkRecords]);
+
+  const hrTopStaffAwarded = useMemo(() => {
+    const marksByStaff = new Map<string, { name: string; value: number }>();
+
+    filteredStaffMarkRecords.forEach((record) => {
+      const staffName = getLeaderName(record.staffName, "");
+      const normalizedName = normalizeStaffName(staffName);
+      const awardedMarks = getNumberField(record, "marks", "score", "awardedMarks");
+      if (!normalizedName || awardedMarks <= 0) return;
+      const current = marksByStaff.get(normalizedName) || { name: staffName, value: 0 };
+      current.value += awardedMarks;
+      if (!current.name) current.name = staffName;
+      marksByStaff.set(normalizedName, current);
+    });
+
+    return [...marksByStaff.values()]
+      .sort((first, second) => second.value - first.value)
+      .slice(0, 5);
+  }, [filteredStaffMarkRecords]);
+
+  const handleCreateStaff = useCallback(async () => {
+    const staffName = createStaffForm.staffName.trim();
+    const role = createStaffForm.role.trim();
+
+    if (!staffName || !role) {
+      toast({
+        title: "Staff details required",
+        description: "Enter at least the staff name and role.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!activeProgram) {
+      toast({
+        title: "Programme required",
+        description: "Select a programme before creating staff.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const alreadyExists = staffDirectoryRecords.some((record) =>
+      normalizeStaffName(record.staffName) === normalizeStaffName(staffName) &&
+      normalizeProgramme(record.programme || activeProgram) === normalizeProgramme(activeProgram),
+    );
+
+    if (alreadyExists) {
+      toast({
+        title: "Staff already exists",
+        description: `${staffName} is already in the HR staff table for ${activeProgram}.`,
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      setIsSavingStaffDirectory(true);
+      await push(ref(db, "hrStaffDirectory"), {
+        staffName,
+        role,
+        county: createStaffForm.county.trim(),
+        phone: createStaffForm.phone.trim(),
+        notes: createStaffForm.notes.trim(),
+        programme: normalizeProgramme(activeProgram),
+        status: "active",
+        createdAt: Date.now(),
+        createdBy: userName || "HR Manager",
+      });
+
+      setCreateStaffForm(createDefaultStaffForm());
+      setIsCreateStaffOpen(false);
+      await fetchStaffDirectory();
+      toast({
+        title: "Staff created",
+        description: `${staffName} is now available in the HR staff table.`,
+      });
+    } catch (error) {
+      console.error("Error creating HR staff:", error);
+      toast({
+        title: "Create failed",
+        description: "We could not create the staff record right now.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSavingStaffDirectory(false);
+    }
+  }, [activeProgram, createStaffForm, fetchStaffDirectory, staffDirectoryRecords, toast, userName]);
+
+  const openAwardDialog = useCallback((staffRow: StaffManagementRow) => {
+    setSelectedStaffRow(staffRow);
+    setStaffMarkForm({
+      ...createDefaultStaffMarkForm(),
+      staffName: staffRow.staffName,
+    });
+    setIsAwardDialogOpen(true);
+  }, []);
+
+  const handleToggleStaffStatus = useCallback(async (staffRow: StaffManagementRow) => {
+    if (!staffRow.managedInDirectory) return;
+
+    const nextStatus = staffRow.status === "active" ? "inactive" : "active";
+
+    try {
+      await update(ref(db, `hrStaffDirectory/${staffRow.id}`), {
+        status: nextStatus,
+        updatedAt: Date.now(),
+        updatedBy: userName || "HR Manager",
+      });
+      await fetchStaffDirectory();
+      toast({
+        title: "Staff updated",
+        description: `${staffRow.staffName} is now ${nextStatus}.`,
+      });
+    } catch (error) {
+      console.error("Error updating HR staff status:", error);
+      toast({
+        title: "Update failed",
+        description: "We could not update the staff status right now.",
+        variant: "destructive",
+      });
+    }
+  }, [fetchStaffDirectory, toast, userName]);
+
+  const handleStaffMarkSubmit = useCallback(async () => {
+    const staffName = staffMarkForm.staffName.trim();
+    const marks = parseNumericValue(staffMarkForm.marks);
+
+    if (!staffName) {
+      toast({
+        title: "Staff name required",
+        description: "Enter the staff member you want to score.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!activeProgram) {
+      toast({
+        title: "Programme required",
+        description: "Select a programme before awarding marks.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!Number.isFinite(marks) || marks <= 0 || marks > 100) {
+      toast({
+        title: "Invalid marks",
+        description: "Enter marks between 1 and 100.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      setIsSavingStaffMark(true);
+      await push(ref(db, "hrStaffMarks"), {
+        staffName,
+        marks,
+        note: staffMarkForm.note.trim(),
+        programme: normalizeProgramme(activeProgram),
+        dateAwarded: staffMarkForm.dateAwarded || formatDateToLocal(new Date()),
+        createdAt: Date.now(),
+        awardedBy: userName || "HR Manager",
+        periodStart: dateRange.startDate || "",
+        periodEnd: dateRange.endDate || "",
+      });
+
+      setStaffMarkForm(createDefaultStaffMarkForm());
+      setSelectedStaffRow(null);
+      setIsAwardDialogOpen(false);
+      await fetchStaffMarks();
+      toast({
+        title: "Marks saved",
+        description: `${staffName} has been scored successfully.`,
+      });
+    } catch (error) {
+      console.error("Error saving HR staff marks:", error);
+      toast({
+        title: "Save failed",
+        description: "We could not save the staff marks right now.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSavingStaffMark(false);
+    }
+  }, [activeProgram, dateRange.endDate, dateRange.startDate, fetchStaffMarks, staffMarkForm, toast, userName]);
+
   useEffect(() => {
     const initialDates = getCurrentMonthDates();
     setDateRange(initialDates);
     fetchAllData();
   }, []);
+
+  useEffect(() => {
+    fetchStaffDirectory();
+  }, [fetchStaffDirectory]);
+
+  useEffect(() => {
+    fetchStaffMarks();
+  }, [fetchStaffMarks]);
 
   useEffect(() => {
     if (userCanViewAllProgrammeData) {
@@ -1007,6 +1585,8 @@ const PerformanceReport = () => {
     );
   }, []);
 
+  const topFieldOfficerPeak = data.topFieldOfficers[0]?.value || 0;
+
   if (analysisLoading || loading) {
     return (
       <div className="flex flex-col justify-center items-center h-96 space-y-4">
@@ -1024,13 +1604,13 @@ const PerformanceReport = () => {
         </div>
 
         <Card className="w-full md:w-auto border-0 shadow-lg bg-white">
-          <CardContent className="p-4">
-            <div className="flex flex-colmd:flex-row lg:flex-row xl:flex-row gap-4 items-end">
+          <CardContent className="px-3 py-2.5 md:px-3 md:py-3">
+            <div className="flex flex-colmd:flex-row lg:flex-row xl:flex-row gap-3 items-end">
               
               {/* Year Selector */}
-              <div className="w-full md:w-40 space-y-1">
-                <Label className="text-xs text-gray-500 font-semibold">Fiscal Year</Label>
-                <Select value={selectedYear || undefined} onValueChange={handleYearChange}>
+                <div className="w-full md:w-40 space-y-0">
+                  <Label className="sr-only">Fiscal Year</Label>
+                  <Select value={selectedYear || undefined} onValueChange={handleYearChange}>
                   <SelectTrigger className="h-9">
                     <div className="flex items-center gap-2">
                         <Calendar className="h-4 w-4 text-gray-500" />
@@ -1048,7 +1628,7 @@ const PerformanceReport = () => {
               {/* Programme Selector */}
               {showProgrammeFilter && (
                 <div className="w-full md:w-48 space-y-1">
-                  <Label className="text-xs text-gray-500 font-semibold">PROJECT</Label>
+                  <Label className="sr-only">Programme</Label>
                   <Select value={activeProgram} onValueChange={setActiveProgram}>
                     <SelectTrigger className="h-9">
                       <SelectValue placeholder="Select Programme" />
@@ -1063,8 +1643,8 @@ const PerformanceReport = () => {
 
               {/* Quarter Selector (Replaces Q1-Q4 Buttons) */}
               
-              <div className="w-full md:w-40 space-y-1">
-                <Label className="text-xs text-gray-500 font-semibold">Quarter</Label>
+              <div className="w-full md:w-40 space-y-0">
+                <Label className="sr-only">Quarter</Label>
                 <Select value={selectedQuarter || undefined} onValueChange={handleQuarterChange}>
                   <SelectTrigger className="h-9">
                     <SelectValue placeholder="Select Quarter" />
@@ -1078,9 +1658,9 @@ const PerformanceReport = () => {
                 </Select>
               </div>
                <Button onClick={clearFilters} variant="ghost" size="sm" className="text-red-500 hover:text-red-600">Reset Filters</Button>
-              <div className="flex flex- gap-2 w-full md:w-auto">
-                <div className="space-y-1">
-                  <Label className="text-xs text-gray-500 font-semibold">From</Label>
+              <div className="flex flex-wrap gap-2 w-full md:w-auto">
+                <div className="space-y-0">
+                  <Label className="sr-only" htmlFor="startDate">From</Label>
                   <Input
                     id="startDate"
                     type="date"
@@ -1089,8 +1669,8 @@ const PerformanceReport = () => {
                     className="border-gray-200 text-xs focus:border-blue-500 h-9 pr-2"
                   />
                 </div>
-                <div className="space-y-1">
-                  <Label className="text-xs text-gray-500 font-semibold">To</Label>
+                <div className="space-y-0">
+                  <Label className="sr-only" htmlFor="endDate">To</Label>
                   <Input
                     id="endDate"
                     type="date"
@@ -1120,7 +1700,6 @@ const PerformanceReport = () => {
               title="Total Goats Purchased"
               value={data.totalGoatsPurchased.toLocaleString()}
               icon={Beef}
-              subtext="Goats purchased in the selected period"
               color="orange"
             />
 
@@ -1128,7 +1707,6 @@ const PerformanceReport = () => {
               title="Total Registered Farmers"
               value={data.totalFarmers.toLocaleString()}
               icon={Users}
-              subtext="Farmer registrations in the selected period"
               color="blue"
             />
 
@@ -1136,7 +1714,6 @@ const PerformanceReport = () => {
               title="Total Trained Farmers"
               value={data.totalTrainedFarmers.toLocaleString()}
               icon={GraduationCap}
-              subtext="Farmers reached through training"
               color="yellow"
             />
 
@@ -1152,7 +1729,6 @@ const PerformanceReport = () => {
               title="Total Doses Given Out"
               value={data.totalDosesGivenOut.toLocaleString()}
               icon={Syringe}
-              subtext="Animal health doses recorded in the selected period"
               color="red"
             />
           </div>
@@ -1163,44 +1739,76 @@ const PerformanceReport = () => {
         <section>
           <SectionHeader title="HR Rankings" />
 
-          <div className="grid gap-6 md:grid-cols-2 mb-6">
+          <div className="grid gap-6 lg:grid-cols-2 mb-6">
             <Card className="border-0 shadow-lg bg-white">
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm flex items-center gap-2 text-gray-800">
                   <Users className="h-4 w-4 text-blue-600" />
-                  Top Field Officers (Mobile Users)
+                  Top Field Officers
                 </CardTitle>
               </CardHeader>
-              <CardContent>
-                <ResponsiveContainer width="100%" height={250}>
-                  <BarChart data={data.topFieldOfficers} layout="vertical" margin={{ top: 5, right: 30, left: 80, bottom: 5 }}>
-                    <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f3f4f6" />
-                    <XAxis type="number" axisLine={false} tickLine={false} />
-                    <YAxis type="category" dataKey="name" width={90} axisLine={false} tickLine={false} tick={{fontSize: 11}} />
-                    <Tooltip />
-                    <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={12} fill={COLORS.darkBlue} />
-                  </BarChart>
-                </ResponsiveContainer>
+              <CardContent className="space-y-3">
+                {data.topFieldOfficers.length > 0 ? data.topFieldOfficers.map((officer) => {
+                  const share = topFieldOfficerPeak > 0 ? (officer.value / topFieldOfficerPeak) * 100 : 0;
+                  return (
+                    <div key={officer.name} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold text-slate-900">{officer.name}</p>
+                        </div>
+                        <Badge className="border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-50">
+                          {officer.value} farmers
+                        </Badge>
+                      </div>
+                      <div className="mt-3 h-2 rounded-full bg-slate-200">
+                        <div
+                          className="h-2 rounded-full bg-blue-700 transition-all"
+                          style={{ width: `${Math.max(share, 10)}%` }}
+                        />
+                      </div>
+                    </div>
+                  );
+                }) : (
+                  <div className="flex h-[220px] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-500">
+                    No field officer activity found for the selected filters.
+                  </div>
+                )}
               </CardContent>
             </Card>
 
             <Card className="border-0 shadow-lg bg-white">
               <CardHeader className="pb-2">
+                {reportAudience === "hr" && (
+                  <div className="mb-3 flex flex-wrap justify-end gap-2">
+                    <Button variant="outline" size="sm" onClick={() => setIsCreateStaffOpen(true)}>
+                      Create Staff
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => setIsStaffManagementOpen(true)}>
+                      Staff Table
+                    </Button>
+                  </div>
+                )}
                 <CardTitle className="text-sm flex items-center gap-2 text-gray-800">
                   <Award className="h-4 w-4 text-yellow-600" />
                   Top Staff Awarded
                 </CardTitle>
               </CardHeader>
               <CardContent>
+              {hrTopStaffAwarded.length > 0 ? (
                 <ResponsiveContainer width="100%" height={250}>
-                  <BarChart data={data.topStaffAwarded} layout="vertical" margin={{ top: 5, right: 30, left: 80, bottom: 5 }}>
+                  <BarChart data={hrTopStaffAwarded} layout="vertical" margin={HORIZONTAL_BAR_CHART_MARGIN}>
                     <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f3f4f6" />
                     <XAxis type="number" axisLine={false} tickLine={false} />
-                    <YAxis type="category" dataKey="name" width={90} axisLine={false} tickLine={false} tick={{fontSize: 11}} />
+                    <YAxis type="category" dataKey="name" width={HORIZONTAL_BAR_CHART_Y_AXIS_WIDTH} axisLine={false} tickLine={false} tick={{ fontSize: 11 }} />
                     <Tooltip />
                     <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={12} fill={COLORS.yellow} />
                   </BarChart>
                 </ResponsiveContainer>
+              ) : (
+                <div className="flex h-[220px] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-500">
+                  No staff marks have been awarded for the selected programme and dates yet.
+                </div>
+              )}
               </CardContent>
             </Card>
           </div>
@@ -1220,19 +1828,31 @@ const PerformanceReport = () => {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <ResponsiveContainer width="100%" height={250}>
-                  <BarChart data={data.topLocations} layout="vertical" margin={{ top: 5, right: 30, left: 80, bottom: 5 }}>
+                <ResponsiveContainer width="100%" height={280}>
+                  <BarChart
+                    data={data.topLocations}
+                    margin={{ top: 8, right: 12, left: 0, bottom: 44 }}
+                  >
                     <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f3f4f6" />
-                    <XAxis type="number" axisLine={false} tickLine={false} />
-                    <YAxis type="category" dataKey="name" width={90} axisLine={false} tickLine={false} tick={{fontSize: 11}} />
+                    <XAxis
+                      dataKey="name"
+                      axisLine={false}
+                      tickLine={false}
+                      interval={0}
+                      angle={-18}
+                      textAnchor="end"
+                      height={56}
+                      tick={{ fontSize: 11 }}
+                    />
+                    <YAxis type="number" allowDecimals={false} axisLine={false} tickLine={false} />
                     <Tooltip />
-                    <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={12} fill={COLORS.green} />
+                    <Bar dataKey="value" radius={[4, 4, 0, 0]} barSize={24} fill={COLORS.green} />
                   </BarChart>
                 </ResponsiveContainer>
               </CardContent>
             </Card>
 
-            <Card className="border-0 shadow-lg bg-white h-[350px]">
+            <Card className="border-0 shadow-lg bg-white">
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm flex items-center gap-2 text-gray-800">
                   <Award className="h-4 w-4 text-teal-600" />
@@ -1285,6 +1905,374 @@ const PerformanceReport = () => {
             </CardContent>
           </Card>
         </section>
+      )}
+
+      <Dialog
+        open={isCreateStaffOpen}
+        onOpenChange={(open) => {
+          setIsCreateStaffOpen(open);
+          if (!open) setCreateStaffForm(createDefaultStaffForm());
+        }}
+      >
+        <DialogContent className="max-w-2xl bg-white">
+          <DialogHeader>
+            <DialogTitle>Create Staff</DialogTitle>
+            <DialogDescription>
+              Add a staff member to the HR table for {activeProgram || "the selected programme"}.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="create-staff-name">Staff Name</Label>
+              <Input
+                id="create-staff-name"
+                placeholder="Enter staff name"
+                value={createStaffForm.staffName}
+                onChange={(event) => setCreateStaffForm((current) => ({ ...current, staffName: event.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="create-staff-role">Role</Label>
+              <Input
+                id="create-staff-role"
+                placeholder="Field Officer, Supervisor..."
+                value={createStaffForm.role}
+                onChange={(event) => setCreateStaffForm((current) => ({ ...current, role: event.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="create-staff-county">County</Label>
+              <Input
+                id="create-staff-county"
+                placeholder="Assigned county"
+                value={createStaffForm.county}
+                onChange={(event) => setCreateStaffForm((current) => ({ ...current, county: event.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="create-staff-phone">Phone</Label>
+              <Input
+                id="create-staff-phone"
+                placeholder="Optional phone number"
+                value={createStaffForm.phone}
+                onChange={(event) => setCreateStaffForm((current) => ({ ...current, phone: event.target.value }))}
+              />
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="create-staff-notes">Notes</Label>
+            <Textarea
+              id="create-staff-notes"
+              placeholder="Optional staff notes"
+              value={createStaffForm.notes}
+              onChange={(event) => setCreateStaffForm((current) => ({ ...current, notes: event.target.value }))}
+            />
+          </div>
+
+          <div className="flex items-center justify-between gap-3 rounded-2xl bg-slate-50 px-4 py-3">
+            <p className="text-xs text-slate-500">
+              Programme: <span className="font-semibold text-slate-700">{activeProgram || "No programme selected"}</span>
+            </p>
+            <Button onClick={handleCreateStaff} disabled={isSavingStaffDirectory}>
+              {isSavingStaffDirectory ? "Saving..." : "Create Staff"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={isStaffManagementOpen} onOpenChange={setIsStaffManagementOpen}>
+        <DialogContent className="max-w-6xl bg-white">
+          <DialogHeader>
+            <DialogTitle>HR Staff Table</DialogTitle>
+            <DialogDescription>
+              Manage staff records and award marks for {activeProgram || "the selected programme"}.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="max-h-[60vh] overflow-auto rounded-xl border border-slate-200">
+            <Table>
+              <TableHeader className="bg-slate-50">
+                <TableRow>
+                  <TableHead>Staff</TableHead>
+                  <TableHead>Role</TableHead>
+                  <TableHead>County</TableHead>
+                  <TableHead>Phone</TableHead>
+                  <TableHead>Programme</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Total Marks</TableHead>
+                  <TableHead>Awards</TableHead>
+                  <TableHead>Last Award</TableHead>
+                  <TableHead>Action</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {staffManagementRows.length > 0 ? staffManagementRows.map((staffRow) => (
+                  <TableRow key={staffRow.id}>
+                    <TableCell className="font-medium text-slate-900">
+                      <div>{staffRow.staffName}</div>
+                      {staffRow.lastAwardNote && (
+                        <div className="mt-1 text-xs text-slate-500">{staffRow.lastAwardNote}</div>
+                      )}
+                    </TableCell>
+                    <TableCell>{staffRow.role}</TableCell>
+                    <TableCell>{staffRow.county}</TableCell>
+                    <TableCell>{staffRow.phone}</TableCell>
+                    <TableCell>{staffRow.programme}</TableCell>
+                    <TableCell>
+                      <Badge
+                        className={
+                          staffRow.status === "active" ?
+                            "border-green-200 bg-green-50 text-green-700 hover:bg-green-50" :
+                            staffRow.status === "inactive" ?
+                              "border-slate-200 bg-slate-100 text-slate-700 hover:bg-slate-100" :
+                              "border-yellow-200 bg-yellow-50 text-yellow-700 hover:bg-yellow-50"
+                        }
+                      >
+                        {staffRow.status}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>{staffRow.totalMarks}</TableCell>
+                    <TableCell>{staffRow.awardCount}</TableCell>
+                    <TableCell>{staffRow.lastAwardDate}</TableCell>
+                    <TableCell>
+                      <div className="flex flex-wrap gap-2">
+                        <Button size="sm" variant="outline" onClick={() => openAwardDialog(staffRow)}>
+                          Award
+                        </Button>
+                        {staffRow.managedInDirectory && (
+                          <Button size="sm" variant="ghost" onClick={() => handleToggleStaffStatus(staffRow)}>
+                            {staffRow.status === "active" ? "Deactivate" : "Activate"}
+                          </Button>
+                        )}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                )) : (
+                  <TableRow>
+                    <TableCell colSpan={10} className="py-10 text-center text-slate-500">
+                      No staff records found for the current filters.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={isAwardDialogOpen}
+        onOpenChange={(open) => {
+          setIsAwardDialogOpen(open);
+          if (!open) {
+            setSelectedStaffRow(null);
+            setStaffMarkForm(createDefaultStaffMarkForm());
+          }
+        }}
+      >
+        <DialogContent className="max-w-2xl bg-white">
+          <DialogHeader>
+            <DialogTitle>Award Staff Marks</DialogTitle>
+            <DialogDescription>
+              Score {selectedStaffRow?.staffName || "the selected staff"} for the active reporting period.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="award-staff-name">Staff Name</Label>
+              <Input
+                id="award-staff-name"
+                value={staffMarkForm.staffName}
+                onChange={(event) => setStaffMarkForm((current) => ({ ...current, staffName: event.target.value }))}
+                disabled={!!selectedStaffRow}
+              />
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="award-staff-marks">Marks</Label>
+                <Input
+                  id="award-staff-marks"
+                  type="number"
+                  min="1"
+                  max="100"
+                  placeholder="1 - 100"
+                  value={staffMarkForm.marks}
+                  onChange={(event) => setStaffMarkForm((current) => ({ ...current, marks: event.target.value }))}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="award-staff-date">Award Date</Label>
+                <Input
+                  id="award-staff-date"
+                  type="date"
+                  value={staffMarkForm.dateAwarded}
+                  onChange={(event) => setStaffMarkForm((current) => ({ ...current, dateAwarded: event.target.value }))}
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="award-staff-note">Performance Note</Label>
+              <Textarea
+                id="award-staff-note"
+                placeholder="Add a short reason for the award"
+                value={staffMarkForm.note}
+                onChange={(event) => setStaffMarkForm((current) => ({ ...current, note: event.target.value }))}
+              />
+            </div>
+            <div className="flex items-center justify-between gap-3 rounded-2xl bg-slate-50 px-4 py-3">
+              <p className="text-xs text-slate-500">
+                Saving to: <span className="font-semibold text-slate-700">{activeProgram || "No programme selected"}</span>
+              </p>
+              <Button onClick={handleStaffMarkSubmit} disabled={isSavingStaffMark}>
+                {isSavingStaffMark ? "Saving..." : "Save Staff Marks"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {hasSection("project-manager-report") && (
+      <section>
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4 mb-6">
+          <StatsCard
+            title="Total Registered Farmers"
+            value={data.totalFarmers.toLocaleString()}
+            icon={Users}
+            color="blue"
+          />
+
+          <StatsCard
+            title="Trained Farmers"
+            value={data.totalTrainedFarmers.toLocaleString()}
+            icon={GraduationCap}
+            color="yellow"
+          />
+
+          <StatsCard
+            title="Animal Census"
+            value={data.totalAnimals.toLocaleString()}
+            icon={Beef}
+            color="orange"
+          />
+
+          <StatsCard
+            title="Total Goats Purchased"
+            value={data.totalGoatsPurchased.toLocaleString()}
+            icon={Beef}
+            color="green"
+          />
+        </div>
+
+        <div className="grid gap-6 md:grid-cols-2 mb-6">
+          <Card className="border-0 shadow-lg bg-white">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm flex items-center gap-2 text-gray-800">
+                <MapPin className="h-4 w-4 text-purple-600" />
+                Performance per County
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={280}>
+                <PieChart>
+                  <Pie
+                    data={data.countyPerformanceData}
+                    cx="50%"
+                    cy="50%"
+                    outerRadius={90}
+                    innerRadius={52}
+                    paddingAngle={2}
+                    dataKey="value"
+                    labelLine={false}
+                  >
+                    {data.countyPerformanceData.map((entry, index) => (
+                      <Cell key={`county-cell-${index}`} fill={BAR_COLORS[index % BAR_COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip />
+                  <Legend verticalAlign="bottom" height={36} iconType="circle" />
+                </PieChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+
+          <Card className="border-0 shadow-lg bg-white">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm flex items-center gap-2 text-gray-800">
+                <MapPin className="h-4 w-4 text-blue-600" />
+                Performance per Subcounty
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={280}>
+                <BarChart
+                  data={data.subcountyPerformanceData}
+                  margin={{ top: 8, right: 12, left: 0, bottom: 52 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
+                  <XAxis
+                    dataKey="name"
+                    axisLine={false}
+                    tickLine={false}
+                    interval={0}
+                    angle={-18}
+                    textAnchor="end"
+                    height={60}
+                    tick={{ fontSize: 11 }}
+                  />
+                  <YAxis allowDecimals={false} axisLine={false} tickLine={false} />
+                  <Tooltip />
+                  <Bar dataKey="value" radius={[4, 4, 0, 0]} barSize={24} fill={COLORS.darkBlue} />
+                </BarChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+        </div>
+
+        <div className="grid gap-6 md:grid-cols-2">
+          <Card className="border-0 shadow-lg bg-white">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm flex items-center gap-2 text-gray-800">
+                <TargetIcon className="h-4 w-4 text-teal-600" />
+                Total Breeds Distributed per Location
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={250}>
+                <BarChart data={data.breedsByLocationData} layout="vertical" margin={HORIZONTAL_BAR_CHART_MARGIN}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f3f4f6" />
+                  <XAxis type="number" axisLine={false} tickLine={false} />
+                  <YAxis type="category" dataKey="name" width={HORIZONTAL_BAR_CHART_Y_AXIS_WIDTH} axisLine={false} tickLine={false} tick={{ fontSize: 11 }} />
+                  <Tooltip />
+                  <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={12} fill={COLORS.teal} />
+                </BarChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+
+          <Card className="border-0 shadow-lg bg-white">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm flex items-center gap-2 text-gray-800">
+                <Syringe className="h-4 w-4 text-red-600" />
+                Total Doses Administered per Location
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={250}>
+                <BarChart data={data.dosesByLocationData} layout="vertical" margin={HORIZONTAL_BAR_CHART_MARGIN}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f3f4f6" />
+                  <XAxis type="number" axisLine={false} tickLine={false} />
+                  <YAxis type="category" dataKey="name" width={HORIZONTAL_BAR_CHART_Y_AXIS_WIDTH} axisLine={false} tickLine={false} tick={{ fontSize: 11 }} />
+                  <Tooltip />
+                  <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={12} fill={COLORS.red} />
+                </BarChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+        </div>
+      </section>
       )}
 
       {hasSection("default-registration") && (
@@ -1402,10 +2390,10 @@ const PerformanceReport = () => {
             </CardHeader>
             <CardContent>
               <ResponsiveContainer width="100%" height={250}>
-                <BarChart data={data.topLocations} layout="vertical" margin={{ top: 5, right: 30, left: 80, bottom: 5 }}>
+                <BarChart data={data.topLocations} layout="vertical" margin={HORIZONTAL_BAR_CHART_MARGIN}>
                   <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f3f4f6" />
                   <XAxis type="number" axisLine={false} tickLine={false} />
-                  <YAxis type="category" dataKey="name" width={75} axisLine={false} tickLine={false} tick={{fontSize: 11}} />
+                  <YAxis type="category" dataKey="name" width={HORIZONTAL_BAR_CHART_Y_AXIS_WIDTH} axisLine={false} tickLine={false} tick={{fontSize: 11}} />
                   <Tooltip />
                   <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={12}>
                     {data.topLocations.map((entry, index) => (
@@ -1426,10 +2414,10 @@ const PerformanceReport = () => {
             </CardHeader>
             <CardContent>
               <ResponsiveContainer width="100%" height={250}>
-                <BarChart data={data.topCustomers} layout="vertical" margin={{ top: 5, right: 30, left: 80, bottom: 5 }}>
+                <BarChart data={data.topCustomers} layout="vertical" margin={HORIZONTAL_BAR_CHART_MARGIN}>
                   <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f3f4f6" />
                   <XAxis type="number" axisLine={false} tickLine={false} />
-                  <YAxis type="category" dataKey="name" width={75} axisLine={false} tickLine={false} tick={{fontSize: 11}} />
+                  <YAxis type="category" dataKey="name" width={HORIZONTAL_BAR_CHART_Y_AXIS_WIDTH} axisLine={false} tickLine={false} tick={{fontSize: 11}} />
                   <Tooltip />
                   <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={12}>
                     {data.topCustomers.map((entry, index) => (
@@ -1538,10 +2526,10 @@ const PerformanceReport = () => {
             </CardHeader>
             <CardContent>
               <ResponsiveContainer width="100%" height={250}>
-                <BarChart data={data.vaccinationByCountyData} layout="vertical" margin={{ top: 5, right: 30, left: 80, bottom: 5 }}>
+                <BarChart data={data.vaccinationByCountyData} layout="vertical" margin={HORIZONTAL_BAR_CHART_MARGIN}>
                   <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f3f4f6" />
                   <XAxis type="number" axisLine={false} tickLine={false} />
-                  <YAxis type="category" dataKey="name" width={75} axisLine={false} tickLine={false} tick={{fontSize: 11}} />
+                  <YAxis type="category" dataKey="name" width={HORIZONTAL_BAR_CHART_Y_AXIS_WIDTH} axisLine={false} tickLine={false} tick={{fontSize: 11}} />
                   <Tooltip />
                   <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={12} fill={COLORS.red} />
                 </BarChart>

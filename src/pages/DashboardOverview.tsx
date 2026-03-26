@@ -269,7 +269,7 @@ const DashboardOverview = () => {
     () => userIsChiefAdmin ? PROGRAMME_OPTIONS : assignedProgrammeOptions,
     [assignedProgrammeOptions, userIsChiefAdmin]
   );
-  const showOverviewProgrammeSelector = userIsChiefAdmin && programmeOptions.length > 0;
+  const showOverviewProgrammeSelector = programmeOptions.length > 1;
 
   const [localOverviewData, setLocalOverviewData] = useState<OverviewSummaryData | null>(null);
   const [localOverviewLoading, setLocalOverviewLoading] = useState(false);
@@ -600,7 +600,7 @@ const DashboardOverview = () => {
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-md font-bold text-slate-900">Dashboard Overview</h1>
-            {!userIsChiefAdmin && selectedProgramme && (
+            {!showOverviewProgrammeSelector && selectedProgramme && (
                <div className="flex gap-2 mt-2">
                  <Badge variant="outline" className="text-xs">{selectedProgramme}</Badge>
                </div>

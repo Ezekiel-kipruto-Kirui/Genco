@@ -1055,7 +1055,7 @@ const LivestockFarmersPage = () => {
                 
             
             
-            {userCanViewAllProgrammeData ? (
+            {availablePrograms.length > 1 ? (
                 <div className="space-y-2 w-full lg:w-[180px]">
                     <Select value={activeProgram} onValueChange={handleProgramChange} disabled={availablePrograms.length === 0}>
                         <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white h-10 font-bold w-full">
@@ -1078,7 +1078,7 @@ const LivestockFarmersPage = () => {
                 </Button>
             
           
-            {selectedRecords.length > 0 && (
+            {selectedRecords.length > 0 && userIsChiefAdmin && (
             <Button variant="destructive" size="sm" onClick={openBulkDeleteConfirm} disabled={deleteLoading} className="text-xs h-10">
               <Trash2 className="h-4 w-4 mr-2" /> Delete ({selectedRecords.length})
             </Button>
