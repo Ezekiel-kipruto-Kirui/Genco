@@ -1,15 +1,14 @@
-import { createContext, useContext, useEffect, useState, type FC, type ReactNode } from "react";
-import { User, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "firebase/auth";
-import { ref, get, query, orderByChild, equalTo } from "firebase/database";
+import { createContext, useContext, useEffect, useRef, useState, type FC, type ReactNode } from "react";
+import { User, onAuthStateChanged, signInWithEmailAndPassword, signOut } from "firebase/auth";
+import { equalTo, get, orderByChild, query, ref } from "firebase/database";
 import { auth, db } from "@/lib/firebase";
 import { useToast } from "@/hooks/use-toast";
-
-// --- Types ---
+import { isMobileUser } from "@/contexts/authhelper";
 
 interface UserProfile {
   role: string | null;
   allowedProgrammes: Record<string, boolean> | null;
-  name: string | null; // We fetch this from the DB
+  name: string | null;
   userAttribute: string | null;
 }
 
@@ -17,7 +16,7 @@ interface AuthContextType {
   user: User | null;
   userRole: string | null;
   userAttribute: string | null;
-  userName: string | null; // Exposed to the app
+  userName: string | null;
   allowedProgrammes: Record<string, boolean> | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<void>;
@@ -40,10 +39,21 @@ export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [userRole, setUserRole] = useState<string | null>(null);
   const [userAttribute, setUserAttribute] = useState<string | null>(null);
-  const [userName, setUserName] = useState<string | null>(null); // Added state for user name
+  const [userName, setUserName] = useState<string | null>(null);
   const [allowedProgrammes, setAllowedProgrammes] = useState<Record<string, boolean> | null>(null);
   const [loading, setLoading] = useState(true);
+  const pendingLoginRef = useRef(false);
+  const blockedSessionRef = useRef<string | null>(null);
   const { toast } = useToast();
+
+  const clearAuthState = () => {
+    setUser(null);
+    setUserRole(null);
+    setUserAttribute(null);
+    setAllowedProgrammes(null);
+    setUserName(null);
+    localStorage.removeItem(ROLE_STORAGE_KEY);
+  };
 
   const extractUserAttribute = (userData: any): string | null => {
     const directAttribute = userData?.accessControl?.customAttribute;
@@ -67,10 +77,8 @@ export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
     return null;
   };
 
-  // Fetches Role, Name, and Allowed Programmes from DB 'users' node
   const fetchUserProfile = async (uid: string): Promise<UserProfile> => {
     try {
-      // 1. Attempt direct lookup at users/{uid}
       const userRef = ref(db, `users/${uid}`);
       const snapshot = await get(userRef);
 
@@ -79,12 +87,11 @@ export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
         return {
           role: userData.role || null,
           allowedProgrammes: userData.allowedProgrammes || null,
-          name: userData.name || null, // Fetch name from DB
-          userAttribute: extractUserAttribute(userData)
+          name: userData.name || null,
+          userAttribute: extractUserAttribute(userData),
         };
       }
 
-      // 2. Fallback query for legacy structure where UID is stored inside each user object
       console.warn("User not found at direct UID path, falling back to uid query...");
       const usersByUidQuery = query(ref(db, "users"), orderByChild("uid"), equalTo(uid));
       const matchingUsersSnapshot = await get(usersByUidQuery);
@@ -96,12 +103,12 @@ export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
           return {
             role: match.role || null,
             allowedProgrammes: match.allowedProgrammes || null,
-            name: match.name || null, // Fetch name from DB
-            userAttribute: extractUserAttribute(match)
+            name: match.name || null,
+            userAttribute: extractUserAttribute(match),
           };
         }
       }
-      
+
       return { role: null, allowedProgrammes: null, name: null, userAttribute: null };
     } catch (error) {
       console.error("Error fetching user profile:", error);
@@ -110,43 +117,69 @@ export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
   };
 
   useEffect(() => {
-    let isMounted = true; 
+    let isMounted = true;
 
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (!isMounted) return;
 
-      setUser(user);
+      setLoading(true);
 
-      if (user) {
-        try {
-          const profile = await fetchUserProfile(user.uid);
-          
-          if (isMounted) {
-            setUserRole(profile.role);
-            setUserAttribute(profile.userAttribute);
-            setAllowedProgrammes(profile.allowedProgrammes);
-            
-            // Set name from DB, fallback to Firebase Auth displayName, then email, then "Admin"
-            setUserName(profile.name || user.displayName || user.email || "Admin");
-            
-            if (profile.role) {
-              localStorage.setItem(ROLE_STORAGE_KEY, profile.role);
-            }
+      if (!firebaseUser) {
+        pendingLoginRef.current = false;
+        blockedSessionRef.current = null;
+        clearAuthState();
+        if (isMounted) setLoading(false);
+        return;
+      }
+
+      setUser(firebaseUser);
+
+      try {
+        const profile = await fetchUserProfile(firebaseUser.uid);
+        if (!isMounted) return;
+
+        if (isMobileUser(profile.role, profile.userAttribute)) {
+          pendingLoginRef.current = false;
+          clearAuthState();
+
+          if (blockedSessionRef.current !== firebaseUser.uid) {
+            blockedSessionRef.current = firebaseUser.uid;
+            toast({
+              title: "Access restricted",
+              description: "Mobile users can submit data only and cannot access the web dashboard.",
+              variant: "destructive",
+            });
           }
-        } catch (error) {
-          console.error("Auth initialization error:", error);
-        } finally {
-          if (isMounted) setLoading(false);
+
+          await signOut(auth);
+          return;
         }
-      } else {
-        if (isMounted) {
-          setUserRole(null);
-          setUserAttribute(null);
-          setAllowedProgrammes(null);
-          setUserName(null);
+
+        blockedSessionRef.current = null;
+        setUser(firebaseUser);
+        setUserRole(profile.role);
+        setUserAttribute(profile.userAttribute);
+        setAllowedProgrammes(profile.allowedProgrammes);
+        setUserName(profile.name || firebaseUser.displayName || firebaseUser.email || "Admin");
+
+        if (profile.role) {
+          localStorage.setItem(ROLE_STORAGE_KEY, profile.role);
+        } else {
           localStorage.removeItem(ROLE_STORAGE_KEY);
-          setLoading(false);
         }
+
+        if (pendingLoginRef.current) {
+          pendingLoginRef.current = false;
+          toast({
+            title: "Welcome back!",
+            description: "You have successfully signed in.",
+          });
+        }
+      } catch (error) {
+        console.error("Auth initialization error:", error);
+        clearAuthState();
+      } finally {
+        if (isMounted) setLoading(false);
       }
     });
 
@@ -154,25 +187,27 @@ export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
       isMounted = false;
       unsubscribe();
     };
-  }, []);
+  }, [toast]);
 
   const signIn = async (email: string, password: string) => {
     try {
+      pendingLoginRef.current = true;
+      setLoading(true);
       await signInWithEmailAndPassword(auth, email, password);
-      toast({
-        title: "Welcome back!",
-        description: "You have successfully signed in.",
-      });
     } catch (error: any) {
+      pendingLoginRef.current = false;
+      setLoading(false);
       console.error("Sign in error:", error);
-      
+
       let message = "Invalid credentials. Please try again.";
-      
-      if (error.code === 'auth/invalid-credential' || 
-          error.code === 'auth/user-not-found' || 
-          error.code === 'auth/wrong-password') {
+
+      if (
+        error.code === "auth/invalid-credential" ||
+        error.code === "auth/user-not-found" ||
+        error.code === "auth/wrong-password"
+      ) {
         message = "Incorrect email or password.";
-      } else if (error.code === 'auth/too-many-requests') {
+      } else if (error.code === "auth/too-many-requests") {
         message = "Too many failed attempts. Please try again later.";
       } else if (error.message) {
         message = error.message;
@@ -205,8 +240,9 @@ export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
   };
 
   return (
-    // CRITICAL FIX: Added userName to the context value below
-    <AuthContext.Provider value={{ user, userRole, userAttribute, userName, allowedProgrammes, loading, signIn, signOutUser }}>
+    <AuthContext.Provider
+      value={{ user, userRole, userAttribute, userName, allowedProgrammes, loading, signIn, signOutUser }}
+    >
       {children}
     </AuthContext.Provider>
   );

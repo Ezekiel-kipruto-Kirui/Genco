@@ -11,6 +11,7 @@ const CHART_COLORS = {
   sheep: "#f97316",
   fallback: "#f59e0b",
 };
+const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 type AnalysisScope =
   | "overview"
@@ -66,6 +67,16 @@ const parseNumber = (value: unknown): number => {
     if (Number.isFinite(parsed)) return parsed;
   }
   return 0;
+};
+
+const parseBoolean = (value: unknown): boolean => {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value === 1;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    return normalized === "true" || normalized === "yes" || normalized === "1";
+  }
+  return false;
 };
 
 const parseDate = (value: unknown): Date | null => {
@@ -148,6 +159,11 @@ const getArrayLikeSize = (value: unknown): number => {
   return 0;
 };
 
+const normalizeLooseText = (value: unknown): string =>
+  typeof value === "string"
+    ? value.trim().toLowerCase().replace(/[-_]+/g, " ").replace(/\s+/g, " ")
+    : "";
+
 const getLeaderName = (value: unknown, fallback: string): string => {
   if (typeof value === "string" && value.trim()) return value.trim();
   return fallback;
@@ -163,6 +179,81 @@ const getOfftakeGoatsTotal = (record: Record<string, unknown>): number =>
     0,
   );
 
+const getOrderEntries = (orders: unknown): Record<string, unknown>[] => {
+  if (Array.isArray(orders)) return orders.filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === "object");
+  if (orders && typeof orders === "object") {
+    return Object.values(orders).filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === "object");
+  }
+  return [];
+};
+
+const getOrderReferenceId = (record: Record<string, unknown>): string => {
+  const recordId = String(record.id || "").trim();
+  const candidates = [
+    record.parentOrderId,
+    record.requestId,
+    record.targetOrderId,
+    record.offtakeOrderId,
+  ];
+
+  for (const candidate of candidates) {
+    const normalized = String(candidate || "").trim();
+    if (normalized && normalized !== recordId) return normalized;
+  }
+
+  return "";
+};
+
+const getOrderTotalGoats = (record: Record<string, unknown>): number => {
+  const itemsTotal = getOrderEntries(record.orders).reduce(
+    (sum, item) => sum + getFieldNumber(item, "goats"),
+    0,
+  );
+
+  return Math.max(
+    itemsTotal,
+    getFieldNumber(record, "totalGoats"),
+    getFieldNumber(record, "goats"),
+    getFieldNumber(record, "goatsBought") + getFieldNumber(record, "remainingGoats"),
+    0,
+  );
+};
+
+const isBatchOrderRecord = (record: Record<string, unknown>): boolean => {
+  if (getOrderReferenceId(record)) return false;
+
+  const hasEmbeddedOrders = getOrderEntries(record.orders).length > 0;
+  const hasTarget = getOrderTotalGoats(record) > 0;
+  const sourcePage = normalizeLooseText(record.sourcePage);
+
+  if (sourcePage && sourcePage !== "orders" && !hasEmbeddedOrders && getFieldNumber(record, "totalGoats") <= 0) {
+    return false;
+  }
+
+  return hasEmbeddedOrders || hasTarget;
+};
+
+const getOrderRecordDate = (record: Record<string, unknown>): unknown =>
+  record.date || record.completedAt || record.createdAt || record.timestamp;
+
+const getRequisitionRequestedAmount = (record: Record<string, unknown>): number => {
+  const recordType = normalize(record.type);
+  if (recordType === "fuel and service") {
+    return Math.max(getFieldNumber(record, "fuelAmount"), getFieldNumber(record, "totalAmount"), 0);
+  }
+
+  return Math.max(getFieldNumber(record, "total"), getFieldNumber(record, "totalAmount"), 0);
+};
+
+const getRequisitionRecordDate = (record: Record<string, unknown>): unknown =>
+  record.submittedAt ||
+  record.createdAt ||
+  record.approvedAt ||
+  record.authorizedAt ||
+  record.transactionCompletedAt ||
+  record.completedAt ||
+  record.rejectedAt;
+
 const getActivityTotalDoses = (record: Record<string, unknown>): number => {
   if (Array.isArray(record.vaccines)) {
     return record.vaccines.reduce((sum, vaccine) => {
@@ -172,6 +263,126 @@ const getActivityTotalDoses = (record: Record<string, unknown>): number => {
   }
 
   return getFieldNumber(record, "number_doses");
+};
+
+const getActivityLocationName = (record: Record<string, unknown>): string =>
+  String(
+    record.location ||
+      record.Location ||
+      record.subcounty ||
+      record.Subcounty ||
+      record.county ||
+      record.County ||
+      "Unknown",
+  ).trim() || "Unknown";
+
+const getInfrastructureRecordDate = (record: Record<string, unknown>): Date | null =>
+  parseDate(record.date ?? record.Date ?? record.created_at ?? record.createdAt);
+
+const getInfrastructureStatuses = (record: Record<string, unknown>) => ({
+  drilled: parseBoolean(record.drilled ?? record.Drilled),
+  equipped: parseBoolean(record.equipped ?? record.Equipped),
+  rehabilitated: parseBoolean(record.rehabilitated ?? record.Rehabilitated),
+  maintained: parseBoolean(record.maintained ?? record.Maintained),
+});
+
+const getOverviewComparisonYears = (referenceDate: Date = new Date()) => ({
+  year1: referenceDate.getFullYear(),
+  year2: referenceDate.getFullYear() - 1,
+});
+
+const buildOverviewVaccinationTrend = (
+  animalHealthRecords: Record<string, unknown>[],
+  comparisonYears = getOverviewComparisonYears(),
+) => {
+  const trend = MONTH_LABELS.map((name) => ({name, year1: 0, year2: 0}));
+
+  for (const record of animalHealthRecords) {
+    const date = parseDate(record.date || record.createdAt);
+    const totalDoses = getActivityTotalDoses(record);
+    if (!date || totalDoses <= 0) continue;
+
+    const monthIndex = date.getMonth();
+    if (date.getFullYear() === comparisonYears.year1) trend[monthIndex].year1 += totalDoses;
+    if (date.getFullYear() === comparisonYears.year2) trend[monthIndex].year2 += totalDoses;
+  }
+
+  return trend;
+};
+
+const buildInfrastructureComparison = (
+  records: Record<string, unknown>[],
+  comparisonYears = getOverviewComparisonYears(),
+) => {
+  let firstYearValue = 0;
+  let secondYearValue = 0;
+
+  for (const record of records) {
+    const statuses = getInfrastructureStatuses(record);
+    if (!statuses.rehabilitated) {
+      continue;
+    }
+
+    const date = getInfrastructureRecordDate(record);
+    if (!date) continue;
+
+    if (date.getFullYear() === comparisonYears.year1) firstYearValue += 1;
+    if (date.getFullYear() === comparisonYears.year2) secondYearValue += 1;
+  }
+
+  return [
+    {name: "Year 1", value: firstYearValue, color: "#2710a1"},
+    {name: "Year 2", value: secondYearValue, color: "#f89b0d"},
+  ];
+};
+
+const buildOverviewRegistrationComparison = (
+  farmers: Record<string, unknown>[],
+  comparisonYears = getOverviewComparisonYears(),
+) => {
+  let currentYearRegistrations = 0;
+  let lastYearRegistrations = 0;
+
+  for (const farmer of farmers) {
+    const date = parseDate(farmer.createdAt || farmer.registrationDate);
+    if (!date) continue;
+
+    if (date.getFullYear() === comparisonYears.year1) currentYearRegistrations += 1;
+    if (date.getFullYear() === comparisonYears.year2) lastYearRegistrations += 1;
+  }
+
+  return [
+    {name: "Year 1", value: currentYearRegistrations, color: "#2710a1"},
+    {name: "Year 2", value: lastYearRegistrations, color: "#f89b0d"},
+  ];
+};
+
+const buildOverviewRecentLocations = (activities: Record<string, unknown>[]) => {
+  const seen = new Set<string>();
+
+  return [...activities]
+    .map((record) => {
+      const visitedDate = parseDate(record.date || record.createdAt);
+      const location = String(record.location || record.activityName || "").trim();
+      const county = String(record.county || record.region || "").trim();
+
+      return {
+        name: location || county || "Unknown location",
+        county: county || "Unknown county",
+        visitedAt: visitedDate ? visitedDate.toISOString() : "",
+        timestamp: visitedDate?.getTime() || 0,
+      };
+    })
+    .filter((entry) => entry.name && entry.timestamp > 0)
+    .sort((a, b) => b.timestamp - a.timestamp)
+    .filter((entry) => {
+      const key = `${entry.name}|${entry.county}`.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 4)
+    .map(({timestamp, ...entry}) => entry);
 };
 
 const getRecordProgramme = (record: Record<string, unknown>): string =>
@@ -364,9 +575,27 @@ const emptyOverview = () => ({
     totalGoats: 0,
     totalSheep: 0,
     totalCattle: 0,
+    totalAnimals: 0,
+    totalGoatsPurchased: 0,
     regionsVisited: 0,
   },
   topRegions: [],
+  comparisonYears: getOverviewComparisonYears(),
+  maintainedInfrastructure: [
+    {name: "Year 1", value: 0, color: "#2710a1"},
+    {name: "Year 2", value: 0, color: "#f89b0d"},
+  ],
+  registrationComparison: [
+    {name: "Year 1", value: 0, color: "#2710a1"},
+    {name: "Year 2", value: 0, color: "#f89b0d"},
+  ],
+  animalCensusVsPurchased: [
+    {name: "Goats on record", value: 0, color: "#ffc107"},
+    {name: "Goats purchased", value: 0, color: "#a80d10"},
+  ],
+  vaccinationTrend: MONTH_LABELS.map((name) => ({name, year1: 0, year2: 0})),
+  countyCoverage: [],
+  recentLocations: [],
   recentActivities: [],
   pendingActivitiesCount: 0,
 });
@@ -449,12 +678,16 @@ const emptySales = () => ({
     expenses: 0,
     netProfit: 0,
     avgCostPerKgCarcass: 0,
+    totalGoatOrdersPlaced: 0,
+    requisitionExpenses: 0,
+    totalRequisitions: 0,
   },
   genderData: [],
   countyData: [],
   topLocations: [],
   topFarmers: [],
   monthlyTrend: [],
+  requisitionTrend: [],
   top3Months: [],
 });
 
@@ -464,11 +697,15 @@ const createOverview = async (
 ) => {
   const programmes = resolveProgrammes(profile, requestedProgramme);
   if (programmes.length === 0) return emptyOverview();
+  const comparisonYears = getOverviewComparisonYears();
 
-  const [farmers, activities, capacity] = await Promise.all([
+  const [farmers, activities, capacity, offtakes, animalHealthActivities, boreholes] = await Promise.all([
     fetchCollectionByProgrammes("farmers", programmes),
     fetchCollectionByProgrammes("Recent Activities", programmes),
     fetchCollectionByProgrammes("capacityBuilding", programmes),
+    fetchCollectionByProgrammes("offtakes", programmes),
+    fetchCollectionByProgrammes("AnimalHealthActivities", programmes),
+    fetchCollectionByProgrammes("BoreholeStorage", programmes),
   ]);
 
   let maleFarmers = 0;
@@ -525,6 +762,16 @@ const createOverview = async (
     (sum, record) => sum + parseNumber(record.totalFarmers),
     0,
   );
+  const totalAnimals = totalGoats + totalSheep + totalCattle;
+  const totalGoatsPurchased = offtakes.reduce(
+    (sum, record) => sum + getOfftakeGoatsTotal(record),
+    0,
+  );
+  const countyCoverage = topRegions.map((region, index) => ({
+    name: region.name,
+    value: region.farmerCount,
+    color: ["#2710a1", "#f89b0d", "#ffea00", "#2cb100"][index % 4],
+  }));
 
   return {
     scope: "overview",
@@ -539,9 +786,21 @@ const createOverview = async (
       totalGoats,
       totalSheep,
       totalCattle,
+      totalAnimals,
+      totalGoatsPurchased,
       regionsVisited: Object.keys(regionMap).length,
     },
     topRegions,
+    comparisonYears,
+    maintainedInfrastructure: buildInfrastructureComparison(boreholes, comparisonYears),
+    registrationComparison: buildOverviewRegistrationComparison(farmers, comparisonYears),
+    animalCensusVsPurchased: [
+      {name: "Goats on record", value: totalGoats, color: "#ffc107"},
+      {name: "Goats purchased", value: totalGoatsPurchased, color: "#a80d10"},
+    ],
+    vaccinationTrend: buildOverviewVaccinationTrend(animalHealthActivities, comparisonYears),
+    countyCoverage,
+    recentLocations: buildOverviewRecentLocations(activities),
     recentActivities,
     pendingActivitiesCount,
   };
@@ -813,7 +1072,7 @@ const createPerformanceReport = async (
   for (const record of filteredAnimalHealthActivities) {
     const doses = getActivityTotalDoses(record);
     totalDosesGivenOut += doses;
-    const location = String(record.location || "Unknown").trim() || "Unknown";
+    const location = getActivityLocationName(record);
     if (doses > 0) {
       dosesByLocationMap[location] = (dosesByLocationMap[location] || 0) + doses;
     }
@@ -944,10 +1203,24 @@ const createSalesReport = async (
   const programmes = resolveProgrammes(profile, requestedProgramme);
   if (programmes.length === 0) return emptySales();
 
-  const offtakes = await fetchCollectionByProgrammes("offtakes", programmes);
+  const [offtakes, orders, requisitions] = await Promise.all([
+    fetchCollectionByProgrammes("offtakes", programmes),
+    fetchCollectionByProgrammes("orders", programmes),
+    fetchCollectionByProgrammes("requisitions", programmes),
+  ]);
   const filteredData = filterRecordsByDateRange(
     offtakes,
     (record) => record.date || record.Date || record.createdAt,
+    dateRange,
+  );
+  const filteredOrders = filterRecordsByDateRange(
+    orders,
+    (record) => getOrderRecordDate(record),
+    dateRange,
+  );
+  const filteredRequisitions = filterRecordsByDateRange(
+    requisitions,
+    (record) => getRequisitionRecordDate(record),
     dateRange,
   );
 
@@ -959,11 +1232,15 @@ const createSalesReport = async (
   let totalLiveWeight = 0;
   let totalCarcassWeight = 0;
   let totalAnimalsCount = 0;
+  let totalGoatOrdersPlaced = 0;
+  let requisitionExpenses = 0;
+  let totalRequisitions = 0;
   const genderCounts: Record<string, number> = {Male: 0, Female: 0};
   const countySales: Record<string, number> = {};
   const locationSales: Record<string, number> = {};
   const farmerSales: Record<string, {name: string; revenue: number; animals: number; county: string}> = {};
   const monthlyData: Record<string, {monthName: string; revenue: number; volume: number}> = {};
+  const requisitionMonthlyData: Record<string, {monthName: string; count: number; amount: number}> = {};
   const pricePerKg = parseNumber(salesInputs?.pricePerKg);
   const expenses = parseNumber(salesInputs?.expenses);
 
@@ -1026,6 +1303,28 @@ const createSalesReport = async (
     }
   }
 
+  for (const record of filteredOrders) {
+    if (!isBatchOrderRecord(record)) continue;
+    totalGoatOrdersPlaced += getOrderTotalGoats(record);
+  }
+
+  for (const record of filteredRequisitions) {
+    const requestedAmount = getRequisitionRequestedAmount(record);
+    requisitionExpenses += requestedAmount;
+    totalRequisitions += 1;
+
+    const date = parseDate(getRequisitionRecordDate(record));
+    if (!date) continue;
+
+    const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+    const monthName = date.toLocaleString("default", {month: "short"});
+    if (!requisitionMonthlyData[monthKey]) {
+      requisitionMonthlyData[monthKey] = {monthName, count: 0, amount: 0};
+    }
+    requisitionMonthlyData[monthKey].count += 1;
+    requisitionMonthlyData[monthKey].amount += requestedAmount;
+  }
+
   const costPerGoat = totalGoats > 0 ? totalPurchaseCost / totalGoats : 0;
   const avgLiveWeight = totalAnimalsCount > 0 ? totalLiveWeight / totalAnimalsCount : 0;
   const avgCarcassWeight = totalAnimalsCount > 0 ? totalCarcassWeight / totalAnimalsCount : 0;
@@ -1048,6 +1347,10 @@ const createSalesReport = async (
   const monthlyTrend = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"].map((month) => {
     const match = Object.values(monthlyData).find((entry) => entry.monthName === month);
     return {month, revenue: match ? match.revenue : 0, volume: match ? match.volume : 0};
+  });
+  const requisitionTrend = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"].map((month) => {
+    const match = Object.values(requisitionMonthlyData).find((entry) => entry.monthName === month);
+    return {month, count: match ? match.count : 0, amount: match ? match.amount : 0};
   });
   const top3Months = Object.values(monthlyData)
     .sort((a, b) => b.revenue - a.revenue)
@@ -1078,12 +1381,16 @@ const createSalesReport = async (
       expenses,
       netProfit,
       avgCostPerKgCarcass,
+      totalGoatOrdersPlaced,
+      requisitionExpenses,
+      totalRequisitions,
     },
     genderData,
     countyData,
     topLocations,
     topFarmers,
     monthlyTrend,
+    requisitionTrend,
     top3Months,
   };
 };

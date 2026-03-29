@@ -1,8 +1,13 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
-import { canViewAllProgrammes } from "@/contexts/authhelper";
-import { ref, onValue } from "firebase/database";
+import {
+  canViewAllProgrammes,
+  isAdmin,
+  isChiefAdmin,
+  resolvePermissionPrincipal,
+} from "@/contexts/authhelper";
+import { ref, onValue, get } from "firebase/database";
 import { db } from "@/lib/firebase";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { 
@@ -75,6 +80,45 @@ interface SalesInputs {
   expenses: number;
 }
 
+interface OrderAnalyticsItem {
+  goats?: number;
+}
+
+interface OrderAnalyticsRecord {
+  id: string;
+  date?: Date | string | number;
+  completedAt?: Date | string | number;
+  createdAt?: Date | string | number;
+  timestamp?: number;
+  goats?: number;
+  goatsBought?: number;
+  remainingGoats?: number;
+  totalGoats?: number;
+  programme?: string;
+  sourcePage?: string;
+  parentOrderId?: string;
+  requestId?: string;
+  targetOrderId?: string;
+  offtakeOrderId?: string;
+  orders?: OrderAnalyticsItem[] | Record<string, OrderAnalyticsItem>;
+}
+
+interface RequisitionAnalyticsRecord {
+  id: string;
+  type?: string;
+  programme?: string;
+  submittedAt?: Date | string | number;
+  createdAt?: Date | string | number;
+  approvedAt?: Date | string | number;
+  authorizedAt?: Date | string | number;
+  transactionCompletedAt?: Date | string | number;
+  completedAt?: Date | string | number;
+  rejectedAt?: Date | string | number;
+  totalAmount?: number;
+  total?: number;
+  fuelAmount?: number;
+}
+
 interface SalesAnalyticsPayload {
   filteredCount: number;
   stats: {
@@ -93,12 +137,16 @@ interface SalesAnalyticsPayload {
     expenses: number;
     netProfit: number;
     avgCostPerKgCarcass: number;
+    totalGoatOrdersPlaced: number;
+    requisitionExpenses: number;
+    totalRequisitions: number;
   };
   genderData: Array<{ name: string; value: number }>;
   countyData: Array<{ name: string; count: number }>;
   topLocations: Array<{ name: string; count: number }>;
   topFarmers: Array<{ name: string; revenue: number; animals: number; county: string }>;
   monthlyTrend: Array<{ month: string; revenue: number; volume: number }>;
+  requisitionTrend: Array<{ month: string; count: number; amount: number }>;
   top3Months: Array<{ month: string; revenue: number; volume: number }>;
 }
 
@@ -213,6 +261,11 @@ const getQDates = (year: number, quarter: 1 | 2 | 3 | 4) => {
 const normalizeProgrammeToken = (value: string | null | undefined): string =>
   (value || "").trim().toUpperCase();
 
+const normalizeLooseText = (value: unknown): string =>
+  typeof value === "string"
+    ? value.trim().toLowerCase().replace(/[-_]+/g, " ").replace(/\s+/g, " ")
+    : "";
+
 const parseNumber = (value: unknown): number => {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string") {
@@ -221,6 +274,74 @@ const parseNumber = (value: unknown): number => {
   }
   return 0;
 };
+
+const getOrderEntries = (orders: OrderAnalyticsRecord["orders"]): OrderAnalyticsItem[] => {
+  if (Array.isArray(orders)) return orders.filter(Boolean);
+  if (orders && typeof orders === "object") return Object.values(orders).filter(Boolean);
+  return [];
+};
+
+const getOrderReferenceId = (record: OrderAnalyticsRecord): string => {
+  const recordId = String(record.id || "").trim();
+  const candidates = [record.parentOrderId, record.requestId, record.targetOrderId, record.offtakeOrderId];
+
+  for (const candidate of candidates) {
+    const normalized = String(candidate || "").trim();
+    if (normalized && normalized !== recordId) return normalized;
+  }
+
+  return "";
+};
+
+const getOrderTotalGoats = (record: OrderAnalyticsRecord): number => {
+  const embeddedItemsTotal = getOrderEntries(record.orders).reduce(
+    (sum, item) => sum + parseNumber(item.goats),
+    0,
+  );
+
+  return Math.max(
+    embeddedItemsTotal,
+    parseNumber(record.totalGoats),
+    parseNumber(record.goats),
+    parseNumber(record.goatsBought) + parseNumber(record.remainingGoats),
+    0,
+  );
+};
+
+const isBatchOrderRecord = (record: OrderAnalyticsRecord): boolean => {
+  if (getOrderReferenceId(record)) return false;
+
+  const hasEmbeddedOrders = getOrderEntries(record.orders).length > 0;
+  const hasTarget = getOrderTotalGoats(record) > 0;
+  const sourcePage = normalizeLooseText(record.sourcePage);
+
+  if (sourcePage && sourcePage !== "orders" && !hasEmbeddedOrders && parseNumber(record.totalGoats) <= 0) {
+    return false;
+  }
+
+  return hasEmbeddedOrders || hasTarget;
+};
+
+const getOrderRecordDate = (record: OrderAnalyticsRecord): unknown =>
+  record.date || record.completedAt || record.createdAt || record.timestamp;
+
+const getRequisitionRequestedAmount = (record: RequisitionAnalyticsRecord): number => {
+  const recordType = normalizeLooseText(record.type);
+  if (recordType === "fuel and service") {
+    return Math.max(parseNumber(record.fuelAmount), parseNumber(record.totalAmount), 0);
+  }
+
+  return Math.max(parseNumber(record.total), parseNumber(record.totalAmount), 0);
+};
+
+const getRequisitionRecordDate = (record: RequisitionAnalyticsRecord): unknown =>
+  record.submittedAt ||
+  record.createdAt ||
+  record.approvedAt ||
+  record.authorizedAt ||
+  record.transactionCompletedAt ||
+  record.completedAt ||
+  record.rejectedAt;
 
 const createEmptySalesAnalytics = (salesInputs: SalesInputs): SalesAnalyticsPayload => ({
   filteredCount: 0,
@@ -240,17 +361,23 @@ const createEmptySalesAnalytics = (salesInputs: SalesInputs): SalesAnalyticsPayl
     expenses: salesInputs.expenses,
     netProfit: -salesInputs.expenses,
     avgCostPerKgCarcass: 0,
+    totalGoatOrdersPlaced: 0,
+    requisitionExpenses: 0,
+    totalRequisitions: 0,
   },
   genderData: [],
   countyData: [],
   topLocations: [],
   topFarmers: [],
   monthlyTrend: [],
+  requisitionTrend: [],
   top3Months: [],
 });
 
 const buildLocalSalesAnalytics = (
   records: OfftakeData[],
+  orders: OrderAnalyticsRecord[],
+  requisitions: RequisitionAnalyticsRecord[],
   dateRange: { startDate: string; endDate: string },
   selectedProgramme: string | null,
   salesInputs: SalesInputs,
@@ -275,11 +402,25 @@ const buildLocalSalesAnalytics = (
   let totalLiveWeight = 0;
   let totalCarcassWeight = 0;
   let totalAnimalsCount = 0;
+  let totalGoatOrdersPlaced = 0;
+  let requisitionExpenses = 0;
+  let totalRequisitions = 0;
   const genderCounts: Record<string, number> = { Male: 0, Female: 0 };
   const countySales: Record<string, number> = {};
   const locationSales: Record<string, number> = {};
   const farmerSales: Record<string, { name: string; revenue: number; animals: number; county: string }> = {};
   const monthlyData: Record<string, { monthName: string; revenue: number; volume: number }> = {};
+  const requisitionMonthlyData: Record<string, { monthName: string; count: number; amount: number }> = {};
+  const filteredOrders = orders.filter((record) => {
+    const recordProgramme = normalizeProgrammeToken(record.programme);
+    const matchesProgramme = !targetProgramme || recordProgramme === targetProgramme;
+    return matchesProgramme && isDateInRange(getOrderRecordDate(record), dateRange.startDate, dateRange.endDate);
+  });
+  const filteredRequisitions = requisitions.filter((record) => {
+    const recordProgramme = normalizeProgrammeToken(record.programme);
+    const matchesProgramme = !targetProgramme || recordProgramme === targetProgramme;
+    return matchesProgramme && isDateInRange(getRequisitionRecordDate(record), dateRange.startDate, dateRange.endDate);
+  });
 
   for (const record of filteredData) {
     const goatsArr = Array.isArray(record.goats) ? record.goats : [];
@@ -342,6 +483,28 @@ const buildLocalSalesAnalytics = (
     }
   }
 
+  filteredOrders.forEach((record) => {
+    if (!isBatchOrderRecord(record)) return;
+    totalGoatOrdersPlaced += getOrderTotalGoats(record);
+  });
+
+  filteredRequisitions.forEach((record) => {
+    const requestedAmount = getRequisitionRequestedAmount(record);
+    requisitionExpenses += requestedAmount;
+    totalRequisitions += 1;
+
+    const date = parseDate(getRequisitionRecordDate(record));
+    if (!date) return;
+
+    const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+    const monthName = date.toLocaleString("default", { month: "short" });
+    if (!requisitionMonthlyData[monthKey]) {
+      requisitionMonthlyData[monthKey] = { monthName, count: 0, amount: 0 };
+    }
+    requisitionMonthlyData[monthKey].count += 1;
+    requisitionMonthlyData[monthKey].amount += requestedAmount;
+  });
+
   const costPerGoat = totalGoats > 0 ? totalPurchaseCost / totalGoats : 0;
   const avgLiveWeight = totalAnimalsCount > 0 ? totalLiveWeight / totalAnimalsCount : 0;
   const avgCarcassWeight = totalAnimalsCount > 0 ? totalCarcassWeight / totalAnimalsCount : 0;
@@ -366,6 +529,9 @@ const buildLocalSalesAnalytics = (
       expenses: salesInputs.expenses,
       netProfit,
       avgCostPerKgCarcass,
+      totalGoatOrdersPlaced,
+      requisitionExpenses,
+      totalRequisitions,
     },
     genderData: [
       { name: "Male", value: genderCounts.Male },
@@ -385,6 +551,10 @@ const buildLocalSalesAnalytics = (
       const match = Object.values(monthlyData).find((entry) => entry.monthName === month);
       return { month, revenue: match ? match.revenue : 0, volume: match ? match.volume : 0 };
     }),
+    requisitionTrend: ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"].map((month) => {
+      const match = Object.values(requisitionMonthlyData).find((entry) => entry.monthName === month);
+      return { month, count: match ? match.count : 0, amount: match ? match.amount : 0 };
+    }),
     top3Months: Object.values(monthlyData)
       .sort((a, b) => b.revenue - a.revenue)
       .slice(0, 3)
@@ -399,13 +569,15 @@ const buildLocalSalesAnalytics = (
 // --- Custom Hook for Offtake Data Processing ---
 const useOfftakeData = (
   offtakeData: OfftakeData[],
+  orderData: OrderAnalyticsRecord[],
+  requisitionData: RequisitionAnalyticsRecord[],
   dateRange: { startDate: string; endDate: string },
   selectedProgramme: string | null,
   salesInputs: SalesInputs,
 ) => {
   const localData = useMemo(
-    () => buildLocalSalesAnalytics(offtakeData, dateRange, selectedProgramme, salesInputs),
-    [offtakeData, dateRange.endDate, dateRange.startDate, salesInputs, selectedProgramme]
+    () => buildLocalSalesAnalytics(offtakeData, orderData, requisitionData, dateRange, selectedProgramme, salesInputs),
+    [offtakeData, orderData, requisitionData, dateRange.endDate, dateRange.startDate, salesInputs, selectedProgramme]
   );
 
   const queryResult = useQuery({
@@ -506,6 +678,8 @@ const SalesReport = () => {
   
   const [loading, setLoading] = useState(true);
   const [offtakeData, setOfftakeData] = useState<OfftakeData[]>([]);
+  const [orderData, setOrderData] = useState<OrderAnalyticsRecord[]>([]);
+  const [requisitionData, setRequisitionData] = useState<RequisitionAnalyticsRecord[]>([]);
   const [isCacheHit, setIsCacheHit] = useState(false);
   
   const currentYear = new Date().getFullYear();
@@ -532,6 +706,14 @@ const SalesReport = () => {
     () => resolveAccessibleProgrammes(userCanViewAllProgrammeData, allowedProgrammes),
     [allowedProgrammes, userCanViewAllProgrammeData]
   );
+  const permissionPrincipal = useMemo(
+    () => resolvePermissionPrincipal(userRole, userAttribute),
+    [userRole, userAttribute]
+  );
+  const userCanManageSalesInputs = useMemo(
+    () => isChiefAdmin(permissionPrincipal) || isAdmin(permissionPrincipal),
+    [permissionPrincipal]
+  );
   const [activeProgram, setActiveProgram] = useState<string>(""); 
   const showProgrammeFilter = accessibleProgrammes.length > 1;
   const [salesInputs, setSalesInputs] = useState<SalesInputs>({ pricePerKg: 0, expenses: 0 });
@@ -542,8 +724,18 @@ const SalesReport = () => {
   });
   const analysisProgramme = selectedProgramme || activeProgram || null;
 
-  const { stats, genderData, countyData, topLocations, topFarmers, monthlyTrend, filteredCount, top3Months, isLoading: analysisLoading } =
-    useOfftakeData(offtakeData, dateRange, analysisProgramme, salesInputs);
+  const {
+    stats,
+    genderData,
+    countyData,
+    topLocations,
+    topFarmers,
+    monthlyTrend,
+    requisitionTrend,
+    filteredCount,
+    top3Months,
+    isLoading: analysisLoading,
+  } = useOfftakeData(offtakeData, orderData, requisitionData, dateRange, analysisProgramme, salesInputs);
 
   const unsubscribeRef = useRef<(() => void) | null>(null);
 
@@ -655,6 +847,83 @@ const SalesReport = () => {
     return () => { if(unsubscribe) unsubscribe(); };
   }, [activeProgram, toast]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!activeProgram) {
+      setOrderData([]);
+      setRequisitionData([]);
+      return;
+    }
+
+    const loadFinanceCollections = async () => {
+      try {
+        const [ordersSnap, requisitionsSnap] = await Promise.all([
+          get(ref(db, "orders")),
+          get(ref(db, "requisitions")),
+        ]);
+
+        if (cancelled) return;
+
+        const normalizedActiveProgram = normalizeProgrammeToken(activeProgram);
+        const ordersList = ordersSnap.exists()
+          ? Object.entries(ordersSnap.val() as Record<string, any>)
+              .map(([id, item]) => ({
+                id,
+                date: item.date,
+                completedAt: item.completedAt,
+                createdAt: item.createdAt,
+                timestamp: item.timestamp,
+                goats: item.goats,
+                goatsBought: item.goatsBought,
+                remainingGoats: item.remainingGoats,
+                totalGoats: item.totalGoats,
+                programme: item.programme || item.Programme || "",
+                sourcePage: item.sourcePage,
+                parentOrderId: item.parentOrderId,
+                requestId: item.requestId,
+                targetOrderId: item.targetOrderId,
+                offtakeOrderId: item.offtakeOrderId,
+                orders: item.orders,
+              }))
+              .filter((record) => normalizeProgrammeToken(record.programme || activeProgram) === normalizedActiveProgram)
+          : [];
+
+        const requisitionsList = requisitionsSnap.exists()
+          ? Object.entries(requisitionsSnap.val() as Record<string, any>)
+              .map(([id, item]) => ({
+                id,
+                type: item.type,
+                programme: item.programme || item.Programme || "",
+                submittedAt: item.submittedAt,
+                createdAt: item.createdAt,
+                approvedAt: item.approvedAt,
+                authorizedAt: item.authorizedAt,
+                transactionCompletedAt: item.transactionCompletedAt,
+                completedAt: item.completedAt,
+                rejectedAt: item.rejectedAt,
+                totalAmount: item.totalAmount,
+                total: item.total,
+                fuelAmount: item.fuelAmount,
+              }))
+              .filter((record) => normalizeProgrammeToken(record.programme || activeProgram) === normalizedActiveProgram)
+          : [];
+
+        setOrderData(ordersList);
+        setRequisitionData(requisitionsList);
+      } catch (error) {
+        console.error("Error fetching finance collections:", error);
+        toast({ title: "Error", description: "Failed to load order and requisition data.", variant: "destructive" });
+      }
+    };
+
+    void loadFinanceCollections();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeProgram, toast]);
+
   const handleDateRangeChange = useCallback((key: string, value: string) => setDateRange(prev => ({ ...prev, [key]: value })), []);
 
   const handleYearChange = useCallback((year: string) => {
@@ -691,6 +960,10 @@ const SalesReport = () => {
 
   const formatCurrency = (val: number) => `KES ${val.toLocaleString(undefined, {maximumFractionDigits: 0})}`;
   const openSalesInputsDialog = () => {
+    if (!userCanManageSalesInputs) {
+      return;
+    }
+
     setSalesInputsForm({
       pricePerKg: salesInputs.pricePerKg.toString(),
       expenses: salesInputs.expenses.toString(),
@@ -699,6 +972,15 @@ const SalesReport = () => {
   };
 
   const saveSalesInputs = () => {
+    if (!userCanManageSalesInputs) {
+      toast({
+        title: "Unauthorized",
+        description: "Only admin or chief admin can update expense inputs.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     const isUpdate = salesInputs.pricePerKg > 0 || salesInputs.expenses > 0;
     const parsedPricePerKg = Math.max(0, Number(salesInputsForm.pricePerKg) || 0);
     const parsedExpenses = Math.max(0, Number(salesInputsForm.expenses) || 0);
@@ -737,17 +1019,19 @@ const SalesReport = () => {
         <div className="flex flex-col gap-4 md:gap-6">
           <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
             <div>
-              <h1 className="text-xl md:text-xl font-bold text-gray-900 tracking-tight">Offtake Dashboard</h1>
+              <h1 className="text-xl md:text-xl font-bold text-gray-900 tracking-tight">Finance Dashboard</h1>
               <p className="text-sm text-gray-500 mt-1 flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-blue-600"></span>
                 Viewing Data: <span className="font-semibold text-blue-700">{activeProgram || "All Programmes"}</span>
                 {isCacheHit && <span className="text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full border border-blue-200">Cached</span>}
               </p>
             </div>
-            <Button type="button" variant="outline" className="w-full md:w-auto" onClick={openSalesInputsDialog}>
-              <Calculator className="h-4 w-4 mr-2" />
-              {hasConfiguredSalesInputs ? "Update Revenue Inputs" : "Add Revenue Inputs"}
-            </Button>
+            {userCanManageSalesInputs && (
+              <Button type="button" variant="outline" className="w-full md:w-auto" onClick={openSalesInputsDialog}>
+                <Calculator className="h-4 w-4 mr-2" />
+                {hasConfiguredSalesInputs ? "Update Expense Inputs" : "Add Expense Inputs"}
+              </Button>
+            )}
           </div>
 
           {/* Modern Responsive Filter Control Panel */}
@@ -1085,11 +1369,76 @@ const SalesReport = () => {
           </Card>
         </section>
 
+        {/* --- SECTION 3: ORDERS & REQUISITIONS --- */}
+        <section className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700 delay-100">
+          <div className="flex items-center gap-2 pb-1 border-b border-gray-200">
+             <Calendar className="h-5 w-5 text-green-600" />
+             <h2 className="text-lg font-bold text-gray-800">Orders and Requisition Tracks</h2>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <StatsCard
+              title="Total Goat Orders Placed"
+              value={millify(stats.totalGoatOrdersPlaced)}
+              icon={Package}
+              subText="Summed from order batch totals in the selected range"
+              color="blue"
+            />
+            <StatsCard
+              title="Expenses In Requisitions"
+              value={millify(stats.requisitionExpenses)}
+              icon={DollarSign}
+              subText={`${stats.totalRequisitions.toLocaleString()} requisitions in the selected range`}
+              color="orange"
+            />
+          </div>
+
+          <Card className="border-0 shadow-sm bg-white rounded-2xl">
+            <CardHeader className="pb-4 pt-6 px-6">
+              <CardTitle className="text-sm font-bold flex items-center gap-2 text-gray-800">
+                <TrendingUp className="h-4 w-4 text-blue-600" />
+                Monthly Requisition Trend
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="px-6 pb-6">
+              <ResponsiveContainer width="100%" height={350}>
+                <AreaChart data={requisitionTrend}>
+                  <defs>
+                    <linearGradient id="colorRequisitionTrend" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor={COLORS.orange} stopOpacity={0.24}/>
+                      <stop offset="95%" stopColor={COLORS.orange} stopOpacity={0}/>
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+                  <XAxis dataKey="month" tick={{ fontSize: 12, fill: '#64748b' }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fontSize: 12, fill: '#64748b' }} axisLine={false} tickLine={false} />
+                  <Tooltip 
+                    contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                    formatter={(value: number, name: string) => [
+                      name === 'count' ? `${value} Requisitions` : formatCurrency(value), 
+                      name === 'count' ? 'Requisitions' : 'Amount'
+                    ]} 
+                  />
+                  <Area 
+                    type="monotone" 
+                    dataKey="count" 
+                    stroke={COLORS.orange} 
+                    strokeWidth={2}
+                    fillOpacity={1} 
+                    fill="url(#colorRequisitionTrend)" 
+                    name="count"
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+        </section>
+
         <Dialog open={isSalesInputsDialogOpen} onOpenChange={setIsSalesInputsDialogOpen}>
           <DialogContent className="sm:max-w-md">
             <DialogHeader>
               <DialogTitle>
-                {hasConfiguredSalesInputs ? "Update Revenue and Expense Inputs" : "Add Revenue and Expense Inputs"}
+                {hasConfiguredSalesInputs ? "Update Expense Inputs" : "Add Expense Inputs"}
               </DialogTitle>
             </DialogHeader>
             <div className="space-y-4 py-2">
@@ -1123,7 +1472,7 @@ const SalesReport = () => {
             <DialogFooter>
               <Button variant="outline" onClick={() => setIsSalesInputsDialogOpen(false)}>Cancel</Button>
               <Button onClick={saveSalesInputs}>
-                {hasConfiguredSalesInputs ? "Update Inputs" : "Add Inputs"}
+                {hasConfiguredSalesInputs ? "Update Expense Inputs" : "Add Expense Inputs"}
               </Button>
             </DialogFooter>
           </DialogContent>

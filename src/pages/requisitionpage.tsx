@@ -20,7 +20,12 @@ import html2canvas from "html2canvas";
 import { jsPDF } from "jspdf";
 import { millify } from "millify";
 import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
-import { resolveAccessibleProgrammes, resolveActiveProgramme } from "@/lib/programme-access";
+import {
+  canAccessProgrammeRecord,
+  normalizeProgramme,
+  resolveAccessibleProgrammes,
+  resolveActiveProgramme,
+} from "@/lib/programme-access";
 
 // --- Types ---
 interface PerdiemItem {
@@ -122,8 +127,20 @@ interface Pagination {
 
 // --- Constants ---
 const PAGE_LIMIT = 10;
+const ALL_PROGRAMMES_VALUE = "ALL";
+
+const createDefaultFilters = (): Filters => ({
+  search: "",
+  startDate: "",
+  endDate: "",
+  type: "all",
+  status: "all",
+});
 
 // --- Helper Functions ---
+const getNormalizedStatus = (status: unknown): string =>
+  typeof status === "string" ? status.trim().toLowerCase() : "";
+
 const parseDate = (date: any): Date | null => {
   if (!date) return null;
   try {
@@ -257,12 +274,12 @@ const RequisitionsPage = () => {
   // List State
   const [allRequisitions, setAllRequisitions] = useState<RequisitionData[]>([]);
   const [filteredRequisitions, setFilteredRequisitions] = useState<RequisitionData[]>([]);
-  const [activeProgram, setActiveProgram] = useState<string>("ALL"); 
-  const [availablePrograms, setAvailablePrograms] = useState<string[]>([]);
+  const [activeProgram, setActiveProgram] = useState<string>(ALL_PROGRAMMES_VALUE);
   const [loading, setLoading] = useState(true);
   const [exportLoading, setExportLoading] = useState(false);
   const [selectedRecords, setSelectedRecords] = useState<string[]>([]);
   const [isBulkProcessing, setIsBulkProcessing] = useState(false);
+  const [searchValue, setSearchValue] = useState("");
   
   // Dialog States
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
@@ -305,13 +322,7 @@ const RequisitionsPage = () => {
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
   // Filters
-  const [filters, setFilters] = useState<Filters>({
-    search: "",
-    startDate: currentMonth.startDate,
-    endDate: currentMonth.endDate,
-    type: "all",
-    status: "all"
-  });
+  const [filters, setFilters] = useState<Filters>(() => createDefaultFilters());
 
   const [stats, setStats] = useState<Stats>({
     totalRequests: 0,
@@ -422,13 +433,27 @@ const RequisitionsPage = () => {
 
   // --- 1. Fetch User Permissions ---
   useEffect(() => {
-    if (canViewAllRequisitionProgrammes) {
-      setAvailablePrograms([]);
-      setActiveProgram("ALL");
-      return;
-    }
-    setAvailablePrograms(accessibleProgrammes);
-    setActiveProgram((prev) => resolveActiveProgramme(prev === "ALL" ? "" : prev, accessibleProgrammes));
+    setActiveProgram((prev) => {
+      const normalizedPrev = normalizeProgramme(prev);
+
+      if (canViewAllRequisitionProgrammes) {
+        if (prev === ALL_PROGRAMMES_VALUE || (!!normalizedPrev && accessibleProgrammes.includes(normalizedPrev))) {
+          return prev || ALL_PROGRAMMES_VALUE;
+        }
+        return ALL_PROGRAMMES_VALUE;
+      }
+
+      if (accessibleProgrammes.length === 0) return "";
+
+      if (accessibleProgrammes.length > 1) {
+        if (prev === ALL_PROGRAMMES_VALUE || (!!normalizedPrev && accessibleProgrammes.includes(normalizedPrev))) {
+          return prev || ALL_PROGRAMMES_VALUE;
+        }
+        return ALL_PROGRAMMES_VALUE;
+      }
+
+      return resolveActiveProgramme(prev === ALL_PROGRAMMES_VALUE ? "" : prev, accessibleProgrammes);
+    });
   }, [accessibleProgrammes, canViewAllRequisitionProgrammes]);
 
   // --- 2. Data Fetching ---
@@ -463,6 +488,7 @@ const RequisitionsPage = () => {
             return {
                 id: key,
                 ...item,
+                status: (getNormalizedStatus(item.status) || "pending") as RequisitionData["status"],
                 phoneNumber: normalizedPhone,
                 tripPurpose: isFuel ? item.fuelPurpose : item.tripPurpose,
                 items: Array.isArray(item.items) ? item.items : [], 
@@ -500,12 +526,17 @@ const RequisitionsPage = () => {
       return;
     }
     const baseFilteredList = allRequisitions.filter(record => {
-      if (
-        !canViewAllRequisitionProgrammes &&
-        activeProgram &&
-        activeProgram !== "ALL" &&
-        String(record.programme || "").trim() !== activeProgram
-      ) {
+      const normalizedRecordProgramme = normalizeProgramme(record.programme);
+      const normalizedActiveProgram = normalizeProgramme(activeProgram);
+
+      if (!canViewAllRequisitionProgrammes) {
+        if (!canAccessProgrammeRecord(record.programme, accessibleProgrammes, false)) {
+          return false;
+        }
+        if (normalizedActiveProgram && normalizedRecordProgramme !== normalizedActiveProgram) {
+          return false;
+        }
+      } else if (normalizedActiveProgram && normalizedRecordProgramme !== normalizedActiveProgram) {
         return false;
       }
 
@@ -536,10 +567,11 @@ const RequisitionsPage = () => {
     });
 
     const roleScopedList = baseFilteredList.filter((record) => {
-      if (userHasHummanResourceRights) return record.status === "approved";
+      const normalizedStatus = getNormalizedStatus(record.status);
+      if (userHasHummanResourceRights) return normalizedStatus === "approved";
       if (userHasFinanceRights) {
         const isAuthorized = !!String(record.authorizedBy || "").trim();
-        const isCompleted = String(record.status || "").toLowerCase() === "complete";
+        const isCompleted = normalizedStatus === "complete";
         return isAuthorized || isCompleted;
       }
       return true;
@@ -554,13 +586,13 @@ const RequisitionsPage = () => {
     setFilteredRequisitions(sortedFilteredList);
 
     const totalRequests = baseFilteredList.length;
-    const pendingRequests = baseFilteredList.filter(r => r.status === 'pending').length;
-    const approvedRequests = baseFilteredList.filter(r => r.status === 'approved').length;
+    const pendingRequests = baseFilteredList.filter((r) => getNormalizedStatus(r.status) === "pending").length;
+    const approvedRequests = baseFilteredList.filter((r) => getNormalizedStatus(r.status) === "approved").length;
     const authorizedRequests = baseFilteredList.filter(
-      (r) => r.status === "approved" && !!String(r.authorizedBy || "").trim()
+      (r) => getNormalizedStatus(r.status) === "approved" && !!String(r.authorizedBy || "").trim()
     ).length;
-    const rejectedRequests = baseFilteredList.filter(r => r.status === "rejected").length;
-    const completeRequests = baseFilteredList.filter(r => r.status === 'complete').length;
+    const rejectedRequests = baseFilteredList.filter((r) => getNormalizedStatus(r.status) === "rejected").length;
+    const completeRequests = baseFilteredList.filter((r) => getNormalizedStatus(r.status) === "complete").length;
     const totalAmount = baseFilteredList.reduce((sum, r) => sum + (r.totalAmount || 0), 0);
     
     setStats({
@@ -586,6 +618,7 @@ const RequisitionsPage = () => {
     userHasHummanResourceRights,
     userHasFinanceRights,
     activeProgram,
+    accessibleProgrammes,
     canViewAllRequisitionProgrammes,
   ]);
 
@@ -616,19 +649,8 @@ const RequisitionsPage = () => {
     return allRequisitions.filter((record) => selectedSet.has(record.id));
   };
 
-  const handleProgramChange = (program: string) => {
-    setActiveProgram(program);
-    setFilters(prev => ({ 
-        ...prev, search: "", 
-        startDate: currentMonth.startDate, 
-        endDate: currentMonth.endDate, 
-        type: "all", status: "all"
-    }));
-    setSelectedRecords([]);
-    setPagination(prev => ({ ...prev, page: 1 }));
-  };
-
   const handleSearchChange = useCallback((value: string) => {
+    setSearchValue(value);
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
     searchTimeoutRef.current = setTimeout(() => {
       setFilters(prev => ({ ...prev, search: value }));
@@ -640,6 +662,22 @@ const RequisitionsPage = () => {
     setFilters(prev => ({ ...prev, [key]: value }));
     setPagination(prev => ({ ...prev, page: 1 }));
   }, []);
+
+  const clearFilters = useCallback(() => {
+    setSearchValue("");
+    setFilters(createDefaultFilters());
+    setSelectedRecords([]);
+    setPagination(prev => ({ ...prev, page: 1 }));
+  }, []);
+
+  const resetToCurrentMonth = useCallback(() => {
+    setFilters((prev) => ({
+      ...prev,
+      startDate: currentMonth.startDate,
+      endDate: currentMonth.endDate,
+    }));
+    setPagination((prev) => ({ ...prev, page: 1 }));
+  }, [currentMonth.endDate, currentMonth.startDate]);
 
   const handlePageChange = useCallback((newPage: number) => {
     setPagination(prev => {
@@ -1886,22 +1924,12 @@ const RequisitionsPage = () => {
                 </div>
             </div>
             
-            {userIsChiefAdmin && availablePrograms.length > 1 && (
-                <div className="space-y-2 w-full lg:w-[180px]">
-                    <Select value={activeProgram} onValueChange={handleProgramChange} disabled={availablePrograms.length === 0}>
-                        <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white h-9 font-bold w-full">
-                            <SelectValue placeholder="Select Programme" />
-                        </SelectTrigger>
-                        <SelectContent>
-                            {availablePrograms.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
-                        </SelectContent>
-                    </Select>
-                </div>
-            )}
-
-            <div className="w-full xl:w-auto flex justify-end">
-                <Button variant="outline" size="sm" onClick={() => setFilters({ ...filters, search: "", startDate: "", endDate: "", type: "all", status: "all" })} className="h-9 px-6 w-full xl:w-auto">
+            <div className="flex flex-col sm:flex-row gap-2 w-full xl:w-auto">
+                <Button variant="outline" size="sm" onClick={clearFilters} className="h-9 px-6 w-full xl:w-auto">
                     Clear Filters
+                </Button>
+                <Button variant="outline" size="sm" onClick={resetToCurrentMonth} className="h-9 px-6 w-full xl:w-auto">
+                    This Month
                 </Button>
             </div>
           
@@ -1952,22 +1980,12 @@ const RequisitionsPage = () => {
                 </div>
             </div>
             
-            {userIsChiefAdmin && availablePrograms.length > 1 && (
-                <div className="space-y-2 w-full lg:w-[180px]">
-                    <Select value={activeProgram} onValueChange={handleProgramChange} disabled={availablePrograms.length === 0}>
-                        <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white h-9 font-bold w-full">
-                            <SelectValue placeholder="Select Programme" />
-                        </SelectTrigger>
-                        <SelectContent>
-                            {availablePrograms.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
-                        </SelectContent>
-                    </Select>
-                </div>
-            )}
-
-            <div className="w-full xl:w-auto flex justify-end">
-                <Button variant="outline" size="sm" onClick={() => setFilters({ ...filters, search: "", startDate: "", endDate: "", type: "all", status: "all" })} className="h-9 px-6 w-full xl:w-auto">
+            <div className="flex flex-col sm:flex-row gap-2 w-full xl:w-auto">
+                <Button variant="outline" size="sm" onClick={clearFilters} className="h-9 px-6 w-full xl:w-auto">
                     Clear Filters
+                </Button>
+                <Button variant="outline" size="sm" onClick={resetToCurrentMonth} className="h-9 px-6 w-full xl:w-auto">
+                    This Month
                 </Button>
             </div>
           
@@ -2034,7 +2052,7 @@ const RequisitionsPage = () => {
 
             <div className="space-y-2 lg:col-span-2">
                 <Label className="font-semibold text-gray-700 text-xs uppercase">Search User</Label>
-                <Input placeholder="Name, County, Location..." defaultValue={filters.search} onChange={(e) => handleSearchChange(e.target.value)} className="border-gray-300 focus:border-blue-500 bg-white h-9" />
+                <Input placeholder="Name, County, Location..." value={searchValue} onChange={(e) => handleSearchChange(e.target.value)} className="border-gray-300 focus:border-blue-500 bg-white h-9" />
             </div>
           </div>
         </CardContent>

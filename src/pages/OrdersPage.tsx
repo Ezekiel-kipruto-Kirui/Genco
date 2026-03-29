@@ -490,10 +490,24 @@ const OrdersPage = () => {
     () => resolvePermissionPrincipal(userRole, userAttribute),
     [userRole, userAttribute]
   );
+  const userCanCreateOrders = useMemo(
+    () => isChiefAdmin(permissionPrincipal) || isOfftakeOfficer(permissionPrincipal),
+    [permissionPrincipal]
+  );
   const userCanEditOrders = useMemo(
     () => isChiefAdmin(permissionPrincipal) || isOfftakeOfficer(permissionPrincipal),
     [permissionPrincipal]
   );
+
+  const ensureOrderCreateAccess = () => {
+    if (userCanCreateOrders) return true;
+    toast({
+      title: "Unauthorized",
+      description: "Only offtake officer or chief admin can create orders.",
+      variant: "destructive",
+    });
+    return false;
+  };
 
   const ensureOrderEditAccess = () => {
     if (userCanEditOrders) return true;
@@ -970,6 +984,8 @@ const OrdersPage = () => {
   };
 
   const openCreateDialog = () => {
+    if (!ensureOrderCreateAccess()) return;
+
     if (!activeProgram) {
       toast({
         title: "Select programme",
@@ -1198,6 +1214,8 @@ const OrdersPage = () => {
   };
 
   const handleCreateOrder = async () => {
+    if (!ensureOrderCreateAccess()) return;
+
     if (!activeProgram) {
       toast({
         title: "Select programme",
@@ -1315,14 +1333,16 @@ const OrdersPage = () => {
               <p className="text-sm text-slate-500">Grouped order batches with totals and per-order breakdown.</p>
             </div>
           </div>
-          <Button
-            onClick={openCreateDialog}
-            disabled={!activeProgram}
-            className="w-fit gap-2 bg-blue-600 text-white hover:bg-blue-700"
-          >
-            <Plus className="h-4 w-4" />
-            New Order
-          </Button>
+          {userCanCreateOrders && (
+            <Button
+              onClick={openCreateDialog}
+              disabled={!activeProgram}
+              className="w-fit gap-2 bg-blue-600 text-white hover:bg-blue-700"
+            >
+              <Plus className="h-4 w-4" />
+              New Order
+            </Button>
+          )}
         </div>
 
         <div className="grid gap-4 md:grid-cols-3">

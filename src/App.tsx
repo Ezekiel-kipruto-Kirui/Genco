@@ -57,6 +57,7 @@ const SALES_REPORT_ALLOWED_IDENTITIES = [...FULL_ACCESS_IDENTITIES, ...FINANCE_I
 const FIELD_ACTIVITIES_ALLOWED_IDENTITIES = [...FULL_ACCESS_IDENTITIES, ...PROJECT_MANAGER_IDENTITIES, ...HR_IDENTITIES, ...FINANCE_IDENTITIES];
 const INFRASTRUCTURE_ALLOWED_IDENTITIES = [...FULL_ACCESS_IDENTITIES, ...PROJECT_MANAGER_IDENTITIES, ...HR_IDENTITIES];
 const SITE_MANAGEMENT_ALLOWED_IDENTITIES = [...FULL_ACCESS_IDENTITIES];
+const USER_MANAGEMENT_ALLOWED_IDENTITIES = ["chief-admin"];
 const REQUISITION_ALLOWED_IDENTITIES = [
   ...FULL_ACCESS_IDENTITIES,
   ...PROJECT_MANAGER_IDENTITIES,
@@ -253,7 +254,7 @@ const App = () => (
                 <Route
                   path="users"
                   element={
-                    <ProtectedRoute allowedRoles={SITE_MANAGEMENT_ALLOWED_IDENTITIES}>
+                    <ProtectedRoute allowedRoles={USER_MANAGEMENT_ALLOWED_IDENTITIES}>
                       <UserManagementPage />
                     </ProtectedRoute>
                   }

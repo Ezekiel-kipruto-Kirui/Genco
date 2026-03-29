@@ -42,6 +42,7 @@ import {
   canAccessProjectManagerSection,
   canAccessRequisition,
   canAccessReports,
+  canAccessUserManagement,
   isFinance,
   isHummanResourceManager,
   isProjectManager,
@@ -196,8 +197,8 @@ export function DashboardSidebar() {
           : [];
   const showStandaloneDashboard = roleMenuItems.length === 0 && canAccessDashboard(userRole, userAttribute);
   const showBottomRequisition = canAccessRequisition(userRole, userAttribute);
-  const sidebarItemClassName = "h-8 gap-2 px-1.5 py-1";
-  const sidebarSubItemClassName = "h-6 gap-1.5 px-1";
+  const sidebarItemClassName = "h-8 gap-2 px-1 py-0.5";
+  const sidebarSubItemClassName = "h-6 gap-1 px-0.5";
 
   return (
     <Sidebar className={`${collapsed ? "w-14" : "w-64"} bg-green-700 text-white`} collapsible="icon">
@@ -352,7 +353,7 @@ export function DashboardSidebar() {
 
       <SidebarFooter className="bg-green-700 pt-2">
         <SidebarMenu>
-          {canAccessSiteManagement(userRole, userAttribute) && (
+          {canAccessUserManagement(userRole, userAttribute) && (
             <SidebarMenuItem>
               <SidebarMenuButton asChild className={sidebarItemClassName}>
                 <NavLink

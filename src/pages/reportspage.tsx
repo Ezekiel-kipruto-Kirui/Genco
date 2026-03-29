@@ -40,7 +40,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { useToast } from "@/hooks/use-toast";
+import { toast } from "@/hooks/use-toast";
 import { fetchAnalysisSummary } from "@/lib/analysis";
 import { resolveAccessibleProgrammes, resolveActiveProgramme } from "@/lib/programme-access";
 
@@ -201,6 +201,11 @@ type StaffMarkFormState = {
   dateAwarded: string;
 };
 
+const EMPTY_STAFF_MARK_RECORDS: StaffMarkRecord[] = [];
+const EMPTY_STAFF_DIRECTORY_RECORDS: StaffDirectoryRecord[] = [];
+const EMPTY_STAFF_MANAGEMENT_ROWS: StaffManagementRow[] = [];
+const EMPTY_TOP_STAFF_AWARDED: Array<{ name: string; value: number }> = [];
+
 const createDefaultStaffForm = (): CreateStaffFormState => ({
   staffName: "",
   role: "",
@@ -313,6 +318,25 @@ const getAnimalHealthTotalDoses = (record: AnimalHealthRecord): number => {
     return record.vaccines.reduce((sum, vaccine) => sum + (Number(vaccine?.doses) || 0), 0);
   }
   return getNumberField(record, "number_doses");
+};
+
+const getAnimalHealthLocationName = (record: AnimalHealthRecord): string =>
+  String(record.location || record.subcounty || record.county || "Unknown").trim() || "Unknown";
+
+const buildLocationMetricSeries = (entries: Array<{ name: string; value: number }>) => {
+  const totals = new Map<string, number>();
+
+  entries.forEach((entry) => {
+    const locationName = String(entry.name || "Unknown").trim() || "Unknown";
+    const value = Number(entry.value || 0);
+    if (value <= 0) return;
+    totals.set(locationName, (totals.get(locationName) || 0) + value);
+  });
+
+  return Array.from(totals.entries())
+    .map(([name, value]) => ({ name, value }))
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 10);
 };
 
 const isDateInRange = (date: any, startDate: string, endDate: string): boolean => {
@@ -599,7 +623,7 @@ function computeLocalPerformanceReportData(
   filteredAnimalHealthActivities.forEach((record) => {
     const doses = getAnimalHealthTotalDoses(record);
     totalDosesGivenOut += doses;
-    const location = String(record.location || "Unknown").trim() || "Unknown";
+    const location = getAnimalHealthLocationName(record);
     if (doses > 0) {
       dosesByLocationMap[location] = (dosesByLocationMap[location] || 0) + doses;
     }
@@ -778,6 +802,8 @@ const useProcessedData = (
       }),
     enabled: USE_REMOTE_ANALYTICS && !!selectedProgramme,
     staleTime: 2 * 60 * 1000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 
   const localData = useMemo(
@@ -798,10 +824,13 @@ const useProcessedData = (
     [_allFarmers, _trainingRecords, _animalHealthActivities, _offtakeRecords, _staffMarkRecords, dateRange, timeFrame, selectedProgramme, selectedYear],
   );
 
+  const remoteData = useMemo(
+    () => ({ ...EMPTY_PERFORMANCE_DATA, ...(queryResult.data as Partial<PerformanceReportData> | undefined) }),
+    [queryResult.data],
+  );
+
   return {
-    data: USE_REMOTE_ANALYTICS ?
-      { ...EMPTY_PERFORMANCE_DATA, ...(queryResult.data as Partial<PerformanceReportData> | undefined) } :
-      localData ?? EMPTY_PERFORMANCE_DATA,
+    data: USE_REMOTE_ANALYTICS ? remoteData : localData ?? EMPTY_PERFORMANCE_DATA,
     isLoading: queryResult.isLoading || queryResult.isFetching,
   };
 };
@@ -866,7 +895,7 @@ type ReportSectionId =
 
 const REPORT_VIEW_PROFILES: Record<ReportAudience, { title: string; sections: ReportSectionId[] }> = {
   hr: {
-    title: "HR Performance Dashboard",
+    title: "",
     sections: ["hr-summary", "hr-rankings", "hr-distribution"],
   },
   "project-manager": {
@@ -893,7 +922,6 @@ const resolveReportAudience = (
 
 const PerformanceReport = () => {
   const { userRole, userAttribute, userName, allowedProgrammes } = useAuth();
-  const { toast } = useToast();
   const currentMonthDates = useMemo(() => getCurrentMonthDates(), []);
   
   const cacheRef = useRef<{
@@ -951,6 +979,7 @@ const PerformanceReport = () => {
     () => resolveReportAudience(userRole, userAttribute),
     [userRole, userAttribute]
   );
+  const isHrReport = reportAudience === "hr";
   const reportViewProfile = REPORT_VIEW_PROFILES[reportAudience];
   const hasSection = useCallback(
     (section: ReportSectionId) => reportViewProfile.sections.includes(section),
@@ -962,6 +991,13 @@ const PerformanceReport = () => {
     const parsed = parseInt(selectedYear, 10);
     return Number.isNaN(parsed) ? null : parsed;
   }, [selectedYear]);
+  const allowedProgrammeSet = useMemo(
+    () =>
+      userCanViewAllProgrammeData ?
+        null :
+        new Set(accessibleProgrammes.map((programme) => normalizeProgramme(programme))),
+    [accessibleProgrammes, userCanViewAllProgrammeData],
+  );
   
   const { data, isLoading: analysisLoading } = useProcessedData(
     allFarmers,
@@ -973,6 +1009,14 @@ const PerformanceReport = () => {
     timeFrame,
     activeProgram || null,
     selectedYearNum,
+  );
+  const projectManagerBreedsByLocationData = useMemo(
+    () => buildLocationMetricSeries(data.breedsByLocationData),
+    [data.breedsByLocationData],
+  );
+  const projectManagerVaccinesByLocationData = useMemo(
+    () => buildLocationMetricSeries(data.dosesByLocationData),
+    [data.dosesByLocationData],
   );
 
   const fetchAllData = async () => {
@@ -994,13 +1038,11 @@ const PerformanceReport = () => {
           cacheRef.current.animalHealth &&
           cacheRef.current.offtakes &&
           (now - cacheRef.current.timestamp < CACHE_DURATION)) {
-        console.log("Using cached data");
         farmersList = cacheRef.current.farmers;
         trainingList = cacheRef.current.training;
         animalHealthList = cacheRef.current.animalHealth;
         offtakeList = cacheRef.current.offtakes;
       } else {
-        console.log("Fetching new data");
         const farmersRef = ref(db, 'farmers');
         const farmersSnap = await get(farmersRef);
 
@@ -1048,6 +1090,9 @@ const PerformanceReport = () => {
               date: activity.date || '',
               createdAt: activity.createdAt,
               programme: activity.programme || undefined,
+              county: activity.county || activity.County || '',
+              subcounty: activity.subcounty || activity.Subcounty || '',
+              location: activity.location || activity.Location || activity.subcounty || activity.Subcounty || activity.county || activity.County || '',
               vaccines: Array.isArray(activity.vaccines) ? activity.vaccines : undefined,
               vaccinetype: activity.vaccinetype || undefined,
               number_doses: activity.number_doses,
@@ -1097,16 +1142,17 @@ const PerformanceReport = () => {
   };
 
   const fetchStaffDirectory = useCallback(async () => {
+    if (!isHrReport) {
+      setStaffDirectoryRecords((current) => (current.length > 0 ? EMPTY_STAFF_DIRECTORY_RECORDS : current));
+      return;
+    }
+
     try {
       const staffDirectorySnap = await get(ref(db, "hrStaffDirectory"));
       if (!staffDirectorySnap.exists()) {
-        setStaffDirectoryRecords([]);
+        setStaffDirectoryRecords(EMPTY_STAFF_DIRECTORY_RECORDS);
         return;
       }
-
-      const allowedProgrammeSet = userCanViewAllProgrammeData ?
-        null :
-        new Set(accessibleProgrammes.map((programme) => normalizeProgramme(programme)));
 
       const staffDirectory = Object.entries(staffDirectorySnap.val() as Record<string, StaffDirectoryRecord>)
         .map(([id, record]) => ({
@@ -1122,7 +1168,7 @@ const PerformanceReport = () => {
           const firstDate = parseDate(second.createdAt || second.updatedAt)?.getTime() || 0;
           const secondDate = parseDate(first.createdAt || first.updatedAt)?.getTime() || 0;
           return firstDate - secondDate;
-        });
+      });
 
       setStaffDirectoryRecords(staffDirectory);
     } catch (error) {
@@ -1133,19 +1179,20 @@ const PerformanceReport = () => {
         variant: "destructive",
       });
     }
-  }, [accessibleProgrammes, toast, userCanViewAllProgrammeData]);
+  }, [allowedProgrammeSet, isHrReport, toast]);
 
   const fetchStaffMarks = useCallback(async () => {
+    if (!isHrReport) {
+      setStaffMarkRecords((current) => (current.length > 0 ? EMPTY_STAFF_MARK_RECORDS : current));
+      return;
+    }
+
     try {
       const staffMarksSnap = await get(ref(db, "hrStaffMarks"));
       if (!staffMarksSnap.exists()) {
-        setStaffMarkRecords([]);
+        setStaffMarkRecords(EMPTY_STAFF_MARK_RECORDS);
         return;
       }
-
-      const allowedProgrammeSet = userCanViewAllProgrammeData ?
-        null :
-        new Set(accessibleProgrammes.map((programme) => normalizeProgramme(programme)));
 
       const marks = Object.entries(staffMarksSnap.val() as Record<string, StaffMarkRecord>)
         .map(([id, record]) => ({
@@ -1172,29 +1219,39 @@ const PerformanceReport = () => {
         variant: "destructive",
       });
     }
-  }, [accessibleProgrammes, toast, userCanViewAllProgrammeData]);
+  }, [allowedProgrammeSet, isHrReport, toast]);
 
   const filteredStaffMarkRecords = useMemo(
-    () =>
+    () => {
+      if (!isHrReport) return EMPTY_STAFF_MARK_RECORDS;
+      return (
       staffMarkRecords.filter((record) => {
         const programme = normalizeProgramme(record.programme);
         const recordDate = record.dateAwarded || record.createdAt;
         return (!activeProgram || programme === normalizeProgramme(activeProgram)) &&
           isDateInRange(recordDate, dateRange.startDate, dateRange.endDate);
-      }),
-    [activeProgram, dateRange.endDate, dateRange.startDate, staffMarkRecords],
+      })
+      );
+    },
+    [activeProgram, dateRange.endDate, dateRange.startDate, isHrReport, staffMarkRecords],
   );
 
   const filteredStaffDirectoryRecords = useMemo(
-    () =>
+    () => {
+      if (!isHrReport) return EMPTY_STAFF_DIRECTORY_RECORDS;
+      return (
       staffDirectoryRecords.filter((record) => {
         const programme = normalizeProgramme(record.programme);
         return !activeProgram || !programme || programme === normalizeProgramme(activeProgram);
-      }),
-    [activeProgram, staffDirectoryRecords],
+      })
+      );
+    },
+    [activeProgram, isHrReport, staffDirectoryRecords],
   );
 
   const staffManagementRows = useMemo(() => {
+    if (!isHrReport) return EMPTY_STAFF_MANAGEMENT_ROWS;
+
     const rows = new Map<string, StaffManagementRow>();
     const marksByStaff = new Map<string, {
       totalMarks: number;
@@ -1284,9 +1341,11 @@ const PerformanceReport = () => {
       }
       return first.staffName.localeCompare(second.staffName);
     });
-  }, [activeProgram, filteredStaffDirectoryRecords, filteredStaffMarkRecords]);
+  }, [activeProgram, filteredStaffDirectoryRecords, filteredStaffMarkRecords, isHrReport]);
 
   const hrTopStaffAwarded = useMemo(() => {
+    if (!isHrReport) return EMPTY_TOP_STAFF_AWARDED;
+
     const marksByStaff = new Map<string, { name: string; value: number }>();
 
     filteredStaffMarkRecords.forEach((record) => {
@@ -1303,7 +1362,7 @@ const PerformanceReport = () => {
     return [...marksByStaff.values()]
       .sort((first, second) => second.value - first.value)
       .slice(0, 5);
-  }, [filteredStaffMarkRecords]);
+  }, [filteredStaffMarkRecords, isHrReport]);
 
   const handleCreateStaff = useCallback(async () => {
     const staffName = createStaffForm.staffName.trim();
@@ -1475,8 +1534,6 @@ const PerformanceReport = () => {
   }, [activeProgram, dateRange.endDate, dateRange.startDate, fetchStaffMarks, staffMarkForm, toast, userName]);
 
   useEffect(() => {
-    const initialDates = getCurrentMonthDates();
-    setDateRange(initialDates);
     fetchAllData();
   }, []);
 
@@ -1489,12 +1546,14 @@ const PerformanceReport = () => {
   }, [fetchStaffMarks]);
 
   useEffect(() => {
-    if (userCanViewAllProgrammeData) {
-      setActiveProgram((prev) => (prev === "KPMD" || prev === "RANGE" ? prev : "KPMD"));
-      return;
+    const nextProgramme = userCanViewAllProgrammeData ?
+      (activeProgram === "KPMD" || activeProgram === "RANGE" ? activeProgram : "KPMD") :
+      resolveActiveProgramme(activeProgram, accessibleProgrammes);
+
+    if (nextProgramme !== activeProgram) {
+      setActiveProgram(nextProgramme);
     }
-    setActiveProgram((prev) => resolveActiveProgramme(prev, accessibleProgrammes));
-  }, [accessibleProgrammes, userCanViewAllProgrammeData]);
+  }, [activeProgram, accessibleProgrammes, userCanViewAllProgrammeData]);
 
   const handleDateRangeChange = useCallback((key: string, value: string) => {
     setDateRange(prev => ({ ...prev, [key]: value }));
@@ -1599,9 +1658,11 @@ const PerformanceReport = () => {
   return (
     <div className="space-y-8 p-1 bg-gray-50/50 min-h-screen pb-10">
       <div className="flex flex-col gap-2">
-        <div>
-          <h1 className="text-xl font-semibold text-gray-900">{reportViewProfile.title}</h1>
-        </div>
+        {reportViewProfile.title ? (
+          <div>
+            <h1 className="text-xl font-semibold text-gray-900">{reportViewProfile.title}</h1>
+          </div>
+        ) : null}
 
         <Card className="w-full md:w-auto border-0 shadow-lg bg-white">
           <CardContent className="px-3 py-2.5 md:px-3 md:py-3">
@@ -1693,8 +1754,6 @@ const PerformanceReport = () => {
 
       {hasSection("hr-summary") && (
         <section>
-          <SectionHeader title="HR Summary" />
-
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5 mb-6">
             <StatsCard
               title="Total Goats Purchased"
@@ -1737,8 +1796,6 @@ const PerformanceReport = () => {
 
       {hasSection("hr-rankings") && (
         <section>
-          <SectionHeader title="HR Rankings" />
-
           <div className="grid gap-6 lg:grid-cols-2 mb-6">
             <Card className="border-0 shadow-lg bg-white">
               <CardHeader className="pb-2">
@@ -1817,8 +1874,6 @@ const PerformanceReport = () => {
 
       {hasSection("hr-distribution") && (
         <section>
-          <SectionHeader title="Distribution And Registration" />
-
           <div className="grid gap-6 md:grid-cols-2 mb-6">
             <Card className="border-0 shadow-lg bg-white">
               <CardHeader className="pb-2">
@@ -2171,7 +2226,7 @@ const PerformanceReport = () => {
             <CardHeader className="pb-2">
               <CardTitle className="text-sm flex items-center gap-2 text-gray-800">
                 <MapPin className="h-4 w-4 text-purple-600" />
-                Performance per County
+                Registered Farmers per County
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -2191,7 +2246,7 @@ const PerformanceReport = () => {
                       <Cell key={`county-cell-${index}`} fill={BAR_COLORS[index % BAR_COLORS.length]} />
                     ))}
                   </Pie>
-                  <Tooltip />
+                  <Tooltip formatter={(value: number | string) => [Number(value).toLocaleString(), "Registered Farmers"]} />
                   <Legend verticalAlign="bottom" height={36} iconType="circle" />
                 </PieChart>
               </ResponsiveContainer>
@@ -2202,7 +2257,7 @@ const PerformanceReport = () => {
             <CardHeader className="pb-2">
               <CardTitle className="text-sm flex items-center gap-2 text-gray-800">
                 <MapPin className="h-4 w-4 text-blue-600" />
-                Performance per Subcounty
+                Registered Farmers per Subcounty
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -2223,7 +2278,7 @@ const PerformanceReport = () => {
                     tick={{ fontSize: 11 }}
                   />
                   <YAxis allowDecimals={false} axisLine={false} tickLine={false} />
-                  <Tooltip />
+                  <Tooltip formatter={(value: number | string) => [Number(value).toLocaleString(), "Registered Farmers"]} />
                   <Bar dataKey="value" radius={[4, 4, 0, 0]} barSize={24} fill={COLORS.darkBlue} />
                 </BarChart>
               </ResponsiveContainer>
@@ -2236,18 +2291,43 @@ const PerformanceReport = () => {
             <CardHeader className="pb-2">
               <CardTitle className="text-sm flex items-center gap-2 text-gray-800">
                 <TargetIcon className="h-4 w-4 text-teal-600" />
-                Total Breeds Distributed per Location
+                Breeds Distributed per Location
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <ResponsiveContainer width="100%" height={250}>
-                <BarChart data={data.breedsByLocationData} layout="vertical" margin={HORIZONTAL_BAR_CHART_MARGIN}>
-                  <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f3f4f6" />
-                  <XAxis type="number" axisLine={false} tickLine={false} />
-                  <YAxis type="category" dataKey="name" width={HORIZONTAL_BAR_CHART_Y_AXIS_WIDTH} axisLine={false} tickLine={false} tick={{ fontSize: 11 }} />
-                  <Tooltip />
-                  <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={12} fill={COLORS.teal} />
-                </BarChart>
+              <ResponsiveContainer width="100%" height={280}>
+                <AreaChart
+                  data={projectManagerBreedsByLocationData}
+                  margin={{ top: 8, right: 12, left: 0, bottom: 52 }}
+                >
+                  <defs>
+                    <linearGradient id="pmBreedsLocationFill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor={COLORS.teal} stopOpacity={0.35} />
+                      <stop offset="95%" stopColor={COLORS.teal} stopOpacity={0.04} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
+                  <XAxis
+                    dataKey="name"
+                    axisLine={false}
+                    tickLine={false}
+                    interval={0}
+                    angle={-18}
+                    textAnchor="end"
+                    height={60}
+                    tick={{ fontSize: 11 }}
+                  />
+                  <YAxis allowDecimals={false} axisLine={false} tickLine={false} />
+                  <Tooltip formatter={(value: number | string) => [Number(value).toLocaleString(), "Breeds Distributed"]} />
+                  <Area
+                    type="monotone"
+                    dataKey="value"
+                    name="Breeds Distributed"
+                    stroke={COLORS.teal}
+                    strokeWidth={3}
+                    fill="url(#pmBreedsLocationFill)"
+                  />
+                </AreaChart>
               </ResponsiveContainer>
             </CardContent>
           </Card>
@@ -2256,17 +2336,34 @@ const PerformanceReport = () => {
             <CardHeader className="pb-2">
               <CardTitle className="text-sm flex items-center gap-2 text-gray-800">
                 <Syringe className="h-4 w-4 text-red-600" />
-                Total Doses Administered per Location
+                Administered Vaccines per Location
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <ResponsiveContainer width="100%" height={250}>
-                <BarChart data={data.dosesByLocationData} layout="vertical" margin={HORIZONTAL_BAR_CHART_MARGIN}>
+              <ResponsiveContainer width="100%" height={280}>
+                <BarChart
+                  data={projectManagerVaccinesByLocationData}
+                  layout="vertical"
+                  margin={HORIZONTAL_BAR_CHART_MARGIN}
+                >
                   <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f3f4f6" />
                   <XAxis type="number" axisLine={false} tickLine={false} />
-                  <YAxis type="category" dataKey="name" width={HORIZONTAL_BAR_CHART_Y_AXIS_WIDTH} axisLine={false} tickLine={false} tick={{ fontSize: 11 }} />
-                  <Tooltip />
-                  <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={12} fill={COLORS.red} />
+                  <YAxis
+                    type="category"
+                    dataKey="name"
+                    width={HORIZONTAL_BAR_CHART_Y_AXIS_WIDTH}
+                    axisLine={false}
+                    tickLine={false}
+                    tick={{ fontSize: 11 }}
+                  />
+                  <Tooltip formatter={(value: number | string) => [Number(value).toLocaleString(), "Administered Doses"]} />
+                  <Bar
+                    dataKey="value"
+                    name="Administered Doses"
+                    radius={[0, 4, 4, 0]}
+                    barSize={12}
+                    fill={COLORS.red}
+                  />
                 </BarChart>
               </ResponsiveContainer>
             </CardContent>
@@ -2564,4 +2661,3 @@ const PerformanceReport = () => {
 };
 
 export default PerformanceReport;
-

@@ -1,64 +1,79 @@
-import { useState, useEffect, useMemo } from "react";
-import { ref, push, get, query, orderByChild, equalTo } from "firebase/database"; 
-import { db } from "@/lib/firebase"; 
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { 
-  Users, GraduationCap, Beef, MapPin, Plus, Activity, Eye, Bell, ArrowRight, Trash2, Loader2
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { get, ref } from "firebase/database";
+import { useQuery } from "@tanstack/react-query";
+import {
+  Activity,
+  ArrowRight,
+  Clock3,
+  Eye,
+  Leaf,
+  Loader2,
+  MapPin,
+  Plus,
+  ShoppingCart,
+  UsersRound,
 } from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
-import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Area,
+  AreaChart,
+  CartesianGrid,
+  Cell,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { Link } from "react-router-dom";
+import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/contexts/AuthContext";
-import { useQuery, useQueryClient } from "@tanstack/react-query"; // Import React Query
-import { fetchAnalysisSummary } from "@/lib/analysis";
-import { Calendar } from "@/components/ui/calendar";
 import { canViewAllProgrammes } from "@/contexts/authhelper";
+import { fetchAnalysisSummary } from "@/lib/analysis";
+import { db } from "@/lib/firebase";
+import { normalizeProgramme, resolveAccessibleProgrammes, resolveActiveProgramme } from "@/lib/programme-access";
 
-const PROGRAMME_OPTIONS = ["KPMD", "RANGE"];
+type OverviewRecord = Record<string, any>;
 
-// --- Interfaces ---
-interface FarmerData extends Record<string, any> {
-  id: string;
-  programme?: string;
-  goats?: number | { male: number; female: number; total: number };
-  cattle?: string | number;
-  sheep?: string | number;
-  gender?: string;
-  region?: string;
-}
+type ComparisonYears = {
+  year1: number;
+  year2: number;
+};
 
-interface Participant {
+type DonutSegment = {
   name: string;
-  role: string;
-}
+  value: number;
+  color: string;
+};
 
-interface Activity {
+type TrendPoint = {
+  name: string;
+  year1: number;
+  year2: number;
+};
+
+type CountyCoverage = {
+  name: string;
+  value: number;
+  color: string;
+};
+
+type RecentLocation = {
+  name: string;
+  county: string;
+  visitedAt: string;
+};
+
+type RecentActivity = {
   id: string;
   activityName: string;
-  date: string; 
-  numberOfPersons: number;
-  county: string;
+  date: string;
+  status: string;
   location: string;
-  participants: Participant[];
-  subcounty: string;
-  createdAt: any;
-  status: 'pending' | 'in-progress' | 'completed' | 'cancelled';
-  programme?: string;
-  totalFarmers?: number;
-}
-
-interface RegionStats {
-  name: string;
-  farmerCount: number;
-  maleFarmers: number;
-  femaleFarmers: number;
-}
+  participants: number;
+};
 
 interface OverviewSummaryData {
   stats: {
@@ -66,214 +81,769 @@ interface OverviewSummaryData {
     maleFarmers: number;
     femaleFarmers: number;
     trainedFarmers: number;
-    maleGoats: number;
-    femaleGoats: number;
+    totalAnimals: number;
     totalGoats: number;
     totalSheep: number;
     totalCattle: number;
-    regionsVisited: number;
+    totalGoatsPurchased: number;
+    countiesCovered: number;
   };
-  topRegions: RegionStats[];
-  recentActivities: Activity[];
+  comparisonYears: ComparisonYears;
+  maintainedInfrastructure: DonutSegment[];
+  registrationComparison: DonutSegment[];
+  animalCensusVsPurchased: DonutSegment[];
+  vaccinationTrend: TrendPoint[];
+  countyCoverage: CountyCoverage[];
+  recentLocations: RecentLocation[];
+  recentActivities: RecentActivity[];
   pendingActivitiesCount: number;
 }
 
-// --- Helper Functions ---
-const getGoatTotal = (goats: any): number => {
-  if (typeof goats === 'number') return goats;
-  if (typeof goats === 'object' && goats !== null && typeof goats.total === 'number') return goats.total;
-  return 0;
+type OverviewCollections = {
+  farmers: OverviewRecord[];
+  capacity: OverviewRecord[];
+  offtakes: OverviewRecord[];
+  animalHealth: OverviewRecord[];
+  boreholes: OverviewRecord[];
+  activities: OverviewRecord[];
 };
 
 const LOCALHOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
 const USE_REMOTE_ANALYTICS =
   typeof window !== "undefined" && !LOCALHOSTS.has(window.location.hostname);
 
+const YEAR_ONE_COLOR = "#2710a1";
+const YEAR_TWO_COLOR = "#f89b0d";
+const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const COUNTY_BAR_COLORS = [YEAR_ONE_COLOR, YEAR_TWO_COLOR, "#ffea00", "#2cb100"];
+const relativeTimeFormatter = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
+const activityDateFormatter = new Intl.DateTimeFormat("en", {
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+});
+const getComparisonYears = (referenceDate: Date = new Date()): ComparisonYears => ({
+  year1: referenceDate.getFullYear(),
+  year2: referenceDate.getFullYear() - 1,
+});
+const EMPTY_DONUT_SEGMENTS: DonutSegment[] = [
+  { name: "Year 1", value: 0, color: YEAR_ONE_COLOR },
+  { name: "Year 2", value: 0, color: YEAR_TWO_COLOR },
+];
+const EMPTY_COUNTY_COVERAGE: CountyCoverage[] = COUNTY_BAR_COLORS.map((color, index) => ({
+  name: `County ${index + 1}`,
+  value: 0,
+  color,
+}));
 const EMPTY_OVERVIEW_DATA: OverviewSummaryData = {
   stats: {
     totalFarmers: 0,
     maleFarmers: 0,
     femaleFarmers: 0,
     trainedFarmers: 0,
-    maleGoats: 0,
-    femaleGoats: 0,
+    totalAnimals: 0,
     totalGoats: 0,
     totalSheep: 0,
     totalCattle: 0,
-    regionsVisited: 0,
+    totalGoatsPurchased: 0,
+    countiesCovered: 0,
   },
-  topRegions: [],
+  comparisonYears: getComparisonYears(),
+  maintainedInfrastructure: EMPTY_DONUT_SEGMENTS,
+  registrationComparison: EMPTY_DONUT_SEGMENTS,
+  animalCensusVsPurchased: [
+    { name: "Goats on record", value: 0, color: "#ffc107" },
+    { name: "Goats purchased", value: 0, color: "#a80d10" },
+  ],
+  vaccinationTrend: MONTH_LABELS.map((name) => ({ name, year1: 0, year2: 0 })),
+  countyCoverage: EMPTY_COUNTY_COVERAGE,
+  recentLocations: [],
   recentActivities: [],
   pendingActivitiesCount: 0,
 };
 
-const parseDate = (date: any): Date | null => {
-  if (!date) return null;
+const parseDate = (value: unknown): Date | null => {
+  if (!value) return null;
 
   try {
-    if (date?.toDate && typeof date.toDate === "function") return date.toDate();
-    if (date instanceof Date) return date;
-    if (typeof date === "number") return new Date(date);
-    if (typeof date === "string") {
-      const parsed = new Date(date);
-      if (!Number.isNaN(parsed.getTime())) return parsed;
+    if (value instanceof Date) return value;
+    if (typeof value === "number") {
+      const parsed = new Date(value);
+      return Number.isNaN(parsed.getTime()) ? null : parsed;
     }
-    if (date?.seconds) return new Date(date.seconds * 1000);
+    if (typeof value === "string") {
+      const parsed = new Date(value);
+      return Number.isNaN(parsed.getTime()) ? null : parsed;
+    }
+    if (typeof value === "object" && value !== null) {
+      const record = value as { seconds?: number; toDate?: () => Date; _seconds?: number };
+      if (typeof record.toDate === "function") {
+        const parsed = record.toDate();
+        return Number.isNaN(parsed.getTime()) ? null : parsed;
+      }
+      if (typeof record.seconds === "number") {
+        const parsed = new Date(record.seconds * 1000);
+        return Number.isNaN(parsed.getTime()) ? null : parsed;
+      }
+      if (typeof record._seconds === "number") {
+        const parsed = new Date(record._seconds * 1000);
+        return Number.isNaN(parsed.getTime()) ? null : parsed;
+      }
+    }
   } catch (error) {
-    console.error("Error parsing date:", error, date);
+    console.error("Failed to parse date:", error, value);
   }
 
   return null;
 };
 
-const normalizeProgramme = (value: unknown): string =>
-  typeof value === "string" ? value.trim().toUpperCase() : "";
-
-const getAssignedProgrammes = (
-  allowedProgrammes: Record<string, boolean> | null | undefined,
-): string[] => PROGRAMME_OPTIONS.filter((programme) => allowedProgrammes?.[programme] === true);
-
-const getNumberField = (obj: Record<string, any>, ...fieldNames: string[]): number => {
-  for (const fieldName of fieldNames) {
-    const value = obj[fieldName];
-    if (value !== undefined && value !== null && value !== "") {
-      const num = Number(value);
-      return Number.isNaN(num) ? 0 : num;
+const getNumberField = (record: Record<string, unknown>, ...fields: string[]): number => {
+  for (const field of fields) {
+    const value = record[field];
+    if (value === undefined || value === null || value === "") continue;
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string") {
+      const parsed = Number(value.replace(/,/g, "").trim());
+      if (Number.isFinite(parsed)) return parsed;
     }
   }
   return 0;
 };
 
-// --- Components ---
-const StatCard = ({ title, icon, maleCount, femaleCount, total, gradient, description }: any) => (
-  <div className="group relative bg-white">
-    <div className="relative bg-white backdrop-blur-sm rounded-2xl shadow-xl hover:shadow-2xl transition-all duration-300 p-6">
-      <div className="flex items-center">
-        <div className="flex-shrink-0">
-          <div className={`w-14 h-14 rounded-xl flex items-center justify-center shadow-lg ${gradient}`}>
-            {icon}
-          </div>
-        </div>
-        <div className="ml-5 flex-1">
-          <p className="text-sm font-medium text-slate-600 uppercase tracking-wide">{title}</p>
-          <p className="text-2xl font-bold text-slate-900 mt-1">{total.toLocaleString()}</p>
-          {(maleCount !== undefined && femaleCount !== undefined) ? (
-            <div className="flex gap-4 mt-3">
-              <div className="flex flex-col">
-                <span className="text-xs font-medium text-slate-600">Male</span>
-                <span className="text-sm font-semibold text-slate-900">{maleCount.toLocaleString()}</span>
+const parseBoolean = (value: unknown): boolean => {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value === 1;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    return normalized === "true" || normalized === "yes" || normalized === "1";
+  }
+  return false;
+};
+
+const getArrayLikeSize = (value: unknown): number => {
+  if (Array.isArray(value)) return value.length;
+  if (value && typeof value === "object") return Object.keys(value as Record<string, unknown>).length;
+  return 0;
+};
+
+const getGoatTotal = (goats: unknown): number => {
+  if (typeof goats === "number" || typeof goats === "string") {
+    return getNumberField({ goats }, "goats");
+  }
+
+  if (goats && typeof goats === "object") {
+    const record = goats as Record<string, unknown>;
+    if (Object.prototype.hasOwnProperty.call(record, "total")) {
+      return getNumberField(record, "total");
+    }
+    return getNumberField(record, "male") + getNumberField(record, "female");
+  }
+
+  return 0;
+};
+
+const getOfftakeGoatsTotal = (record: Record<string, unknown>): number =>
+  Math.max(
+    getNumberField(record, "totalGoats"),
+    getNumberField(record, "goatsBought"),
+    getNumberField(record, "goats"),
+    getArrayLikeSize(record.goats),
+    getArrayLikeSize(record.Goats),
+    0,
+  );
+
+const getActivityTotalDoses = (record: Record<string, unknown>): number => {
+  if (Array.isArray(record.vaccines)) {
+    return record.vaccines.reduce((sum, vaccine) => {
+      if (!vaccine || typeof vaccine !== "object") return sum;
+      return sum + getNumberField(vaccine as Record<string, unknown>, "doses");
+    }, 0);
+  }
+
+  return getNumberField(record, "number_doses");
+};
+
+const getInfrastructureStatuses = (record: Record<string, unknown>) => ({
+  drilled: parseBoolean(record.drilled ?? record.Drilled),
+  equipped: parseBoolean(record.equipped ?? record.Equipped),
+  rehabilitated: parseBoolean(record.rehabilitated ?? record.Rehabilitated),
+  maintained: parseBoolean(record.maintained ?? record.Maintained),
+});
+
+const getInfrastructureRecordDate = (record: Record<string, unknown>) =>
+  parseDate(record.date ?? record.Date ?? record.created_at ?? record.createdAt);
+
+const getOverviewRecordProgramme = (record: OverviewRecord) =>
+  normalizeProgramme(record.programme ?? record.Programme);
+
+const buildVaccinationTrend = (
+  animalHealthRecords: OverviewRecord[],
+  comparisonYears: ComparisonYears,
+): TrendPoint[] => {
+  const trend = MONTH_LABELS.map((name) => ({ name, year1: 0, year2: 0 }));
+
+  for (const record of animalHealthRecords) {
+    const totalDoses = getActivityTotalDoses(record);
+    const date = parseDate(record.date || record.createdAt);
+    if (!date || totalDoses <= 0) continue;
+
+    const monthIndex = date.getMonth();
+    if (date.getFullYear() === comparisonYears.year1) trend[monthIndex].year1 += totalDoses;
+    if (date.getFullYear() === comparisonYears.year2) trend[monthIndex].year2 += totalDoses;
+  }
+
+  return trend;
+};
+
+const buildInfrastructureComparison = (
+  records: OverviewRecord[],
+  comparisonYears: ComparisonYears,
+): DonutSegment[] => {
+  let year1Value = 0;
+  let year2Value = 0;
+
+  for (const record of records) {
+    const statuses = getInfrastructureStatuses(record);
+    if (!statuses.rehabilitated) continue;
+    const date = getInfrastructureRecordDate(record);
+    if (!date) continue;
+
+    if (date.getFullYear() === comparisonYears.year1) year1Value += 1;
+    if (date.getFullYear() === comparisonYears.year2) year2Value += 1;
+  }
+
+  return [
+    { name: "Year 1", value: year1Value, color: YEAR_ONE_COLOR },
+    { name: "Year 2", value: year2Value, color: YEAR_TWO_COLOR },
+  ];
+};
+
+const buildRegistrationComparison = (
+  farmers: OverviewRecord[],
+  comparisonYears: ComparisonYears,
+): DonutSegment[] => {
+  let year1Value = 0;
+  let year2Value = 0;
+
+  for (const farmer of farmers) {
+    const date = parseDate(farmer.createdAt || farmer.registrationDate);
+    if (!date) continue;
+
+    if (date.getFullYear() === comparisonYears.year1) year1Value += 1;
+    if (date.getFullYear() === comparisonYears.year2) year2Value += 1;
+  }
+
+  return [
+    { name: "Year 1", value: year1Value, color: YEAR_ONE_COLOR },
+    { name: "Year 2", value: year2Value, color: YEAR_TWO_COLOR },
+  ];
+};
+
+const buildRecentLocations = (activities: OverviewRecord[]): RecentLocation[] => {
+  const seen = new Set<string>();
+
+  return [...activities]
+    .map((record) => {
+      const visitedDate = parseDate(record.date || record.createdAt);
+      const location = String(record.location || record.activityName || "").trim();
+      const county = String(record.county || record.region || "").trim();
+
+      return {
+        name: location || county || "Unknown location",
+        county: county || "Unknown county",
+        visitedAt: visitedDate ? visitedDate.toISOString() : "",
+        timestamp: visitedDate?.getTime() || 0,
+      };
+    })
+    .filter((entry) => entry.timestamp > 0)
+    .sort((left, right) => right.timestamp - left.timestamp)
+    .filter((entry) => {
+      const key = `${entry.name}|${entry.county}`.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 4)
+    .map(({ timestamp, ...entry }) => entry);
+};
+
+const buildRecentActivities = (activities: OverviewRecord[]): RecentActivity[] =>
+  [...activities]
+    .map((record) => ({
+      id: String(record.id || record.activityId || record.activityName || Math.random()),
+      activityName: String(record.activityName || record.title || "Untitled activity").trim() || "Untitled activity",
+      date: String(record.date || record.createdAt || ""),
+      status: String(record.status || "pending").trim() || "pending",
+      location: String(record.location || record.activityName || record.county || "Unknown location").trim() || "Unknown location",
+      participants: Math.max(
+        getNumberField(record, "numberOfPersons", "participantsCount"),
+        getArrayLikeSize(record.participants),
+        0,
+      ),
+    }))
+    .filter((record) => parseDate(record.date))
+    .sort((left, right) => (parseDate(right.date)?.getTime() || 0) - (parseDate(left.date)?.getTime() || 0))
+    .slice(0, 3);
+
+const buildOverviewSummaryFromRecords = ({
+  farmers,
+  capacity,
+  offtakes,
+  animalHealth,
+  boreholes,
+  activities,
+}: OverviewCollections): OverviewSummaryData => {
+  const comparisonYears = getComparisonYears();
+  let maleFarmers = 0;
+  let femaleFarmers = 0;
+  let totalGoats = 0;
+  let totalSheep = 0;
+  let totalCattle = 0;
+  const countyMap: Record<string, number> = {};
+
+  for (const farmer of farmers) {
+    const gender = String(farmer.gender || "").trim().toLowerCase();
+    if (gender === "male") maleFarmers += 1;
+    if (gender === "female") femaleFarmers += 1;
+
+    totalGoats += getGoatTotal(farmer.goats);
+    totalSheep += getNumberField(farmer, "sheep");
+    totalCattle += getNumberField(farmer, "cattle");
+
+    const county = String(farmer.county || farmer.region || "").trim();
+    if (county) countyMap[county] = (countyMap[county] || 0) + 1;
+  }
+
+  const totalAnimals = totalGoats + totalSheep + totalCattle;
+  const trainedFarmers = capacity.reduce(
+    (sum, record) => sum + getNumberField(record, "totalFarmers", "trainedFarmers"),
+    0,
+  );
+  const totalGoatsPurchased = offtakes.reduce(
+    (sum, record) => sum + getOfftakeGoatsTotal(record),
+    0,
+  );
+  const countyCoverage = Object.entries(countyMap)
+    .sort(([, a], [, b]) => b - a)
+    .slice(0, 4)
+    .map(([name, value], index) => ({
+      name,
+      value,
+      color: COUNTY_BAR_COLORS[index % COUNTY_BAR_COLORS.length],
+    }));
+
+  return {
+    stats: {
+      totalFarmers: farmers.length,
+      maleFarmers,
+      femaleFarmers,
+      trainedFarmers,
+      totalAnimals,
+      totalGoats,
+      totalSheep,
+      totalCattle,
+      totalGoatsPurchased,
+      countiesCovered: Object.keys(countyMap).length,
+    },
+    comparisonYears,
+    maintainedInfrastructure: buildInfrastructureComparison(boreholes, comparisonYears),
+    registrationComparison: buildRegistrationComparison(farmers, comparisonYears),
+    animalCensusVsPurchased: [
+      { name: "Goats on record", value: totalGoats, color: "#ffc107" },
+      { name: "Goats purchased", value: totalGoatsPurchased, color: "#a80d10" },
+    ],
+    vaccinationTrend: buildVaccinationTrend(animalHealth, comparisonYears),
+    countyCoverage: countyCoverage.length > 0 ? countyCoverage : EMPTY_COUNTY_COVERAGE,
+    recentLocations: buildRecentLocations(activities),
+    recentActivities: buildRecentActivities(activities),
+    pendingActivitiesCount: activities.filter(
+      (record) => String(record.status || "").trim().toLowerCase() === "pending",
+    ).length,
+  };
+};
+
+const toPercentage = (value: number, total: number): number => {
+  if (total <= 0) return 0;
+  return Number(((value / total) * 100).toFixed(1));
+};
+
+const formatWholeNumber = (value: number) => value.toLocaleString();
+const formatProgressLabel = (value: number, description: string) => `${value.toFixed(1)}% ${description}`;
+const formatActivityDate = (value: string): string => {
+  const date = parseDate(value);
+  if (!date) return "Unknown date";
+  return activityDateFormatter.format(date);
+};
+const formatActivityStatus = (value: string): string => {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return "Pending";
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+};
+const formatRelativeTime = (value: string): string => {
+  const date = parseDate(value);
+  if (!date) return "Unknown";
+
+  const diffMs = date.getTime() - Date.now();
+  const units: Array<[Intl.RelativeTimeFormatUnit, number]> = [
+    ["day", 24 * 60 * 60 * 1000],
+    ["hour", 60 * 60 * 1000],
+    ["minute", 60 * 1000],
+  ];
+
+  for (const [unit, size] of units) {
+    if (Math.abs(diffMs) >= size || unit === "minute") {
+      return relativeTimeFormatter.format(Math.round(diffMs / size), unit);
+    }
+  }
+
+  return "just now";
+};
+
+const TopMetricCard = ({
+  title,
+  value,
+  icon,
+  accentColor,
+  progressValue,
+  progressLabel,
+  detail,
+}: {
+  title: string;
+  value: number;
+  icon: ReactNode;
+  accentColor: string;
+  progressValue: number;
+  progressLabel: string;
+  detail?: ReactNode;
+}) => (
+  <div className="rounded-[20px] border border-slate-200 bg-white px-6 py-5 shadow-[0_8px_30px_rgba(15,23,42,0.05)]">
+    <div className="flex items-start justify-between gap-4">
+      <div className="space-y-2">
+        <p className="text-[16px] font-medium tracking-[-0.02em] text-slate-400">{title}</p>
+        <p className="text-[26px] font-semibold tracking-[-0.04em] text-slate-950 sm:text-[42px]">
+          {formatWholeNumber(value)}
+        </p>
+      </div>
+      <div className="mt-1">{icon}</div>
+    </div>
+
+    <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-slate-400">
+      <span className="font-semibold text-slate-500">{progressLabel}</span>
+      {detail}
+    </div>
+
+    <div className="mt-4 h-[8px] rounded-full bg-slate-100">
+      <div
+        className="h-full rounded-full transition-[width] duration-500"
+        style={{ width: `${Math.min(progressValue, 100)}%`, backgroundColor: accentColor }}
+      />
+    </div>
+  </div>
+);
+
+const OverviewPanel = ({
+  title,
+  children,
+  className = "",
+}: {
+  title: string;
+  children: ReactNode;
+  className?: string;
+}) => (
+  <div className={`rounded-[24px] border border-slate-200 bg-white p-5 shadow-[0_10px_35px_rgba(15,23,42,0.04)] sm:p-6 ${className}`}>
+    <h2 className="text-[13px] font-medium uppercase tracking-[-0.01em] text-slate-400">{title}</h2>
+    {children}
+  </div>
+);
+
+const ChartLegend = ({ items }: { items: DonutSegment[] }) => (
+  <div className="mt-3 flex flex-wrap items-center justify-center gap-5 text-sm text-slate-500">
+    {items.map((item) => (
+      <div key={item.name} className="flex items-center gap-2">
+        <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.color }} />
+        <span>{item.name}</span>
+        <span className="font-semibold text-slate-700">{formatWholeNumber(item.value)}</span>
+      </div>
+    ))}
+  </div>
+);
+
+const DonutPanel = ({
+  title,
+  data,
+  comparisonNote,
+}: {
+  title: string;
+  data: DonutSegment[];
+  comparisonNote?: string;
+}) => {
+  const hasValues = data.some((item) => item.value > 0);
+  const chartData = hasValues ? data : [{ name: "No data", value: 1, color: "#e2e8f0" }];
+
+  return (
+    <OverviewPanel title={title} className="flex h-full min-h-[360px] flex-col">
+      <div className="mt-4 flex-1">
+        <ResponsiveContainer width="100%" height={260}>
+          <PieChart>
+            <Pie
+              data={chartData}
+              dataKey="value"
+              nameKey="name"
+              innerRadius={72}
+              outerRadius={104}
+              paddingAngle={0}
+              stroke="none"
+            >
+              {chartData.map((entry) => (
+                <Cell key={entry.name} fill={entry.color} />
+              ))}
+            </Pie>
+          </PieChart>
+        </ResponsiveContainer>
+      </div>
+      {hasValues ? (
+        <>
+          <ChartLegend items={data} />
+          {comparisonNote ? <p className="mt-2 text-center text-xs text-slate-400">{comparisonNote}</p> : null}
+        </>
+      ) : (
+        <p className="mt-3 text-center text-sm text-slate-400">No data available yet</p>
+      )}
+    </OverviewPanel>
+  );
+};
+
+const RecentLocationsPanel = ({ locations }: { locations: RecentLocation[] }) => (
+  <div className="flex h-full min-h-[360px] flex-col rounded-[24px] border border-slate-200 bg-white p-6 shadow-[0_10px_35px_rgba(15,23,42,0.04)]">
+    <h2 className="text-[17px] font-semibold tracking-[-0.02em] text-slate-900">Recently Visited Locations</h2>
+
+    {locations.length > 0 ? (
+      <div className="mt-7 space-y-6">
+        {locations.map((location) => (
+          <div key={`${location.name}-${location.visitedAt}`} className="flex items-start justify-between gap-4">
+            <div className="flex items-start gap-4">
+              <div className="flex h-11 w-11 items-center justify-center rounded-full bg-emerald-50">
+                <MapPin className="h-5 w-5 text-emerald-500" />
               </div>
-              <div className="h-8 w-px bg-slate-200" />
-              <div className="flex flex-col">
-                <span className="text-xs font-medium text-slate-600">Female</span>
-                <span className="text-sm font-semibold text-slate-900">{femaleCount.toLocaleString()}</span>
+              <div>
+                <p className="text-[16px] font-medium text-slate-800">{location.name}</p>
+                <p className="text-sm text-slate-400">{location.county}</p>
               </div>
             </div>
-          ) : description && (
-             <p className="text-xs text-slate-500 mt-3">{description}</p>
-          )}
+
+            <div className="mt-1 flex items-center gap-2 text-sm text-slate-400">
+              <Clock3 className="h-4 w-4" />
+              <span>{formatRelativeTime(location.visitedAt)}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    ) : (
+      <div className="flex flex-1 items-center justify-center text-sm text-slate-400">
+        No recent locations available yet.
+      </div>
+    )}
+  </div>
+);
+
+const RecentActivitiesPanel = ({ activities }: { activities: RecentActivity[] }) => (
+  <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_18px_50px_rgba(15,23,42,0.08)]">
+    <div className="flex items-center justify-between gap-4 border-b border-slate-100 bg-gradient-to-r from-slate-50 via-white to-slate-50 px-6 py-6 sm:px-8">
+      <div className="flex items-center gap-4">
+        <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-r from-[#4f7cff] to-[#9333ea] text-white shadow-[0_12px_24px_rgba(99,102,241,0.28)]">
+          <Activity className="h-5 w-5" />
         </div>
+        <h2 className="text-[18px] font-semibold tracking-[-0.02em] text-slate-900">Recent Activities</h2>
+      </div>
+
+      <Link
+        to="/dashboard/activities"
+        className="inline-flex items-center gap-2 text-base font-medium text-slate-600 transition-colors hover:text-slate-900"
+      >
+        <span>View All</span>
+        <ArrowRight className="h-4 w-4" />
+      </Link>
+    </div>
+
+    <div className="px-6 py-7 sm:px-8">
+      {activities.length > 0 ? (
+        <div className="overflow-x-auto">
+          <div className="min-w-[860px] overflow-hidden rounded-[24px] border border-slate-100 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.09)]">
+            <div className="grid grid-cols-[minmax(0,1.8fr)_minmax(110px,0.9fr)_minmax(110px,0.8fr)_minmax(120px,1fr)_minmax(90px,0.7fr)] gap-4 bg-slate-50 px-5 py-5 text-sm font-semibold text-slate-600">
+              <span>Activity Name</span>
+              <span>Date</span>
+              <span>Status</span>
+              <span>Location</span>
+              <span>Participants</span>
+            </div>
+
+            {activities.map((activity, index) => {
+              const normalizedStatus = activity.status.trim().toLowerCase();
+              const statusClasses = normalizedStatus === "completed"
+                ? "bg-emerald-100 text-emerald-700"
+                : "bg-amber-100 text-amber-700";
+
+              return (
+                <div
+                  key={`${activity.id}-${activity.date}-${index}`}
+                  className="grid grid-cols-[minmax(0,1.8fr)_minmax(110px,0.9fr)_minmax(110px,0.8fr)_minmax(120px,1fr)_minmax(90px,0.7fr)] gap-4 border-t border-slate-100 px-5 py-5 text-sm text-slate-700"
+                >
+                  <div className="flex items-center gap-4">
+                    <span className="h-3 w-3 rounded-full bg-gradient-to-r from-[#4f7cff] to-[#9333ea]" />
+                    <span className="truncate text-[16px] font-medium text-slate-800">{activity.activityName}</span>
+                  </div>
+                  <div className="flex items-center">
+                    <span className="rounded-full bg-blue-100 px-3 py-1 text-sm font-semibold text-blue-700">
+                      {formatActivityDate(activity.date)}
+                    </span>
+                  </div>
+                  <div className="flex items-center">
+                    <span className={`rounded-full px-3 py-1 text-sm font-semibold ${statusClasses}`}>
+                      {formatActivityStatus(activity.status)}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 text-[16px] text-slate-600">
+                    <MapPin className="h-4 w-4 text-slate-500" />
+                    <span className="truncate">{activity.location}</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-[16px] font-semibold text-slate-800">
+                    <UsersRound className="h-4 w-4 text-slate-500" />
+                    <span>{formatWholeNumber(activity.participants)}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ) : (
+        <div className="flex min-h-[220px] items-center justify-center rounded-[24px] border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-400">
+          No recent activities available yet.
+        </div>
+      )}
+
+      <div className="mt-8 flex flex-col gap-4 border-t border-slate-200 pt-8 sm:flex-row sm:items-center sm:justify-between">
+        <Button
+          asChild
+          variant="outline"
+          className="h-12 rounded-2xl border-slate-300 bg-white px-6 text-base font-medium text-slate-700 hover:bg-slate-50"
+        >
+          <Link to="/dashboard/activities">
+            <Eye className="h-4 w-4" />
+            View All Activities
+          </Link>
+        </Button>
+
+        <Button
+          asChild
+          className="h-12 rounded-2xl bg-gradient-to-r from-[#4f7cff] to-[#9333ea] px-6 text-base font-semibold text-white shadow-[0_16px_32px_rgba(99,102,241,0.28)] hover:from-[#4370ec] hover:to-[#8429d6]"
+        >
+          <Link to="/dashboard/activities">
+            <Plus className="h-4 w-4" />
+            Schedule Activity
+          </Link>
+        </Button>
       </div>
     </div>
   </div>
 );
 
-const ActivityTable = ({ activities }: { activities: Activity[] }) => {
-  const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
-    return isNaN(date.getTime()) ? 'Invalid Date' : date.toLocaleDateString('en-US', {
-      year: 'numeric', month: 'short', day: 'numeric'
-    });
-  };
-
-  const getStatusBadge = (status: string) => {
-    const statusConfig: any = {
-      'pending': { color: 'bg-yellow-100 text-yellow-800', label: 'Pending' },
-      'in-progress': { color: 'bg-blue-100 text-blue-800', label: 'In Progress' },
-      'completed': { color: 'bg-green-100 text-green-800', label: 'Completed' },
-      'cancelled': { color: 'bg-red-100 text-red-800', label: 'Cancelled' }
-    };
-    const config = statusConfig[status] || statusConfig.pending;
-    return <Badge className={`${config.color} border-0 text-xs`}>{config.label}</Badge>;
-  };
+const CountiesCoveredPanel = ({ data }: { data: CountyCoverage[] }) => {
+  const maxValue = Math.max(...data.map((item) => item.value), 1);
 
   return (
-    <div className="bg-white/95 backdrop-blur-sm rounded-2xl shadow-xl overflow-hidden">
-      <div className="overflow-x-auto">
-        <table className="w-full">
-          <thead>
-            <tr className="bg-gradient-to-r from-slate-50 to-slate-100/80 shadow-sm">
-              <th className="p-4 text-left font-semibold text-slate-700 text-sm">Activity Name</th>
-              <th className="p-4 text-left font-semibold text-slate-700 text-sm">Date</th>
-              <th className="p-4 text-left font-semibold text-slate-700 text-sm">Status</th>
-              <th className="p-4 text-left font-semibold text-slate-700 text-sm">Location</th>
-              <th className="p-4 text-left font-semibold text-slate-700 text-sm">Participants</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {activities.map((activity) => (
-              <tr key={activity.id} className="hover:bg-slate-50/50 transition-colors duration-200 group">
-                <td className="p-4">
-                  <div className="flex items-center gap-3">
-                    <div className="w-2 h-2 bg-gradient-to-r from-blue-500 to-purple-500 rounded-full"></div>
-                    <span className="font-medium text-slate-900 group-hover:text-blue-600 transition-colors">{activity.activityName}</span>
-                  </div>
-                </td>
-                <td className="p-4"><Badge className="bg-blue-100 text-blue-700 border-0 shadow-sm">{formatDate(activity.date)}</Badge></td>
-                <td className="p-4">{getStatusBadge(activity.status)}</td>
-                <td className="p-4">
-                  <div className="flex items-center gap-2"><MapPin className="h-4 w-4 text-slate-500" /><span className="text-slate-700">{activity.location}</span></div>
-                </td>
-                <td className="p-4">
-                  <div className="flex items-center gap-2"><Users className="h-4 w-4 text-slate-500" /><span className="font-semibold text-slate-900">{activity.numberOfPersons}</span></div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+    <OverviewPanel title="COUNTIES COVERED" className="h-full min-h-[360px]">
+      <div className="mt-10 space-y-5">
+        {data.map((item, index) => (
+          <div key={`${item.name}-${index}`} className="space-y-2">
+            <div className="flex items-center justify-between gap-3 text-xs uppercase tracking-[0.12em] text-slate-300">
+              <span className="truncate">{item.name}</span>
+              <span>{formatWholeNumber(item.value)}</span>
+            </div>
+            <div className="h-4 rounded-full bg-slate-100">
+              <div
+                className="h-full rounded-full"
+                style={{
+                  width: `${(item.value / maxValue) * 100}%`,
+                  backgroundColor: item.color,
+                }}
+              />
+            </div>
+          </div>
+        ))}
       </div>
-    </div>
+    </OverviewPanel>
   );
 };
 
-// --- Main Page ---
+const OverviewLoading = () => (
+  <div className="space-y-6">
+    <div className="grid gap-4 md:grid-cols-3">
+      {Array.from({ length: 3 }).map((_, index) => (
+        <div key={index} className="rounded-[20px] border border-slate-200 bg-white p-6">
+          <Skeleton className="h-5 w-40" />
+          <Skeleton className="mt-4 h-10 w-24" />
+          <Skeleton className="mt-6 h-4 w-52" />
+          <Skeleton className="mt-4 h-2 w-full rounded-full" />
+        </div>
+      ))}
+    </div>
+
+    <div className="grid gap-6 lg:grid-cols-2">
+      <Skeleton className="h-[360px] rounded-[24px]" />
+      <Skeleton className="h-[360px] rounded-[24px]" />
+    </div>
+
+    <div className="grid gap-6 lg:grid-cols-2">
+      <Skeleton className="h-[360px] rounded-[24px]" />
+      <Skeleton className="h-[360px] rounded-[24px]" />
+    </div>
+
+    <div className="grid gap-6 lg:grid-cols-2">
+      <Skeleton className="h-[360px] rounded-[24px]" />
+      <Skeleton className="h-[360px] rounded-[24px]" />
+    </div>
+  </div>
+);
 
 const DashboardOverview = () => {
   const { user, userRole, userAttribute, allowedProgrammes, loading } = useAuth();
-  const { toast } = useToast();
-  const queryClient = useQueryClient();
-  const userIsChiefAdmin = userRole === "chief-admin";
   const userCanViewAllProgrammeData = useMemo(
     () => canViewAllProgrammes(userRole, userAttribute),
-    [userRole, userAttribute]
+    [userAttribute, userRole],
   );
 
-  // Dashboard View State
-  const [selectedProgramme, setSelectedProgramme] = useState<string>("");
-
-  // Dialog State
-  const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
-  const [participantForm, setParticipantForm] = useState({ name: "", role: "" });
-  const [participants, setParticipants] = useState<Participant[]>([]);
-  const [activeProgrammeForAdd, setActiveProgrammeForAdd] = useState<string>("");
-  
-  const [activityForm, setActivityForm] = useState({
-    activityName: "", date: "", county: "", subcounty: "", location: "",
-  });
-
-  const assignedProgrammeOptions = useMemo(
-    () => getAssignedProgrammes(allowedProgrammes),
-    [allowedProgrammes]
+  const accessibleProgrammes = useMemo(
+    () => resolveAccessibleProgrammes(userCanViewAllProgrammeData, allowedProgrammes),
+    [allowedProgrammes, userCanViewAllProgrammeData],
   );
+  const canSwitchProgrammes = userCanViewAllProgrammeData || accessibleProgrammes.length > 1;
   const programmeOptions = useMemo(
-    () => userIsChiefAdmin ? PROGRAMME_OPTIONS : assignedProgrammeOptions,
-    [assignedProgrammeOptions, userIsChiefAdmin]
+    () => (userCanViewAllProgrammeData ? ["All", ...accessibleProgrammes] : accessibleProgrammes),
+    [accessibleProgrammes, userCanViewAllProgrammeData],
   );
-  const showOverviewProgrammeSelector = programmeOptions.length > 1;
-
+  const [selectedProgramme, setSelectedProgramme] = useState("");
   const [localOverviewData, setLocalOverviewData] = useState<OverviewSummaryData | null>(null);
   const [localOverviewLoading, setLocalOverviewLoading] = useState(false);
-  const remoteOverviewEnabled = USE_REMOTE_ANALYTICS && !!selectedProgramme && !loading;
+
+  useEffect(() => {
+    if (!userRole && !userAttribute) {
+      setSelectedProgramme("");
+      return;
+    }
+
+    if (userCanViewAllProgrammeData) {
+      setSelectedProgramme((current) => {
+        if (current === "All") return current;
+        if (accessibleProgrammes.includes(current as (typeof accessibleProgrammes)[number])) return current;
+        return "All";
+      });
+      return;
+    }
+
+    setSelectedProgramme((current) => resolveActiveProgramme(current, accessibleProgrammes));
+  }, [accessibleProgrammes, userAttribute, userCanViewAllProgrammeData, userRole]);
+
+  const remoteOverviewEnabled = USE_REMOTE_ANALYTICS && Boolean(selectedProgramme) && !loading;
 
   const overviewQuery = useQuery({
     queryKey: ["overview-analysis", user?.uid, userRole, userAttribute, selectedProgramme],
@@ -287,7 +857,7 @@ const DashboardOverview = () => {
     staleTime: 2 * 60 * 1000,
   });
 
-  const shouldFetchLocalOverview = !!selectedProgramme && (!remoteOverviewEnabled || overviewQuery.isError);
+  const shouldFetchLocalOverview = Boolean(selectedProgramme) && (!remoteOverviewEnabled || overviewQuery.isError);
 
   useEffect(() => {
     if (!selectedProgramme) {
@@ -305,132 +875,53 @@ const DashboardOverview = () => {
 
     const fetchLocalOverview = async () => {
       setLocalOverviewLoading(true);
-      setLocalOverviewData(null);
+
       try {
-        const [farmersSnap, activitiesSnap, capacitySnap] = await Promise.all([
+        const [farmersSnap, capacitySnap, offtakesSnap, animalHealthSnap, boreholesSnap, activitiesSnap] = await Promise.all([
           get(ref(db, "farmers")),
-          get(ref(db, "Recent Activities")),
           get(ref(db, "capacityBuilding")),
+          get(ref(db, "offtakes")),
+          get(ref(db, "AnimalHealthActivities")),
+          get(ref(db, "BoreholeStorage")),
+          get(ref(db, "Recent Activities")),
         ]);
 
         if (cancelled) return;
 
+        const snapshotToArray = (snapshot: Awaited<ReturnType<typeof get>>): OverviewRecord[] =>
+          snapshot.exists()
+            ? Object.entries(snapshot.val() as Record<string, OverviewRecord>).map(([id, record]) => ({
+                id,
+                ...record,
+              }))
+            : [];
+
         const requestedProgramme = normalizeProgramme(selectedProgramme);
-        const includeAllProgrammes = !requestedProgramme || requestedProgramme === "ALL";
+        const includeAllProgrammes = selectedProgramme === "All" || !requestedProgramme;
+        const byProgramme = (records: OverviewRecord[]) =>
+          records.filter((record) => includeAllProgrammes || getOverviewRecordProgramme(record) === requestedProgramme);
 
-        const farmers = farmersSnap.exists()
-          ? Object.entries(farmersSnap.val() as Record<string, any>).map(([id, record]) => ({ id, ...record }))
-          : [];
-        const activities = activitiesSnap.exists()
-          ? Object.entries(activitiesSnap.val() as Record<string, any>).map(([id, record]) => ({ id, ...record }))
-          : [];
-        const capacity = capacitySnap.exists()
-          ? Object.entries(capacitySnap.val() as Record<string, any>).map(([id, record]) => ({ id, ...record }))
-          : [];
-
-        const filteredFarmers = farmers.filter((farmer) => {
-          const programme = normalizeProgramme(farmer.programme);
-          return includeAllProgrammes || programme === requestedProgramme;
+        const summary = buildOverviewSummaryFromRecords({
+          farmers: byProgramme(snapshotToArray(farmersSnap)),
+          capacity: byProgramme(snapshotToArray(capacitySnap)),
+          offtakes: byProgramme(snapshotToArray(offtakesSnap)),
+          animalHealth: byProgramme(snapshotToArray(animalHealthSnap)),
+          boreholes: byProgramme(snapshotToArray(boreholesSnap)),
+          activities: byProgramme(snapshotToArray(activitiesSnap)),
         });
-        const filteredActivities = activities.filter((activity) => {
-          const programme = normalizeProgramme(activity.programme);
-          return includeAllProgrammes || programme === requestedProgramme;
-        });
-        const filteredCapacity = capacity.filter((record) => {
-          const programme = normalizeProgramme(record.programme);
-          return includeAllProgrammes || programme === requestedProgramme;
-        });
-
-        let maleFarmers = 0;
-        let femaleFarmers = 0;
-        let maleGoats = 0;
-        let femaleGoats = 0;
-        let totalGoats = 0;
-        let totalSheep = 0;
-        let totalCattle = 0;
-        const regionMap: Record<string, number> = {};
-
-        for (const farmer of filteredFarmers) {
-          const gender = String(farmer.gender || "").trim().toLowerCase();
-          if (gender === "male") maleFarmers += 1;
-          else if (gender === "female") femaleFarmers += 1;
-
-          totalGoats += getGoatTotal(farmer.goats);
-          if (farmer.goats && typeof farmer.goats === "object") {
-            const goatRecord = farmer.goats as Record<string, any>;
-            maleGoats += getNumberField(goatRecord, "male");
-            femaleGoats += getNumberField(goatRecord, "female");
-          }
-          totalSheep += getNumberField(farmer as Record<string, any>, "sheep");
-          totalCattle += getNumberField(farmer as Record<string, any>, "cattle");
-
-          const region = String(farmer.region || farmer.county || "Unknown").trim() || "Unknown";
-          regionMap[region] = (regionMap[region] || 0) + 1;
-        }
-
-        const topRegions = Object.entries(regionMap)
-          .map(([name, farmerCount]) => ({ name, farmerCount, maleFarmers: 0, femaleFarmers: 0 }))
-          .sort((a, b) => b.farmerCount - a.farmerCount)
-          .slice(0, 4);
-
-        const recentActivities = [...filteredActivities]
-          .sort((a, b) => (parseDate(b.date)?.getTime() || 0) - (parseDate(a.date)?.getTime() || 0))
-          .slice(0, 3)
-          .map((record) => {
-            const rawStatus = String(record.status || "pending").trim().toLowerCase();
-            const status: Activity["status"] = ["pending", "in-progress", "completed", "cancelled"].includes(rawStatus)
-              ? (rawStatus as Activity["status"])
-              : "pending";
-
-            return {
-              id: String(record.id || ""),
-              activityName: String(record.activityName || ""),
-              date: String(record.date || record.createdAt || ""),
-              numberOfPersons: getNumberField(record as Record<string, any>, "numberOfPersons") ||
-                (Array.isArray(record.participants) ? record.participants.length : 0),
-              county: String(record.county || ""),
-              location: String(record.location || ""),
-              participants: Array.isArray(record.participants) ? record.participants : [],
-              subcounty: String(record.subcounty || ""),
-              createdAt: record.createdAt || record.date || "",
-              status,
-              programme: record.programme ? normalizeProgramme(record.programme) : undefined,
-              totalFarmers: getNumberField(record as Record<string, any>, "totalFarmers"),
-            };
-          });
-
-        const pendingActivitiesCount = filteredActivities.filter(
-          (activity) => String(activity.status || "").trim().toLowerCase() === "pending",
-        ).length;
-        const trainedFarmers = filteredCapacity.reduce(
-          (sum, record) => sum + getNumberField(record as Record<string, any>, "totalFarmers", "trainedFarmers"),
-          0,
-        );
 
         if (!cancelled) {
-          setLocalOverviewData({
-            stats: {
-              totalFarmers: filteredFarmers.length,
-              maleFarmers,
-              femaleFarmers,
-              trainedFarmers,
-              maleGoats,
-              femaleGoats,
-              totalGoats,
-              totalSheep,
-              totalCattle,
-              regionsVisited: Object.keys(regionMap).length,
-            },
-            topRegions,
-            recentActivities,
-            pendingActivitiesCount,
-          });
+          setLocalOverviewData(summary);
         }
       } catch (error) {
-        console.error("Error building local overview data:", error);
-        if (!cancelled) setLocalOverviewData(EMPTY_OVERVIEW_DATA);
+        console.error("Failed to build local overview:", error);
+        if (!cancelled) {
+          setLocalOverviewData(EMPTY_OVERVIEW_DATA);
+        }
       } finally {
-        if (!cancelled) setLocalOverviewLoading(false);
+        if (!cancelled) {
+          setLocalOverviewLoading(false);
+        }
       }
     };
 
@@ -444,340 +935,181 @@ const DashboardOverview = () => {
   const overviewData =
     (overviewQuery.data as OverviewSummaryData | undefined) ?? localOverviewData ?? EMPTY_OVERVIEW_DATA;
 
-  const calculatedStats = {
-    totalFarmers: overviewData?.stats?.totalFarmers || 0,
-    maleFarmers: overviewData?.stats?.maleFarmers || 0,
-    femaleFarmers: overviewData?.stats?.femaleFarmers || 0,
-    trainedFarmers: overviewData?.stats?.trainedFarmers || 0,
-    maleGoats: overviewData?.stats?.maleGoats || 0,
-    femaleGoats: overviewData?.stats?.femaleGoats || 0,
-    totalGoats: overviewData?.stats?.totalGoats || 0,
-    totalSheep: overviewData?.stats?.totalSheep || 0,
-    totalCattle: overviewData?.stats?.totalCattle || 0,
-    regionsVisited: overviewData?.stats?.regionsVisited || 0,
-  };
-
-  const regionStats = overviewData?.topRegions || [];
-  const recentActivities = overviewData?.recentActivities || [];
-  const pendingActivitiesCount = overviewData?.pendingActivitiesCount || 0;
+  const stats = overviewData.stats ?? EMPTY_OVERVIEW_DATA.stats;
+  const comparisonYears = overviewData.comparisonYears ?? getComparisonYears();
+  const currentYearRegistrations = overviewData.registrationComparison?.[0]?.value ?? 0;
+  const registrationPercentage = toPercentage(currentYearRegistrations, stats.totalFarmers);
+  const trainingPercentage = toPercentage(stats.trainedFarmers, stats.totalFarmers);
+  const censusPercentage = toPercentage(stats.totalGoatsPurchased, stats.totalGoats);
   const isLoadingRemoteOverview =
     remoteOverviewEnabled &&
     !overviewQuery.isError &&
     (overviewQuery.isLoading || overviewQuery.isFetching);
   const isLoadingData = isLoadingRemoteOverview || localOverviewLoading;
 
-
-  // --- Effects & Handlers ---
-
-  useEffect(() => {
-    if (!userRole) {
-      setSelectedProgramme("");
-      return;
-    }
-
-    if (userIsChiefAdmin && userCanViewAllProgrammeData) {
-      setSelectedProgramme((prev) => (
-        prev === "All" || PROGRAMME_OPTIONS.includes(prev) ? prev : "All"
-      ));
-      return;
-    }
-
-    if (assignedProgrammeOptions.length === 0) {
-      setSelectedProgramme("");
-      return;
-    }
-
-    setSelectedProgramme(assignedProgrammeOptions[0]);
-  }, [assignedProgrammeOptions, userCanViewAllProgrammeData, userIsChiefAdmin, userRole]);
-
-  const handleAddParticipant = () => {
-    if (participantForm.name.trim() && participantForm.role.trim()) {
-      setParticipants([...participants, { ...participantForm }]);
-      setParticipantForm({ name: "", role: "" });
-    }
-  };
-
-  const removeParticipant = (index: number) => {
-    setParticipants(participants.filter((_, i) => i !== index));
-  };
-
-  const handleAddActivity = async () => {
-    if (!userIsChiefAdmin) {
-      toast({
-        title: "Access denied",
-        description: "Only chief admin can create, edit, or delete records on this page.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    if (participants.length === 0) {
-      toast({ title: "Error", description: "Please add at least one participant", variant: "destructive" });
-      return;
-    }
-    if (!activeProgrammeForAdd) {
-      toast({ title: "Error", description: "Select a programme first.", variant: "destructive" });
-      return;
-    }
-
-    try {
-      await push(ref(db, "Recent Activities"), {
-        ...activityForm,
-        numberOfPersons: participants.length, 
-        participants: participants,
-        status: 'pending', 
-        programme: activeProgrammeForAdd,
-        createdBy: user?.email,
-        createdAt: new Date().toISOString(), 
-      });
-      
-      toast({ title: "Success", description: "Activity scheduled successfully." });
-      
-      setActivityForm({ activityName: "", date: "", county: "", subcounty: "", location: "" });
-      setParticipants([]);
-      setIsAddDialogOpen(false);
-      
-      // Invalidate queries to trigger a refetch
-      queryClient.invalidateQueries({ queryKey: ["overview-analysis"] });
-    } catch (error) {
-      toast({ title: "Error", description: "Failed to schedule activity.", variant: "destructive" });
-    }
-  };
-
-  useEffect(() => {
-    if (selectedProgramme && selectedProgramme !== "All" && PROGRAMME_OPTIONS.includes(selectedProgramme)) {
-      setActiveProgrammeForAdd(selectedProgramme);
-    } else if (PROGRAMME_OPTIONS.length > 0) {
-      setActiveProgrammeForAdd(PROGRAMME_OPTIONS[0]);
-    } else {
-      setActiveProgrammeForAdd("");
-    }
-  }, [selectedProgramme]);
-
-  const LoadingSkeleton = () => (
-    <div className="space-y-8">
-      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-2">
-        {[...Array(4)].map((_, i) => (
-          <div key={i} className="group relative">
-            <div className="relative bg-white/95 backdrop-blur-sm rounded-2xl shadow-xl p-6">
-              <div className="flex items-center">
-                <div className="flex-shrink-0"><Skeleton className="w-14 h-14 rounded-xl" /></div>
-                <div className="ml-5 flex-1">
-                  <Skeleton className="h-4 w-32 mb-2" />
-                  <Skeleton className="h-8 w-20 mb-3" />
-                  <div className="flex gap-4"><Skeleton className="h-10 flex-1 rounded-lg" /><Skeleton className="h-10 flex-1 rounded-lg" /></div>
-                </div>
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-
-  const topRegions = regionStats.slice(0, 4);
-
   if (loading) {
     return (
-       <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100/80 p-4 sm:p-6 flex items-center justify-center">
-         <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
-       </div>
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-slate-500" />
+      </div>
     );
   }
 
-  if (!userIsChiefAdmin && assignedProgrammeOptions.length === 0) {
+  if (!userCanViewAllProgrammeData && accessibleProgrammes.length === 0) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100/80 p-4 sm:p-6">
-        <Card className="max-w-md mx-auto mt-20"><CardHeader><CardTitle>No Access</CardTitle></CardHeader><CardContent><p>You are not assigned to any programmes.</p></CardContent></Card>
+      <div className="rounded-[24px] border border-slate-200 bg-white p-8 text-center shadow-[0_10px_35px_rgba(15,23,42,0.04)]">
+        <h1 className="text-lg font-semibold text-slate-900">No programme access</h1>
+        <p className="mt-2 text-sm text-slate-500">This account is not assigned to any programme data.</p>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100/80 p-4 sm:p-6">
-      <div className="max-w-7xl mx-auto space-y-8">
-        {/* Header */}
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h1 className="text-md font-bold text-slate-900">Dashboard Overview</h1>
-            {!showOverviewProgrammeSelector && selectedProgramme && (
-               <div className="flex gap-2 mt-2">
-                 <Badge variant="outline" className="text-xs">{selectedProgramme}</Badge>
-               </div>
-            )}
-          </div>
-          <Link to="/dashboard/activities">
-            <Button variant="outline" className="relative">
-              <Bell className="h-4 w-4 mr-2" /> Activities
-              {pendingActivitiesCount > 0 && (
-                <span className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 text-xs flex items-center justify-center">{pendingActivitiesCount}</span>
-              )}
-            </Button>
-          </Link>
+    <div className="min-h-screen bg-[#f5f6f7] px-3 py-4 sm:px-5 sm:py-5">
+      <div className="mx-auto max-w-[1120px] space-y-6">
+        <div className="flex items-center justify-end">
+          {canSwitchProgrammes ? (
+            <div className="w-full max-w-[170px] space-y-2">
+              <Label htmlFor="overview-programme" className="text-xs uppercase tracking-[0.16em] text-slate-400">
+                Programme
+              </Label>
+              <Select value={selectedProgramme} onValueChange={setSelectedProgramme}>
+                <SelectTrigger id="overview-programme" className="rounded-2xl border-slate-200 bg-white">
+                  <SelectValue placeholder="Select programme" />
+                </SelectTrigger>
+                <SelectContent>
+                  {programmeOptions.map((programme) => (
+                    <SelectItem key={programme} value={programme}>
+                      {programme}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          ) : null}
         </div>
 
         {isLoadingData ? (
-          <LoadingSkeleton />
+          <OverviewLoading />
         ) : (
           <>
-            {/* Programme Selector */}
-            {showOverviewProgrammeSelector && (
-              <div className="flex justify-center mb-6">
-                <div className="w-full max-w-xs space-y-2">
-                  <Label htmlFor="dashboard-overview-programme" className="text-sm font-medium text-slate-700">
-                    Programme
-                  </Label>
-                  <Select value={selectedProgramme} onValueChange={setSelectedProgramme}>
-                    <SelectTrigger id="dashboard-overview-programme" className="bg-white rounded-xl border border-slate-200 shadow-sm">
-                      <SelectValue placeholder="Select programme" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="All">All Programmes</SelectItem>
-                      {programmeOptions.map((programme) => (
-                        <SelectItem key={programme} value={programme}>
-                          {programme}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-            )}
+            <div className="grid gap-4 md:grid-cols-3">
+              <TopMetricCard
+                title="Registered farmers"
+                value={stats.totalFarmers}
+                progressValue={registrationPercentage}
+                progressLabel={formatProgressLabel(registrationPercentage, "of total")}
+                accentColor="#2ea55f"
+                icon={<UsersRound className="h-5 w-5 text-[#2ea55f]" />}
+                detail={
+                  <>
+                    <span>male : {formatWholeNumber(stats.maleFarmers)}</span>
+                    <span>|</span>
+                    <span>female : {formatWholeNumber(stats.femaleFarmers)}</span>
+                  </>
+                }
+              />
 
-            {/* Stats Grid */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <StatCard title="Farmers Registered" icon={<Users className="h-7 w-7 text-blue-600" />} maleCount={calculatedStats.maleFarmers} femaleCount={calculatedStats.femaleFarmers} total={calculatedStats.totalFarmers} gradient="bg-gradient-to-br from-blue-100 to-blue-50" />
-              <StatCard title="Trained Farmers" icon={<GraduationCap className="h-7 w-7 text-green-600" />} maleCount={calculatedStats.trainedMale} femaleCount={calculatedStats.trainedFemale} total={calculatedStats.trainedFarmers} gradient="bg-gradient-to-br from-green-100 to-green-50" description={`Data from ${selectedProgramme === "All" ? "All Programmes" : selectedProgramme}`} />
-              <StatCard title="Animal Census" icon={<Beef className="h-7 w-7 text-orange-600" />} maleCount={calculatedStats.maleGoats} femaleCount={calculatedStats.femaleGoats} total={calculatedStats.totalGoats} gradient="bg-gradient-to-br from-orange-100 to-orange-50" />
-              <div className="group relative">
-                <div className="relative bg-white/95 backdrop-blur-sm rounded-2xl shadow-xl hover:shadow-2xl transition-all duration-300 p-6">
-                  <div className="flex items-center">
-                    <div className="flex-shrink-0">
-                      <div className="w-14 h-14 bg-gradient-to-br from-purple-100 to-purple-50 rounded-xl flex items-center justify-center shadow-lg"><MapPin className="h-7 w-7 text-purple-600" /></div>
-                    </div>
-                    <div className="ml-5 flex-1">
-                     <div className="flex items-center justify-between mb-1"> 
-                      <p className="text-sm font-medium text-slate-600 uppercase tracking-wide">COUNTIES COVERED</p>
-                      <p className="bg-purple-100 text-purple-700 border-0 text-xs rounded-full text-center w-10">{calculatedStats.regionsVisited}</p>
-                      </div>
-                      {topRegions.length > 0 && (
-                        <div className="mt-4 grid grid-cols-2 gap-1">
-                          {topRegions.map((region) => (
-                            <div key={region.name} className="bg-slate-50/80 rounded-lg p-1 shadow-sm">
-                              <div className="flex items-center justify-between mb-1">
-                                <span className="text-xs font-semibold text-slate-700 truncate">{region.name}</span>
-                                <Badge className="bg-purple-100 text-purple-700 border-0 text-xs">{region.farmerCount}</Badge>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                      {topRegions.length === 0 && <div className="mt-3 text-sm text-slate-500">No region data available</div>}
-                    </div>
-                  </div>
-                </div>
-              </div>
+              <TopMetricCard
+                title="Trained farmers"
+                value={stats.trainedFarmers}
+                progressValue={trainingPercentage}
+                progressLabel={formatProgressLabel(trainingPercentage, "of registered farmers")}
+                accentColor="#3978c7"
+                icon={<Leaf className="h-5 w-5 text-[#3978c7]" />}
+              />
+
+              <TopMetricCard
+                title="Animal census"
+                value={stats.totalAnimals}
+                progressValue={censusPercentage}
+                progressLabel={formatProgressLabel(censusPercentage, "goats purchased")}
+                accentColor="#f58b1f"
+                icon={<ShoppingCart className="h-5 w-5 text-[#f58b1f]" />}
+                detail={
+                  <>
+                    <span>goats : {formatWholeNumber(stats.totalGoats)}</span>
+                    <span>|</span>
+                    <span>purchased : {formatWholeNumber(stats.totalGoatsPurchased)}</span>
+                  </>
+                }
+              />
             </div>
 
-            {/* Activities */}
-            <div className="space-y-6">
-              <div className="bg-white/95 backdrop-blur-sm rounded-2xl shadow-xl overflow-hidden">
-                <div className="px-6 py-4 bg-gradient-to-r from-slate-50 to-slate-100/80 shadow-sm">
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="flex items-center">
-                      <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-500 rounded-lg flex items-center justify-center shadow-lg mr-3"><Activity className="w-4 h-4 text-white" /></div>
-                      <h3 className="text-lg font-semibold text-slate-900">Recent Activities</h3>
-                      {selectedProgramme !== "All" && <Badge className="ml-2 bg-blue-100 text-blue-700 border-0">{selectedProgramme}</Badge>}
-                    </div>
-                    <Link to="/dashboard/activities"><Button variant="ghost" size="sm" className="text-slate-600 hover:text-slate-900">View All <ArrowRight className="h-4 w-4 ml-1" /></Button></Link>
-                  </div>
+            <div className="grid items-stretch gap-6 lg:grid-cols-2">
+              <DonutPanel
+                title="MAINTAINED INFRASTRUCTURE"
+                data={overviewData.maintainedInfrastructure ?? EMPTY_DONUT_SEGMENTS}
+                comparisonNote={`Year 1 = ${comparisonYears.year1} | Year 2 = ${comparisonYears.year2}`}
+              />
+              <DonutPanel
+                title="ANIMAL CENSUS VS GOATS PURCHASED"
+                data={overviewData.animalCensusVsPurchased ?? EMPTY_OVERVIEW_DATA.animalCensusVsPurchased}
+              />
+            </div>
+
+            <div className="grid items-stretch gap-6 lg:grid-cols-2">
+              <DonutPanel
+                title="FARMERS REGISTRATION RATE"
+                data={overviewData.registrationComparison ?? EMPTY_DONUT_SEGMENTS}
+                comparisonNote={`Year 1 = ${comparisonYears.year1} | Year 2 = ${comparisonYears.year2}`}
+              />
+              <RecentLocationsPanel locations={overviewData.recentLocations ?? EMPTY_OVERVIEW_DATA.recentLocations} />
+            </div>
+
+            <div className="grid items-stretch gap-6 lg:grid-cols-2">
+              <OverviewPanel title="GOATS VACCINATION" className="flex h-full min-h-[360px] flex-col">
+                <div className="mt-5 flex-1">
+                  <ResponsiveContainer width="100%" height={260}>
+                    <AreaChart
+                      data={overviewData.vaccinationTrend ?? EMPTY_OVERVIEW_DATA.vaccinationTrend}
+                      margin={{ top: 16, right: 8, left: 0, bottom: 0 }}
+                    >
+                      <defs>
+                        <linearGradient id="overviewVaccinationFill" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#ff7a1a" stopOpacity={0.65} />
+                          <stop offset="100%" stopColor="#ff7a1a" stopOpacity={0.04} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
+                      <XAxis dataKey="name" tickLine={false} axisLine={false} tick={{ fill: "#cbd5e1", fontSize: 12 }} />
+                      <YAxis tickLine={false} axisLine={false} tick={{ fill: "#64748b", fontSize: 12 }} />
+                      <Area
+                        type="monotone"
+                        dataKey="year1"
+                        stroke={YEAR_ONE_COLOR}
+                        strokeWidth={2}
+                        fillOpacity={0}
+                      />
+                      <Area
+                        type="monotone"
+                        dataKey="year2"
+                        stroke="#ff7a1a"
+                        strokeWidth={2.5}
+                        fill="url(#overviewVaccinationFill)"
+                      />
+                    </AreaChart>
+                  </ResponsiveContainer>
                 </div>
 
-                <div className="p-6">
-                  {recentActivities.length > 0 ? (
-                    <>
-                      <ActivityTable activities={recentActivities} />
-                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between pt-6 mt-6 border-t border-slate-200">
-                        <Link to="/dashboard/activities"><Button variant="outline" className="border-slate-300 text-slate-700 hover:bg-slate-50 font-medium px-4 py-2 rounded-xl transition-all duration-200 shadow-sm"><Eye className="h-4 w-4 mr-2" /> View All Activities</Button></Link>
-                        {userIsChiefAdmin && (
-                          <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
-                            <DialogTrigger asChild><Button className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white font-semibold px-4 py-2 rounded-xl shadow-lg hover:shadow-xl transition-all duration-200"><Plus className="h-4 w-4 mr-2" /> Schedule Activity</Button></DialogTrigger>
-                            <DialogContent className="sm:max-w-[700px] bg-white rounded-2xl border-0 shadow-2xl max-h-[90vh] overflow-y-auto">
-                            <DialogHeader><DialogTitle className="text-xl font-semibold text-slate-900">Schedule New Activity</DialogTitle></DialogHeader>
-                            <div className="grid gap-6 py-4">
-                              {userIsChiefAdmin && (
-                                <div className="space-y-2">
-                                  <Label htmlFor="schedule-programme-select">Programme</Label>
-                                  <Select value={activeProgrammeForAdd} onValueChange={setActiveProgrammeForAdd}>
-                                    <SelectTrigger id="schedule-programme-select" className="bg-white rounded-xl border border-slate-300">
-                                      <SelectValue placeholder="Select programme" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      {PROGRAMME_OPTIONS.map((programme) => (
-                                        <SelectItem key={programme} value={programme}>
-                                          {programme}
-                                        </SelectItem>
-                                      ))}
-                                    </SelectContent>
-                                  </Select>
-                                </div>
-                              )}
-                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                <div className="space-y-2"><Label htmlFor="activityName">Activity Name</Label><Input id="activityName" value={activityForm.activityName} onChange={(e) => setActivityForm({...activityForm, activityName: e.target.value})} placeholder="Enter activity name" /></div>
-                                <div className="space-y-2"><Label htmlFor="date">Date</Label><Input id="date" type="date" value={activityForm.date} onChange={(e) => setActivityForm({...activityForm, date: e.target.value})} /></div>
-                              </div>
-                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                <div className="space-y-2"><Label htmlFor="county">County</Label><Input id="county" value={activityForm.county} onChange={(e) => setActivityForm({...activityForm, county: e.target.value})} placeholder="Enter county" /></div>
-                                <div className="space-y-2"><Label htmlFor="subcounty">Subcounty</Label><Input id="subcounty" value={activityForm.subcounty} onChange={(e) => setActivityForm({...activityForm, subcounty: e.target.value})} placeholder="Enter subcounty" /></div>
-                              </div>
-                              <div className="space-y-2"><Label htmlFor="location">Location</Label><Input id="location" value={activityForm.location} onChange={(e) => setActivityForm({...activityForm, location: e.target.value})} placeholder="Enter location" /></div>
-                              <div className="space-y-4 border-t pt-4">
-                                <div className="flex items-center justify-between"><Label>Participants ({participants.length})</Label><span className="text-xs text-slate-500">Add participants with their roles</span></div>
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                  <Input placeholder="Participant Name" value={participantForm.name} onChange={(e) => setParticipantForm({...participantForm, name: e.target.value})} />
-                                  <div className="flex gap-2">
-                                    <Input placeholder="Role" value={participantForm.role} onChange={(e) => setParticipantForm({...participantForm, role: e.target.value})} />
-                                    <Button type="button" onClick={handleAddParticipant} className="bg-blue-500 hover:bg-blue-600 text-white" disabled={!participantForm.name.trim() || !participantForm.role.trim()}><Plus className="h-4 w-4" /></Button>
-                                  </div>
-                                </div>
-                                {participants.length > 0 && (
-                                  <div className="space-y-2 max-h-40 overflow-y-auto">
-                                    {participants.map((participant, index) => (
-                                      <div key={index} className="flex items-center justify-between bg-slate-50 rounded-lg p-3">
-                                        <div className="flex-1"><p className="font-medium text-slate-900">{participant.name}</p><p className="text-sm text-slate-600">{participant.role}</p></div>
-                                        <Button type="button" variant="ghost" size="sm" onClick={() => removeParticipant(index)} className="text-red-500 hover:text-red-700 hover:bg-red-50"><Trash2 className="h-4 w-4" /></Button>
-                                      </div>
-                                    ))}
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                            <div className="flex justify-end gap-3 pt-4">
-                              <Button variant="outline" onClick={() => { setIsAddDialogOpen(false); setParticipants([]); setActivityForm({ activityName: "", date: "", county: "", subcounty: "", location: "" }); }}>Cancel</Button>
-                              <Button onClick={handleAddActivity} disabled={participants.length === 0} className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 rounded-xl text-white font-semibold shadow-lg hover:shadow-xl transition-all disabled:opacity-50"><Calendar className="h-4 w-4 mr-2" /> Schedule Activity</Button>
-                            </div>
-                            </DialogContent>
-                          </Dialog>
-                        )}
-                      </div>
-                    </>
-                  ) : (
-                    <div className="text-center p-8 border-2 border-dashed border-slate-300 rounded-2xl bg-slate-50/50">
-                      <div className="w-16 h-16 bg-gradient-to-r from-blue-500 to-purple-500 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg"><Activity className="h-8 w-8 text-white" /></div>
-                      <h4 className="text-xl font-bold text-slate-800 mb-2">No activities yet</h4>
-                      <p className="text-slate-600 mb-4">Start scheduling your field activities and events to see them displayed here.</p>
-                      <div className="flex justify-center">
-                        {userIsChiefAdmin && (
-                          <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
-                            <DialogTrigger asChild><Button className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white font-semibold px-4 py-2 rounded-xl shadow-lg hover:shadow-xl transition-all duration-200"><Plus className="h-4 w-4 mr-2" /> Schedule Your First Activity</Button></DialogTrigger>
-                          </Dialog>
-                        )}
-                      </div>
-                    </div>
-                  )}
+                <div className="mt-3 flex flex-wrap items-center justify-center gap-5 text-sm text-slate-500">
+                  <div className="flex items-center gap-2">
+                    <span className="h-2.5 w-2.5 rounded-full bg-[#2710a1]" />
+                    <span>Year 1</span>
+                    <span className="font-semibold text-slate-700">{comparisonYears.year1}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="h-2.5 w-2.5 rounded-full bg-[#ff7a1a]" />
+                    <span>Year 2</span>
+                    <span className="font-semibold text-slate-700">{comparisonYears.year2}</span>
+                  </div>
                 </div>
-              </div>
+              </OverviewPanel>
+
+              <CountiesCoveredPanel data={overviewData.countyCoverage ?? EMPTY_COUNTY_COVERAGE} />
             </div>
+
+            <RecentActivitiesPanel activities={overviewData.recentActivities ?? EMPTY_OVERVIEW_DATA.recentActivities} />
           </>
         )}
       </div>
@@ -786,4 +1118,3 @@ const DashboardOverview = () => {
 };
 
 export default DashboardOverview;
-

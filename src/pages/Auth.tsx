@@ -14,15 +14,15 @@ const Auth = () => {
   const [isLoading, setIsLoading] = useState(false);
   
   // Retrieve userRole from the auth context
-  const { signIn, user, userRole, userAttribute } = useAuth();
+  const { signIn, user, userRole, userAttribute, loading } = useAuth();
   const navigate = useNavigate();
 
   useEffect(() => {
     // Redirect once either role or custom attribute has loaded.
-    if (user && (userRole || userAttribute)) {
+    if (!loading && user && (userRole || userAttribute)) {
       navigate(getLandingRouteForRole(userRole, userAttribute), { replace: true });
     }
-  }, [user, userRole, userAttribute, navigate]);
+  }, [loading, user, userRole, userAttribute, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
