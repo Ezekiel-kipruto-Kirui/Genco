@@ -32,6 +32,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/contexts/AuthContext";
 import { canViewAllProgrammes } from "@/contexts/authhelper";
 import { fetchAnalysisSummary } from "@/lib/analysis";
+import { cacheKey, readCachedValue, writeCachedValue } from "@/lib/data-cache";
 import { db } from "@/lib/firebase";
 import { normalizeProgramme, resolveAccessibleProgrammes, resolveActiveProgramme } from "@/lib/programme-access";
 
@@ -161,6 +162,11 @@ const EMPTY_OVERVIEW_DATA: OverviewSummaryData = {
   recentActivities: [],
   pendingActivitiesCount: 0,
 };
+const OVERVIEW_CACHE_TTL_MS = 10 * 60 * 1000;
+const buildOverviewCacheKey = (
+  userId: string | null | undefined,
+  programme: string | null | undefined
+) => cacheKey("overview-summary", userId || "anon", programme || "none");
 
 const parseDate = (value: unknown): Date | null => {
   if (!value) return null;
@@ -467,8 +473,149 @@ const toPercentage = (value: number, total: number): number => {
   return Number(((value / total) * 100).toFixed(1));
 };
 
-const formatWholeNumber = (value: number) => value.toLocaleString();
-const formatProgressLabel = (value: number, description: string) => `${value.toFixed(1)}% ${description}`;
+const getSafeNumber = (value: unknown, fallback = 0): number => {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number(value.replace(/,/g, "").trim());
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return fallback;
+};
+
+const cloneDonutSegments = (segments: DonutSegment[]): DonutSegment[] =>
+  segments.map((segment) => ({ ...segment }));
+
+const sanitizeDonutSegments = (
+  value: unknown,
+  fallback: DonutSegment[] = EMPTY_DONUT_SEGMENTS,
+): DonutSegment[] => {
+  if (!Array.isArray(value) || value.length === 0) return cloneDonutSegments(fallback);
+
+  return value.map((item, index) => {
+    const segment = item && typeof item === "object" ? item as Partial<DonutSegment> : {};
+    return {
+      name: typeof segment.name === "string" && segment.name.trim() ? segment.name : `Item ${index + 1}`,
+      value: getSafeNumber(segment.value),
+      color:
+        typeof segment.color === "string" && segment.color.trim()
+          ? segment.color
+          : fallback[index % fallback.length]?.color || YEAR_ONE_COLOR,
+    };
+  });
+};
+
+const sanitizeTrendPoints = (value: unknown): TrendPoint[] => {
+  if (!Array.isArray(value) || value.length === 0) {
+    return EMPTY_OVERVIEW_DATA.vaccinationTrend.map((point) => ({ ...point }));
+  }
+
+  return value.map((item, index) => {
+    const point = item && typeof item === "object" ? item as Partial<TrendPoint> : {};
+    return {
+      name: typeof point.name === "string" && point.name.trim() ? point.name : MONTH_LABELS[index] || `Point ${index + 1}`,
+      year1: getSafeNumber(point.year1),
+      year2: getSafeNumber(point.year2),
+    };
+  });
+};
+
+const sanitizeCountyCoverage = (value: unknown): CountyCoverage[] => {
+  if (!Array.isArray(value) || value.length === 0) {
+    return EMPTY_COUNTY_COVERAGE.map((item) => ({ ...item }));
+  }
+
+  return value.map((item, index) => {
+    const coverage = item && typeof item === "object" ? item as Partial<CountyCoverage> : {};
+    return {
+      name: typeof coverage.name === "string" && coverage.name.trim() ? coverage.name : `County ${index + 1}`,
+      value: getSafeNumber(coverage.value),
+      color:
+        typeof coverage.color === "string" && coverage.color.trim()
+          ? coverage.color
+          : COUNTY_BAR_COLORS[index % COUNTY_BAR_COLORS.length],
+    };
+  });
+};
+
+const sanitizeRecentLocations = (value: unknown): RecentLocation[] => {
+  if (!Array.isArray(value)) return [];
+
+  return value.map((item, index) => {
+    const location = item && typeof item === "object" ? item as Partial<RecentLocation> : {};
+    return {
+      name: typeof location.name === "string" && location.name.trim() ? location.name : `Location ${index + 1}`,
+      county: typeof location.county === "string" && location.county.trim() ? location.county : "Unknown county",
+      visitedAt: typeof location.visitedAt === "string" ? location.visitedAt : "",
+    };
+  });
+};
+
+const sanitizeRecentActivities = (value: unknown): RecentActivity[] => {
+  if (!Array.isArray(value)) return [];
+
+  return value.map((item, index) => {
+    const activity = item && typeof item === "object" ? item as Partial<RecentActivity> : {};
+    return {
+      id: typeof activity.id === "string" && activity.id.trim() ? activity.id : `activity-${index + 1}`,
+      activityName:
+        typeof activity.activityName === "string" && activity.activityName.trim()
+          ? activity.activityName
+          : "Untitled activity",
+      date: typeof activity.date === "string" ? activity.date : "",
+      status: typeof activity.status === "string" && activity.status.trim() ? activity.status : "pending",
+      location:
+        typeof activity.location === "string" && activity.location.trim()
+          ? activity.location
+          : "Unknown location",
+      participants: getSafeNumber(activity.participants),
+    };
+  });
+};
+
+const sanitizeOverviewSummary = (value: unknown): OverviewSummaryData => {
+  if (!value || typeof value !== "object") return EMPTY_OVERVIEW_DATA;
+
+  const data = value as Partial<OverviewSummaryData> & {
+    stats?: Partial<OverviewSummaryData["stats"]>;
+    comparisonYears?: Partial<ComparisonYears>;
+  };
+  const stats = data.stats || {};
+  const comparisonYears = data.comparisonYears || {};
+
+  return {
+    stats: {
+      totalFarmers: getSafeNumber(stats.totalFarmers),
+      maleFarmers: getSafeNumber(stats.maleFarmers),
+      femaleFarmers: getSafeNumber(stats.femaleFarmers),
+      trainedFarmers: getSafeNumber(stats.trainedFarmers),
+      totalAnimals: getSafeNumber(stats.totalAnimals),
+      totalGoats: getSafeNumber(stats.totalGoats),
+      totalSheep: getSafeNumber(stats.totalSheep),
+      totalCattle: getSafeNumber(stats.totalCattle),
+      totalGoatsPurchased: getSafeNumber(stats.totalGoatsPurchased),
+      countiesCovered: getSafeNumber(stats.countiesCovered),
+    },
+    comparisonYears: {
+      year1: getSafeNumber(comparisonYears.year1, getComparisonYears().year1),
+      year2: getSafeNumber(comparisonYears.year2, getComparisonYears().year2),
+    },
+    maintainedInfrastructure: sanitizeDonutSegments(data.maintainedInfrastructure, EMPTY_DONUT_SEGMENTS),
+    registrationComparison: sanitizeDonutSegments(data.registrationComparison, EMPTY_DONUT_SEGMENTS),
+    animalCensusVsPurchased: sanitizeDonutSegments(
+      data.animalCensusVsPurchased,
+      EMPTY_OVERVIEW_DATA.animalCensusVsPurchased,
+    ),
+    vaccinationTrend: sanitizeTrendPoints(data.vaccinationTrend),
+    countyCoverage: sanitizeCountyCoverage(data.countyCoverage),
+    recentLocations: sanitizeRecentLocations(data.recentLocations),
+    recentActivities: sanitizeRecentActivities(data.recentActivities),
+    pendingActivitiesCount: getSafeNumber(data.pendingActivitiesCount),
+  };
+};
+
+const formatWholeNumber = (value: unknown) => getSafeNumber(value).toLocaleString();
+const formatProgressLabel = (value: unknown, description: string) =>
+  `${getSafeNumber(value).toFixed(1)}% ${description}`;
 const formatActivityDate = (value: string): string => {
   const date = parseDate(value);
   if (!date) return "Unknown date";
@@ -822,8 +969,28 @@ const DashboardOverview = () => {
     [accessibleProgrammes, userCanViewAllProgrammeData],
   );
   const [selectedProgramme, setSelectedProgramme] = useState("");
-  const [localOverviewData, setLocalOverviewData] = useState<OverviewSummaryData | null>(null);
+  const [localOverviewState, setLocalOverviewState] = useState<{
+    key: string;
+    data: OverviewSummaryData | null;
+  }>({
+    key: "",
+    data: null,
+  });
   const [localOverviewLoading, setLocalOverviewLoading] = useState(false);
+  const overviewCacheStorageKey = useMemo(
+    () => buildOverviewCacheKey(user?.uid, selectedProgramme || null),
+    [selectedProgramme, user?.uid],
+  );
+  const cachedOverviewData = useMemo(
+    () => {
+      if (!selectedProgramme) return null;
+      const cached = readCachedValue<OverviewSummaryData>(overviewCacheStorageKey, OVERVIEW_CACHE_TTL_MS);
+      return cached ? sanitizeOverviewSummary(cached) : null;
+    },
+    [overviewCacheStorageKey, selectedProgramme],
+  );
+  const localOverviewData = localOverviewState.key === overviewCacheStorageKey ? localOverviewState.data : null;
+  const hasImmediateOverviewData = Boolean(cachedOverviewData || localOverviewData);
 
   useEffect(() => {
     if (!userRole && !userAttribute) {
@@ -843,25 +1010,58 @@ const DashboardOverview = () => {
     setSelectedProgramme((current) => resolveActiveProgramme(current, accessibleProgrammes));
   }, [accessibleProgrammes, userAttribute, userCanViewAllProgrammeData, userRole]);
 
+  useEffect(() => {
+    if (!selectedProgramme) {
+      setLocalOverviewState({ key: "", data: null });
+      return;
+    }
+
+    setLocalOverviewState((current) => {
+      if (current.key === overviewCacheStorageKey && current.data) {
+        return current;
+      }
+
+      return {
+        key: overviewCacheStorageKey,
+        data: cachedOverviewData,
+      };
+    });
+  }, [cachedOverviewData, overviewCacheStorageKey, selectedProgramme]);
+
   const remoteOverviewEnabled = USE_REMOTE_ANALYTICS && Boolean(selectedProgramme) && !loading;
 
   const overviewQuery = useQuery({
     queryKey: ["overview-analysis", user?.uid, userRole, userAttribute, selectedProgramme],
-    queryFn: () =>
-      fetchAnalysisSummary({
+    queryFn: async () =>
+      sanitizeOverviewSummary(await fetchAnalysisSummary({
         scope: "overview",
         programme: selectedProgramme === "All" ? "All" : selectedProgramme || null,
-      }),
+      })),
     enabled: remoteOverviewEnabled,
     retry: 0,
-    staleTime: 2 * 60 * 1000,
+    staleTime: 5 * 60 * 1000,
+    gcTime: 15 * 60 * 1000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    initialData: cachedOverviewData ?? undefined,
   });
+
+  useEffect(() => {
+    const remoteData = overviewQuery.data as OverviewSummaryData | undefined;
+    if (!selectedProgramme || !remoteData) return;
+
+    writeCachedValue(overviewCacheStorageKey, remoteData);
+    setLocalOverviewState({
+      key: overviewCacheStorageKey,
+      data: remoteData,
+    });
+  }, [overviewCacheStorageKey, overviewQuery.data, selectedProgramme]);
 
   const shouldFetchLocalOverview = Boolean(selectedProgramme) && (!remoteOverviewEnabled || overviewQuery.isError);
 
   useEffect(() => {
     if (!selectedProgramme) {
-      setLocalOverviewData(EMPTY_OVERVIEW_DATA);
+      setLocalOverviewState({ key: "", data: null });
       setLocalOverviewLoading(false);
       return;
     }
@@ -874,7 +1074,7 @@ const DashboardOverview = () => {
     let cancelled = false;
 
     const fetchLocalOverview = async () => {
-      setLocalOverviewLoading(true);
+      setLocalOverviewLoading(!hasImmediateOverviewData);
 
       try {
         const [farmersSnap, capacitySnap, offtakesSnap, animalHealthSnap, boreholesSnap, activitiesSnap] = await Promise.all([
@@ -909,14 +1109,22 @@ const DashboardOverview = () => {
           boreholes: byProgramme(snapshotToArray(boreholesSnap)),
           activities: byProgramme(snapshotToArray(activitiesSnap)),
         });
+        const normalizedSummary = sanitizeOverviewSummary(summary);
 
         if (!cancelled) {
-          setLocalOverviewData(summary);
+          writeCachedValue(overviewCacheStorageKey, normalizedSummary);
+          setLocalOverviewState({
+            key: overviewCacheStorageKey,
+            data: normalizedSummary,
+          });
         }
       } catch (error) {
         console.error("Failed to build local overview:", error);
-        if (!cancelled) {
-          setLocalOverviewData(EMPTY_OVERVIEW_DATA);
+        if (!cancelled && !cachedOverviewData) {
+          setLocalOverviewState({
+            key: overviewCacheStorageKey,
+            data: EMPTY_OVERVIEW_DATA,
+          });
         }
       } finally {
         if (!cancelled) {
@@ -930,10 +1138,14 @@ const DashboardOverview = () => {
     return () => {
       cancelled = true;
     };
-  }, [selectedProgramme, shouldFetchLocalOverview]);
+  }, [cachedOverviewData, hasImmediateOverviewData, overviewCacheStorageKey, selectedProgramme, shouldFetchLocalOverview]);
 
-  const overviewData =
-    (overviewQuery.data as OverviewSummaryData | undefined) ?? localOverviewData ?? EMPTY_OVERVIEW_DATA;
+  const overviewData = sanitizeOverviewSummary(
+    (overviewQuery.data as OverviewSummaryData | undefined) ??
+    localOverviewData ??
+    cachedOverviewData ??
+    EMPTY_OVERVIEW_DATA
+  );
 
   const stats = overviewData.stats ?? EMPTY_OVERVIEW_DATA.stats;
   const comparisonYears = overviewData.comparisonYears ?? getComparisonYears();
@@ -941,11 +1153,12 @@ const DashboardOverview = () => {
   const registrationPercentage = toPercentage(currentYearRegistrations, stats.totalFarmers);
   const trainingPercentage = toPercentage(stats.trainedFarmers, stats.totalFarmers);
   const censusPercentage = toPercentage(stats.totalGoatsPurchased, stats.totalGoats);
+  const hasOverviewData = Boolean(overviewQuery.data || localOverviewData || cachedOverviewData);
   const isLoadingRemoteOverview =
     remoteOverviewEnabled &&
     !overviewQuery.isError &&
-    (overviewQuery.isLoading || overviewQuery.isFetching);
-  const isLoadingData = isLoadingRemoteOverview || localOverviewLoading;
+    overviewQuery.isLoading;
+  const isLoadingData = !hasOverviewData && (isLoadingRemoteOverview || localOverviewLoading);
 
   if (loading) {
     return (

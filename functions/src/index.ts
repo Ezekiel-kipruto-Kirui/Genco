@@ -733,7 +733,8 @@ const sendHrNewRequisitionEmail = async (
     `<strong>County:</strong> ${county}<br/>`,
     `<strong>Subcounty:</strong> ${subcounty}`,
     "</p>",
-    "<p>Please review it in the system once it reaches your approval stage.</p>",
+    "<p>Please review it in the system once it reaches your approval " +
+      "stage.</p>",
   ].join("");
 
   await sendEmail(hrRecipients, subject, text, html);

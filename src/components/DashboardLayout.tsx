@@ -6,8 +6,7 @@ import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { DashboardSidebar } from "./DashboardSidebar";
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
-// CHANGED: Import Realtime Database functions
-import { ref, get, query, orderByChild, equalTo } from "firebase/database";
+import { ref, get } from "firebase/database";
 import { db } from "@/lib/firebase";
 import { getRoleDisplayName } from "@/contexts/authhelper";
 
@@ -21,14 +20,12 @@ const DashboardLayout = () => {
 
   const fetchPendingActivitiesCount = async () => {
     try {
-      // Query only pending activities to avoid downloading full collection on login.
-      const pendingActivitiesQuery = query(
-        ref(db, "Recent Activities"),
-        orderByChild("status"),
-        equalTo("pending")
-      );
-      const snapshot = await get(pendingActivitiesQuery);
-      const pendingCount = snapshot.exists() ? Object.keys(snapshot.val()).length : 0;
+      const snapshot = await get(ref(db, "Recent Activities"));
+      const pendingCount = snapshot.exists()
+        ? Object.values(snapshot.val() as Record<string, { status?: string }>)
+            .filter((activity) => String(activity?.status || "").trim().toLowerCase() === "pending")
+            .length
+        : 0;
       setPendingActivitiesCount(pendingCount);
     } catch (error) {
       console.error("Error fetching pending activities:", error);

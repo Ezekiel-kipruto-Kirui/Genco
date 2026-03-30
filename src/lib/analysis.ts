@@ -19,7 +19,8 @@ export interface AnalysisRequest {
   salesInputs?: { pricePerKg?: number | string | null; expenses?: number | string | null } | null;
 }
 
-const CACHE_TTL_MS = 2 * 60 * 1000;
+const DEFAULT_CACHE_TTL_MS = 2 * 60 * 1000;
+const OVERVIEW_CACHE_TTL_MS = 10 * 60 * 1000;
 
 const buildCacheKey = (request: AnalysisRequest): string =>
   cacheKey(
@@ -38,7 +39,8 @@ const buildCacheKey = (request: AnalysisRequest): string =>
 
 export const fetchAnalysisSummary = async (request: AnalysisRequest): Promise<any> => {
   const key = buildCacheKey(request);
-  const cached = readCachedValue<any>(key, CACHE_TTL_MS);
+  const ttlMs = request.scope === "overview" ? OVERVIEW_CACHE_TTL_MS : DEFAULT_CACHE_TTL_MS;
+  const cached = readCachedValue<any>(key, ttlMs);
   if (cached) return cached;
 
   const functions = getFunctions(getApp(), "us-central1");

@@ -160,9 +160,9 @@ const getArrayLikeSize = (value: unknown): number => {
 };
 
 const normalizeLooseText = (value: unknown): string =>
-  typeof value === "string"
-    ? value.trim().toLowerCase().replace(/[-_]+/g, " ").replace(/\s+/g, " ")
-    : "";
+  typeof value === "string" ?
+    value.trim().toLowerCase().replace(/[-_]+/g, " ").replace(/\s+/g, " ") :
+    "";
 
 const getLeaderName = (value: unknown, fallback: string): string => {
   if (typeof value === "string" && value.trim()) return value.trim();
