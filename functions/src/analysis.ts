@@ -366,14 +366,12 @@ const resolveOverviewComparisonYears = (
   const referenceYear = Math.max(referenceDate.getFullYear(), latestKnownYear);
   const calendarYears = buildYearRange(year1, referenceYear);
   const fallbackYear2 = calendarYears[calendarYears.length - 1] ?? year1;
-  const parsedSelectedYear =
-    typeof selectedComparisonYear === "string"
-      ? Number.parseInt(selectedComparisonYear, 10)
-      : (typeof selectedComparisonYear === "number" ? selectedComparisonYear : null);
-  const year2 =
-    parsedSelectedYear && calendarYears.includes(parsedSelectedYear)
-      ? parsedSelectedYear
-      : fallbackYear2;
+  const parsedSelectedYear = typeof selectedComparisonYear === "string" ?
+    Number.parseInt(selectedComparisonYear, 10) :
+    typeof selectedComparisonYear === "number" ? selectedComparisonYear : null;
+  const year2 = parsedSelectedYear && calendarYears.includes(parsedSelectedYear) ?
+    parsedSelectedYear :
+    fallbackYear2;
 
   return {
     year1,
