@@ -11,7 +11,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Download, MapPin, Eye, Droplets, Users, Building, Trash2, Upload, Plus, Edit } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { canViewAllProgrammes, isChiefAdmin } from "@/contexts/authhelper";
+import { canManageInfrastructureRecords, canViewAllProgrammes } from "@/contexts/authhelper";
 import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
 import {millify} from "millify";
 import { resolveAccessibleProgrammes, resolveActiveProgramme } from "@/lib/programme-access";
@@ -40,7 +40,7 @@ interface Borehole {
   waterUsed?: number;
   drilled?: boolean;
   equipped?: boolean;   // Added Equipped
-  rehabilitated?: boolean; // Added Rehabilitated
+  maintained?: boolean;
 }
 
 interface Filters {
@@ -54,7 +54,7 @@ interface Stats {
   totalBoreholes: number;
   drilledBoreholes: number;
   equippedBoreholes: number; // Replaced maintained
-  rehabilitatedBoreholes: number; // Added
+  maintainedBoreholes: number;
   totalPeople: number;
   totalWaterUsed: number;
 }
@@ -325,11 +325,15 @@ const toBoolean = (value: unknown): boolean => {
   return false;
 };
 
-const normalizeStatusFlags = (record: Pick<Borehole, "drilled" | "equipped" | "rehabilitated">) => {
+const normalizeStatusFlags = (record: {
+  drilled?: boolean;
+  equipped?: boolean;
+  maintained?: boolean;
+}) => {
   return {
     drilled: Boolean(record.drilled),
     equipped: Boolean(record.equipped),
-    rehabilitated: Boolean(record.rehabilitated),
+    maintained: Boolean(record.maintained),
   };
 };
 
@@ -345,8 +349,8 @@ const getRecordStatuses = (record: Borehole): Array<{ key: string; label: string
   if (record.equipped) {
     statuses.push({ key: "equipped", label: "Equipped", className: "bg-blue-100 text-blue-800" });
   }
-  if (record.rehabilitated) {
-    statuses.push({ key: "rehabilitated", label: "Rehabilitated", className: "bg-orange-100 text-orange-800" });
+  if (record.maintained) {
+    statuses.push({ key: "maintained", label: "Maintained", className: "bg-orange-100 text-orange-800" });
   }
 
   return statuses;
@@ -402,14 +406,14 @@ const BoreholePage = () => {
     waterUsed: 0,
     drilled: false,
     equipped: false,   // Added Equipped
-    rehabilitated: false // Added Rehabilitated
+    maintained: false
   });
 
   const [stats, setStats] = useState<Stats>({
     totalBoreholes: 0,
     drilledBoreholes: 0,
     equippedBoreholes: 0, // Updated
-    rehabilitatedBoreholes: 0, // Added
+    maintainedBoreholes: 0,
     totalPeople: 0,
     totalWaterUsed: 0
   });
@@ -422,9 +426,10 @@ const BoreholePage = () => {
     hasPrev: false
   });
 
-  const userIsChiefAdmin = useMemo(() => {
-    return isChiefAdmin(userRole);
-  }, [userRole]);
+  const canManageRecords = useMemo(
+    () => canManageInfrastructureRecords(userRole, userAttribute),
+    [userAttribute, userRole]
+  );
   const userCanViewAllProgrammeData = useMemo(
     () => canViewAllProgrammes(userRole, userAttribute),
     [userRole, userAttribute]
@@ -438,7 +443,7 @@ const BoreholePage = () => {
     [activeProgram]
   );
   const requireChiefAdmin = () => {
-    if (userIsChiefAdmin) return true;
+    if (canManageRecords) return true;
     toast({
       title: "Access denied",
       description: "Only chief admin can create, edit, or delete records on this page.",
@@ -481,7 +486,7 @@ const BoreholePage = () => {
           const item = data[key];
           const status = normalizeStatusFlags({
             drilled: toBoolean(pickFirstDefined(item.drilled, item.Drilled)),
-            rehabilitated: toBoolean(pickFirstDefined(item.rehabilitated, item.Rehabilitated)),
+            maintained: toBoolean(pickFirstDefined(item.maintained, item.Maintained, item.maintaned, item.Maintaned, item.rehabilitated, item.Rehabilitated)),
             equipped: toBoolean(pickFirstDefined(item.equipped, item.Equipped)),
           });
 
@@ -498,7 +503,7 @@ const BoreholePage = () => {
             waterUsed: safeWaterToInteger(pickFirstDefined(item.WaterUsed, item["Water Used"], item.waterUsed)),
             drilled: status.drilled,
             equipped: status.equipped, // Map Equipped
-            rehabilitated: status.rehabilitated // Map Rehabilitated
+            maintained: status.maintained
           };
         })
           .filter((item) => normalizeProgramme(item.programme) === normalizeProgramme(activeProgram));
@@ -534,7 +539,7 @@ const BoreholePage = () => {
         totalBoreholes: 0,
         drilledBoreholes: 0,
         equippedBoreholes: 0,
-        rehabilitatedBoreholes: 0,
+        maintainedBoreholes: 0,
         totalPeople: 0,
         totalWaterUsed: 0
       });
@@ -591,15 +596,15 @@ const BoreholePage = () => {
     const totalWaterUsed = sortedFiltered.reduce((sum, record) => sum + safeWaterToInteger(record.waterUsed), 0);
     const drilledBoreholes = sortedFiltered.filter(record => record.drilled).length;
     const equippedBoreholes = sortedFiltered.filter(record => record.equipped).length; // Updated
-    const rehabilitatedBoreholes = sortedFiltered.filter(record => record.rehabilitated).length; // Added
+    const maintainedBoreholes = sortedFiltered.filter(record => record.maintained).length;
 
-    console.log("Stats - Total Boreholes:", sortedFiltered.length, "Drilled:", drilledBoreholes, "Equipped:", equippedBoreholes, "Rehabilitated:", rehabilitatedBoreholes, "People:", totalPeople, "Water Used:", totalWaterUsed);
+    console.log("Stats - Total Boreholes:", sortedFiltered.length, "Drilled:", drilledBoreholes, "Equipped:", equippedBoreholes, "Maintained:", maintainedBoreholes, "People:", totalPeople, "Water Used:", totalWaterUsed);
 
     setStats({
       totalBoreholes: sortedFiltered.length,
       drilledBoreholes,
       equippedBoreholes,
-      rehabilitatedBoreholes,
+      maintainedBoreholes,
       totalPeople,
       totalWaterUsed
     });
@@ -685,7 +690,7 @@ const BoreholePage = () => {
 
       const status = normalizeStatusFlags({
         drilled: !!newBorehole.drilled,
-        rehabilitated: !!newBorehole.rehabilitated,
+        maintained: !!newBorehole.maintained,
         equipped: !!newBorehole.equipped,
       });
 
@@ -700,7 +705,7 @@ const BoreholePage = () => {
         WaterUsed: safeWaterToInteger(newBorehole.waterUsed),
         drilled: status.drilled,
         equipped: status.equipped,   // Added Equipped
-        rehabilitated: status.rehabilitated, // Added Rehabilitated
+        maintained: status.maintained,
         date: new Date(newBorehole.date || new Date()).toISOString()
       };
 
@@ -726,7 +731,7 @@ const BoreholePage = () => {
           waterUsed: 0,
           drilled: false,
           equipped: false,
-          rehabilitated: false
+          maintained: false
         });
         setIsCreateDialogOpen(false);
 
@@ -769,7 +774,7 @@ const BoreholePage = () => {
 
       const status = normalizeStatusFlags({
         drilled: !!editingRecord.drilled,
-        rehabilitated: !!editingRecord.rehabilitated,
+        maintained: !!editingRecord.maintained,
         equipped: !!editingRecord.equipped,
       });
 
@@ -782,7 +787,7 @@ const BoreholePage = () => {
         WaterUsed: safeWaterToInteger(editingRecord.waterUsed),
         drilled: status.drilled,
         equipped: status.equipped,    // Added Equipped
-        rehabilitated: status.rehabilitated, // Added Rehabilitated
+        maintained: status.maintained,
         date: editingRecord.date // Pass existing date
       };
 
@@ -954,6 +959,7 @@ const BoreholePage = () => {
   };
 
   const handleExport = async () => {
+    if (!requireChiefAdmin()) return;
     try {
       setExportLoading(true);
       
@@ -1056,7 +1062,7 @@ const BoreholePage = () => {
   };
 
   const openEditDialog = (record: Borehole) => {
-    if (!userIsChiefAdmin) return;
+    if (!canManageRecords) return;
     setEditingRecord({
       ...record,
       programme: normalizeProgramme(record.programme),
@@ -1164,6 +1170,8 @@ const BoreholePage = () => {
             <Checkbox
               checked={selectedRecords.includes(record.id)}
               onCheckedChange={() => handleSelectRecord(record.id)}
+              disabled={!canManageRecords}
+              className={!canManageRecords ? "invisible" : ""}
             />
           </td>,
           <td key="date" className="py-2 px-3 text-xs text-gray-500">{formatDate(record.date)}</td>,
@@ -1213,7 +1221,7 @@ const BoreholePage = () => {
               >
                 <Eye className="h-3.5 w-3.5" />
               </Button>
-              {userIsChiefAdmin && (
+              {canManageRecords && (
                 <>
                   <Button
                     variant="ghost"
@@ -1241,7 +1249,7 @@ const BoreholePage = () => {
         ]}
       </tr>
     );
-  }, [selectedRecords, handleSelectRecord, openViewDialog, openEditDialog, userIsChiefAdmin]);
+  }, [canManageRecords, selectedRecords, handleSelectRecord, openViewDialog, openEditDialog]);
 
   return (
     <div className="space-y-6">
@@ -1295,7 +1303,7 @@ const BoreholePage = () => {
             This Month
           </Button>
           
-          {userIsChiefAdmin && (
+          {canManageRecords && (
             <>
               <Button 
                 onClick={() => setIsCreateDialogOpen(true)}
@@ -1347,7 +1355,7 @@ const BoreholePage = () => {
             <>
               <div>• {stats.drilledBoreholes} drilled</div>
               <div>• {stats.equippedBoreholes} equipped</div>
-              <div>• {stats.rehabilitatedBoreholes} rehabilitated</div>
+              <div>• {stats.maintainedBoreholes} maintained</div>
             </>
           }
         />
@@ -1399,9 +1407,11 @@ const BoreholePage = () => {
                       {[
                         <th key="select" className="py-3 px-3">
                           <Checkbox
-                            checked={selectedRecords.length === currentPageRecords.length && currentPageRecords.length > 0}
-                            onCheckedChange={handleSelectAll}
-                          />
+                          checked={selectedRecords.length === currentPageRecords.length && currentPageRecords.length > 0}
+                          onCheckedChange={handleSelectAll}
+                          disabled={!canManageRecords}
+                          className={!canManageRecords ? "invisible" : ""}
+                        />
                         </th>,
                         <th key="date" className="py-3 px-3 font-semibold text-gray-700">Date</th>,
                         <th key="programme" className="py-3 px-3 font-semibold text-gray-700">Programme</th>,
@@ -1715,16 +1725,16 @@ const BoreholePage = () => {
 
               <div className="flex items-center space-x-2">
                 <Checkbox
-                  id="create-rehabilitated"
-                  checked={newBorehole.rehabilitated || false}
+                  id="create-maintained"
+                  checked={newBorehole.maintained || false}
                   onCheckedChange={(checked) =>
                     setNewBorehole(prev => ({
                       ...prev,
-                      rehabilitated: checked === true
+                      maintained: checked === true
                     }))
                   }
                 />
-                <Label htmlFor="create-rehabilitated" className="font-semibold text-gray-700">Rehabilitated</Label>
+                <Label htmlFor="create-maintained" className="font-semibold text-gray-700">Maintained</Label>
               </div>
             </div>
           </div>
@@ -1744,7 +1754,7 @@ const BoreholePage = () => {
                   waterUsed: 0,
                   drilled: false,
                   equipped: false,
-                  rehabilitated: false
+                  maintained: false
                 });
               }}
               disabled={createLoading}
@@ -1909,20 +1919,20 @@ const BoreholePage = () => {
 
                 <div className="flex items-center space-x-2">
                   <Checkbox
-                    id="edit-rehabilitated"
-                    checked={editingRecord.rehabilitated || false}
+                    id="edit-maintained"
+                    checked={editingRecord.maintained || false}
                     onCheckedChange={(checked) =>
                       setEditingRecord(prev =>
                         prev
                           ? {
                               ...prev,
-                              rehabilitated: checked === true
+                              maintained: checked === true
                             }
                           : null
                       )
                     }
                   />
-                  <Label htmlFor="edit-rehabilitated" className="font-semibold text-gray-700">Rehabilitated</Label>
+                  <Label htmlFor="edit-maintained" className="font-semibold text-gray-700">Maintained</Label>
                 </div>
               </div>
             </div>

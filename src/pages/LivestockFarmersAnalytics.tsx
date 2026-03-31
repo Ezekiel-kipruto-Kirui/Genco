@@ -79,6 +79,8 @@ interface TimeSeriesItem {
   animals: any;
 }
 
+type FilterMode = "weekly" | "monthly" | "yearly" | "custom";
+
 const getGenderColor = (label: string): string => {
   const normalized = label.trim().toLowerCase();
   if (normalized === "male") return COLORS.navy;
@@ -142,14 +144,153 @@ const parseDate = (date: any): Date | null => {
 const formatDateToLocal = (date: Date): string =>
   `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const getToday = (): Date => {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return today;
+};
+
+const getDateTimestamp = (value: unknown): number => parseDate(value)?.getTime() || 0;
+
 const getCurrentMonthDates = () => {
-  const now = new Date();
+  const now = getToday();
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-  const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
   return {
     startDate: formatDateToLocal(startOfMonth),
-    endDate: formatDateToLocal(endOfMonth),
+    endDate: formatDateToLocal(now),
   };
+};
+
+const getCurrentYearDates = () => {
+  const now = getToday();
+  const startOfYear = new Date(now.getFullYear(), 0, 1);
+  return {
+    startDate: formatDateToLocal(startOfYear),
+    endDate: formatDateToLocal(now),
+  };
+};
+
+const getCurrentWeekDates = () => {
+  const now = getToday();
+  const startOfWeek = new Date(now);
+  startOfWeek.setDate(now.getDate() - now.getDay());
+  return {
+    startDate: formatDateToLocal(startOfWeek),
+    endDate: formatDateToLocal(now),
+  };
+};
+
+const normalizeDateRange = (range: { startDate?: string; endDate?: string }) => {
+  const today = getToday();
+  const start = parseDate(range.startDate) ?? parseDate(range.endDate) ?? today;
+  const end = parseDate(range.endDate) ?? parseDate(range.startDate) ?? today;
+  const normalizedStart = new Date(start);
+  const normalizedEnd = new Date(end);
+  normalizedStart.setHours(0, 0, 0, 0);
+  normalizedEnd.setHours(0, 0, 0, 0);
+
+  if (normalizedEnd > today) {
+    normalizedEnd.setTime(today.getTime());
+  }
+
+  if (normalizedStart > normalizedEnd) {
+    return {
+      start: normalizedEnd,
+      end: normalizedStart > today ? today : normalizedStart,
+    };
+  }
+
+  return { start: normalizedStart, end: normalizedEnd };
+};
+
+const getInclusiveDayCount = (start: Date, end: Date): number =>
+  Math.max(1, Math.floor((end.getTime() - start.getTime()) / MS_PER_DAY) + 1);
+
+const addDays = (date: Date, days: number): Date => {
+  const result = new Date(date);
+  result.setDate(result.getDate() + days);
+  result.setHours(0, 0, 0, 0);
+  return result;
+};
+
+const isSameCalendarWeek = (start: Date, end: Date): boolean => {
+  const startOfWeek = new Date(start);
+  startOfWeek.setDate(start.getDate() - start.getDay());
+  startOfWeek.setHours(0, 0, 0, 0);
+
+  const endOfWeek = new Date(startOfWeek);
+  endOfWeek.setDate(startOfWeek.getDate() + 6);
+  endOfWeek.setHours(23, 59, 59, 999);
+
+  return end >= startOfWeek && end <= endOfWeek;
+};
+
+const countCoveredWeeks = (start: Date, end: Date): number => {
+  let total = 0;
+  let cursor = new Date(start);
+
+  while (cursor <= end) {
+    total += 1;
+    const weekStart = new Date(cursor);
+    weekStart.setDate(cursor.getDate() - cursor.getDay());
+    weekStart.setHours(0, 0, 0, 0);
+
+    const weekEnd = new Date(weekStart);
+    weekEnd.setDate(weekStart.getDate() + 6);
+    cursor = addDays(weekEnd, 1);
+  }
+
+  return Math.max(1, total);
+};
+
+const countCoveredMonths = (start: Date, end: Date): number => {
+  let total = 0;
+  let cursor = new Date(start.getFullYear(), start.getMonth(), 1);
+  cursor.setHours(0, 0, 0, 0);
+
+  while (cursor <= end) {
+    total += 1;
+    cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
+    cursor.setHours(0, 0, 0, 0);
+  }
+
+  return Math.max(1, total);
+};
+
+const countCoveredYears = (start: Date, end: Date): number =>
+  Math.max(1, end.getFullYear() - start.getFullYear() + 1);
+
+const resolveTargetMode = (
+  dateRange: { startDate?: string; endDate?: string },
+  filterMode: FilterMode,
+): Exclude<FilterMode, "custom"> => {
+  if (filterMode !== "custom") return filterMode;
+
+  const { start, end } = normalizeDateRange(dateRange);
+  const sameMonth = start.getFullYear() === end.getFullYear() && start.getMonth() === end.getMonth();
+  const sameYear = start.getFullYear() === end.getFullYear();
+
+  if (isSameCalendarWeek(start, end)) return "weekly";
+  if (sameMonth) return "monthly";
+  if (sameYear) return "monthly";
+  return "yearly";
+};
+
+const calculateActiveTarget = (
+  dateRange: { startDate?: string; endDate?: string },
+  targetMode: Exclude<FilterMode, "custom">,
+): number => {
+  const { start, end } = normalizeDateRange(dateRange);
+
+  const target =
+    targetMode === "weekly"
+      ? countCoveredWeeks(start, end) * TARGETS.weekly
+      : targetMode === "monthly"
+        ? countCoveredMonths(start, end) * TARGETS.monthly
+        : countCoveredYears(start, end) * TARGETS.yearly;
+
+  return Math.max(1, Math.round(target));
 };
 
 const normalizeProgramme = (value: unknown): string =>
@@ -190,9 +331,7 @@ const LivestockFarmersAnalytics = () => {
   const [filteredData, setFilteredData] = useState<FarmerData[]>([]);
   const [activeProgram, setActiveProgram] = useState<string>(""); 
   const [availablePrograms, setAvailablePrograms] = useState<string[]>([]);
-  
-  // State for dynamic target based on selection (Week/Month/Year)
-  const [activeTarget, setActiveTarget] = useState<number>(TARGETS.monthly);
+  const [filterMode, setFilterMode] = useState<FilterMode>("yearly");
 
   // Chart Data States
   const [genderData, setGenderData] = useState<PieDataItem[]>([]);
@@ -211,7 +350,15 @@ const LivestockFarmersAnalytics = () => {
     totalTrainedFromCapacity: 0
   });
 
-  const [dateRange, setDateRange] = useState(getCurrentMonthDates);
+  const [dateRange, setDateRange] = useState(getCurrentYearDates);
+  const targetMode = useMemo(
+    () => resolveTargetMode(dateRange, filterMode),
+    [dateRange, filterMode],
+  );
+  const activeTarget = useMemo(
+    () => calculateActiveTarget(dateRange, targetMode),
+    [dateRange, targetMode],
+  );
   const userCanViewAllProgrammeData = useMemo(
     () => canViewAllProgrammes(userRole, userAttribute),
     [userRole, userAttribute]
@@ -231,6 +378,7 @@ const LivestockFarmersAnalytics = () => {
       activeProgram,
       dateRange.startDate,
       dateRange.endDate,
+      targetMode,
       activeTarget,
     ],
     queryFn: () =>
@@ -238,6 +386,7 @@ const LivestockFarmersAnalytics = () => {
         scope: "livestock-analytics",
         programme: activeProgram || null,
         dateRange,
+        timeFrame: targetMode,
         target: activeTarget,
       }),
     enabled: USE_REMOTE_ANALYTICS && !!activeProgram,
@@ -300,7 +449,7 @@ const LivestockFarmersAnalytics = () => {
 
       const normalizedActiveProgram = normalizeProgramme(activeProgram);
       const farmersList = Object.keys(data)
-        .map((key) => {
+        .map<FarmerData | null>((key) => {
           const item = data[key] || {};
           const programme = normalizeProgramme(item.programme ?? item.Programme);
           if (normalizedActiveProgram && programme !== normalizedActiveProgram) {
@@ -329,7 +478,7 @@ const LivestockFarmersAnalytics = () => {
           };
         })
         .filter((item): item is FarmerData => item !== null);
-      farmersList.sort((a, b) => (b.createdAt as number) - (a.createdAt as number));
+      farmersList.sort((a, b) => getDateTimestamp(b.createdAt) - getDateTimestamp(a.createdAt));
       setAllFarmers(farmersList);
       setLoading(false);
       try {
@@ -397,7 +546,7 @@ const LivestockFarmersAnalytics = () => {
   useEffect(() => {
     if (USE_REMOTE_ANALYTICS) return;
     applyFilters();
-  }, [dateRange, allFarmers, trainingRecords]);
+  }, [activeTarget, allFarmers, dateRange, filterMode, trainingRecords]);
 
   const isDateInRange = (date: any, startDate: string, endDate: string): boolean => {
     if (!startDate && !endDate) return true;
@@ -560,48 +709,29 @@ const LivestockFarmersAnalytics = () => {
 
   const handleDateRangeChange = (key: string, value: string) => {
     setDateRange(prev => ({ ...prev, [key]: value }));
-    setActiveTarget(TARGETS.monthly); // Reset to default if manually typing dates
+    setFilterMode("custom");
   };
 
   // Filter Buttons
   const setWeekFilter = () => {
-    const now = new Date();
-    const startOfWeek = new Date(now);
-    startOfWeek.setDate(now.getDate() - now.getDay());
-    const endOfWeek = new Date(now);
-    endOfWeek.setDate(now.getDate() + (6 - now.getDay()));
-    setDateRange({
-      startDate: formatDateToLocal(startOfWeek),
-      endDate: formatDateToLocal(endOfWeek)
-    });
-    setActiveTarget(TARGETS.weekly);
+    setDateRange(getCurrentWeekDates());
+    setFilterMode("weekly");
   };
 
   const setMonthFilter = () => {
-    const now = new Date();
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-    setDateRange({
-      startDate: formatDateToLocal(startOfMonth),
-      endDate: formatDateToLocal(endOfMonth)
-    });
-    setActiveTarget(TARGETS.monthly);
+    setDateRange(getCurrentMonthDates());
+    setFilterMode("monthly");
   };
 
   const setYearFilter = () => {
-    const now = new Date();
-    const startOfYear = new Date(now.getFullYear(), 0, 1);
-    const endOfYear = new Date(now.getFullYear(), 11, 31);
-    setDateRange({
-      startDate: formatDateToLocal(startOfYear),
-      endDate: formatDateToLocal(endOfYear)
-    });
-    setActiveTarget(TARGETS.yearly);
+    setDateRange(getCurrentYearDates());
+    setFilterMode("yearly");
   };
 
   const clearFilters = () => {
-    setDateRange({ startDate: "", endDate: "" });
-    setActiveTarget(TARGETS.monthly); // Reset to default
+    const currentYearRange = getCurrentYearDates();
+    setDateRange(currentYearRange);
+    setFilterMode("yearly");
   };
 
   const renderCustomizedLabel = useCallback(({
@@ -626,6 +756,11 @@ const LivestockFarmersAnalytics = () => {
       </text>
     );
   }, []);
+
+  const getFilterButtonClass = (isActive: boolean) =>
+    isActive
+      ? "text-xs h-9 bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100"
+      : "text-xs h-9";
 
   const StatsCard = ({ title, value, icon: Icon, description, color = "navy" }: any) => (
     <Card className="relative overflow-hidden group hover:shadow-xl transition-all duration-300 border-0 bg-gradient-to-br from-white to-gray-50">
@@ -668,26 +803,6 @@ const LivestockFarmersAnalytics = () => {
     );
   }
 
-  if (stats.total === 0) {
-    return (
-      <div className="flex flex-col items-center justify-center h-full p-8 space-y-4">
-        <Card className="w-full max-w-2xl border-red-200 bg-red-50">
-          <CardHeader>
-            <CardTitle className="flex items-center text-red-800">
-              <AlertCircle className="h-6 w-6 mr-2" />
-              No Data Found
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-red-700">
-              We could not find any farmers in database.
-            </p>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-6 p-1">
       <div className="flex flex-row md:flex-col lg:flex-col items-start  ">
@@ -717,13 +832,28 @@ const LivestockFarmersAnalytics = () => {
                     />
                   
           
-                  <Button variant="outline" size="sm" onClick={setWeekFilter} className="text-xs h-9">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={setWeekFilter}
+                    className={getFilterButtonClass(filterMode === "weekly")}
+                  >
                     This Week
                   </Button>
-                  <Button variant="outline" size="sm" onClick={setMonthFilter} className="text-xs h-9">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={setMonthFilter}
+                    className={getFilterButtonClass(filterMode === "monthly")}
+                  >
                     This Month
                   </Button>
-                  <Button variant="outline" size="sm" onClick={setYearFilter} className="text-xs h-9 bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={setYearFilter}
+                    className={getFilterButtonClass(filterMode === "yearly")}
+                  >
                     This Year
                   </Button>
                   <Button size="sm" onClick={clearFilters} variant="secondary" className="text-xs h-9">
@@ -746,9 +876,25 @@ const LivestockFarmersAnalytics = () => {
             </CardContent>
           </Card>
 
-         
+        
         
       </div>
+
+      {stats.total === 0 ? (
+        <Card className="border-amber-200 bg-amber-50">
+          <CardHeader>
+            <CardTitle className="flex items-center text-amber-800">
+              <AlertCircle className="mr-2 h-5 w-5" />
+              No farmer data for this filter
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-amber-700">
+              No farmers were found for the selected date range. Change the dates or use Clear to return to the current year.
+            </p>
+          </CardContent>
+        </Card>
+      ) : null}
 
       <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-3">
         <StatsCard 

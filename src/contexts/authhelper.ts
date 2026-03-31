@@ -1,4 +1,13 @@
-const normalizeText = (value: string) => value.toLowerCase().trim().replace(/\s+/g, " ");
+const normalizeText = (value: string) => {
+  const normalized = value
+    .toLowerCase()
+    .trim()
+    .replace(/[-_]+/g, " ")
+    .replace(/\s+/g, " ");
+
+  if (normalized === "chief admin") return "chief-admin";
+  return normalized;
+};
 
 const HR_IDENTIFIERS = new Set([
   "humman resource manager",
@@ -230,6 +239,15 @@ export const canAccessInfrastructure = (
   return canAccessFarmerData(userRole, userAttribute) || isHummanResourceManager(principal);
 };
 
+export const canManageInfrastructureRecords = (
+  userRole: string | null | undefined,
+  userAttribute?: string | null
+): boolean => {
+  if (isMobileUser(userRole, userAttribute)) return false;
+  const principal = resolvePermissionPrincipal(userRole, userAttribute);
+  return isChiefAdmin(principal);
+};
+
 export const canAccessFieldActivities = (
   userRole: string | null | undefined,
   userAttribute?: string | null
@@ -338,17 +356,22 @@ export const hasAnyRole = (
   userAttribute?: string | null
 ): boolean => {
   if (isMobileUser(userRole, userAttribute)) return false;
+  const normalizedRole = normalizeRole(userRole);
+  const normalizedAttribute = normalizeAttribute(userAttribute);
   const principal = resolvePermissionPrincipal(userRole, userAttribute);
+  const permissionTokens = Array.from(
+    new Set([normalizedRole, normalizedAttribute, principal].filter(Boolean))
+  );
 
   return allowedRoles
     .map(normalizeText)
     .some((allowedRole) => {
-      if (HR_IDENTIFIERS.has(allowedRole)) return isHummanResourceManager(principal);
-      if (PROJECT_MANAGER_IDENTIFIERS.has(allowedRole)) return isProjectManager(principal);
-      if (FINANCE_IDENTIFIERS.has(allowedRole)) return isFinance(principal);
-      if (OFFTAKE_IDENTIFIERS.has(allowedRole)) return isOfftakeOfficer(principal);
-      if (FULL_ACCESS_ATTRIBUTE_IDENTIFIERS.has(allowedRole)) return isFullAccessAttribute(principal);
-      return allowedRole === principal;
+      if (HR_IDENTIFIERS.has(allowedRole)) return permissionTokens.some((token) => isHummanResourceManager(token));
+      if (PROJECT_MANAGER_IDENTIFIERS.has(allowedRole)) return permissionTokens.some((token) => isProjectManager(token));
+      if (FINANCE_IDENTIFIERS.has(allowedRole)) return permissionTokens.some((token) => isFinance(token));
+      if (OFFTAKE_IDENTIFIERS.has(allowedRole)) return permissionTokens.some((token) => isOfftakeOfficer(token));
+      if (FULL_ACCESS_ATTRIBUTE_IDENTIFIERS.has(allowedRole)) return permissionTokens.some((token) => isFullAccessAttribute(token));
+      return permissionTokens.includes(allowedRole);
     });
 };
 

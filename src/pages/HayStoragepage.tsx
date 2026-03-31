@@ -20,7 +20,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Download, Warehouse, Eye, Calendar, Building, DollarSign, Package, Archive, Edit, Save, X, Upload, Trash2, Plus, LandPlot } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { canViewAllProgrammes, isChiefAdmin } from "@/contexts/authhelper";
+import { canManageInfrastructureRecords, canViewAllProgrammes } from "@/contexts/authhelper";
 import { uploadDataWithValidation, formatValidationErrors, UploadResult } from "@/lib/uploads-util";
 import { db } from "@/lib/firebase";
 import { millify} from "millify";
@@ -92,7 +92,7 @@ interface TableRowProps {
   onView: (record: HayStorage) => void;
   onEdit: (record: HayStorage) => void;
   onDeleteSelect: (id: string) => void;
-  userIsChiefAdmin: boolean;
+  canManageRecords: boolean;
 }
 
 // --- Constants ---
@@ -287,7 +287,7 @@ const FilterSection = ({ filters, uniqueCounties, onSearch, onFilterChange }: Fi
   </div>
 );
 
-const TableRow = ({ record, isSelected, onSelectRecord, onView, onEdit, onDeleteSelect, userIsChiefAdmin }: TableRowProps) => {
+const TableRow = ({ record, isSelected, onSelectRecord, onView, onEdit, onDeleteSelect, canManageRecords }: TableRowProps) => {
   // Calculate Balance
   const balance = (record.bales_harvested_stored || 0) - (record.bales_sold || 0);
   const balanceColor = balance >= 0 ? "text-green-600" : "text-red-600";
@@ -300,6 +300,8 @@ const TableRow = ({ record, isSelected, onSelectRecord, onView, onEdit, onDelete
       <Checkbox
         checked={isSelected}
         onCheckedChange={() => onSelectRecord(record.id)}
+        disabled={!canManageRecords}
+        className={!canManageRecords ? "invisible" : ""}
       />
     </td>
     <td className="py-3 px-4">{formatDate(record.date_planted)}</td>
@@ -343,7 +345,7 @@ const TableRow = ({ record, isSelected, onSelectRecord, onView, onEdit, onDelete
           <Eye className="h-4 w-4 text-blue-500" />
         </Button>
         {/* Edit/Delete available for all raw records now */}
-        {userIsChiefAdmin && (
+        {canManageRecords && (
           <>
             <Button
               variant="outline"
@@ -462,7 +464,10 @@ const HayStoragePage = () => {
     return counties;
   }, [allHayStorage]);
 
-  const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
+  const canManageRecords = useMemo(
+    () => canManageInfrastructureRecords(userRole, userAttribute),
+    [userAttribute, userRole]
+  );
   const userCanViewAllProgrammeData = useMemo(
     () => canViewAllProgrammes(userRole, userAttribute),
     [userRole, userAttribute]
@@ -482,7 +487,7 @@ const HayStoragePage = () => {
     [activeProgram]
   );
   const requireChiefAdmin = () => {
-    if (userIsChiefAdmin) return true;
+    if (canManageRecords) return true;
     toast({
       title: "Access denied",
       description: "Only chief admin can create, edit, or delete records on this page.",
@@ -554,14 +559,14 @@ const HayStoragePage = () => {
   }, []);
 
   const openEditDialog = useCallback((record: HayStorage) => {
-    if (!userIsChiefAdmin) return;
+    if (!canManageRecords) return;
     setEditingRecord({
       ...record,
       programme: getProgrammeValue(record.programme),
       pasture_stages: [...record.pasture_stages]
     });
     setIsEditDialogOpen(true);
-  }, [userIsChiefAdmin]);
+  }, [canManageRecords]);
 
   const closeEditDialog = useCallback(() => {
     setEditingRecord(null);
@@ -942,6 +947,7 @@ const HayStoragePage = () => {
 
   // Export Function
   const handleExport = async () => {
+    if (!requireChiefAdmin()) return;
     try {
       setExportLoading(true);
       if (rawFilteredHayStorage.length === 0) {
@@ -996,6 +1002,7 @@ const HayStoragePage = () => {
 
   const resetToCurrentMonth = () => setFilters(prev => ({ ...prev, ...currentMonth }));
   const openAddDialog = useCallback(() => {
+    if (!requireChiefAdmin()) return;
     setAddingRecord((prev) => ({
       ...prev,
       programme: getProgrammeValue(activeProgram) || normalizeProgramme(prev.programme),
@@ -1021,7 +1028,7 @@ const HayStoragePage = () => {
          
         </div>
         <div className="flex flex-wrap gap-2 w-full xl:w-auto">
-          {userIsChiefAdmin && selectableProgrammes.length > 0 && (
+          {canManageRecords && selectableProgrammes.length > 0 && (
             <Select value={activeProgram} onValueChange={setActiveProgram}>
               <SelectTrigger className="w-full sm:w-[180px] border-gray-300 focus:border-blue-500 bg-white">
                 <SelectValue placeholder="Select Programme" />
@@ -1037,11 +1044,11 @@ const HayStoragePage = () => {
           )}
           <Button variant="outline" size="sm" onClick={clearAllFilters} className="text-xs border-gray-300 hover:bg-gray-50">Clear All Filters</Button>
           <Button variant="outline" size="sm" onClick={resetToCurrentMonth} className="text-xs border-gray-300 hover:bg-gray-50">This Month</Button>
-          <Button onClick={openAddDialog} className="bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white shadow-md text-xs">
-            <Plus className="h-4 w-4 mr-2" /> Add Record
-          </Button>
-          {userIsChiefAdmin && (
+          {canManageRecords && (
             <>
+              <Button onClick={openAddDialog} className="bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white shadow-md text-xs">
+                <Plus className="h-4 w-4 mr-2" /> Add Record
+              </Button>
               <Button onClick={() => setIsUploadDialogOpen(true)} className="bg-green-50 text-green-500 hover:bg-green-100 hover:text-green-600 border border-green-200 shadow-md text-xs">
                 <Upload className="h-4 w-4 mr-2" /> Upload Data
               </Button>
@@ -1102,9 +1109,11 @@ const HayStoragePage = () => {
                   <thead className="rounded whitespace-nowrap">
                     <tr className="bg-blue-100">
                       <th className="py-3 px-4">
-                        <Checkbox
+                <Checkbox
                           checked={selectedRecords.length === getCurrentPageRecords().length && getCurrentPageRecords().length > 0}
                           onCheckedChange={handleSelectAll}
+                          disabled={!canManageRecords}
+                          className={!canManageRecords ? "invisible" : ""}
                         />
                       </th>
                       <th className="py-1 text-xs text-left px-6 font-medium text-gray-600">Harvesting Date</th>
@@ -1130,7 +1139,7 @@ const HayStoragePage = () => {
                         onView={openViewDialog}
                         onEdit={openEditDialog}
                         onDeleteSelect={(id) => { setSelectedRecords([id]); setIsDeleteDialogOpen(true); }}
-                        userIsChiefAdmin={userIsChiefAdmin}
+                        canManageRecords={canManageRecords}
                       />
                     ))}
                   </tbody>

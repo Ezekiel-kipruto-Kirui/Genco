@@ -568,7 +568,10 @@ const RequisitionsPage = () => {
 
     const roleScopedList = baseFilteredList.filter((record) => {
       const normalizedStatus = getNormalizedStatus(record.status);
-      if (userHasHummanResourceRights) return normalizedStatus === "approved";
+      if (userHasHummanResourceRights) {
+        if (filters.status !== "all") return normalizedStatus === filters.status.toLowerCase();
+        return normalizedStatus === "approved";
+      }
       if (userHasFinanceRights) {
         const isAuthorized = !!String(record.authorizedBy || "").trim();
         const isCompleted = normalizedStatus === "complete";
@@ -2038,7 +2041,7 @@ const RequisitionsPage = () => {
 
             <div className="space-y-2">
                 <Label className="font-semibold text-gray-700 text-xs uppercase">Status</Label>
-                <Select value={filters.status} onValueChange={(value) => handleFilterChange("status", value)} disabled={userHasHrLikeViewRights}>
+                <Select value={filters.status} onValueChange={(value) => handleFilterChange("status", value)}>
                     <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white h-9"><SelectValue placeholder="All Statuses" /></SelectTrigger>
                     <SelectContent>
                         <SelectItem value="all">All Statuses</SelectItem>

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+﻿import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { get, ref } from "firebase/database";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -21,6 +21,7 @@ import {
   Pie,
   PieChart,
   ResponsiveContainer,
+  Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
@@ -41,6 +42,7 @@ type OverviewRecord = Record<string, any>;
 type ComparisonYears = {
   year1: number;
   year2: number;
+  availableYears: number[];
 };
 
 type DonutSegment = {
@@ -100,6 +102,8 @@ interface OverviewSummaryData {
   pendingActivitiesCount: number;
 }
 
+type OverviewStats = OverviewSummaryData["stats"];
+
 type OverviewCollections = {
   farmers: OverviewRecord[];
   capacity: OverviewRecord[];
@@ -117,6 +121,9 @@ const YEAR_ONE_COLOR = "#2710a1";
 const YEAR_TWO_COLOR = "#f89b0d";
 const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const COUNTY_BAR_COLORS = [YEAR_ONE_COLOR, YEAR_TWO_COLOR, "#ffea00", "#2cb100"];
+const SECONDARY_TEXT_CLASS = "text-gray-600";
+const RECENT_LOCATION_MAX_AGE_DAYS = 180;
+const RECENT_LOCATION_MAX_AGE_MS = RECENT_LOCATION_MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
 const relativeTimeFormatter = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
 const activityDateFormatter = new Intl.DateTimeFormat("en", {
   month: "short",
@@ -125,8 +132,21 @@ const activityDateFormatter = new Intl.DateTimeFormat("en", {
 });
 const getComparisonYears = (referenceDate: Date = new Date()): ComparisonYears => ({
   year1: referenceDate.getFullYear(),
-  year2: referenceDate.getFullYear() - 1,
+  year2: referenceDate.getFullYear(),
+  availableYears: [referenceDate.getFullYear()],
 });
+const getComparisonYearLabel = (businessStartYear: number, comparisonYear: number, fallbackIndex = 1): string => {
+  if (comparisonYear === businessStartYear && fallbackIndex > 1) {
+    return `Year ${fallbackIndex}`;
+  }
+  const yearIndex = comparisonYear - businessStartYear + 1;
+  return `Year ${yearIndex >= 1 ? yearIndex : fallbackIndex}`;
+};
+const buildYearRange = (startYear: number, endYear: number): number[] => {
+  const safeStartYear = Math.min(startYear, endYear);
+  const safeEndYear = Math.max(startYear, endYear);
+  return Array.from({ length: safeEndYear - safeStartYear + 1 }, (_, index) => safeStartYear + index);
+};
 const EMPTY_DONUT_SEGMENTS: DonutSegment[] = [
   { name: "Year 1", value: 0, color: YEAR_ONE_COLOR },
   { name: "Year 2", value: 0, color: YEAR_TWO_COLOR },
@@ -165,8 +185,9 @@ const EMPTY_OVERVIEW_DATA: OverviewSummaryData = {
 const OVERVIEW_CACHE_TTL_MS = 10 * 60 * 1000;
 const buildOverviewCacheKey = (
   userId: string | null | undefined,
-  programme: string | null | undefined
-) => cacheKey("overview-summary", userId || "anon", programme || "none");
+  programme: string | null | undefined,
+  selectedComparisonYear: number | null | undefined,
+) => cacheKey("overview-summary", userId || "anon", programme || "none", selectedComparisonYear ?? "auto");
 
 const parseDate = (value: unknown): Date | null => {
   if (!value) return null;
@@ -271,31 +292,103 @@ const getActivityTotalDoses = (record: Record<string, unknown>): number => {
 
 const getInfrastructureStatuses = (record: Record<string, unknown>) => ({
   drilled: parseBoolean(record.drilled ?? record.Drilled),
-  equipped: parseBoolean(record.equipped ?? record.Equipped),
-  rehabilitated: parseBoolean(record.rehabilitated ?? record.Rehabilitated),
-  maintained: parseBoolean(record.maintained ?? record.Maintained),
+  equipped: parseBoolean(record.equipped ?? record.Equipped ?? record.equiped ?? record.Equiped),
+  maintained: parseBoolean(
+    record.maintained ??
+    record.Maintained ??
+    record.maintaned ??
+    record.Maintaned ??
+    record.rehabilitated ??
+    record.Rehabilitated,
+  ),
 });
 
 const getInfrastructureRecordDate = (record: Record<string, unknown>) =>
   parseDate(record.date ?? record.Date ?? record.created_at ?? record.createdAt);
 
+const getActivityRecordDate = (record: Record<string, unknown>) =>
+  parseDate(record.date ?? record.Date ?? record.created_at ?? record.createdAt);
+
+const getFarmerVaccinationDate = (record: Record<string, unknown>) =>
+  parseDate(
+    record.vaccinationDate ??
+    record.vaccination_date ??
+    record.dateVaccinated ??
+    record.date_vaccinated ??
+    record.updatedAt ??
+    record.updated_at,
+  );
+
+const getFarmerVisitDate = (record: Record<string, unknown>) =>
+  parseDate(
+    record.lastVisitedAt ??
+    record.lastVisitDate ??
+    record.visitDate ??
+    record.updatedAt ??
+    record.updated_at ??
+    record.vaccinationDate ??
+    record.vaccination_date ??
+    record.createdAt ??
+    record.registrationDate,
+  );
+
+const resolveComparisonYears = (
+  availableYears: number[],
+  selectedComparisonYear?: number | null,
+  referenceDate: Date = new Date(),
+): ComparisonYears => {
+  const normalizedYears = Array.from(
+    new Set(
+      availableYears
+        .map((year) => Math.trunc(year))
+        .filter((year) => Number.isFinite(year) && year > 0),
+    ),
+  ).sort((left, right) => left - right);
+
+  if (normalizedYears.length === 0) {
+    return getComparisonYears(referenceDate);
+  }
+
+  const year1 = normalizedYears[0];
+  const latestKnownYear = normalizedYears[normalizedYears.length - 1] ?? year1;
+  const referenceYear = Math.max(referenceDate.getFullYear(), latestKnownYear);
+  const calendarYears = buildYearRange(year1, referenceYear);
+  const fallbackYear2 = calendarYears[calendarYears.length - 1] ?? year1;
+  const year2 =
+    selectedComparisonYear !== null &&
+    selectedComparisonYear !== undefined &&
+    calendarYears.includes(selectedComparisonYear)
+      ? selectedComparisonYear
+      : fallbackYear2;
+
+  return {
+    year1,
+    year2,
+    availableYears: calendarYears,
+  };
+};
+
 const getOverviewRecordProgramme = (record: OverviewRecord) =>
   normalizeProgramme(record.programme ?? record.Programme);
 
 const buildVaccinationTrend = (
-  animalHealthRecords: OverviewRecord[],
+  farmers: OverviewRecord[],
   comparisonYears: ComparisonYears,
 ): TrendPoint[] => {
   const trend = MONTH_LABELS.map((name) => ({ name, year1: 0, year2: 0 }));
 
-  for (const record of animalHealthRecords) {
-    const totalDoses = getActivityTotalDoses(record);
-    const date = parseDate(record.date || record.createdAt);
-    if (!date || totalDoses <= 0) continue;
+  for (const farmer of farmers) {
+    if (!parseBoolean(farmer.vaccinated)) continue;
+
+    const date = getFarmerVaccinationDate(farmer);
+    const vaccinatedGoats = Math.max(getGoatTotal(farmer.goats), getNumberField(farmer, "goats"), 0);
+    if (!date || vaccinatedGoats <= 0) continue;
 
     const monthIndex = date.getMonth();
-    if (date.getFullYear() === comparisonYears.year1) trend[monthIndex].year1 += totalDoses;
-    if (date.getFullYear() === comparisonYears.year2) trend[monthIndex].year2 += totalDoses;
+    if (date.getFullYear() === comparisonYears.year1) trend[monthIndex].year1 += vaccinatedGoats;
+    if (comparisonYears.year2 !== comparisonYears.year1 && date.getFullYear() === comparisonYears.year2) {
+      trend[monthIndex].year2 += vaccinatedGoats;
+    }
   }
 
   return trend;
@@ -307,20 +400,23 @@ const buildInfrastructureComparison = (
 ): DonutSegment[] => {
   let year1Value = 0;
   let year2Value = 0;
+  const year2Label = getComparisonYearLabel(comparisonYears.year1, comparisonYears.year2, 2);
 
   for (const record of records) {
     const statuses = getInfrastructureStatuses(record);
-    if (!statuses.rehabilitated) continue;
+    if (!statuses.maintained) continue;
     const date = getInfrastructureRecordDate(record);
     if (!date) continue;
 
     if (date.getFullYear() === comparisonYears.year1) year1Value += 1;
-    if (date.getFullYear() === comparisonYears.year2) year2Value += 1;
+    if (comparisonYears.year2 !== comparisonYears.year1 && date.getFullYear() === comparisonYears.year2) {
+      year2Value += 1;
+    }
   }
 
   return [
     { name: "Year 1", value: year1Value, color: YEAR_ONE_COLOR },
-    { name: "Year 2", value: year2Value, color: YEAR_TWO_COLOR },
+    { name: year2Label, value: year2Value, color: YEAR_TWO_COLOR },
   ];
 };
 
@@ -330,28 +426,31 @@ const buildRegistrationComparison = (
 ): DonutSegment[] => {
   let year1Value = 0;
   let year2Value = 0;
+  const year2Label = getComparisonYearLabel(comparisonYears.year1, comparisonYears.year2, 2);
 
   for (const farmer of farmers) {
     const date = parseDate(farmer.createdAt || farmer.registrationDate);
     if (!date) continue;
 
     if (date.getFullYear() === comparisonYears.year1) year1Value += 1;
-    if (date.getFullYear() === comparisonYears.year2) year2Value += 1;
+    if (comparisonYears.year2 !== comparisonYears.year1 && date.getFullYear() === comparisonYears.year2) {
+      year2Value += 1;
+    }
   }
 
   return [
     { name: "Year 1", value: year1Value, color: YEAR_ONE_COLOR },
-    { name: "Year 2", value: year2Value, color: YEAR_TWO_COLOR },
+    { name: year2Label, value: year2Value, color: YEAR_TWO_COLOR },
   ];
 };
 
-const buildRecentLocations = (activities: OverviewRecord[]): RecentLocation[] => {
+const buildRecentLocations = (farmers: OverviewRecord[]): RecentLocation[] => {
   const seen = new Set<string>();
 
-  return [...activities]
+  return [...farmers]
     .map((record) => {
-      const visitedDate = parseDate(record.date || record.createdAt);
-      const location = String(record.location || record.activityName || "").trim();
+      const visitedDate = getFarmerVisitDate(record);
+      const location = String(record.location || record.subcounty || record.county || record.region || "").trim();
       const county = String(record.county || record.region || "").trim();
 
       return {
@@ -361,7 +460,7 @@ const buildRecentLocations = (activities: OverviewRecord[]): RecentLocation[] =>
         timestamp: visitedDate?.getTime() || 0,
       };
     })
-    .filter((entry) => entry.timestamp > 0)
+    .filter((entry) => entry.timestamp > 0 && Date.now() - entry.timestamp < RECENT_LOCATION_MAX_AGE_MS)
     .sort((left, right) => right.timestamp - left.timestamp)
     .filter((entry) => {
       const key = `${entry.name}|${entry.county}`.toLowerCase();
@@ -398,8 +497,8 @@ const buildOverviewSummaryFromRecords = ({
   animalHealth,
   boreholes,
   activities,
-}: OverviewCollections): OverviewSummaryData => {
-  const comparisonYears = getComparisonYears();
+}: OverviewCollections, selectedComparisonYear?: number | null): OverviewSummaryData => {
+  const availableYears = new Set<number>();
   let maleFarmers = 0;
   let femaleFarmers = 0;
   let totalGoats = 0;
@@ -408,6 +507,16 @@ const buildOverviewSummaryFromRecords = ({
   const countyMap: Record<string, number> = {};
 
   for (const farmer of farmers) {
+    const registrationDate = parseDate(farmer.createdAt || farmer.registrationDate);
+    if (registrationDate) {
+      availableYears.add(registrationDate.getFullYear());
+    }
+
+    const vaccinationDate = getFarmerVaccinationDate(farmer);
+    if (vaccinationDate) {
+      availableYears.add(vaccinationDate.getFullYear());
+    }
+
     const gender = String(farmer.gender || "").trim().toLowerCase();
     if (gender === "male") maleFarmers += 1;
     if (gender === "female") femaleFarmers += 1;
@@ -419,6 +528,33 @@ const buildOverviewSummaryFromRecords = ({
     const county = String(farmer.county || farmer.region || "").trim();
     if (county) countyMap[county] = (countyMap[county] || 0) + 1;
   }
+
+  for (const record of boreholes) {
+    const date = getInfrastructureRecordDate(record);
+    if (date) availableYears.add(date.getFullYear());
+  }
+
+  for (const record of animalHealth) {
+    const date = getActivityRecordDate(record);
+    if (date) availableYears.add(date.getFullYear());
+  }
+
+  for (const record of capacity) {
+    const date = parseDate(record.startDate ?? record.date ?? record.Date ?? record.createdAt ?? record.created_at);
+    if (date) availableYears.add(date.getFullYear());
+  }
+
+  for (const record of offtakes) {
+    const date = parseDate(record.date ?? record.Date ?? record.createdAt ?? record.created_at);
+    if (date) availableYears.add(date.getFullYear());
+  }
+
+  for (const record of activities) {
+    const date = getActivityRecordDate(record);
+    if (date) availableYears.add(date.getFullYear());
+  }
+
+  const comparisonYears = resolveComparisonYears([...availableYears], selectedComparisonYear);
 
   const totalAnimals = totalGoats + totalSheep + totalCattle;
   const trainedFarmers = capacity.reduce(
@@ -458,9 +594,9 @@ const buildOverviewSummaryFromRecords = ({
       { name: "Goats on record", value: totalGoats, color: "#ffc107" },
       { name: "Goats purchased", value: totalGoatsPurchased, color: "#a80d10" },
     ],
-    vaccinationTrend: buildVaccinationTrend(animalHealth, comparisonYears),
+    vaccinationTrend: buildVaccinationTrend(farmers, comparisonYears),
     countyCoverage: countyCoverage.length > 0 ? countyCoverage : EMPTY_COUNTY_COVERAGE,
-    recentLocations: buildRecentLocations(activities),
+    recentLocations: buildRecentLocations(farmers),
     recentActivities: buildRecentActivities(activities),
     pendingActivitiesCount: activities.filter(
       (record) => String(record.status || "").trim().toLowerCase() === "pending",
@@ -502,6 +638,19 @@ const sanitizeDonutSegments = (
           : fallback[index % fallback.length]?.color || YEAR_ONE_COLOR,
     };
   });
+};
+
+const relabelComparisonDonutSegments = (
+  segments: DonutSegment[],
+  businessStartYear: number,
+  comparisonYear: number,
+): DonutSegment[] => {
+  if (segments.length === 0) return segments;
+
+  return segments.map((segment, index) => ({
+    ...segment,
+    name: index === 0 ? "Year 1" : getComparisonYearLabel(businessStartYear, comparisonYear, index + 1),
+  }));
 };
 
 const sanitizeTrendPoints = (value: unknown): TrendPoint[] => {
@@ -572,6 +721,30 @@ const sanitizeRecentActivities = (value: unknown): RecentActivity[] => {
   });
 };
 
+const sanitizeComparisonYears = (value: unknown): ComparisonYears => {
+  const fallback = getComparisonYears();
+  if (!value || typeof value !== "object") return fallback;
+
+  const candidate = value as Partial<ComparisonYears>;
+  const year1 = getSafeNumber(candidate.year1, fallback.year1);
+  const year2 = getSafeNumber(candidate.year2, fallback.year2);
+  const availableYears = Array.isArray(candidate.availableYears)
+    ? Array.from(
+        new Set(
+          candidate.availableYears
+            .map((item) => getSafeNumber(item))
+            .filter((year) => year > 0),
+        ),
+      ).sort((left, right) => left - right)
+    : [];
+
+  return {
+    year1,
+    year2,
+    availableYears: availableYears.length > 0 ? availableYears : Array.from(new Set([year1, year2])).sort((left, right) => left - right),
+  };
+};
+
 const sanitizeOverviewSummary = (value: unknown): OverviewSummaryData => {
   if (!value || typeof value !== "object") return EMPTY_OVERVIEW_DATA;
 
@@ -579,26 +752,26 @@ const sanitizeOverviewSummary = (value: unknown): OverviewSummaryData => {
     stats?: Partial<OverviewSummaryData["stats"]>;
     comparisonYears?: Partial<ComparisonYears>;
   };
-  const stats = data.stats || {};
-  const comparisonYears = data.comparisonYears || {};
+  const stats: Partial<OverviewStats> | undefined =
+    data.stats && typeof data.stats === "object"
+      ? data.stats as Partial<OverviewStats>
+      : undefined;
+  const comparisonYears = sanitizeComparisonYears(data.comparisonYears);
 
   return {
     stats: {
-      totalFarmers: getSafeNumber(stats.totalFarmers),
-      maleFarmers: getSafeNumber(stats.maleFarmers),
-      femaleFarmers: getSafeNumber(stats.femaleFarmers),
-      trainedFarmers: getSafeNumber(stats.trainedFarmers),
-      totalAnimals: getSafeNumber(stats.totalAnimals),
-      totalGoats: getSafeNumber(stats.totalGoats),
-      totalSheep: getSafeNumber(stats.totalSheep),
-      totalCattle: getSafeNumber(stats.totalCattle),
-      totalGoatsPurchased: getSafeNumber(stats.totalGoatsPurchased),
-      countiesCovered: getSafeNumber(stats.countiesCovered),
+      totalFarmers: getSafeNumber(stats?.totalFarmers),
+      maleFarmers: getSafeNumber(stats?.maleFarmers),
+      femaleFarmers: getSafeNumber(stats?.femaleFarmers),
+      trainedFarmers: getSafeNumber(stats?.trainedFarmers),
+      totalAnimals: getSafeNumber(stats?.totalAnimals),
+      totalGoats: getSafeNumber(stats?.totalGoats),
+      totalSheep: getSafeNumber(stats?.totalSheep),
+      totalCattle: getSafeNumber(stats?.totalCattle),
+      totalGoatsPurchased: getSafeNumber(stats?.totalGoatsPurchased),
+      countiesCovered: getSafeNumber(stats?.countiesCovered),
     },
-    comparisonYears: {
-      year1: getSafeNumber(comparisonYears.year1, getComparisonYears().year1),
-      year2: getSafeNumber(comparisonYears.year2, getComparisonYears().year2),
-    },
+    comparisonYears,
     maintainedInfrastructure: sanitizeDonutSegments(data.maintainedInfrastructure, EMPTY_DONUT_SEGMENTS),
     registrationComparison: sanitizeDonutSegments(data.registrationComparison, EMPTY_DONUT_SEGMENTS),
     animalCensusVsPurchased: sanitizeDonutSegments(
@@ -613,9 +786,27 @@ const sanitizeOverviewSummary = (value: unknown): OverviewSummaryData => {
   };
 };
 
+const hasMeaningfulOverviewData = (value: unknown): boolean => {
+  const data = sanitizeOverviewSummary(value);
+
+  return (
+    data.stats.totalFarmers > 0 ||
+    data.stats.trainedFarmers > 0 ||
+    data.stats.totalAnimals > 0 ||
+    data.stats.totalGoatsPurchased > 0 ||
+    data.maintainedInfrastructure.some((item) => item.value > 0) ||
+    data.registrationComparison.some((item) => item.value > 0) ||
+    data.animalCensusVsPurchased.some((item) => item.value > 0) ||
+    data.vaccinationTrend.some((item) => item.year1 > 0 || item.year2 > 0) ||
+    data.countyCoverage.some((item) => item.value > 0) ||
+    data.recentLocations.length > 0 ||
+    data.recentActivities.length > 0
+  );
+};
+
 const formatWholeNumber = (value: unknown) => getSafeNumber(value).toLocaleString();
 const formatProgressLabel = (value: unknown, description: string) =>
-  `${getSafeNumber(value).toFixed(1)}% ${description}`;
+  description ? `${getSafeNumber(value).toFixed(1)}% ${description}` : `${getSafeNumber(value).toFixed(1)}%`;
 const formatActivityDate = (value: string): string => {
   const date = parseDate(value);
   if (!date) return "Unknown date";
@@ -666,7 +857,7 @@ const TopMetricCard = ({
   <div className="rounded-[20px] border border-slate-200 bg-white px-6 py-5 shadow-[0_8px_30px_rgba(15,23,42,0.05)]">
     <div className="flex items-start justify-between gap-4">
       <div className="space-y-2">
-        <p className="text-[16px] font-medium tracking-[-0.02em] text-slate-400">{title}</p>
+        <p className={`text-[16px] font-medium tracking-[-0.02em] ${SECONDARY_TEXT_CLASS}`}>{title}</p>
         <p className="text-[26px] font-semibold tracking-[-0.04em] text-slate-950 sm:text-[42px]">
           {formatWholeNumber(value)}
         </p>
@@ -674,8 +865,8 @@ const TopMetricCard = ({
       <div className="mt-1">{icon}</div>
     </div>
 
-    <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-slate-400">
-      <span className="font-semibold text-slate-500">{progressLabel}</span>
+    <div className={`mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] ${SECONDARY_TEXT_CLASS}`}>
+      <span className={`font-semibold ${SECONDARY_TEXT_CLASS}`}>{progressLabel}</span>
       {detail}
     </div>
 
@@ -692,46 +883,100 @@ const OverviewPanel = ({
   title,
   children,
   className = "",
+  headerExtra,
 }: {
   title: string;
   children: ReactNode;
   className?: string;
+  headerExtra?: ReactNode;
 }) => (
   <div className={`rounded-[24px] border border-slate-200 bg-white p-5 shadow-[0_10px_35px_rgba(15,23,42,0.04)] sm:p-6 ${className}`}>
-    <h2 className="text-[13px] font-medium uppercase tracking-[-0.01em] text-slate-400">{title}</h2>
+    <div className="flex items-start justify-between gap-4">
+      <h2 className={`text-[13px] font-medium uppercase tracking-[-0.01em] ${SECONDARY_TEXT_CLASS}`}>{title}</h2>
+      {headerExtra}
+    </div>
     {children}
   </div>
 );
 
 const ChartLegend = ({ items }: { items: DonutSegment[] }) => (
-  <div className="mt-3 flex flex-wrap items-center justify-center gap-5 text-sm text-slate-500">
+  <div className={`mt-3 flex flex-wrap items-center justify-center gap-5 text-sm ${SECONDARY_TEXT_CLASS}`}>
     {items.map((item) => (
       <div key={item.name} className="flex items-center gap-2">
         <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.color }} />
         <span>{item.name}</span>
-        <span className="font-semibold text-slate-700">{formatWholeNumber(item.value)}</span>
+        <span className={`font-semibold ${SECONDARY_TEXT_CLASS}`}>{formatWholeNumber(item.value)}</span>
       </div>
     ))}
   </div>
 );
 
+const ComparisonYearSelector = ({
+  businessStartYear,
+  availableYears,
+  selectedYear,
+  onChange,
+}: {
+  businessStartYear: number;
+  availableYears: number[];
+  selectedYear: number;
+  onChange: (value: number) => void;
+}) => {
+  const options = availableYears.filter((year) => year > businessStartYear);
+  if (options.length === 0) return null;
+
+  return (
+    <Select value={String(selectedYear)} onValueChange={(value) => onChange(Number(value))}>
+      <SelectTrigger className={`h-8 w-[132px] rounded-xl border-slate-200 bg-white px-3 text-xs ${SECONDARY_TEXT_CLASS}`}>
+        <SelectValue placeholder="Select Year 2" />
+      </SelectTrigger>
+      <SelectContent>
+        {options.map((year) => (
+          <SelectItem key={year} value={String(year)}>
+            {`${getComparisonYearLabel(businessStartYear, year)} (${year})`}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+};
+
 const DonutPanel = ({
   title,
   data,
   comparisonNote,
+  headerExtra,
+  tooltipValueLabel = "records",
 }: {
   title: string;
   data: DonutSegment[];
   comparisonNote?: string;
+  headerExtra?: ReactNode;
+  tooltipValueLabel?: string;
 }) => {
   const hasValues = data.some((item) => item.value > 0);
   const chartData = hasValues ? data : [{ name: "No data", value: 1, color: "#e2e8f0" }];
 
   return (
-    <OverviewPanel title={title} className="flex h-full min-h-[360px] flex-col">
+    <OverviewPanel title={title} className="flex h-full min-h-[360px] flex-col" headerExtra={headerExtra}>
       <div className="mt-4 flex-1">
         <ResponsiveContainer width="100%" height={260}>
           <PieChart>
+            <Tooltip
+              content={({ active, payload }) => {
+                const segment = payload?.[0]?.payload as DonutSegment | undefined;
+                if (!active || !segment || !hasValues) return null;
+
+                return (
+                  <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-[0_12px_28px_rgba(15,23,42,0.12)]">
+                    <p className={`text-xs ${SECONDARY_TEXT_CLASS}`}>{segment.name}</p>
+                    <p className="mt-1 text-sm font-semibold text-slate-900">
+                      {formatWholeNumber(segment.value)} {tooltipValueLabel}
+                    </p>
+                  </div>
+                );
+              }}
+            />
             <Pie
               data={chartData}
               dataKey="value"
@@ -751,10 +996,10 @@ const DonutPanel = ({
       {hasValues ? (
         <>
           <ChartLegend items={data} />
-          {comparisonNote ? <p className="mt-2 text-center text-xs text-slate-400">{comparisonNote}</p> : null}
+          {comparisonNote ? <p className={`mt-2 text-center text-xs ${SECONDARY_TEXT_CLASS}`}>{comparisonNote}</p> : null}
         </>
       ) : (
-        <p className="mt-3 text-center text-sm text-slate-400">No data available yet</p>
+        <p className={`mt-3 text-center text-sm ${SECONDARY_TEXT_CLASS}`}>No data available yet</p>
       )}
     </OverviewPanel>
   );
@@ -774,11 +1019,11 @@ const RecentLocationsPanel = ({ locations }: { locations: RecentLocation[] }) =>
               </div>
               <div>
                 <p className="text-[16px] font-medium text-slate-800">{location.name}</p>
-                <p className="text-sm text-slate-400">{location.county}</p>
+                <p className={`text-sm ${SECONDARY_TEXT_CLASS}`}>{location.county}</p>
               </div>
             </div>
 
-            <div className="mt-1 flex items-center gap-2 text-sm text-slate-400">
+            <div className={`mt-1 flex items-center gap-2 text-sm ${SECONDARY_TEXT_CLASS}`}>
               <Clock3 className="h-4 w-4" />
               <span>{formatRelativeTime(location.visitedAt)}</span>
             </div>
@@ -786,7 +1031,7 @@ const RecentLocationsPanel = ({ locations }: { locations: RecentLocation[] }) =>
         ))}
       </div>
     ) : (
-      <div className="flex flex-1 items-center justify-center text-sm text-slate-400">
+      <div className={`flex flex-1 items-center justify-center text-sm ${SECONDARY_TEXT_CLASS}`}>
         No recent locations available yet.
       </div>
     )}
@@ -805,7 +1050,7 @@ const RecentActivitiesPanel = ({ activities }: { activities: RecentActivity[] })
 
       <Link
         to="/dashboard/activities"
-        className="inline-flex items-center gap-2 text-base font-medium text-slate-600 transition-colors hover:text-slate-900"
+        className={`inline-flex items-center gap-2 text-base font-medium ${SECONDARY_TEXT_CLASS} transition-colors hover:text-gray-600`}
       >
         <span>View All</span>
         <ArrowRight className="h-4 w-4" />
@@ -816,7 +1061,7 @@ const RecentActivitiesPanel = ({ activities }: { activities: RecentActivity[] })
       {activities.length > 0 ? (
         <div className="overflow-x-auto">
           <div className="min-w-[860px] overflow-hidden rounded-[24px] border border-slate-100 bg-white shadow-[0_14px_34px_rgba(15,23,42,0.09)]">
-            <div className="grid grid-cols-[minmax(0,1.8fr)_minmax(110px,0.9fr)_minmax(110px,0.8fr)_minmax(120px,1fr)_minmax(90px,0.7fr)] gap-4 bg-slate-50 px-5 py-5 text-sm font-semibold text-slate-600">
+            <div className={`grid grid-cols-[minmax(0,1.8fr)_minmax(110px,0.9fr)_minmax(110px,0.8fr)_minmax(120px,1fr)_minmax(90px,0.7fr)] gap-4 bg-slate-50 px-5 py-5 text-sm font-semibold ${SECONDARY_TEXT_CLASS}`}>
               <span>Activity Name</span>
               <span>Date</span>
               <span>Status</span>
@@ -833,11 +1078,11 @@ const RecentActivitiesPanel = ({ activities }: { activities: RecentActivity[] })
               return (
                 <div
                   key={`${activity.id}-${activity.date}-${index}`}
-                  className="grid grid-cols-[minmax(0,1.8fr)_minmax(110px,0.9fr)_minmax(110px,0.8fr)_minmax(120px,1fr)_minmax(90px,0.7fr)] gap-4 border-t border-slate-100 px-5 py-5 text-sm text-slate-700"
+                  className={`grid grid-cols-[minmax(0,1.8fr)_minmax(110px,0.9fr)_minmax(110px,0.8fr)_minmax(120px,1fr)_minmax(90px,0.7fr)] gap-4 border-t border-slate-100 px-5 py-5 text-sm ${SECONDARY_TEXT_CLASS}`}
                 >
                   <div className="flex items-center gap-4">
                     <span className="h-3 w-3 rounded-full bg-gradient-to-r from-[#4f7cff] to-[#9333ea]" />
-                    <span className="truncate text-[16px] font-medium text-slate-800">{activity.activityName}</span>
+                    <span className="truncate text-[16px] font-medium text-gray-600">{activity.activityName}</span>
                   </div>
                   <div className="flex items-center">
                     <span className="rounded-full bg-blue-100 px-3 py-1 text-sm font-semibold text-blue-700">
@@ -849,12 +1094,12 @@ const RecentActivitiesPanel = ({ activities }: { activities: RecentActivity[] })
                       {formatActivityStatus(activity.status)}
                     </span>
                   </div>
-                  <div className="flex items-center gap-2 text-[16px] text-slate-600">
-                    <MapPin className="h-4 w-4 text-slate-500" />
+                  <div className={`flex items-center gap-2 text-[16px] ${SECONDARY_TEXT_CLASS}`}>
+                    <MapPin className={`h-4 w-4 ${SECONDARY_TEXT_CLASS}`} />
                     <span className="truncate">{activity.location}</span>
                   </div>
-                  <div className="flex items-center gap-2 text-[16px] font-semibold text-slate-800">
-                    <UsersRound className="h-4 w-4 text-slate-500" />
+                  <div className={`flex items-center gap-2 text-[16px] font-semibold ${SECONDARY_TEXT_CLASS}`}>
+                    <UsersRound className={`h-4 w-4 ${SECONDARY_TEXT_CLASS}`} />
                     <span>{formatWholeNumber(activity.participants)}</span>
                   </div>
                 </div>
@@ -863,7 +1108,7 @@ const RecentActivitiesPanel = ({ activities }: { activities: RecentActivity[] })
           </div>
         </div>
       ) : (
-        <div className="flex min-h-[220px] items-center justify-center rounded-[24px] border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-400">
+        <div className={`flex min-h-[220px] items-center justify-center rounded-[24px] border border-dashed border-slate-200 bg-slate-50 text-sm ${SECONDARY_TEXT_CLASS}`}>
           No recent activities available yet.
         </div>
       )}
@@ -872,7 +1117,7 @@ const RecentActivitiesPanel = ({ activities }: { activities: RecentActivity[] })
         <Button
           asChild
           variant="outline"
-          className="h-12 rounded-2xl border-slate-300 bg-white px-6 text-base font-medium text-slate-700 hover:bg-slate-50"
+          className={`h-12 rounded-2xl border-slate-300 bg-white px-6 text-base font-medium ${SECONDARY_TEXT_CLASS} hover:bg-slate-50 hover:text-gray-600`}
         >
           <Link to="/dashboard/activities">
             <Eye className="h-4 w-4" />
@@ -902,7 +1147,7 @@ const CountiesCoveredPanel = ({ data }: { data: CountyCoverage[] }) => {
       <div className="mt-10 space-y-5">
         {data.map((item, index) => (
           <div key={`${item.name}-${index}`} className="space-y-2">
-            <div className="flex items-center justify-between gap-3 text-xs uppercase tracking-[0.12em] text-slate-300">
+            <div className="flex items-center justify-between gap-3 text-xs uppercase tracking-[0.12em] text-gray-400">
               <span className="truncate">{item.name}</span>
               <span>{formatWholeNumber(item.value)}</span>
             </div>
@@ -969,6 +1214,7 @@ const DashboardOverview = () => {
     [accessibleProgrammes, userCanViewAllProgrammeData],
   );
   const [selectedProgramme, setSelectedProgramme] = useState("");
+  const [selectedComparisonYear, setSelectedComparisonYear] = useState<number | null>(null);
   const [localOverviewState, setLocalOverviewState] = useState<{
     key: string;
     data: OverviewSummaryData | null;
@@ -978,8 +1224,8 @@ const DashboardOverview = () => {
   });
   const [localOverviewLoading, setLocalOverviewLoading] = useState(false);
   const overviewCacheStorageKey = useMemo(
-    () => buildOverviewCacheKey(user?.uid, selectedProgramme || null),
-    [selectedProgramme, user?.uid],
+    () => buildOverviewCacheKey(user?.uid, selectedProgramme || null, selectedComparisonYear),
+    [selectedComparisonYear, selectedProgramme, user?.uid],
   );
   const cachedOverviewData = useMemo(
     () => {
@@ -995,6 +1241,7 @@ const DashboardOverview = () => {
   useEffect(() => {
     if (!userRole && !userAttribute) {
       setSelectedProgramme("");
+      setSelectedComparisonYear(null);
       return;
     }
 
@@ -1009,6 +1256,10 @@ const DashboardOverview = () => {
 
     setSelectedProgramme((current) => resolveActiveProgramme(current, accessibleProgrammes));
   }, [accessibleProgrammes, userAttribute, userCanViewAllProgrammeData, userRole]);
+
+  useEffect(() => {
+    setSelectedComparisonYear(null);
+  }, [selectedProgramme]);
 
   useEffect(() => {
     if (!selectedProgramme) {
@@ -1031,11 +1282,12 @@ const DashboardOverview = () => {
   const remoteOverviewEnabled = USE_REMOTE_ANALYTICS && Boolean(selectedProgramme) && !loading;
 
   const overviewQuery = useQuery({
-    queryKey: ["overview-analysis", user?.uid, userRole, userAttribute, selectedProgramme],
+    queryKey: ["overview-analysis", user?.uid, userRole, userAttribute, selectedProgramme, selectedComparisonYear ?? "auto"],
     queryFn: async () =>
       sanitizeOverviewSummary(await fetchAnalysisSummary({
         scope: "overview",
         programme: selectedProgramme === "All" ? "All" : selectedProgramme || null,
+        selectedYear: selectedComparisonYear,
       })),
     enabled: remoteOverviewEnabled,
     retry: 0,
@@ -1045,6 +1297,14 @@ const DashboardOverview = () => {
     refetchOnReconnect: false,
     initialData: cachedOverviewData ?? undefined,
   });
+
+  const remoteOverviewData = overviewQuery.data as OverviewSummaryData | undefined;
+  const remoteOverviewHasData = hasMeaningfulOverviewData(remoteOverviewData);
+  const remoteComparisonYearMatchesSelection =
+    selectedComparisonYear === null ||
+    !remoteOverviewData?.comparisonYears ||
+    remoteOverviewData.comparisonYears.year2 === selectedComparisonYear;
+  const remoteOverviewHasUsableData = remoteOverviewHasData && remoteComparisonYearMatchesSelection;
 
   useEffect(() => {
     const remoteData = overviewQuery.data as OverviewSummaryData | undefined;
@@ -1057,7 +1317,13 @@ const DashboardOverview = () => {
     });
   }, [overviewCacheStorageKey, overviewQuery.data, selectedProgramme]);
 
-  const shouldFetchLocalOverview = Boolean(selectedProgramme) && (!remoteOverviewEnabled || overviewQuery.isError);
+  const shouldFetchLocalOverview =
+    Boolean(selectedProgramme) &&
+    (
+      !remoteOverviewEnabled ||
+      overviewQuery.isError ||
+      (remoteOverviewEnabled && !overviewQuery.isLoading && !remoteOverviewHasUsableData)
+    );
 
   useEffect(() => {
     if (!selectedProgramme) {
@@ -1108,7 +1374,7 @@ const DashboardOverview = () => {
           animalHealth: byProgramme(snapshotToArray(animalHealthSnap)),
           boreholes: byProgramme(snapshotToArray(boreholesSnap)),
           activities: byProgramme(snapshotToArray(activitiesSnap)),
-        });
+        }, selectedComparisonYear);
         const normalizedSummary = sanitizeOverviewSummary(summary);
 
         if (!cancelled) {
@@ -1138,10 +1404,10 @@ const DashboardOverview = () => {
     return () => {
       cancelled = true;
     };
-  }, [cachedOverviewData, hasImmediateOverviewData, overviewCacheStorageKey, selectedProgramme, shouldFetchLocalOverview]);
+  }, [cachedOverviewData, hasImmediateOverviewData, overviewCacheStorageKey, selectedComparisonYear, selectedProgramme, shouldFetchLocalOverview]);
 
   const overviewData = sanitizeOverviewSummary(
-    (overviewQuery.data as OverviewSummaryData | undefined) ??
+    (remoteOverviewHasUsableData ? remoteOverviewData : undefined) ??
     localOverviewData ??
     cachedOverviewData ??
     EMPTY_OVERVIEW_DATA
@@ -1149,21 +1415,49 @@ const DashboardOverview = () => {
 
   const stats = overviewData.stats ?? EMPTY_OVERVIEW_DATA.stats;
   const comparisonYears = overviewData.comparisonYears ?? getComparisonYears();
-  const currentYearRegistrations = overviewData.registrationComparison?.[0]?.value ?? 0;
-  const registrationPercentage = toPercentage(currentYearRegistrations, stats.totalFarmers);
+  const availableComparisonYearsKey = comparisonYears.availableYears.join(",");
+  const comparisonYearValue = selectedComparisonYear ?? comparisonYears.year2;
+  const comparisonYearLabel = getComparisonYearLabel(comparisonYears.year1, comparisonYearValue, 2);
+  const maintainedInfrastructureData = relabelComparisonDonutSegments(
+    overviewData.maintainedInfrastructure ?? EMPTY_DONUT_SEGMENTS,
+    comparisonYears.year1,
+    comparisonYearValue,
+  );
+  const registrationComparisonData = relabelComparisonDonutSegments(
+    overviewData.registrationComparison ?? EMPTY_DONUT_SEGMENTS,
+    comparisonYears.year1,
+    comparisonYearValue,
+  );
+  const registrationComparisonValue = overviewData.registrationComparison?.[1]?.value ?? overviewData.registrationComparison?.[0]?.value ?? 0;
+  const registrationPercentage = toPercentage(registrationComparisonValue, stats.totalFarmers);
   const trainingPercentage = toPercentage(stats.trainedFarmers, stats.totalFarmers);
   const censusPercentage = toPercentage(stats.totalGoatsPurchased, stats.totalGoats);
-  const hasOverviewData = Boolean(overviewQuery.data || localOverviewData || cachedOverviewData);
+  const hasOverviewData = Boolean(remoteOverviewHasUsableData || localOverviewData || cachedOverviewData);
   const isLoadingRemoteOverview =
     remoteOverviewEnabled &&
     !overviewQuery.isError &&
     overviewQuery.isLoading;
-  const isLoadingData = !hasOverviewData && (isLoadingRemoteOverview || localOverviewLoading);
+  const isLoadingData = !hasOverviewData && (isLoadingRemoteOverview || localOverviewLoading || shouldFetchLocalOverview);
+  const comparisonNote =
+    comparisonYearValue === comparisonYears.year1
+      ? `Year 1 = ${comparisonYears.year1}`
+      : `Year 1 = ${comparisonYears.year1} | ${comparisonYearLabel} = ${comparisonYearValue}`;
+
+  useEffect(() => {
+    if (
+      selectedComparisonYear !== null &&
+      hasOverviewData &&
+      comparisonYears.availableYears.length > 0 &&
+      !comparisonYears.availableYears.includes(selectedComparisonYear)
+    ) {
+      setSelectedComparisonYear(null);
+    }
+  }, [availableComparisonYearsKey, comparisonYears.availableYears, hasOverviewData, selectedComparisonYear]);
 
   if (loading) {
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-slate-500" />
+        <Loader2 className={`h-8 w-8 animate-spin ${SECONDARY_TEXT_CLASS}`} />
       </div>
     );
   }
@@ -1172,7 +1466,7 @@ const DashboardOverview = () => {
     return (
       <div className="rounded-[24px] border border-slate-200 bg-white p-8 text-center shadow-[0_10px_35px_rgba(15,23,42,0.04)]">
         <h1 className="text-lg font-semibold text-slate-900">No programme access</h1>
-        <p className="mt-2 text-sm text-slate-500">This account is not assigned to any programme data.</p>
+        <p className={`mt-2 text-sm ${SECONDARY_TEXT_CLASS}`}>This account is not assigned to any programme data.</p>
       </div>
     );
   }
@@ -1183,13 +1477,13 @@ const DashboardOverview = () => {
         <div className="flex items-center justify-end">
           {canSwitchProgrammes ? (
             <div className="w-full max-w-[170px] space-y-2">
-              <Label htmlFor="overview-programme" className="text-xs uppercase tracking-[0.16em] text-slate-400">
+              <Label htmlFor="overview-programme" className={`text-xs uppercase tracking-[0.16em] ${SECONDARY_TEXT_CLASS}`}>
                 Programme
               </Label>
               <Select value={selectedProgramme} onValueChange={setSelectedProgramme}>
-                <SelectTrigger id="overview-programme" className="rounded-2xl border-slate-200 bg-white">
-                  <SelectValue placeholder="Select programme" />
-                </SelectTrigger>
+              <SelectTrigger id="overview-programme" className={`rounded-2xl border-slate-200 bg-white ${SECONDARY_TEXT_CLASS}`}>
+                <SelectValue placeholder="Select programme" />
+              </SelectTrigger>
                 <SelectContent>
                   {programmeOptions.map((programme) => (
                     <SelectItem key={programme} value={programme}>
@@ -1208,42 +1502,42 @@ const DashboardOverview = () => {
           <>
             <div className="grid gap-4 md:grid-cols-3">
               <TopMetricCard
-                title="Registered farmers"
+                title="Registered Farmers"
                 value={stats.totalFarmers}
                 progressValue={registrationPercentage}
-                progressLabel={formatProgressLabel(registrationPercentage, "of total")}
+                progressLabel={formatProgressLabel(registrationPercentage, "Of Total")}
                 accentColor="#2ea55f"
                 icon={<UsersRound className="h-5 w-5 text-[#2ea55f]" />}
                 detail={
                   <>
-                    <span>male : {formatWholeNumber(stats.maleFarmers)}</span>
+                    <span>Male : {formatWholeNumber(stats.maleFarmers)}</span>
                     <span>|</span>
-                    <span>female : {formatWholeNumber(stats.femaleFarmers)}</span>
+                    <span>Female : {formatWholeNumber(stats.femaleFarmers)}</span>
                   </>
                 }
               />
 
               <TopMetricCard
-                title="Trained farmers"
+                title="Trained Farmers"
                 value={stats.trainedFarmers}
                 progressValue={trainingPercentage}
-                progressLabel={formatProgressLabel(trainingPercentage, "of registered farmers")}
+                progressLabel={formatProgressLabel(trainingPercentage, "Of Registered Farmers")}
                 accentColor="#3978c7"
                 icon={<Leaf className="h-5 w-5 text-[#3978c7]" />}
               />
 
               <TopMetricCard
-                title="Animal census"
+                title="Animal Census"
                 value={stats.totalAnimals}
                 progressValue={censusPercentage}
-                progressLabel={formatProgressLabel(censusPercentage, "goats purchased")}
+                progressLabel={formatProgressLabel(censusPercentage, "")}
                 accentColor="#f58b1f"
                 icon={<ShoppingCart className="h-5 w-5 text-[#f58b1f]" />}
                 detail={
                   <>
-                    <span>goats : {formatWholeNumber(stats.totalGoats)}</span>
+                    <span>Goats : {formatWholeNumber(stats.totalGoats)}</span>
                     <span>|</span>
-                    <span>purchased : {formatWholeNumber(stats.totalGoatsPurchased)}</span>
+                    <span>Purchased : {formatWholeNumber(stats.totalGoatsPurchased)}</span>
                   </>
                 }
               />
@@ -1252,8 +1546,17 @@ const DashboardOverview = () => {
             <div className="grid items-stretch gap-6 lg:grid-cols-2">
               <DonutPanel
                 title="MAINTAINED INFRASTRUCTURE"
-                data={overviewData.maintainedInfrastructure ?? EMPTY_DONUT_SEGMENTS}
-                comparisonNote={`Year 1 = ${comparisonYears.year1} | Year 2 = ${comparisonYears.year2}`}
+                data={maintainedInfrastructureData}
+                comparisonNote={comparisonNote}
+                tooltipValueLabel="maintained boreholes"
+                headerExtra={
+                  <ComparisonYearSelector
+                    businessStartYear={comparisonYears.year1}
+                    availableYears={comparisonYears.availableYears}
+                    selectedYear={comparisonYearValue}
+                    onChange={setSelectedComparisonYear}
+                  />
+                }
               />
               <DonutPanel
                 title="ANIMAL CENSUS VS GOATS PURCHASED"
@@ -1264,14 +1567,33 @@ const DashboardOverview = () => {
             <div className="grid items-stretch gap-6 lg:grid-cols-2">
               <DonutPanel
                 title="FARMERS REGISTRATION RATE"
-                data={overviewData.registrationComparison ?? EMPTY_DONUT_SEGMENTS}
-                comparisonNote={`Year 1 = ${comparisonYears.year1} | Year 2 = ${comparisonYears.year2}`}
+                data={registrationComparisonData}
+                comparisonNote={comparisonNote}
+                headerExtra={
+                  <ComparisonYearSelector
+                    businessStartYear={comparisonYears.year1}
+                    availableYears={comparisonYears.availableYears}
+                    selectedYear={comparisonYearValue}
+                    onChange={setSelectedComparisonYear}
+                  />
+                }
               />
               <RecentLocationsPanel locations={overviewData.recentLocations ?? EMPTY_OVERVIEW_DATA.recentLocations} />
             </div>
 
             <div className="grid items-stretch gap-6 lg:grid-cols-2">
-              <OverviewPanel title="GOATS VACCINATION" className="flex h-full min-h-[360px] flex-col">
+              <OverviewPanel
+                title="GOATS VACCINATION"
+                className="flex h-full min-h-[360px] flex-col"
+                headerExtra={
+                  <ComparisonYearSelector
+                    businessStartYear={comparisonYears.year1}
+                    availableYears={comparisonYears.availableYears}
+                    selectedYear={comparisonYearValue}
+                    onChange={setSelectedComparisonYear}
+                  />
+                }
+              >
                 <div className="mt-5 flex-1">
                   <ResponsiveContainer width="100%" height={260}>
                     <AreaChart
@@ -1285,8 +1607,8 @@ const DashboardOverview = () => {
                         </linearGradient>
                       </defs>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
-                      <XAxis dataKey="name" tickLine={false} axisLine={false} tick={{ fill: "#cbd5e1", fontSize: 12 }} />
-                      <YAxis tickLine={false} axisLine={false} tick={{ fill: "#64748b", fontSize: 12 }} />
+                      <XAxis dataKey="name" tickLine={false} axisLine={false} tick={{ fill: "#9ca3af", fontSize: 12 }} />
+                      <YAxis tickLine={false} axisLine={false} tick={{ fill: "#9ca3af", fontSize: 12 }} />
                       <Area
                         type="monotone"
                         dataKey="year1"
@@ -1305,16 +1627,16 @@ const DashboardOverview = () => {
                   </ResponsiveContainer>
                 </div>
 
-                <div className="mt-3 flex flex-wrap items-center justify-center gap-5 text-sm text-slate-500">
+                <div className={`mt-3 flex flex-wrap items-center justify-center gap-5 text-sm ${SECONDARY_TEXT_CLASS}`}>
                   <div className="flex items-center gap-2">
                     <span className="h-2.5 w-2.5 rounded-full bg-[#2710a1]" />
                     <span>Year 1</span>
-                    <span className="font-semibold text-slate-700">{comparisonYears.year1}</span>
+                    <span className={`font-semibold ${SECONDARY_TEXT_CLASS}`}>{comparisonYears.year1}</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="h-2.5 w-2.5 rounded-full bg-[#ff7a1a]" />
-                    <span>Year 2</span>
-                    <span className="font-semibold text-slate-700">{comparisonYears.year2}</span>
+                    <span>{comparisonYearLabel}</span>
+                    <span className={`font-semibold ${SECONDARY_TEXT_CLASS}`}>{comparisonYearValue}</span>
                   </div>
                 </div>
               </OverviewPanel>

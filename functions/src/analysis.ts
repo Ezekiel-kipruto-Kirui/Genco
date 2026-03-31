@@ -12,6 +12,8 @@ const CHART_COLORS = {
   fallback: "#f59e0b",
 };
 const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const RECENT_LOCATION_MAX_AGE_DAYS = 180;
+const RECENT_LOCATION_MAX_AGE_MS = RECENT_LOCATION_MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
 
 type AnalysisScope =
   | "overview"
@@ -279,32 +281,125 @@ const getActivityLocationName = (record: Record<string, unknown>): string =>
 const getInfrastructureRecordDate = (record: Record<string, unknown>): Date | null =>
   parseDate(record.date ?? record.Date ?? record.created_at ?? record.createdAt);
 
+const getActivityRecordDate = (record: Record<string, unknown>): Date | null =>
+  parseDate(record.date ?? record.Date ?? record.created_at ?? record.createdAt);
+
+const getFarmerVaccinationDate = (record: Record<string, unknown>): Date | null =>
+  parseDate(
+    record.vaccinationDate ??
+    record.vaccination_date ??
+    record.dateVaccinated ??
+    record.date_vaccinated ??
+    record.updatedAt ??
+    record.updated_at,
+  );
+
+const getFarmerVisitDate = (record: Record<string, unknown>): Date | null =>
+  parseDate(
+    record.lastVisitedAt ??
+    record.lastVisitDate ??
+    record.visitDate ??
+    record.updatedAt ??
+    record.updated_at ??
+    record.vaccinationDate ??
+    record.vaccination_date ??
+    record.createdAt ??
+    record.registrationDate,
+  );
+
 const getInfrastructureStatuses = (record: Record<string, unknown>) => ({
   drilled: parseBoolean(record.drilled ?? record.Drilled),
-  equipped: parseBoolean(record.equipped ?? record.Equipped),
-  rehabilitated: parseBoolean(record.rehabilitated ?? record.Rehabilitated),
-  maintained: parseBoolean(record.maintained ?? record.Maintained),
+  equipped: parseBoolean(record.equipped ?? record.Equipped ?? record.equiped ?? record.Equiped),
+  maintained: parseBoolean(
+    record.maintained ??
+    record.Maintained ??
+    record.maintaned ??
+    record.Maintaned ??
+    record.rehabilitated ??
+    record.Rehabilitated,
+  ),
 });
 
 const getOverviewComparisonYears = (referenceDate: Date = new Date()) => ({
   year1: referenceDate.getFullYear(),
-  year2: referenceDate.getFullYear() - 1,
+  year2: referenceDate.getFullYear(),
+  availableYears: [referenceDate.getFullYear()],
 });
 
+const buildYearRange = (startYear: number, endYear: number): number[] => {
+  const safeStartYear = Math.min(startYear, endYear);
+  const safeEndYear = Math.max(startYear, endYear);
+  return Array.from({length: safeEndYear - safeStartYear + 1}, (_, index) => safeStartYear + index);
+};
+
+const getComparisonYearLabel = (
+  businessStartYear: number,
+  comparisonYear: number,
+  fallbackIndex = 1,
+) => {
+  if (comparisonYear === businessStartYear && fallbackIndex > 1) {
+    return `Year ${fallbackIndex}`;
+  }
+  const yearIndex = comparisonYear - businessStartYear + 1;
+  return `Year ${yearIndex >= 1 ? yearIndex : fallbackIndex}`;
+};
+
+const resolveOverviewComparisonYears = (
+  availableYears: number[],
+  selectedComparisonYear?: number | string | null,
+  referenceDate: Date = new Date(),
+) => {
+  const normalizedYears = Array.from(
+    new Set(
+      availableYears
+        .map((year) => Math.trunc(parseNumber(year)))
+        .filter((year) => Number.isFinite(year) && year > 0),
+    ),
+  ).sort((left, right) => left - right);
+
+  if (normalizedYears.length === 0) {
+    return getOverviewComparisonYears(referenceDate);
+  }
+
+  const year1 = normalizedYears[0];
+  const latestKnownYear = normalizedYears[normalizedYears.length - 1] ?? year1;
+  const referenceYear = Math.max(referenceDate.getFullYear(), latestKnownYear);
+  const calendarYears = buildYearRange(year1, referenceYear);
+  const fallbackYear2 = calendarYears[calendarYears.length - 1] ?? year1;
+  const parsedSelectedYear =
+    typeof selectedComparisonYear === "string"
+      ? Number.parseInt(selectedComparisonYear, 10)
+      : (typeof selectedComparisonYear === "number" ? selectedComparisonYear : null);
+  const year2 =
+    parsedSelectedYear && calendarYears.includes(parsedSelectedYear)
+      ? parsedSelectedYear
+      : fallbackYear2;
+
+  return {
+    year1,
+    year2,
+    availableYears: calendarYears,
+  };
+};
+
 const buildOverviewVaccinationTrend = (
-  animalHealthRecords: Record<string, unknown>[],
+  farmers: Record<string, unknown>[],
   comparisonYears = getOverviewComparisonYears(),
 ) => {
   const trend = MONTH_LABELS.map((name) => ({name, year1: 0, year2: 0}));
 
-  for (const record of animalHealthRecords) {
-    const date = parseDate(record.date || record.createdAt);
-    const totalDoses = getActivityTotalDoses(record);
-    if (!date || totalDoses <= 0) continue;
+  for (const farmer of farmers) {
+    if (!parseBoolean(farmer.vaccinated)) continue;
+
+    const date = getFarmerVaccinationDate(farmer);
+    const vaccinatedGoats = Math.max(getGoatTotal(farmer.goats), getFieldNumber(farmer, "goats"), 0);
+    if (!date || vaccinatedGoats <= 0) continue;
 
     const monthIndex = date.getMonth();
-    if (date.getFullYear() === comparisonYears.year1) trend[monthIndex].year1 += totalDoses;
-    if (date.getFullYear() === comparisonYears.year2) trend[monthIndex].year2 += totalDoses;
+    if (date.getFullYear() === comparisonYears.year1) trend[monthIndex].year1 += vaccinatedGoats;
+    if (comparisonYears.year2 !== comparisonYears.year1 && date.getFullYear() === comparisonYears.year2) {
+      trend[monthIndex].year2 += vaccinatedGoats;
+    }
   }
 
   return trend;
@@ -316,10 +411,11 @@ const buildInfrastructureComparison = (
 ) => {
   let firstYearValue = 0;
   let secondYearValue = 0;
+  const year2Label = getComparisonYearLabel(comparisonYears.year1, comparisonYears.year2, 2);
 
   for (const record of records) {
     const statuses = getInfrastructureStatuses(record);
-    if (!statuses.rehabilitated) {
+    if (!statuses.maintained) {
       continue;
     }
 
@@ -327,12 +423,14 @@ const buildInfrastructureComparison = (
     if (!date) continue;
 
     if (date.getFullYear() === comparisonYears.year1) firstYearValue += 1;
-    if (date.getFullYear() === comparisonYears.year2) secondYearValue += 1;
+    if (comparisonYears.year2 !== comparisonYears.year1 && date.getFullYear() === comparisonYears.year2) {
+      secondYearValue += 1;
+    }
   }
 
   return [
     {name: "Year 1", value: firstYearValue, color: "#2710a1"},
-    {name: "Year 2", value: secondYearValue, color: "#f89b0d"},
+    {name: year2Label, value: secondYearValue, color: "#f89b0d"},
   ];
 };
 
@@ -342,28 +440,31 @@ const buildOverviewRegistrationComparison = (
 ) => {
   let currentYearRegistrations = 0;
   let lastYearRegistrations = 0;
+  const year2Label = getComparisonYearLabel(comparisonYears.year1, comparisonYears.year2, 2);
 
   for (const farmer of farmers) {
     const date = parseDate(farmer.createdAt || farmer.registrationDate);
     if (!date) continue;
 
     if (date.getFullYear() === comparisonYears.year1) currentYearRegistrations += 1;
-    if (date.getFullYear() === comparisonYears.year2) lastYearRegistrations += 1;
+    if (comparisonYears.year2 !== comparisonYears.year1 && date.getFullYear() === comparisonYears.year2) {
+      lastYearRegistrations += 1;
+    }
   }
 
   return [
     {name: "Year 1", value: currentYearRegistrations, color: "#2710a1"},
-    {name: "Year 2", value: lastYearRegistrations, color: "#f89b0d"},
+    {name: year2Label, value: lastYearRegistrations, color: "#f89b0d"},
   ];
 };
 
-const buildOverviewRecentLocations = (activities: Record<string, unknown>[]) => {
+const buildOverviewRecentLocations = (farmers: Record<string, unknown>[]) => {
   const seen = new Set<string>();
 
-  return [...activities]
+  return [...farmers]
     .map((record) => {
-      const visitedDate = parseDate(record.date || record.createdAt);
-      const location = String(record.location || record.activityName || "").trim();
+      const visitedDate = getFarmerVisitDate(record);
+      const location = String(record.location || record.subcounty || record.county || record.region || "").trim();
       const county = String(record.county || record.region || "").trim();
 
       return {
@@ -373,7 +474,7 @@ const buildOverviewRecentLocations = (activities: Record<string, unknown>[]) => 
         timestamp: visitedDate?.getTime() || 0,
       };
     })
-    .filter((entry) => entry.name && entry.timestamp > 0)
+    .filter((entry) => entry.name && entry.timestamp > 0 && Date.now() - entry.timestamp < RECENT_LOCATION_MAX_AGE_MS)
     .sort((a, b) => b.timestamp - a.timestamp)
     .filter((entry) => {
       const key = `${entry.name}|${entry.county}`.toLowerCase();
@@ -577,7 +678,7 @@ const emptyOverview = () => ({
     totalCattle: 0,
     totalAnimals: 0,
     totalGoatsPurchased: 0,
-    regionsVisited: 0,
+    countiesCovered: 0,
   },
   topRegions: [],
   comparisonYears: getOverviewComparisonYears(),
@@ -694,10 +795,10 @@ const emptySales = () => ({
 const createOverview = async (
   profile: AnalysisProfile,
   requestedProgramme?: string | null,
+  selectedComparisonYear?: number | string | null,
 ) => {
   const programmes = resolveProgrammes(profile, requestedProgramme);
   if (programmes.length === 0) return emptyOverview();
-  const comparisonYears = getOverviewComparisonYears();
 
   const [farmers, activities, capacity, offtakes, animalHealthActivities, boreholes] = await Promise.all([
     fetchCollectionByProgrammes("farmers", programmes),
@@ -716,8 +817,19 @@ const createOverview = async (
   let totalSheep = 0;
   let totalCattle = 0;
   const regionMap: Record<string, number> = {};
+  const availableYears = new Set<number>();
 
   for (const farmer of farmers) {
+    const farmerDate = parseDate(farmer.createdAt || farmer.registrationDate);
+    if (farmerDate) {
+      availableYears.add(farmerDate.getFullYear());
+    }
+
+    const vaccinationDate = getFarmerVaccinationDate(farmer);
+    if (vaccinationDate) {
+      availableYears.add(vaccinationDate.getFullYear());
+    }
+
     const gender = String(farmer.gender || "").trim().toLowerCase();
     if (gender === "male") maleFarmers += 1;
     else if (gender === "female") femaleFarmers += 1;
@@ -735,6 +847,33 @@ const createOverview = async (
     const region = String(farmer.region || farmer.county || "").trim();
     if (region) regionMap[region] = (regionMap[region] || 0) + 1;
   }
+
+  for (const record of boreholes) {
+    const date = getInfrastructureRecordDate(record);
+    if (date) availableYears.add(date.getFullYear());
+  }
+
+  for (const record of animalHealthActivities) {
+    const date = getActivityRecordDate(record);
+    if (date) availableYears.add(date.getFullYear());
+  }
+
+  for (const record of capacity) {
+    const date = parseDate(record.startDate ?? record.date ?? record.Date ?? record.createdAt ?? record.created_at);
+    if (date) availableYears.add(date.getFullYear());
+  }
+
+  for (const record of offtakes) {
+    const date = parseDate(record.date ?? record.Date ?? record.createdAt ?? record.created_at);
+    if (date) availableYears.add(date.getFullYear());
+  }
+
+  for (const record of activities) {
+    const date = getActivityRecordDate(record);
+    if (date) availableYears.add(date.getFullYear());
+  }
+
+  const comparisonYears = resolveOverviewComparisonYears([...availableYears], selectedComparisonYear);
 
   const topRegions = Object.entries(regionMap)
     .map(([name, farmerCount]) => ({name, farmerCount}))
@@ -788,7 +927,7 @@ const createOverview = async (
       totalCattle,
       totalAnimals,
       totalGoatsPurchased,
-      regionsVisited: Object.keys(regionMap).length,
+      countiesCovered: Object.keys(regionMap).length,
     },
     topRegions,
     comparisonYears,
@@ -798,9 +937,9 @@ const createOverview = async (
       {name: "Goats on record", value: totalGoats, color: "#ffc107"},
       {name: "Goats purchased", value: totalGoatsPurchased, color: "#a80d10"},
     ],
-    vaccinationTrend: buildOverviewVaccinationTrend(animalHealthActivities, comparisonYears),
+    vaccinationTrend: buildOverviewVaccinationTrend(farmers, comparisonYears),
     countyCoverage,
-    recentLocations: buildOverviewRecentLocations(activities),
+    recentLocations: buildOverviewRecentLocations(farmers),
     recentActivities,
     pendingActivitiesCount,
   };
@@ -1419,7 +1558,7 @@ export const getAnalysisSummary = onCall(async (request) => {
   let response: any;
   switch (scope) {
   case "overview":
-    response = await createOverview(profile, payload.programme);
+    response = await createOverview(profile, payload.programme, payload.selectedYear);
     break;
   case "livestock-analytics":
     response = await createLivestockAnalytics(profile, payload.programme, payload.dateRange, payload.target);

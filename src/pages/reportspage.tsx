@@ -380,6 +380,15 @@ const getCurrentMonthDates = () => {
   };
 };
 
+const getCurrentYearDates = () => {
+  const now = new Date();
+  const startOfYear = new Date(now.getFullYear(), 0, 1);
+  return {
+    startDate: formatDateToLocal(startOfYear),
+    endDate: formatDateToLocal(now),
+  };
+};
+
 const getQ1Dates = (year: number) => { 
   return { startDate: `${year}-01-01`, endDate: `${year}-03-31` };
 };
@@ -1595,18 +1604,12 @@ const PerformanceReport = () => {
 
   // --- Updated Clear Filters ---
   const clearFilters = useCallback(() => {
-    // Remove all filters except programme
-    setSelectedYear("");
+    const currentYearDates = getCurrentYearDates();
+    setSelectedYear(String(currentYear));
     setSelectedQuarter("");
-    
-    // Clear Date Range
-    setDateRange({ startDate: "", endDate: "" });
-    
-    // Reset TimeFrame to default
-    setTimeFrame('monthly');
-    
-    // Note: activeProgram is NOT reset as per requirements
-  }, []);
+    setDateRange(currentYearDates);
+    setTimeFrame('yearly');
+  }, [currentYear]);
 
   const setWeekFilter = useCallback(() => {
     const dates = getCurrentWeekDates();
