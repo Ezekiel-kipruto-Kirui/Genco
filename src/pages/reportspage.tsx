@@ -699,8 +699,19 @@ function computeLocalPerformanceReportData(
       return trendData;
     }
 
-    const baseYear = trendYear ?? currentYear;
-    for (let year = baseYear - 4; year <= baseYear; year += 1) {
+    const yearlyTrendYears =
+      trendYear !== null ?
+        Array.from({ length: 5 }, (_, index) => trendYear - 4 + index) :
+        Array.from(
+          new Set(
+            filteredFarmers
+              .map((farmer) => parseDate(farmer.createdAt || farmer.registrationDate)?.getFullYear() ?? null)
+              .filter((year): year is number => year !== null),
+          ),
+        ).sort((left, right) => left - right);
+    const resolvedYears = yearlyTrendYears.length > 0 ? yearlyTrendYears : [currentYear];
+
+    for (const year of resolvedYears) {
       const yearStart = new Date(year, 0, 1);
       const yearEnd = new Date(year, 11, 31);
       const count = filteredFarmers.filter((farmer) => {
@@ -904,7 +915,7 @@ type ReportSectionId =
 
 const REPORT_VIEW_PROFILES: Record<ReportAudience, { title: string; sections: ReportSectionId[] }> = {
   hr: {
-    title: "",
+    title: "General Report",
     sections: ["hr-summary", "hr-rankings", "hr-distribution"],
   },
   "project-manager": {
@@ -916,6 +927,9 @@ const REPORT_VIEW_PROFILES: Record<ReportAudience, { title: string; sections: Re
     sections: ["default-registration", "default-animal-health"],
   },
 };
+
+const ALL_PROGRAMMES_VALUE = "ALL";
+const ALL_YEARS_VALUE = "ALL";
 
 const resolveReportAudience = (
   userRole: string | null | undefined,
@@ -995,6 +1009,7 @@ const PerformanceReport = () => {
     [reportViewProfile.sections]
   );
   const showProgrammeFilter = accessibleProgrammes.length > 1;
+  const canViewAllReportProgrammes = userCanViewAllProgrammeData || accessibleProgrammes.length > 1;
   
   const selectedYearNum = useMemo(() => {
     const parsed = parseInt(selectedYear, 10);
@@ -1237,7 +1252,12 @@ const PerformanceReport = () => {
       staffMarkRecords.filter((record) => {
         const programme = normalizeProgramme(record.programme);
         const recordDate = record.dateAwarded || record.createdAt;
-        return (!activeProgram || programme === normalizeProgramme(activeProgram)) &&
+        const normalizedActiveProgramme = normalizeProgramme(activeProgram);
+        const matchesProgramme =
+          !normalizedActiveProgramme ||
+          normalizedActiveProgramme === ALL_PROGRAMMES_VALUE ||
+          programme === normalizedActiveProgramme;
+        return matchesProgramme &&
           isDateInRange(recordDate, dateRange.startDate, dateRange.endDate);
       })
       );
@@ -1251,7 +1271,13 @@ const PerformanceReport = () => {
       return (
       staffDirectoryRecords.filter((record) => {
         const programme = normalizeProgramme(record.programme);
-        return !activeProgram || !programme || programme === normalizeProgramme(activeProgram);
+        const normalizedActiveProgramme = normalizeProgramme(activeProgram);
+        return (
+          !normalizedActiveProgramme ||
+          normalizedActiveProgramme === ALL_PROGRAMMES_VALUE ||
+          !programme ||
+          programme === normalizedActiveProgramme
+        );
       })
       );
     },
@@ -1386,10 +1412,10 @@ const PerformanceReport = () => {
       return;
     }
 
-    if (!activeProgram) {
+    if (!activeProgram || normalizeProgramme(activeProgram) === ALL_PROGRAMMES_VALUE) {
       toast({
         title: "Programme required",
-        description: "Select a programme before creating staff.",
+        description: "Select a specific programme before creating staff.",
         variant: "destructive",
       });
       return;
@@ -1490,10 +1516,10 @@ const PerformanceReport = () => {
       return;
     }
 
-    if (!activeProgram) {
+    if (!activeProgram || normalizeProgramme(activeProgram) === ALL_PROGRAMMES_VALUE) {
       toast({
         title: "Programme required",
-        description: "Select a programme before awarding marks.",
+        description: "Select a specific programme before awarding marks.",
         variant: "destructive",
       });
       return;
@@ -1555,20 +1581,32 @@ const PerformanceReport = () => {
   }, [fetchStaffMarks]);
 
   useEffect(() => {
-    const nextProgramme = userCanViewAllProgrammeData ?
-      (activeProgram === "KPMD" || activeProgram === "RANGE" ? activeProgram : "KPMD") :
+    const nextProgramme = canViewAllReportProgrammes ?
+      (activeProgram === ALL_PROGRAMMES_VALUE || activeProgram === "KPMD" || activeProgram === "RANGE" ?
+        activeProgram :
+        ALL_PROGRAMMES_VALUE) :
       resolveActiveProgramme(activeProgram, accessibleProgrammes);
 
     if (nextProgramme !== activeProgram) {
       setActiveProgram(nextProgramme);
     }
-  }, [activeProgram, accessibleProgrammes, userCanViewAllProgrammeData]);
+  }, [activeProgram, accessibleProgrammes, canViewAllReportProgrammes]);
 
   const handleDateRangeChange = useCallback((key: string, value: string) => {
     setDateRange(prev => ({ ...prev, [key]: value }));
   }, []);
 
   const handleYearChange = useCallback((year: string) => {
+    if (year === ALL_YEARS_VALUE) {
+      setSelectedYear(ALL_YEARS_VALUE);
+      setSelectedQuarter("");
+      setDateRange({
+        startDate: "",
+        endDate: "",
+      });
+      setTimeFrame('yearly');
+      return;
+    }
     const yearNum = parseInt(year, 10);
     setSelectedYear(year);
     setSelectedQuarter("");
@@ -1604,12 +1642,19 @@ const PerformanceReport = () => {
 
   // --- Updated Clear Filters ---
   const clearFilters = useCallback(() => {
-    const currentYearDates = getCurrentYearDates();
-    setSelectedYear(String(currentYear));
+    setSelectedYear(ALL_YEARS_VALUE);
     setSelectedQuarter("");
-    setDateRange(currentYearDates);
+    setDateRange({
+      startDate: "",
+      endDate: "",
+    });
     setTimeFrame('yearly');
-  }, [currentYear]);
+    if (canViewAllReportProgrammes) {
+      setActiveProgram(ALL_PROGRAMMES_VALUE);
+    } else {
+      setActiveProgram(resolveActiveProgramme(activeProgram, accessibleProgrammes));
+    }
+  }, [accessibleProgrammes, activeProgram, canViewAllReportProgrammes]);
 
   const setWeekFilter = useCallback(() => {
     const dates = getCurrentWeekDates();
@@ -1673,7 +1718,7 @@ const PerformanceReport = () => {
               
               {/* Year Selector */}
                 <div className="w-full md:w-40 space-y-0">
-                  <Label className="sr-only">Fiscal Year</Label>
+                  
                   <Select value={selectedYear || undefined} onValueChange={handleYearChange}>
                   <SelectTrigger className="h-9">
                     <div className="flex items-center gap-2">
@@ -1682,6 +1727,7 @@ const PerformanceReport = () => {
                     </div>
                   </SelectTrigger>
                   <SelectContent>
+                     <SelectItem value={ALL_YEARS_VALUE}>Years</SelectItem>
                      {availableYears.map(year => (
                        <SelectItem key={year} value={year}>{year}</SelectItem>
                      ))}
@@ -1692,12 +1738,13 @@ const PerformanceReport = () => {
               {/* Programme Selector */}
               {showProgrammeFilter && (
                 <div className="w-full md:w-48 space-y-1">
-                  <Label className="sr-only">Programme</Label>
+                 
                   <Select value={activeProgram} onValueChange={setActiveProgram}>
                     <SelectTrigger className="h-9">
                       <SelectValue placeholder="Select Programme" />
                     </SelectTrigger>
                     <SelectContent>
+                      <SelectItem value={ALL_PROGRAMMES_VALUE}>Programme</SelectItem>
                        <SelectItem value="RANGE">RANGE</SelectItem>
                       <SelectItem value="KPMD">KPMD</SelectItem>                     
                     </SelectContent>
@@ -1708,10 +1755,14 @@ const PerformanceReport = () => {
               {/* Quarter Selector (Replaces Q1-Q4 Buttons) */}
               
               <div className="w-full md:w-40 space-y-0">
-                <Label className="sr-only">Quarter</Label>
-                <Select value={selectedQuarter || undefined} onValueChange={handleQuarterChange}>
+        
+                <Select
+                  value={selectedQuarter || undefined}
+                  onValueChange={handleQuarterChange}
+                  disabled={selectedYear === ALL_YEARS_VALUE}
+                >
                   <SelectTrigger className="h-9">
-                    <SelectValue placeholder="Select Quarter" />
+                    <SelectValue placeholder={selectedYear === ALL_YEARS_VALUE ? "Select Year First" : "Quarter"} />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="q1">Q1 (Jan-Mar)</SelectItem>
@@ -1720,11 +1771,7 @@ const PerformanceReport = () => {
                     <SelectItem value="q4">Q4 (Full Year)</SelectItem>
                   </SelectContent>
                 </Select>
-              </div>
-               <Button onClick={clearFilters} variant="ghost" size="sm" className="text-red-500 hover:text-red-600">Reset Filters</Button>
-              <div className="flex flex-wrap gap-2 w-full md:w-auto">
-                <div className="space-y-0">
-                  <Label className="sr-only" htmlFor="startDate">From</Label>
+              </div>                  
                   <Input
                     id="startDate"
                     type="date"
@@ -1732,9 +1779,8 @@ const PerformanceReport = () => {
                     onChange={(e) => handleDateRangeChange("startDate", e.target.value)}
                     className="border-gray-200 text-xs focus:border-blue-500 h-9 pr-2"
                   />
-                </div>
-                <div className="space-y-0">
-                  <Label className="sr-only" htmlFor="endDate">To</Label>
+                
+                 
                   <Input
                     id="endDate"
                     type="date"
@@ -1742,14 +1788,10 @@ const PerformanceReport = () => {
                     onChange={(e) => handleDateRangeChange("endDate", e.target.value)}
                     className="border-gray-200 text-xs focus:border-blue-500 h-9 pr-2"
                   />
-                </div>
-              
-
-            
                 <Button variant="outline" onClick={setWeekFilter} size="sm">This Week</Button>
                 <Button variant="outline" onClick={setMonthFilter} size="sm">This Month</Button>
-               
-              </div>
+                <Button onClick={clearFilters} variant="ghost" size="sm" className="text-red-500 hover:text-red-600">Reset</Button>
+              
             </div>
           </CardContent>
         </Card>
@@ -2194,7 +2236,7 @@ const PerformanceReport = () => {
 
       {hasSection("project-manager-report") && (
       <section>
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4 mb-6">
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 mb-6">
           <StatsCard
             title="Total Registered Farmers"
             value={data.totalFarmers.toLocaleString()}
@@ -2212,15 +2254,9 @@ const PerformanceReport = () => {
           <StatsCard
             title="Animal Census"
             value={data.totalAnimals.toLocaleString()}
+            subtext={`Purchased goats: ${data.totalGoatsPurchased.toLocaleString()}`}
             icon={Beef}
             color="orange"
-          />
-
-          <StatsCard
-            title="Total Goats Purchased"
-            value={data.totalGoatsPurchased.toLocaleString()}
-            icon={Beef}
-            color="green"
           />
         </div>
 

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, type ReactNode } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 // REALTIME DATABASE IMPORTS
 import {
@@ -75,7 +75,7 @@ interface StatsCardProps {
   title: string;
   value: string | number;
   icon: any;
-  description?: string;
+  description?: ReactNode;
 }
 
 interface FilterSectionProps {
@@ -222,18 +222,22 @@ const getCurrentMonthDates = () => {
 // --- Extracted Sub-Components (Optimization) ---
 
 const StatsCard = ({ title, value, icon: Icon, description }: StatsCardProps) => (
-  <Card className="bg-white text-slate-900 shadow-lg border border-gray-200 relative overflow-hidden">
+  <Card className="relative overflow-hidden border border-gray-200 bg-white text-slate-900 shadow-md">
     <div className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-blue-500 to-purple-600"></div>
-    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 pt-4 pl-6">
-      <CardTitle className="text-sm font-medium text-slate-700">{title}</CardTitle>
+    <CardHeader className="flex flex-row items-center justify-between space-y-0 px-4 pb-1.5 pt-3">
+      <CardTitle className="truncate text-xs font-medium leading-tight text-slate-700 sm:text-sm">{title}</CardTitle>
     </CardHeader>
-    <CardContent className="pl-6 pb-4 flex flex-row">
-      <div className="mr-2 rounded-full p-2 bg-blue-50 text-blue-600">
-        <Icon className="h-5 w-5" />
+    <CardContent className="flex flex-row items-start gap-2 px-4 pb-3">
+      <div className="rounded-full bg-blue-50 p-1.5 text-blue-600">
+        <Icon className="h-4 w-4 sm:h-5 sm:w-5" />
       </div>
-      <div>
-        <div className="text-2xl font-bold text-slate-900 mb-2">{value}</div>
-        {description && <p className="text-xs text-slate-600 mt-2 bg-slate-50 px-2 py-1 rounded-md border border-slate-100">{description}</p>}
+      <div className="min-w-0 flex-1">
+        <div className="mb-1.5 whitespace-nowrap text-lg font-bold leading-none text-slate-900 sm:text-xl">{value}</div>
+        {description && (
+          <div className="mt-1 inline-flex max-w-full flex-wrap gap-1 rounded-md border border-slate-100 bg-slate-50 px-1.5 py-1 text-[11px] leading-tight text-slate-600 sm:text-xs">
+            {description}
+          </div>
+        )}
       </div>
     </CardContent>
   </Card>
@@ -1066,14 +1070,19 @@ const HayStoragePage = () => {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
         <StatsCard title="Land Size" value={formatArea(stats.totalLandUnderPasture)} icon={LandPlot} description="Acres Harvested" />
         <StatsCard title="Total Revenue" value={`KSh ${millify(stats.totalRevenue)}`} icon={DollarSign} description="Revenue from hay sales" />
         <StatsCard
           title="Bales Harvested"
           value={`${millify(stats.totalBalesHarvested)}`}
           icon={Package}
-          description={`Sold: ${stats.totalBalesSold.toLocaleString()} | Balance: ${stats.totalBalesBalance.toLocaleString()}`}
+          description={
+            <>
+              <span className="whitespace-nowrap">Sold: {stats.totalBalesSold.toLocaleString()}</span>
+              <span className="whitespace-nowrap">Balance: {stats.totalBalesBalance.toLocaleString()}</span>
+            </>
+          }
         />
         <StatsCard title="Storage Facilities" value={stats.totalFacilities} icon={Warehouse} description="Unique facilities in view" />
       </div>

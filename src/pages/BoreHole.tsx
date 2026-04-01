@@ -1097,25 +1097,29 @@ const BoreholePage = () => {
 
   // Memoized components
   const StatsCard = useCallback(({ title, value, icon: Icon, description, additionalInfo }: any) => (
-    <Card className="bg-white text-slate-900 shadow-lg border border-gray-200 relative overflow-hidden">
+    <Card className="relative overflow-hidden border border-gray-200 bg-white text-slate-900 shadow-md">
       <div className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-blue-500 to-cyan-600"></div>
       
-      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 pt-4 pl-6">
-        <CardTitle className="text-sm font-medium text-slate-700">{title}</CardTitle>
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 px-4 pb-1.5 pt-3">
+        <CardTitle className="truncate text-xs font-medium leading-tight text-slate-700 sm:text-sm">
+          {title}
+        </CardTitle>
       </CardHeader>
-      <CardContent className="pl-6 pb-4 flex flex-row">
-        <div className="mr-2 rounded-full">
-          <Icon className="h-8 w-8 text-blue-600" />
+      <CardContent className="flex flex-row items-start gap-2 px-4 pb-3">
+        <div className="rounded-full pt-0.5">
+          <Icon className="h-6 w-6 text-blue-600 sm:h-7 sm:w-7" />
         </div>
-        <div>
-          <div className="text-2xl font-bold text-slate-900 mb-2">{value}</div>
+        <div className="min-w-0 flex-1">
+          <div className="mb-1.5 whitespace-nowrap text-lg font-bold leading-none text-slate-900 sm:text-xl">
+            {value}
+          </div>
           {description && (
-            <p className="text-xs text-slate-600 mt-2 bg-slate-50 px-2 py-1 rounded-md border border-slate-100">
+            <p className="inline-flex max-w-full whitespace-nowrap rounded-md border border-slate-100 bg-slate-50 px-1.5 py-1 text-[11px] leading-tight text-slate-600 sm:text-xs">
               {description}
             </p>
           )}
           {additionalInfo && (
-            <div className="text-xs text-slate-500 mt-1 space-y-1">
+            <div className="mt-1 flex flex-wrap gap-1.5 text-[11px] leading-tight text-slate-500 sm:text-xs">
               {additionalInfo}
             </div>
           )}
@@ -1346,16 +1350,22 @@ const BoreholePage = () => {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
         <StatsCard 
           title="Total Boreholes" 
           value={stats.totalBoreholes} 
           icon={Building}
           additionalInfo={
             <>
-              <div>• {stats.drilledBoreholes} drilled</div>
-              <div>• {stats.equippedBoreholes} equipped</div>
-              <div>• {stats.maintainedBoreholes} maintained</div>
+              <div className="whitespace-nowrap rounded-md border border-slate-100 bg-slate-50 px-2 py-1">
+                Drilled: {stats.drilledBoreholes}
+              </div>
+              <div className="whitespace-nowrap rounded-md border border-slate-100 bg-slate-50 px-2 py-1">
+                Equipped: {stats.equippedBoreholes}
+              </div>
+              <div className="whitespace-nowrap rounded-md border border-slate-100 bg-slate-50 px-2 py-1">
+                Maintained: {stats.maintainedBoreholes}
+              </div>
             </>
           }
         />

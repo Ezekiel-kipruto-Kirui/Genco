@@ -165,7 +165,8 @@ const buildRoleMenuItems = (userRole: string | null, userAttribute: string | nul
   if (isHummanResourceManager(principal)) {
     return [
       { title: "Dashboard Overview", url: "/dashboard", icon: TrendingUp },
-      { title: "Report", url: "/dashboard/reports", icon: LineChart },
+      { title: "General Report", url: "/dashboard/reports", icon: LineChart },
+      { title: "Progress Dashboard", url: "/dashboard/livestock/analytics", icon: TrendingUp },
     ];
   }
 

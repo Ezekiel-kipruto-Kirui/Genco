@@ -404,7 +404,7 @@ const buildInfrastructureComparison = (
 
   for (const record of records) {
     const statuses = getInfrastructureStatuses(record);
-    if (!statuses.maintained) continue;
+    if (!statuses.drilled && !statuses.maintained) continue;
     const date = getInfrastructureRecordDate(record);
     if (!date) continue;
 
@@ -854,23 +854,23 @@ const TopMetricCard = ({
   progressLabel: string;
   detail?: ReactNode;
 }) => (
-  <div className="rounded-[20px] border border-slate-200 bg-white px-6 py-5 shadow-[0_8px_30px_rgba(15,23,42,0.05)]">
+  <div className="rounded-[18px] border border-slate-200 bg-white px-4 py-4 shadow-[0_8px_30px_rgba(15,23,42,0.05)] sm:px-5">
     <div className="flex items-start justify-between gap-4">
-      <div className="space-y-2">
-        <p className={`text-[16px] font-medium tracking-[-0.02em] ${SECONDARY_TEXT_CLASS}`}>{title}</p>
-        <p className="text-[26px] font-semibold tracking-[-0.04em] text-slate-950 sm:text-[42px]">
+      <div className="min-w-0 space-y-1.5">
+        <p className={`text-sm font-medium tracking-[-0.02em] ${SECONDARY_TEXT_CLASS}`}>{title}</p>
+        <p className="text-[24px] font-semibold leading-none tracking-[-0.04em] text-slate-950 sm:text-[34px]">
           {formatWholeNumber(value)}
         </p>
       </div>
-      <div className="mt-1">{icon}</div>
+      <div className="mt-0.5 shrink-0">{icon}</div>
     </div>
 
-    <div className={`mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] ${SECONDARY_TEXT_CLASS}`}>
-      <span className={`font-semibold ${SECONDARY_TEXT_CLASS}`}>{progressLabel}</span>
+    <div className={`mt-3 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px] leading-tight sm:text-xs ${SECONDARY_TEXT_CLASS}`}>
+      <span className={`shrink-0 whitespace-nowrap font-semibold ${SECONDARY_TEXT_CLASS}`}>{progressLabel}</span>
       {detail}
     </div>
 
-    <div className="mt-4 h-[8px] rounded-full bg-slate-100">
+    <div className="mt-3 h-[6px] rounded-full bg-slate-100">
       <div
         className="h-full rounded-full transition-[width] duration-500"
         style={{ width: `${Math.min(progressValue, 100)}%`, backgroundColor: accentColor }}
@@ -944,13 +944,11 @@ const ComparisonYearSelector = ({
 const DonutPanel = ({
   title,
   data,
-  comparisonNote,
   headerExtra,
   tooltipValueLabel = "records",
 }: {
   title: string;
   data: DonutSegment[];
-  comparisonNote?: string;
   headerExtra?: ReactNode;
   tooltipValueLabel?: string;
 }) => {
@@ -996,7 +994,6 @@ const DonutPanel = ({
       {hasValues ? (
         <>
           <ChartLegend items={data} />
-          {comparisonNote ? <p className={`mt-2 text-center text-xs ${SECONDARY_TEXT_CLASS}`}>{comparisonNote}</p> : null}
         </>
       ) : (
         <p className={`mt-3 text-center text-sm ${SECONDARY_TEXT_CLASS}`}>No data available yet</p>
@@ -1418,6 +1415,7 @@ const DashboardOverview = () => {
   const availableComparisonYearsKey = comparisonYears.availableYears.join(",");
   const comparisonYearValue = selectedComparisonYear ?? comparisonYears.year2;
   const comparisonYearLabel = getComparisonYearLabel(comparisonYears.year1, comparisonYearValue, 2);
+  const showComparisonSelector = comparisonYears.availableYears.some((year) => year > comparisonYears.year1);
   const maintainedInfrastructureData = relabelComparisonDonutSegments(
     overviewData.maintainedInfrastructure ?? EMPTY_DONUT_SEGMENTS,
     comparisonYears.year1,
@@ -1438,11 +1436,6 @@ const DashboardOverview = () => {
     !overviewQuery.isError &&
     overviewQuery.isLoading;
   const isLoadingData = !hasOverviewData && (isLoadingRemoteOverview || localOverviewLoading || shouldFetchLocalOverview);
-  const comparisonNote =
-    comparisonYearValue === comparisonYears.year1
-      ? `Year 1 = ${comparisonYears.year1}`
-      : `Year 1 = ${comparisonYears.year1} | ${comparisonYearLabel} = ${comparisonYearValue}`;
-
   useEffect(() => {
     if (
       selectedComparisonYear !== null &&
@@ -1474,7 +1467,7 @@ const DashboardOverview = () => {
   return (
     <div className="min-h-screen bg-[#f5f6f7] px-3 py-4 sm:px-5 sm:py-5">
       <div className="mx-auto max-w-[1120px] space-y-6">
-        <div className="flex items-center justify-end">
+        <div className="flex flex-wrap items-end justify-end gap-4">
           {canSwitchProgrammes ? (
             <div className="w-full max-w-[170px] space-y-2">
               <Label htmlFor="overview-programme" className={`text-xs uppercase tracking-[0.16em] ${SECONDARY_TEXT_CLASS}`}>
@@ -1494,13 +1487,28 @@ const DashboardOverview = () => {
               </Select>
             </div>
           ) : null}
+          {showComparisonSelector ? (
+            <div className="w-full max-w-[170px] space-y-2">
+              <Label htmlFor="overview-year-two" className={`text-xs uppercase tracking-[0.16em] ${SECONDARY_TEXT_CLASS}`}>
+                Year 2
+              </Label>
+              <div id="overview-year-two">
+                <ComparisonYearSelector
+                  businessStartYear={comparisonYears.year1}
+                  availableYears={comparisonYears.availableYears}
+                  selectedYear={comparisonYearValue}
+                  onChange={setSelectedComparisonYear}
+                />
+              </div>
+            </div>
+          ) : null}
         </div>
 
         {isLoadingData ? (
           <OverviewLoading />
         ) : (
           <>
-            <div className="grid gap-4 md:grid-cols-3">
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
               <TopMetricCard
                 title="Registered Farmers"
                 value={stats.totalFarmers}
@@ -1510,9 +1518,9 @@ const DashboardOverview = () => {
                 icon={<UsersRound className="h-5 w-5 text-[#2ea55f]" />}
                 detail={
                   <>
-                    <span>Male : {formatWholeNumber(stats.maleFarmers)}</span>
-                    <span>|</span>
-                    <span>Female : {formatWholeNumber(stats.femaleFarmers)}</span>
+                    <span className="whitespace-nowrap">Male : {formatWholeNumber(stats.maleFarmers)}</span>
+                    <span className="shrink-0">|</span>
+                    <span className="whitespace-nowrap">Female : {formatWholeNumber(stats.femaleFarmers)}</span>
                   </>
                 }
               />
@@ -1535,9 +1543,9 @@ const DashboardOverview = () => {
                 icon={<ShoppingCart className="h-5 w-5 text-[#f58b1f]" />}
                 detail={
                   <>
-                    <span>Goats : {formatWholeNumber(stats.totalGoats)}</span>
-                    <span>|</span>
-                    <span>Purchased : {formatWholeNumber(stats.totalGoatsPurchased)}</span>
+                    <span className="whitespace-nowrap">Goats : {formatWholeNumber(stats.totalGoats)}</span>
+                    <span className="shrink-0">|</span>
+                    <span className="whitespace-nowrap">Purchased : {formatWholeNumber(stats.totalGoatsPurchased)}</span>
                   </>
                 }
               />
@@ -1545,18 +1553,9 @@ const DashboardOverview = () => {
 
             <div className="grid items-stretch gap-6 lg:grid-cols-2">
               <DonutPanel
-                title="MAINTAINED INFRASTRUCTURE"
+                title="INFRASTRUCTURE"
                 data={maintainedInfrastructureData}
-                comparisonNote={comparisonNote}
-                tooltipValueLabel="maintained boreholes"
-                headerExtra={
-                  <ComparisonYearSelector
-                    businessStartYear={comparisonYears.year1}
-                    availableYears={comparisonYears.availableYears}
-                    selectedYear={comparisonYearValue}
-                    onChange={setSelectedComparisonYear}
-                  />
-                }
+                tooltipValueLabel="drilled or maintained boreholes"
               />
               <DonutPanel
                 title="ANIMAL CENSUS VS GOATS PURCHASED"
@@ -1568,31 +1567,14 @@ const DashboardOverview = () => {
               <DonutPanel
                 title="FARMERS REGISTRATION RATE"
                 data={registrationComparisonData}
-                comparisonNote={comparisonNote}
-                headerExtra={
-                  <ComparisonYearSelector
-                    businessStartYear={comparisonYears.year1}
-                    availableYears={comparisonYears.availableYears}
-                    selectedYear={comparisonYearValue}
-                    onChange={setSelectedComparisonYear}
-                  />
-                }
               />
               <RecentLocationsPanel locations={overviewData.recentLocations ?? EMPTY_OVERVIEW_DATA.recentLocations} />
             </div>
 
             <div className="grid items-stretch gap-6 lg:grid-cols-2">
               <OverviewPanel
-                title="GOATS VACCINATION"
+                title="ANIMAL HEALTH (VACCINATION)"
                 className="flex h-full min-h-[360px] flex-col"
-                headerExtra={
-                  <ComparisonYearSelector
-                    businessStartYear={comparisonYears.year1}
-                    availableYears={comparisonYears.availableYears}
-                    selectedYear={comparisonYearValue}
-                    onChange={setSelectedComparisonYear}
-                  />
-                }
               >
                 <div className="mt-5 flex-1">
                   <ResponsiveContainer width="100%" height={260}>

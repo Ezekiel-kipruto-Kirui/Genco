@@ -366,8 +366,8 @@ const RequisitionsPage = () => {
     [userRole, userAttribute]
   );
   const canViewAllRequisitionProgrammes = useMemo(
-    () => userCanViewAllProgrammes,
-    [userCanViewAllProgrammes]
+    () => userCanViewAllProgrammes || userHasFinanceRights,
+    [userCanViewAllProgrammes, userHasFinanceRights]
   );
   const accessibleProgrammes = useMemo(
     () => resolveAccessibleProgrammes(canViewAllRequisitionProgrammes, allowedProgrammes),

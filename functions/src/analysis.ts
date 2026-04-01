@@ -171,9 +171,29 @@ const getLeaderName = (value: unknown, fallback: string): string => {
   return fallback;
 };
 
+const getIdentityToken = (value: unknown): string =>
+  typeof value === "string" ? value.trim().toLowerCase() : "";
+
+const getLeaderAggregationKey = (record: Record<string, unknown>): string => {
+  const idToken = getIdentityToken(record.idNumber);
+  if (idToken) return `id:${idToken}`;
+
+  const phoneToken = getIdentityToken(record.phone ?? record.phoneNumber);
+  if (phoneToken) return `phone:${phoneToken}`;
+
+  const usernameToken = getIdentityToken(record.username ?? record.offtakeUserId);
+  if (usernameToken) return `user:${usernameToken}`;
+
+  const nameToken = getIdentityToken(record.farmerName ?? record.name);
+  if (nameToken) return `name:${nameToken}`;
+
+  return `record:${String(record.id || "").trim()}`;
+};
+
 const getOfftakeGoatsTotal = (record: Record<string, unknown>): number =>
   Math.max(
     getFieldNumber(record, "totalGoats"),
+    getFieldNumber(record, "noSheepGoats"),
     getFieldNumber(record, "goatsBought"),
     getArrayLikeSize(record.goats),
     getArrayLikeSize(record.Goats),
@@ -413,7 +433,7 @@ const buildInfrastructureComparison = (
 
   for (const record of records) {
     const statuses = getInfrastructureStatuses(record);
-    if (!statuses.maintained) {
+    if (!statuses.drilled && !statuses.maintained) {
       continue;
     }
 
@@ -1268,8 +1288,17 @@ const createPerformanceReport = async (
       });
       return trendData;
     }
-    const baseYear = trendYear ?? currentYear;
-    for (let year = baseYear - 4; year <= baseYear; year += 1) {
+    const yearlyTrendYears = trendYear !== null ?
+      Array.from({length: 5}, (_, index) => trendYear - 4 + index) :
+      Array.from(
+        new Set(
+          filteredFarmers
+            .map((farmer) => parseDate(farmer.createdAt || farmer.registrationDate)?.getFullYear() ?? null)
+            .filter((year): year is number => year !== null),
+        ),
+      ).sort((left, right) => left - right);
+    const resolvedYears = yearlyTrendYears.length > 0 ? yearlyTrendYears : [currentYear];
+    for (const year of resolvedYears) {
       const yearStart = new Date(year, 0, 1);
       const yearEnd = new Date(year, 11, 31);
       const count = filteredFarmers.filter((farmer) => {
@@ -1375,7 +1404,7 @@ const createSalesReport = async (
   const genderCounts: Record<string, number> = {Male: 0, Female: 0};
   const countySales: Record<string, number> = {};
   const locationSales: Record<string, number> = {};
-  const farmerSales: Record<string, {name: string; revenue: number; animals: number; county: string}> = {};
+  const farmerSales: Record<string, {name: string; revenue: number; animals: number; goats: number; county: string; records: number}> = {};
   const monthlyData: Record<string, {monthName: string; revenue: number; volume: number}> = {};
   const requisitionMonthlyData: Record<string, {monthName: string; count: number; amount: number}> = {};
   const pricePerKg = parseNumber(salesInputs?.pricePerKg);
@@ -1388,7 +1417,7 @@ const createSalesReport = async (
     const goatsArr = Array.isArray(record.goats) ? record.goats : (Array.isArray(record.Goats) ? record.Goats : []);
     const sheepArr = Array.isArray(record.sheep) ? record.sheep : (Array.isArray(record.Sheep) ? record.Sheep : []);
     const cattleArr = Array.isArray(record.cattle) ? record.cattle : (Array.isArray(record.Cattle) ? record.Cattle : []);
-    const txGoats = parseNumber(record.totalGoats) || goatsArr.length;
+    const txGoats = getOfftakeGoatsTotal(record);
     const txSheep = sheepArr.length;
     const txCattle = cattleArr.length;
 
@@ -1420,13 +1449,17 @@ const createSalesReport = async (
     locationSales[location] = (locationSales[location] || 0) + (txGoats + txSheep + txCattle);
 
     const farmerName = String(record.farmerName || record.name || record.username || "Unknown").trim() || "Unknown";
-    if (!farmerSales[farmerName]) {
-      farmerSales[farmerName] = {name: farmerName, revenue: 0, animals: 0, county};
+    const beneficiaryKey = getLeaderAggregationKey(record);
+    if (!farmerSales[beneficiaryKey]) {
+      farmerSales[beneficiaryKey] = {name: farmerName, revenue: 0, animals: 0, goats: 0, county, records: 0};
     } else if (county !== "Unknown") {
-      farmerSales[farmerName].county = county;
+      farmerSales[beneficiaryKey].county = county;
     }
-    farmerSales[farmerName].revenue += txCarcassWeight * pricePerKg;
-    farmerSales[farmerName].animals += txGoats + txSheep + txCattle;
+    farmerSales[beneficiaryKey].name = farmerName || farmerSales[beneficiaryKey].name;
+    farmerSales[beneficiaryKey].revenue += txCarcassWeight * pricePerKg;
+    farmerSales[beneficiaryKey].animals += txGoats;
+    farmerSales[beneficiaryKey].goats += txGoats;
+    farmerSales[beneficiaryKey].records += 1;
 
     const date = parseDate(record.date || record.Date || record.createdAt);
     if (date) {
@@ -1479,7 +1512,7 @@ const createSalesReport = async (
     .sort((a, b) => b.count - a.count)
     .slice(0, 10);
   const topFarmers = Object.values(farmerSales)
-    .sort((a, b) => b.revenue - a.revenue)
+    .sort((a, b) => (b.goats - a.goats) || (b.revenue - a.revenue))
     .slice(0, 5);
   const monthlyTrend = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"].map((month) => {
     const match = Object.values(monthlyData).find((entry) => entry.monthName === month);

@@ -70,9 +70,11 @@ interface OfftakeData {
   sheep?: Array<{ live: string; carcass: string; price: string }>;
   cattle?: Array<{ live: string; carcass: string; price: string }>;
   totalGoats?: number;
+  noSheepGoats?: number;
   totalPrice?: number;
   phone?: string;
   username?: string;
+  idNumber?: string;
 }
 
 interface SalesInputs {
@@ -144,7 +146,7 @@ interface SalesAnalyticsPayload {
   genderData: Array<{ name: string; value: number }>;
   countyData: Array<{ name: string; count: number }>;
   topLocations: Array<{ name: string; count: number }>;
-  topFarmers: Array<{ name: string; revenue: number; animals: number; county: string }>;
+  topFarmers: Array<{ name: string; revenue: number; animals: number; goats: number; county: string; records: number }>;
   monthlyTrend: Array<{ month: string; revenue: number; volume: number }>;
   requisitionTrend: Array<{ month: string; count: number; amount: number }>;
   top3Months: Array<{ month: string; revenue: number; volume: number }>;
@@ -273,6 +275,52 @@ const parseNumber = (value: unknown): number => {
     if (Number.isFinite(parsed)) return parsed;
   }
   return 0;
+};
+
+const getArrayLikeSize = (value: unknown): number => {
+  if (Array.isArray(value)) return value.length;
+  if (value && typeof value === "object") return Object.keys(value as Record<string, unknown>).length;
+  return 0;
+};
+
+const getGoatCountFromUnknown = (value: unknown): number => {
+  if (typeof value === "number" || typeof value === "string") return parseNumber(value);
+  if (Array.isArray(value)) return value.length;
+  if (value && typeof value === "object") {
+    const goatRecord = value as Record<string, unknown>;
+    if (goatRecord.total !== undefined) return parseNumber(goatRecord.total);
+    return parseNumber(goatRecord.male) + parseNumber(goatRecord.female);
+  }
+  return 0;
+};
+
+const getOfftakeGoatTotal = (record: Partial<OfftakeData> | Record<string, unknown>): number =>
+  Math.max(
+    parseNumber(record.totalGoats),
+    parseNumber(record.noSheepGoats),
+    getGoatCountFromUnknown(record.goats),
+    getArrayLikeSize((record as Record<string, unknown>).Goats),
+    parseNumber((record as Record<string, unknown>).goatsBought),
+    0,
+  );
+
+const normalizeIdentityToken = (value: unknown): string =>
+  typeof value === "string" ? value.trim().toLowerCase() : "";
+
+const getBeneficiaryAggregationKey = (record: Partial<OfftakeData>): string => {
+  const idToken = normalizeIdentityToken(record.idNumber);
+  if (idToken) return `id:${idToken}`;
+
+  const phoneToken = normalizeIdentityToken(record.phone);
+  if (phoneToken) return `phone:${phoneToken}`;
+
+  const usernameToken = normalizeIdentityToken(record.username);
+  if (usernameToken) return `user:${usernameToken}`;
+
+  const nameToken = normalizeIdentityToken(record.farmerName);
+  if (nameToken) return `name:${nameToken}`;
+
+  return `record:${String(record.id || "").trim()}`;
 };
 
 const getOrderEntries = (orders: OrderAnalyticsRecord["orders"]): OrderAnalyticsItem[] => {
@@ -408,7 +456,7 @@ const buildLocalSalesAnalytics = (
   const genderCounts: Record<string, number> = { Male: 0, Female: 0 };
   const countySales: Record<string, number> = {};
   const locationSales: Record<string, number> = {};
-  const farmerSales: Record<string, { name: string; revenue: number; animals: number; county: string }> = {};
+  const farmerSales: Record<string, { name: string; revenue: number; animals: number; goats: number; county: string; records: number }> = {};
   const monthlyData: Record<string, { monthName: string; revenue: number; volume: number }> = {};
   const requisitionMonthlyData: Record<string, { monthName: string; count: number; amount: number }> = {};
   const filteredOrders = orders.filter((record) => {
@@ -426,7 +474,7 @@ const buildLocalSalesAnalytics = (
     const goatsArr = Array.isArray(record.goats) ? record.goats : [];
     const sheepArr = Array.isArray(record.sheep) ? record.sheep : [];
     const cattleArr = Array.isArray(record.cattle) ? record.cattle : [];
-    const txGoats = parseNumber(record.totalGoats) || goatsArr.length;
+    const txGoats = getOfftakeGoatTotal(record);
     const txSheep = sheepArr.length;
     const txCattle = cattleArr.length;
     const txCost = parseNumber(record.totalPrice);
@@ -459,17 +507,21 @@ const buildLocalSalesAnalytics = (
     const location = String(record.location || "Unknown").trim() || "Unknown";
     const farmerName = String(record.farmerName || record.username || "Unknown").trim() || "Unknown";
     const txAnimals = txGoats + txSheep + txCattle;
+    const beneficiaryKey = getBeneficiaryAggregationKey(record);
 
     countySales[county] = (countySales[county] || 0) + txGoats;
     locationSales[location] = (locationSales[location] || 0) + txAnimals;
 
-    if (!farmerSales[farmerName]) {
-      farmerSales[farmerName] = { name: farmerName, revenue: 0, animals: 0, county };
+    if (!farmerSales[beneficiaryKey]) {
+      farmerSales[beneficiaryKey] = { name: farmerName, revenue: 0, animals: 0, goats: 0, county, records: 0 };
     } else if (county !== "Unknown") {
-      farmerSales[farmerName].county = county;
+      farmerSales[beneficiaryKey].county = county;
     }
-    farmerSales[farmerName].revenue += txCarcassWeight * salesInputs.pricePerKg;
-    farmerSales[farmerName].animals += txAnimals;
+    farmerSales[beneficiaryKey].name = farmerName || farmerSales[beneficiaryKey].name;
+    farmerSales[beneficiaryKey].revenue += txCarcassWeight * salesInputs.pricePerKg;
+    farmerSales[beneficiaryKey].animals += txGoats;
+    farmerSales[beneficiaryKey].goats += txGoats;
+    farmerSales[beneficiaryKey].records += 1;
 
     const date = parseDate(record.date);
     if (date) {
@@ -545,7 +597,7 @@ const buildLocalSalesAnalytics = (
       .sort((a, b) => b.count - a.count)
       .slice(0, 10),
     topFarmers: Object.values(farmerSales)
-      .sort((a, b) => b.revenue - a.revenue)
+      .sort((a, b) => (b.goats - a.goats) || (b.revenue - a.revenue))
       .slice(0, 5),
     monthlyTrend: ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"].map((month) => {
       const match = Object.values(monthlyData).find((entry) => entry.monthName === month);
@@ -824,7 +876,8 @@ const SalesReport = () => {
           goats: goatsArr,
           sheep: sheepArr,
           cattle: cattleArr,
-          totalGoats: Number(item.totalGoats) || goatsArr.length,
+          totalGoats: Number(item.totalGoats) || Number(item.noSheepGoats) || goatsArr.length,
+          noSheepGoats: Number(item.noSheepGoats) || 0,
           totalPrice: Number(item.totalPrice ?? item.totalprice ?? 0) || 0
         };
       }).filter((record) => {
