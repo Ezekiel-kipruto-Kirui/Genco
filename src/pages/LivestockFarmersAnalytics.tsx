@@ -30,13 +30,16 @@ const BAR_COLORS = [COLORS.navy, COLORS.orange, COLORS.yellow];
 const TARGETS = {
   weekly: 30,
   monthly: 117,
+  quarterly: 351,
   yearly: 1404
 };
+const PROGRESS_MONTHLY_TARGET = 117;
 
 // --- Interfaces ---
 interface FarmerData {
   id: string;
   createdAt: number | string;
+  registrationDate?: number | string;
   name: string;
   gender: string;
   phone: string;
@@ -57,6 +60,20 @@ interface TrainingData {
   programme?: string;
 }
 
+type ProgressStatus = "achieved" | "on-track" | "behind" | "needs-attention";
+
+type ProgressPeriodKey = "q1" | "q2" | "q3" | "year";
+
+interface ProgressPeriod {
+  key: ProgressPeriodKey;
+  label: string;
+  count: number;
+  target: number;
+  progressPercentage: number;
+  status: ProgressStatus;
+  met: boolean;
+}
+
 interface UserProgress {
   id: string;
   name: string;
@@ -64,7 +81,8 @@ interface UserProgress {
   farmersRegistered: number;
   target: number; // Dynamic target
   progressPercentage: number;
-  status: 'achieved' | 'on-track' | 'behind' | 'needs-attention';
+  status: ProgressStatus;
+  periods: ProgressPeriod[];
 }
 
 interface PieDataItem {
@@ -320,6 +338,13 @@ const getGoatTotal = (goats: any): number => {
   return 0;
 };
 
+const getProgressStatus = (progressPercentage: number): ProgressStatus => {
+  if (progressPercentage >= 100) return "achieved";
+  if (progressPercentage >= 75) return "on-track";
+  if (progressPercentage >= 50) return "behind";
+  return "needs-attention";
+};
+
 const USE_REMOTE_ANALYTICS =
   typeof window !== "undefined" && !["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
 
@@ -364,6 +389,37 @@ const LivestockFarmersAnalytics = () => {
     [userRole, userAttribute]
   );
   const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
+  const progressYear = new Date().getFullYear();
+  const quarterTargets = useMemo(() => [
+    {
+      key: "q1" as const,
+      label: "Q1",
+      start: new Date(progressYear, 0, 1),
+      end: new Date(progressYear, 2, 31),
+      target: PROGRESS_MONTHLY_TARGET * 3,
+    },
+    {
+      key: "q2" as const,
+      label: "Q2",
+      start: new Date(progressYear, 0, 1),
+      end: new Date(progressYear, 5, 30),
+      target: PROGRESS_MONTHLY_TARGET * 6,
+    },
+    {
+      key: "q3" as const,
+      label: "Q3",
+      start: new Date(progressYear, 0, 1),
+      end: new Date(progressYear, 8, 30),
+      target: PROGRESS_MONTHLY_TARGET * 9,
+    },
+    {
+      key: "year" as const,
+      label: "Full Year",
+      start: new Date(progressYear, 0, 1),
+      end: new Date(progressYear, 11, 31),
+      target: PROGRESS_MONTHLY_TARGET * 12,
+    },
+  ], [progressYear]);
   const accessibleProgrammes = useMemo(
     () => resolveAccessibleProgrammes(userCanViewAllProgrammeData, allowedProgrammes),
     [allowedProgrammes, userCanViewAllProgrammeData]
@@ -665,13 +721,27 @@ const LivestockFarmersAnalytics = () => {
       .slice(0, 15);
     setSubcountyPerformanceData(scData);
 
-    const userStats: Record<string, { count: number; counties: Set<string> }> = {};
-    data.forEach((farmer) => {
+    const userStats: Record<string, { periods: Record<ProgressPeriodKey, number>; counties: Set<string> }> = {};
+    const trackedFarmers = allFarmers.length > 0 ? allFarmers : data;
+
+    trackedFarmers.forEach((farmer) => {
       const officerName = String(farmer.username || "Unknown User").trim() || "Unknown User";
       if (!userStats[officerName]) {
-        userStats[officerName] = { count: 0, counties: new Set<string>() };
+        userStats[officerName] = {
+          periods: { q1: 0, q2: 0, q3: 0, year: 0 },
+          counties: new Set<string>(),
+        };
       }
-      userStats[officerName].count += 1;
+
+      const farmerDate = parseDate(farmer.createdAt || farmer.registrationDate);
+      if (farmerDate && farmerDate.getFullYear() === progressYear) {
+        quarterTargets.forEach((period) => {
+          if (farmerDate >= period.start && farmerDate <= period.end) {
+            userStats[officerName].periods[period.key] += 1;
+          }
+        });
+      }
+
       const county = String(farmer.county || "").trim();
       if (county) {
         userStats[officerName].counties.add(county);
@@ -680,21 +750,31 @@ const LivestockFarmersAnalytics = () => {
 
     const localProgress = Object.entries(userStats)
       .map(([name, officerData]) => {
-        const progressPercentage = activeTarget > 0 ? (officerData.count / activeTarget) * 100 : 0;
-        let status: UserProgress["status"] = "needs-attention";
-        if (progressPercentage >= 100) status = "achieved";
-        else if (progressPercentage >= 75) status = "on-track";
-        else if (progressPercentage >= 50) status = "behind";
-
+        const periods = quarterTargets.map((period) => {
+          const count = officerData.periods[period.key];
+          const progressPercentage = period.target > 0 ? (count / period.target) * 100 : 0;
+          const status = getProgressStatus(progressPercentage);
+          return {
+            key: period.key,
+            label: period.label,
+            count,
+            target: period.target,
+            progressPercentage,
+            status,
+            met: count >= period.target,
+          };
+        });
+        const yearProgress = periods[periods.length - 1];
         const counties = [...officerData.counties];
         return {
           id: name,
           name,
           region: counties.slice(0, 3).join(", ") + (counties.length > 3 ? "..." : ""),
-          farmersRegistered: officerData.count,
-          target: activeTarget,
-          progressPercentage,
-          status,
+          farmersRegistered: yearProgress.count,
+          target: yearProgress.target,
+          progressPercentage: yearProgress.progressPercentage,
+          status: yearProgress.status,
+          periods,
         };
       })
       .sort((a, b) => b.farmersRegistered - a.farmersRegistered);
@@ -703,7 +783,25 @@ const LivestockFarmersAnalytics = () => {
 
   // User Progress with Dynamic Targets
   const userProgressData = useMemo(
-    () => USE_REMOTE_ANALYTICS ? (analyticsQuery.data as any)?.userProgressData || [] : localUserProgressData,
+    () => {
+      const rawProgressData = USE_REMOTE_ANALYTICS ? (analyticsQuery.data as any)?.userProgressData || [] : localUserProgressData;
+      return rawProgressData.map((user: any) => {
+        const periods = Array.isArray(user.periods) && user.periods.length > 0 ?
+          user.periods :
+          [
+            {
+              key: "year" as const,
+              label: "Full Year",
+              count: Number(user.farmersRegistered || 0),
+              target: Number(user.target || TARGETS.yearly),
+              progressPercentage: Number(user.progressPercentage || 0),
+              status: (user.status || "needs-attention") as ProgressStatus,
+              met: Number(user.farmersRegistered || 0) >= Number(user.target || TARGETS.yearly),
+            },
+          ];
+        return { ...user, periods } as UserProgress;
+      });
+    },
     [analyticsQuery.data, localUserProgressData],
   );
 
@@ -762,6 +860,24 @@ const LivestockFarmersAnalytics = () => {
       ? "text-xs h-9 bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100"
       : "text-xs h-9";
 
+  const getPeriodBadgeClass = (status: ProgressStatus) => {
+    if (status === "achieved") return "border-green-200 bg-green-50 text-green-700";
+    if (status === "on-track") return "border-blue-200 bg-blue-50 text-blue-700";
+    if (status === "behind") return "border-yellow-200 bg-yellow-50 text-yellow-700";
+    return "border-red-200 bg-red-50 text-red-700";
+  };
+
+  const renderPeriodCell = (period: ProgressPeriod) => (
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="text-sm font-semibold text-slate-900">
+        {period.count.toLocaleString()}
+      </span>
+      <Badge variant="outline" className={`text-[11px] font-semibold ${getPeriodBadgeClass(period.status)}`}>
+        {period.met ? "Met target" : "Not met"}
+      </Badge>
+    </div>
+  );
+
   const StatsCard = ({ title, value, icon: Icon, description, color = "navy" }: any) => (
     <Card className="relative overflow-hidden group hover:shadow-xl transition-all duration-300 border-0 bg-gradient-to-br from-white to-gray-50">
       <div className={`absolute left-0 top-0 bottom-0 w-1 ${
@@ -769,24 +885,24 @@ const LivestockFarmersAnalytics = () => {
         color === 'orange' ? 'bg-orange-500' :
         color === 'yellow' ? 'bg-yellow-500' : 'bg-blue-900'
       }`}></div>
-      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 pt-4 pl-6">
-        <CardTitle className="text-sm font-medium text-gray-600">{title}</CardTitle>
-        <div className={`p-2 rounded-xl ${
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-1.5 pt-3 pl-5 pr-4">
+        <CardTitle className="text-xs font-medium text-gray-600">{title}</CardTitle>
+        <div className={`rounded-xl p-1.5 ${
           color === 'navy' ? 'bg-blue-100' :
           color === 'orange' ? 'bg-orange-100' :
           color === 'yellow' ? 'bg-yellow-100' : 'bg-blue-100'
         } shadow-sm`}>
-          <Icon className={`h-4 w-4 ${
+          <Icon className={`h-3.5 w-3.5 ${
             color === 'navy' ? 'text-blue-900' :
             color === 'orange' ? 'text-orange-600' :
             color === 'yellow' ? 'text-yellow-600' : 'text-blue-900'
           }`} />
         </div>
       </CardHeader>
-      <CardContent className="pl-6 pb-4">
-        <div className="text-2xl font-bold text-gray-900">{value}</div>
+      <CardContent className="pl-5 pb-4">
+        <div className="text-xl font-bold tracking-tight text-gray-900 sm:text-[1.65rem]">{value}</div>
         {description && (
-          <p className="text-xs text-gray-500 mt-2 font-medium">
+          <p className="mt-1.5 text-[11px] font-medium text-gray-500">
             {description}
           </p>
         )}
@@ -804,86 +920,82 @@ const LivestockFarmersAnalytics = () => {
   }
 
   return (
-    <div className="space-y-6 p-1">
-      <div className="flex flex-row md:flex-col lg:flex-col items-start  ">
-        <h1 className="text-md text-gray-900">Livestock Farmers Dashboard</h1>
-        
-        
-          <Card className="w-full lg:w-auto border-0 shadow-lg bg-white">
-            
-            <CardContent className="p-3">
-              <div className="flex flex-col lg:flex-row gap-2 items-center">
-                
-                  
-                  
-                    <Input
-                      type="date"
-                      value={dateRange.startDate}
-                      onChange={(e) => handleDateRangeChange("startDate", e.target.value)}
-                      className="border-gray-200 focus:border-blue-500 text-sm h-9 px-8"
-                    />
-               
-                    
-                    <Input
-                      type="date"
-                      value={dateRange.endDate}
-                      onChange={(e) => handleDateRangeChange("endDate", e.target.value)}
-                      className="border-gray-200 focus:border-blue-500 text-sm h-9"
-                    />
-                  
-          
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={setWeekFilter}
-                    className={getFilterButtonClass(filterMode === "weekly")}
-                  >
-                    This Week
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={setMonthFilter}
-                    className={getFilterButtonClass(filterMode === "monthly")}
-                  >
-                    This Month
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={setYearFilter}
-                    className={getFilterButtonClass(filterMode === "yearly")}
-                  >
-                    This Year
-                  </Button>
-                  <Button size="sm" onClick={clearFilters} variant="secondary" className="text-xs h-9">
-                    Clear
-                  </Button>
-                
-                 {availablePrograms.length > 1 && (
-            <Select value={activeProgram} onValueChange={setActiveProgram}>
-              <SelectTrigger className="w-full lg:w-[180px] h-10">
-                <SelectValue placeholder="Select Programme" />
-              </SelectTrigger>
-              <SelectContent>
-                {availablePrograms.map(p => (
-                  <SelectItem key={p} value={p}>{p}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
-              </div>
-            </CardContent>
-          </Card>
+    <div className="space-y-5 p-1">
+      <div className="space-y-3">
+        <h1 className="text-lg font-semibold tracking-tight text-gray-900">Livestock Farmers Dashboard</h1>
 
-        
-        
+        <Card className="w-full border-0 bg-white shadow-lg">
+          <CardContent className="p-4">
+            <div className="space-y-3">
+              <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                <Input
+                  type="date"
+                  value={dateRange.startDate}
+                  onChange={(e) => handleDateRangeChange("startDate", e.target.value)}
+                  className="h-9 border-gray-200 px-3 text-sm focus:border-blue-500"
+                />
+
+                <Input
+                  type="date"
+                  value={dateRange.endDate}
+                  onChange={(e) => handleDateRangeChange("endDate", e.target.value)}
+                  className="h-9 border-gray-200 px-3 text-sm focus:border-blue-500"
+                />
+
+                {availablePrograms.length > 1 ? (
+                  <Select value={activeProgram} onValueChange={setActiveProgram}>
+                    <SelectTrigger className="h-9 w-full border-gray-200 text-sm">
+                      <SelectValue placeholder="Select Programme" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {availablePrograms.map((p) => (
+                        <SelectItem key={p} value={p}>
+                          {p}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : null}
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 lg:grid-cols-3">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={setWeekFilter}
+                  className={`${getFilterButtonClass(filterMode === "weekly")} w-full`}
+                >
+                  This Week
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={setMonthFilter}
+                  className={`${getFilterButtonClass(filterMode === "monthly")} w-full`}
+                >
+                  This Month
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={setYearFilter}
+                  className={`${getFilterButtonClass(filterMode === "yearly")} w-full`}
+                >
+                  This Year
+                </Button>
+                <Button size="sm" onClick={clearFilters} variant="secondary" className="h-9 w-full text-xs">
+                  Clear
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
       {stats.total === 0 ? (
         <Card className="border-amber-200 bg-amber-50">
           <CardHeader>
-            <CardTitle className="flex items-center text-amber-800">
+            <CardTitle className="flex items-center text-base text-amber-800">
               <AlertCircle className="mr-2 h-5 w-5" />
               No farmer data for this filter
             </CardTitle>
@@ -920,95 +1032,188 @@ const LivestockFarmersAnalytics = () => {
         />
       </div>
 
-      <Card className="border-0 shadow-lg bg-white">
-        <CardHeader>
-          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-2">
-            <CardTitle className="text-md flex items-center gap-2 text-gray-800">
-              <UserCheck className="h-5 w-5 text-blue-600" />
-              Field Officers Performance
-            </CardTitle>
-            <Badge variant="outline" className="text-xs font-normal border-blue-200 text-blue-700">
-              Active Target: {activeTarget.toLocaleString()} Farmers
-            </Badge>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <div className="w-full overflow-x-auto rounded-md">
-            <table className="w-full border-collapse border border-gray-300 text-sm text-left whitespace-nowrap">
-              <thead className="rounded">
-                <tr className="bg-blue-50 p-1 px-3">
-                  <th className="py-2 px-4 text-sm text-blue-800 font-semibold">Created By (Username)</th>
-                  <th className="py-2 px-4 text-sm text-blue-800 font-semibold">Counties Active</th>
-                  <th className="py-2 px-4 text-sm text-blue-800 font-semibold">Farmers Registered</th>
-                  <th className="py-2 px-4 text-sm text-blue-800 font-semibold">Target</th>
-                  <th className="py-2 px-4 text-sm text-blue-800 font-semibold">Progress</th>
-                  <th className="py-2 px-4 text-sm text-blue-800 font-semibold">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {userProgressData.map((user) => (
-                  <tr key={user.id} className="border-b hover:bg-blue-50/50 transition-all duration-200 group text-sm">
-                    <td className="py-3 px-4 text-gray-700 font-medium">{user.name}</td>
-                    <td className="py-3 px-4">
-                      <Badge variant="outline" className="bg-gray-50 text-gray-600 border-gray-200">
-                        {user.region || "N/A"}
-                      </Badge>
-                    </td>
-                    <td className="py-3 px-4 text-gray-900 font-semibold">{user.farmersRegistered}</td>
-                    <td className="py-3 px-4 text-gray-600">{user.target}</td>
-                    <td className="py-3 px-4">
-                      <div className="flex items-center gap-3">
-                        <div className="w-24 bg-gray-100 rounded-full h-2">
-                          <div 
-                            className={`h-2 rounded-full transition-all duration-500 ${
-                              user.status === 'achieved' ? 'bg-green-500' :
-                              user.status === 'on-track' ? 'bg-blue-500' :
-                              user.status === 'behind' ? 'bg-yellow-500' :
-                              'bg-red-400'
-                            }`}
-                            style={{ width: `${Math.min(user.progressPercentage, 100)}%` }}
-                          />
-                        </div>
-                        <span className="text-xs font-medium text-gray-600 w-12 text-right">
-                          {user.progressPercentage.toFixed(0)}%
-                        </span>
-                      </div>
-                    </td>
-                    <td className="py-3 px-4">
-                      <Badge 
-                        className={
-                          user.status === 'achieved' ? 'bg-green-50 text-green-700 border-green-200' :
-                          user.status === 'on-track' ? 'bg-blue-50 text-blue-700 border-blue-200' :
-                          user.status === 'behind' ? 'bg-yellow-50 text-yellow-700 border-yellow-200' :
-                          'bg-red-50 text-red-700 border-red-200'
-                        }
-                        variant="outline"
-                      >
-                        {user.status === 'achieved' ? 'Target Achieved' :
-                         user.status === 'on-track' ? 'On Track' :
-                         user.status === 'behind' ? 'Behind Schedule' :
-                         'Needs Attention'}
-                      </Badge>
-                    </td>
-                  </tr>
-                ))}
-                {userProgressData.length === 0 && (
+      <div className="space-y-6">
+        <Card className="overflow-hidden border border-slate-200 bg-white shadow-lg">
+          <CardHeader className="border-b border-slate-100 bg-slate-50/70">
+            <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+              <CardTitle className="flex items-center gap-2 text-base text-gray-800">
+                <UserCheck className="h-5 w-5 text-blue-600" />
+                Field Officers Performance
+              </CardTitle>
+              <Badge variant="outline" className="text-xs font-normal border-blue-200 text-blue-700">
+                Active Target: {activeTarget.toLocaleString()} Farmers
+              </Badge>
+            </div>
+          </CardHeader>
+          <CardContent className="p-0">
+            <div className="overflow-x-auto">
+              <table className="min-w-[880px] w-full border-collapse text-left">
+                <thead className="bg-blue-50">
                   <tr>
-                    <td colSpan={6} className="text-center py-8 text-gray-500 bg-gray-50">
-                      No farmer data available for the selected filters.
-                    </td>
+                    <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-blue-800">Field Officer</th>
+                    <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-blue-800">Counties Active</th>
+                    <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-blue-800">Farmers Registered</th>
+                    <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-blue-800">Target</th>
+                    <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-blue-800">Progress</th>
+                    <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-blue-800">Status</th>
                   </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </CardContent>
-      </Card>
+                </thead>
+                <tbody>
+                  {userProgressData.map((user) => (
+                    <tr key={user.id} className="border-b border-slate-100 transition-colors hover:bg-blue-50/40">
+                      <td className="px-4 py-4 font-medium text-slate-900">
+                        <div className="leading-tight">{user.name}</div>
+                      </td>
+                      <td className="px-4 py-4">
+                        <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-600">
+                          {user.region || "N/A"}
+                        </Badge>
+                      </td>
+                      <td className="px-4 py-4 font-semibold text-slate-900">
+                        {user.farmersRegistered.toLocaleString()}
+                      </td>
+                      <td className="px-4 py-4 text-slate-600">{user.target.toLocaleString()}</td>
+                      <td className="px-4 py-4">
+                        <div className="flex items-center gap-3">
+                          <div className="h-2 w-28 rounded-full bg-slate-100">
+                            <div
+                              className={`h-2 rounded-full transition-all duration-500 ${
+                                user.status === "achieved" ? "bg-green-500" :
+                                user.status === "on-track" ? "bg-blue-500" :
+                                user.status === "behind" ? "bg-yellow-500" :
+                                "bg-red-400"
+                              }`}
+                              style={{ width: `${Math.min(user.progressPercentage, 100)}%` }}
+                            />
+                          </div>
+                          <span className="w-12 text-right text-xs font-medium text-slate-600">
+                            {user.progressPercentage.toFixed(0)}%
+                          </span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-4">
+                        <Badge
+                          className={
+                            user.status === "achieved" ? "border-green-200 bg-green-50 text-green-700" :
+                            user.status === "on-track" ? "border-blue-200 bg-blue-50 text-blue-700" :
+                            user.status === "behind" ? "border-yellow-200 bg-yellow-50 text-yellow-700" :
+                            "border-red-200 bg-red-50 text-red-700"
+                          }
+                          variant="outline"
+                        >
+                          {user.status === "achieved" ? "Target Achieved" :
+                           user.status === "on-track" ? "On Track" :
+                           user.status === "behind" ? "Behind Schedule" :
+                           "Needs Attention"}
+                        </Badge>
+                      </td>
+                    </tr>
+                  ))}
+                  {userProgressData.length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="bg-gray-50 py-8 text-center text-gray-500">
+                        No farmer data available for the selected filters.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="overflow-hidden border border-slate-200 bg-white shadow-lg">
+          <CardHeader className="border-b border-slate-100 bg-slate-50/70">
+            <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+              <CardTitle className="flex items-center gap-2 text-base text-gray-800">
+                <UserCheck className="h-5 w-5 text-blue-600" />
+                Field Officers Quarterly Progress
+              </CardTitle>
+              <div className="flex flex-wrap gap-2">
+                {quarterTargets.map((period) => (
+                  <Badge
+                    key={period.key}
+                    variant="outline"
+                    className="text-xs font-normal border-blue-200 text-blue-700"
+                  >
+                    {period.label} target: {period.target.toLocaleString()} farmers
+                  </Badge>
+                ))}
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="p-0">
+            <div className="overflow-x-auto">
+              <table className="min-w-[980px] w-full border-collapse text-left">
+                <thead className="bg-blue-50">
+                  <tr>
+                    <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-blue-800">Field Officer</th>
+                    <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-blue-800">Counties Active</th>
+                    <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-blue-800">Q1</th>
+                    <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-blue-800">Q2</th>
+                    <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-blue-800">Q3</th>
+                    <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-blue-800">Full Year</th>
+                    <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-blue-800">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {userProgressData.map((user) => {
+                    const periods = user.periods;
+                    const q1 = periods.find((period) => period.key === "q1") || periods[0];
+                    const q2 = periods.find((period) => period.key === "q2") || periods[1] || q1;
+                    const q3 = periods.find((period) => period.key === "q3") || periods[2] || q2;
+                    const yearPeriod = periods.find((period) => period.key === "year") || periods[periods.length - 1] || q3;
+                    return (
+                      <tr key={user.id} className="border-b border-slate-100 transition-colors hover:bg-blue-50/40">
+                        <td className="px-4 py-4 font-medium text-slate-900">
+                          <div className="leading-tight">{user.name}</div>
+                        </td>
+                        <td className="px-4 py-4">
+                          <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-600">
+                            {user.region || "N/A"}
+                          </Badge>
+                        </td>
+                        <td className="px-4 py-4">{renderPeriodCell(q1)}</td>
+                        <td className="px-4 py-4">{renderPeriodCell(q2)}</td>
+                        <td className="px-4 py-4">{renderPeriodCell(q3)}</td>
+                        <td className="px-4 py-4">{renderPeriodCell(yearPeriod)}</td>
+                        <td className="px-4 py-4">
+                          <Badge
+                            variant="outline"
+                            className={
+                              user.status === "achieved" ? "border-green-200 bg-green-50 text-green-700" :
+                              user.status === "on-track" ? "border-blue-200 bg-blue-50 text-blue-700" :
+                              user.status === "behind" ? "border-yellow-200 bg-yellow-50 text-yellow-700" :
+                              "border-red-200 bg-red-50 text-red-700"
+                            }
+                          >
+                            {user.status === "achieved" ? "Target Achieved" :
+                             user.status === "on-track" ? "On Track" :
+                             user.status === "behind" ? "Behind Schedule" :
+                             "Needs Attention"}
+                          </Badge>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {userProgressData.length === 0 && (
+                    <tr>
+                      <td colSpan={7} className="bg-gray-50 py-8 text-center text-gray-500">
+                        No field officer progress data available for the selected programme.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
 
       <div className="grid gap-6 md:grid-cols-2">
         <Card className="border-0 shadow-lg bg-white">
           <CardHeader className="pb-2">
-            <CardTitle className="text-md flex items-center gap-2 text-gray-800">
+            <CardTitle className="flex items-center gap-2 text-base text-gray-800">
               <Users className="h-5 w-5 text-blue-900" />
               Farmers by Gender
             </CardTitle>
@@ -1040,7 +1245,7 @@ const LivestockFarmersAnalytics = () => {
 
         <Card className="border-0 shadow-lg bg-white">
           <CardHeader className="pb-2">
-            <CardTitle className="text-md flex items-center gap-2 text-gray-800">
+            <CardTitle className="flex items-center gap-2 text-base text-gray-800">
               <Beef className="h-5 w-5 text-red-900" />
               Animal Census
             </CardTitle>
@@ -1077,7 +1282,7 @@ const LivestockFarmersAnalytics = () => {
 
         <Card className="border-0 shadow-lg bg-white">
           <CardHeader className="pb-2">
-            <CardTitle className="text-md flex items-center gap-2 text-gray-800">
+            <CardTitle className="flex items-center gap-2 text-base text-gray-800">
               <Activity className="h-5 w-5 text-orange-600" />
               Farmers vs Livestock (Weekly Trend)
             </CardTitle>
@@ -1141,7 +1346,7 @@ const LivestockFarmersAnalytics = () => {
 
         <Card className="border-0 shadow-lg bg-white">
           <CardHeader className="pb-2">
-            <CardTitle className="text-md flex items-center gap-2 text-gray-800">
+            <CardTitle className="flex items-center gap-2 text-base text-gray-800">
               <Map className="h-5 w-5 text-blue-900" />
               Subcounty Performance
             </CardTitle>

@@ -67,6 +67,10 @@ All colors MUST be HSL.
     --sidebar-border: 215 28% 17%;
     --sidebar-ring: 217 91% 60%;
   }
+
+  html {
+    font-size: 15px;
+  }
 }
 
 @layer base {

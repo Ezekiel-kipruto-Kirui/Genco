@@ -144,8 +144,13 @@ export const canViewAllProgrammes = (
   userAttribute?: string | null
 ): boolean => {
   if (isMobileUser(userRole, userAttribute)) return false;
-  void userAttribute;
-  return isChiefAdmin(userRole);
+  const principal = resolvePermissionPrincipal(userRole, userAttribute);
+  return (
+    isChiefAdmin(principal) ||
+    isAdmin(principal) ||
+    isFullAccessAttribute(principal) ||
+    isOfftakeOfficer(principal)
+  );
 };
 
 export const canAccessDashboard = (
@@ -154,13 +159,13 @@ export const canAccessDashboard = (
 ): boolean => {
   if (isMobileUser(userRole, userAttribute)) return false;
   const principal = resolvePermissionPrincipal(userRole, userAttribute);
-  if (isOfftakeOfficer(principal)) return false;
   return (
     isChiefAdmin(principal) ||
     isAdmin(principal) ||
     isFinance(principal) ||
     isProjectManager(principal) ||
     isHummanResourceManager(principal) ||
+    isOfftakeOfficer(principal) ||
     isFullAccessAttribute(principal)
   );
 };

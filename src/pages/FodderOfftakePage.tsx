@@ -147,7 +147,7 @@ const FodderFarmersPage = () => {
   const [viewingRecord, setViewingRecord] = useState<FodderFarmer | null>(null);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   
-  const searchTimeoutRef = useRef<NodeJS.Timeout>();
+  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const currentMonth = useMemo(getCurrentMonthDates, []);
 

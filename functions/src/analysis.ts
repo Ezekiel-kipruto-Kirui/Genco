@@ -11,6 +11,12 @@ const CHART_COLORS = {
   sheep: "#f97316",
   fallback: "#f59e0b",
 };
+const OVERVIEW_SERIES_COLORS = ["#2710a1", "#f89b0d", "#ffea00", "#2cb100", "#0ea5e9", "#ef4444"];
+const INFRASTRUCTURE_SERIES_COLORS = {
+  drilled: "#2710a1",
+  equipped: "#0ea5e9",
+  maintained: "#f89b0d",
+};
 const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const RECENT_LOCATION_MAX_AGE_DAYS = 180;
 const RECENT_LOCATION_MAX_AGE_MS = RECENT_LOCATION_MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
@@ -44,6 +50,9 @@ interface AnalysisProfile {
   userAttribute: string;
   allowedProgrammes: string[];
 }
+
+type ProgressPeriodKey = "q1" | "q2" | "q3" | "year";
+type ProgressStatus = "achieved" | "on-track" | "behind" | "needs-attention";
 
 interface CacheEntry {
   expiresAt: number;
@@ -135,13 +144,47 @@ const dateInRange = (
 
 const getGoatTotal = (goats: unknown): number => {
   if (typeof goats === "number" || typeof goats === "string") return parseNumber(goats);
+  if (Array.isArray(goats)) return goats.length;
   if (typeof goats === "object" && goats !== null) {
-    const record = goats as {total?: unknown; male?: unknown; female?: unknown};
-    if (record.total !== undefined) return parseNumber(record.total);
+    const record = goats as Record<string, unknown>;
+    const directTotal = getFieldNumber(
+      record,
+      "total",
+      "goats",
+      "goat",
+      "noOfGoats",
+      "no of goats",
+      "numberOfGoats",
+      "goatsTotal",
+      "totalGoats",
+      "goatsCount",
+      "goatCount",
+    );
+    if (directTotal > 0) return directTotal;
     return parseNumber(record.male) + parseNumber(record.female);
   }
   return 0;
 };
+
+const getRecordGoatTotal = (record: Record<string, unknown>): number =>
+  Math.max(
+    getGoatTotal(record.goats ?? record.Goats),
+    getFieldNumber(
+      record,
+      "goats",
+      "goat",
+      "noOfGoats",
+      "no of goats",
+      "numberOfGoats",
+      "goatsTotal",
+      "totalGoats",
+      "goatsCount",
+      "goatCount",
+    ),
+    getArrayLikeSize(record.goats),
+    getArrayLikeSize(record.Goats),
+    0,
+  );
 
 const getFieldNumber = (record: Record<string, unknown>, ...fields: string[]): number => {
   for (const field of fields) {
@@ -195,9 +238,13 @@ const getOfftakeGoatsTotal = (record: Record<string, unknown>): number =>
     getFieldNumber(record, "totalGoats"),
     getFieldNumber(record, "noSheepGoats"),
     getFieldNumber(record, "goatsBought"),
+    getFieldNumber(record, "goats"),
+    getFieldNumber(record, "goat"),
+    getFieldNumber(record, "noOfGoats"),
+    getFieldNumber(record, "no of goats"),
+    getFieldNumber(record, "numberOfGoats"),
     getArrayLikeSize(record.goats),
     getArrayLikeSize(record.Goats),
-    getFieldNumber(record, "goats"),
     0,
   );
 
@@ -340,6 +387,138 @@ const getInfrastructureStatuses = (record: Record<string, unknown>) => ({
   ),
 });
 
+const getSeriesColor = (index: number): string =>
+  OVERVIEW_SERIES_COLORS[index % OVERVIEW_SERIES_COLORS.length];
+
+const buildYearlySegments = (
+  records: Record<string, unknown>[],
+  getDateValue: (record: Record<string, unknown>) => Date | null,
+  includeRecord: (record: Record<string, unknown>) => boolean = () => true,
+) => {
+  const yearCounts = new Map<number, number>();
+
+  for (const record of records) {
+    if (!includeRecord(record)) continue;
+    const date = getDateValue(record);
+    if (!date) continue;
+
+    const year = date.getFullYear();
+    yearCounts.set(year, (yearCounts.get(year) || 0) + 1);
+  }
+
+  return [...yearCounts.entries()]
+    .sort(([leftYear], [rightYear]) => leftYear - rightYear)
+    .map(([year, value], index) => ({
+      name: String(year),
+      value,
+      color: getSeriesColor(index),
+    }));
+};
+
+const buildYearlyTrend = (
+  records: Record<string, unknown>[],
+  getDateValue: (record: Record<string, unknown>) => Date | null,
+  getValue: (record: Record<string, unknown>) => number,
+  includeRecord: (record: Record<string, unknown>) => boolean = () => true,
+) => {
+  const yearSet = new Set<number>();
+
+  for (const record of records) {
+    if (!includeRecord(record)) continue;
+    const date = getDateValue(record);
+    const value = getValue(record);
+    if (!date || value <= 0) continue;
+    yearSet.add(date.getFullYear());
+  }
+
+  const years = [...yearSet].sort((left, right) => left - right);
+  const yearLookup = new Set(years);
+  const data = MONTH_LABELS.map((name) => {
+    const point: Record<string, string | number> = { name };
+    for (const year of years) {
+      point[String(year)] = 0;
+    }
+    return point;
+  });
+
+  for (const record of records) {
+    if (!includeRecord(record)) continue;
+    const date = getDateValue(record);
+    const value = getValue(record);
+    if (!date || value <= 0) continue;
+
+    const year = date.getFullYear();
+    if (!yearLookup.has(year)) continue;
+
+    const monthPoint = data[date.getMonth()];
+    const key = String(year);
+    const currentValue = typeof monthPoint[key] === "number" ? monthPoint[key] as number : 0;
+    monthPoint[key] = currentValue + value;
+  }
+
+  return {
+    years,
+    data,
+  };
+};
+
+const buildAnnualComparison = (
+  farmers: Record<string, unknown>[],
+  offtakes: Record<string, unknown>[],
+) => {
+  const yearSet = new Set<number>();
+  const goatsOnRecordByYear = new Map<number, number>();
+  const goatsPurchasedByYear = new Map<number, number>();
+
+  for (const farmer of farmers) {
+    const date = parseDate(farmer.createdAt || farmer.registrationDate);
+    if (!date) continue;
+
+    const year = date.getFullYear();
+    yearSet.add(year);
+    goatsOnRecordByYear.set(year, (goatsOnRecordByYear.get(year) || 0) + getRecordGoatTotal(farmer));
+  }
+
+  for (const record of offtakes) {
+    const date = parseDate(record.date ?? record.Date ?? record.createdAt ?? record.created_at);
+    if (!date) continue;
+
+    const year = date.getFullYear();
+    yearSet.add(year);
+    goatsPurchasedByYear.set(year, (goatsPurchasedByYear.get(year) || 0) + getOfftakeGoatsTotal(record));
+  }
+
+  const years = [...yearSet].sort((left, right) => left - right);
+
+  return {
+    years,
+    data: years.map((year) => ({
+      name: String(year),
+      goatsOnRecord: goatsOnRecordByYear.get(year) || 0,
+      goatsPurchased: goatsPurchasedByYear.get(year) || 0,
+    })),
+  };
+};
+
+const buildInfrastructureComparison = (records: Record<string, unknown>[]) => {
+  let drilled = 0;
+  let equipped = 0;
+  let maintained = 0;
+
+  for (const record of records) {
+    const statuses = getInfrastructureStatuses(record);
+    if (statuses.drilled) drilled += 1;
+    if (statuses.equipped) equipped += 1;
+    if (statuses.maintained) maintained += 1;
+  }
+
+  return [
+    {name: "Drilled", value: drilled, color: INFRASTRUCTURE_SERIES_COLORS.drilled},
+    {name: "Equipped", value: equipped, color: INFRASTRUCTURE_SERIES_COLORS.equipped},
+    {name: "Maintained", value: maintained, color: INFRASTRUCTURE_SERIES_COLORS.maintained},
+  ];
+};
+
 const getOverviewComparisonYears = (referenceDate: Date = new Date()) => ({
   year1: referenceDate.getFullYear(),
   year2: referenceDate.getFullYear(),
@@ -350,18 +529,6 @@ const buildYearRange = (startYear: number, endYear: number): number[] => {
   const safeStartYear = Math.min(startYear, endYear);
   const safeEndYear = Math.max(startYear, endYear);
   return Array.from({length: safeEndYear - safeStartYear + 1}, (_, index) => safeStartYear + index);
-};
-
-const getComparisonYearLabel = (
-  businessStartYear: number,
-  comparisonYear: number,
-  fallbackIndex = 1,
-) => {
-  if (comparisonYear === businessStartYear && fallbackIndex > 1) {
-    return `Year ${fallbackIndex}`;
-  }
-  const yearIndex = comparisonYear - businessStartYear + 1;
-  return `Year ${yearIndex >= 1 ? yearIndex : fallbackIndex}`;
 };
 
 const resolveOverviewComparisonYears = (
@@ -402,79 +569,21 @@ const resolveOverviewComparisonYears = (
 
 const buildOverviewVaccinationTrend = (
   farmers: Record<string, unknown>[],
-  comparisonYears = getOverviewComparisonYears(),
-) => {
-  const trend = MONTH_LABELS.map((name) => ({name, year1: 0, year2: 0}));
-
-  for (const farmer of farmers) {
-    if (!parseBoolean(farmer.vaccinated)) continue;
-
-    const date = getFarmerVaccinationDate(farmer);
-    const vaccinatedGoats = Math.max(getGoatTotal(farmer.goats), getFieldNumber(farmer, "goats"), 0);
-    if (!date || vaccinatedGoats <= 0) continue;
-
-    const monthIndex = date.getMonth();
-    if (date.getFullYear() === comparisonYears.year1) trend[monthIndex].year1 += vaccinatedGoats;
-    if (comparisonYears.year2 !== comparisonYears.year1 && date.getFullYear() === comparisonYears.year2) {
-      trend[monthIndex].year2 += vaccinatedGoats;
-    }
-  }
-
-  return trend;
-};
-
-const buildInfrastructureComparison = (
-  records: Record<string, unknown>[],
-  comparisonYears = getOverviewComparisonYears(),
-) => {
-  let firstYearValue = 0;
-  let secondYearValue = 0;
-  const year2Label = getComparisonYearLabel(comparisonYears.year1, comparisonYears.year2, 2);
-
-  for (const record of records) {
-    const statuses = getInfrastructureStatuses(record);
-    if (!statuses.drilled && !statuses.maintained) {
-      continue;
-    }
-
-    const date = getInfrastructureRecordDate(record);
-    if (!date) continue;
-
-    if (date.getFullYear() === comparisonYears.year1) firstYearValue += 1;
-    if (comparisonYears.year2 !== comparisonYears.year1 && date.getFullYear() === comparisonYears.year2) {
-      secondYearValue += 1;
-    }
-  }
-
-  return [
-    {name: "Year 1", value: firstYearValue, color: "#2710a1"},
-    {name: year2Label, value: secondYearValue, color: "#f89b0d"},
-  ];
-};
+) =>
+  buildYearlyTrend(
+    farmers,
+    getFarmerVaccinationDate,
+    (record) => Math.max(getRecordGoatTotal(record), getFieldNumber(record, "goats"), 0),
+    (record) => parseBoolean(record.vaccinated),
+  );
 
 const buildOverviewRegistrationComparison = (
   farmers: Record<string, unknown>[],
-  comparisonYears = getOverviewComparisonYears(),
-) => {
-  let currentYearRegistrations = 0;
-  let lastYearRegistrations = 0;
-  const year2Label = getComparisonYearLabel(comparisonYears.year1, comparisonYears.year2, 2);
-
-  for (const farmer of farmers) {
-    const date = parseDate(farmer.createdAt || farmer.registrationDate);
-    if (!date) continue;
-
-    if (date.getFullYear() === comparisonYears.year1) currentYearRegistrations += 1;
-    if (comparisonYears.year2 !== comparisonYears.year1 && date.getFullYear() === comparisonYears.year2) {
-      lastYearRegistrations += 1;
-    }
-  }
-
-  return [
-    {name: "Year 1", value: currentYearRegistrations, color: "#2710a1"},
-    {name: year2Label, value: lastYearRegistrations, color: "#f89b0d"},
-  ];
-};
+) =>
+  buildYearlySegments(
+    farmers,
+    (record) => parseDate(record.createdAt || record.registrationDate),
+  );
 
 const buildOverviewRecentLocations = (farmers: Record<string, unknown>[]) => {
   const seen = new Set<string>();
@@ -701,18 +810,23 @@ const emptyOverview = () => ({
   topRegions: [],
   comparisonYears: getOverviewComparisonYears(),
   maintainedInfrastructure: [
-    {name: "Year 1", value: 0, color: "#2710a1"},
-    {name: "Year 2", value: 0, color: "#f89b0d"},
+    {name: "Drilled", value: 0, color: INFRASTRUCTURE_SERIES_COLORS.drilled},
+    {name: "Equipped", value: 0, color: INFRASTRUCTURE_SERIES_COLORS.equipped},
+    {name: "Maintained", value: 0, color: INFRASTRUCTURE_SERIES_COLORS.maintained},
   ],
-  registrationComparison: [
-    {name: "Year 1", value: 0, color: "#2710a1"},
-    {name: "Year 2", value: 0, color: "#f89b0d"},
-  ],
+  registrationComparison: [],
+  animalCensusComparison: {
+    years: [],
+    data: [],
+  },
   animalCensusVsPurchased: [
     {name: "Goats on record", value: 0, color: "#ffc107"},
     {name: "Goats purchased", value: 0, color: "#a80d10"},
   ],
-  vaccinationTrend: MONTH_LABELS.map((name) => ({name, year1: 0, year2: 0})),
+  vaccinationTrend: {
+    years: [],
+    data: MONTH_LABELS.map((name) => ({name})),
+  },
   countyCoverage: [],
   recentLocations: [],
   recentActivities: [],
@@ -852,7 +966,7 @@ const createOverview = async (
     if (gender === "male") maleFarmers += 1;
     else if (gender === "female") femaleFarmers += 1;
 
-    const goats = getGoatTotal(farmer.goats);
+    const goats = getRecordGoatTotal(farmer);
     totalGoats += goats;
     if (farmer.goats && typeof farmer.goats === "object") {
       const goatRecord = farmer.goats as {male?: number; female?: number};
@@ -949,13 +1063,14 @@ const createOverview = async (
     },
     topRegions,
     comparisonYears,
-    maintainedInfrastructure: buildInfrastructureComparison(boreholes, comparisonYears),
-    registrationComparison: buildOverviewRegistrationComparison(farmers, comparisonYears),
+    maintainedInfrastructure: buildInfrastructureComparison(boreholes),
+    registrationComparison: buildOverviewRegistrationComparison(farmers),
+    animalCensusComparison: buildAnnualComparison(farmers, offtakes),
     animalCensusVsPurchased: [
       {name: "Goats on record", value: totalGoats, color: "#ffc107"},
       {name: "Goats purchased", value: totalGoatsPurchased, color: "#a80d10"},
     ],
-    vaccinationTrend: buildOverviewVaccinationTrend(farmers, comparisonYears),
+    vaccinationTrend: buildOverviewVaccinationTrend(farmers),
     countyCoverage,
     recentLocations: buildOverviewRecentLocations(farmers),
     recentActivities,
@@ -999,21 +1114,52 @@ const createLivestockAnalytics = async (
     4: {farmers: 0, animals: 0},
   };
   const subcountyMap: Record<string, number> = {};
-  const userMap: Record<string, {count: number; counties: Set<string>}> = {};
+  const currentYear = new Date().getFullYear();
+  const quarterTargets = [
+    {
+      key: "q1" as const,
+      label: "Q1",
+      start: new Date(currentYear, 0, 1),
+      end: new Date(currentYear, 2, 31),
+      target: 351,
+    },
+    {
+      key: "q2" as const,
+      label: "Q2",
+      start: new Date(currentYear, 0, 1),
+      end: new Date(currentYear, 5, 30),
+      target: 702,
+    },
+    {
+      key: "q3" as const,
+      label: "Q3",
+      start: new Date(currentYear, 0, 1),
+      end: new Date(currentYear, 8, 30),
+      target: 1053,
+    },
+    {
+      key: "year" as const,
+      label: "Full Year",
+      start: new Date(currentYear, 0, 1),
+      end: new Date(currentYear, 11, 31),
+      target: 1404,
+    },
+  ];
+  const userMap: Record<string, {periods: Record<ProgressPeriodKey, number>; counties: Set<string>}> = {};
 
   for (const farmer of filteredFarmers) {
     const gender = String(farmer.gender || "").trim().toLowerCase();
     if (gender === "male") maleFarmers += 1;
     else if (gender === "female") femaleFarmers += 1;
 
-    const goats = getGoatTotal(farmer.goats);
+    const goats = getRecordGoatTotal(farmer);
     const sheep = getFieldNumber(farmer, "sheep");
     totalGoats += goats;
     totalSheep += sheep;
 
-    const date = parseDate(farmer.createdAt || farmer.registrationDate);
-    if (date) {
-      const week = Math.ceil(date.getDate() / 7);
+    const farmerDate = parseDate(farmer.createdAt || farmer.registrationDate);
+    if (farmerDate) {
+      const week = Math.ceil(farmerDate.getDate() / 7);
       if (week >= 1 && week <= 4) {
         weeklyBuckets[week].farmers += 1;
         weeklyBuckets[week].animals += goats + sheep;
@@ -1025,9 +1171,18 @@ const createLivestockAnalytics = async (
 
     const username = String(farmer.username || "Unknown User").trim() || "Unknown User";
     if (!userMap[username]) {
-      userMap[username] = {count: 0, counties: new Set<string>()};
+      userMap[username] = {
+        periods: { q1: 0, q2: 0, q3: 0, year: 0 },
+        counties: new Set<string>(),
+      };
     }
-    userMap[username].count += 1;
+    if (farmerDate && farmerDate.getFullYear() === currentYear) {
+      quarterTargets.forEach((period) => {
+        if (farmerDate >= period.start && farmerDate <= period.end) {
+          userMap[username].periods[period.key] += 1;
+        }
+      });
+    }
     const county = String(farmer.county || "").trim();
     if (county) userMap[username].counties.add(county);
   }
@@ -1036,7 +1191,6 @@ const createLivestockAnalytics = async (
     (sum, record) => sum + parseNumber(record.totalFarmers),
     0,
   );
-  const targetValue = typeof target === "number" && Number.isFinite(target) ? target : 117;
   const totalAnimals = totalGoats + totalSheep;
 
   const genderData = [
@@ -1059,20 +1213,34 @@ const createLivestockAnalytics = async (
     .slice(0, 15);
   const userProgressData = Object.entries(userMap)
     .map(([name, data]) => {
-      const progressPercentage = targetValue > 0 ? (data.count / targetValue) * 100 : 0;
-      let status: "achieved" | "on-track" | "behind" | "needs-attention" = "needs-attention";
-      if (progressPercentage >= 100) status = "achieved";
-      else if (progressPercentage >= 75) status = "on-track";
-      else if (progressPercentage >= 50) status = "behind";
+      const periods = quarterTargets.map((period) => {
+        const count = data.periods[period.key];
+        const progressPercentage = period.target > 0 ? (count / period.target) * 100 : 0;
+        let status: ProgressStatus = "needs-attention";
+        if (progressPercentage >= 100) status = "achieved";
+        else if (progressPercentage >= 75) status = "on-track";
+        else if (progressPercentage >= 50) status = "behind";
+        return {
+          key: period.key,
+          label: period.label,
+          count,
+          target: period.target,
+          progressPercentage,
+          status,
+          met: count >= period.target,
+        };
+      });
+      const yearProgress = periods[periods.length - 1];
       const counties = [...data.counties];
       return {
         id: name,
         name,
         region: counties.slice(0, 3).join(", ") + (counties.length > 3 ? "..." : ""),
-        farmersRegistered: data.count,
-        target: targetValue,
-        progressPercentage,
-        status,
+        farmersRegistered: yearProgress.count,
+        target: yearProgress.target,
+        progressPercentage: yearProgress.progressPercentage,
+        status: yearProgress.status,
+        periods,
       };
     })
     .sort((a, b) => b.farmersRegistered - a.farmersRegistered);
@@ -1155,7 +1323,7 @@ const createPerformanceReport = async (
   const subcountyMap: Record<string, number> = {};
   const locationMap: Record<string, number> = {};
   const topCustomersMap: Record<string, {name: string; value: number; county: string}> = {};
-  const topFieldOfficersMap: Record<string, number> = {};
+  const topFieldOfficersMap: Record<string, { value: number; counties: Record<string, number> }> = {};
   const topStaffAwardedMap: Record<string, number> = {};
   const breedsByCountyMap: Record<string, number> = {};
   const breedsBySubcountyMap: Record<string, number> = {};
@@ -1172,7 +1340,7 @@ const createPerformanceReport = async (
     if (gender === "male") maleFarmers += 1;
     else if (gender === "female") femaleFarmers += 1;
 
-    const goats = getGoatTotal(farmer.goats);
+    const goats = getRecordGoatTotal(farmer);
     const sheep = getFieldNumber(farmer, "sheep");
     const cattle = getFieldNumber(farmer, "cattle");
     const totalAnimalsForFarmer = goats + sheep + cattle;
@@ -1201,7 +1369,10 @@ const createPerformanceReport = async (
     const fieldOfficerName =
       typeof farmer.username === "string" ? farmer.username.trim() : "";
     if (fieldOfficerName) {
-      topFieldOfficersMap[fieldOfficerName] = (topFieldOfficersMap[fieldOfficerName] || 0) + 1;
+      const currentOfficer = topFieldOfficersMap[fieldOfficerName] || { value: 0, counties: {} };
+      currentOfficer.value += 1;
+      currentOfficer.counties[county] = (currentOfficer.counties[county] || 0) + 1;
+      topFieldOfficersMap[fieldOfficerName] = currentOfficer;
     }
 
     if (farmer.vaccinated === true) {
@@ -1249,7 +1420,14 @@ const createPerformanceReport = async (
   const topLocations = Object.entries(locationMap).map(([name, value]) => ({name, value})).sort((a, b) => b.value - a.value).slice(0, 5);
   const topCustomers = Object.values(topCustomersMap).sort((a, b) => b.value - a.value).slice(0, 5);
   const topFieldOfficers = Object.entries(topFieldOfficersMap)
-    .map(([name, value]) => ({name, value}))
+    .map(([name, entry]) => {
+      const countyEntries = Object.entries(entry.counties);
+      const county =
+        countyEntries.length > 0 ?
+          countyEntries.sort((left, right) => right[1] - left[1])[0][0] :
+          "Unknown";
+      return {name, value: entry.value, county};
+    })
     .sort((a, b) => b.value - a.value)
     .slice(0, 5);
   const topStaffAwarded = Object.entries(topStaffAwardedMap)

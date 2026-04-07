@@ -210,7 +210,7 @@ export function DashboardSidebar() {
           </div>
           {!collapsed && (
             <div className="truncate">
-              <h1 className="text-base font-bold text-white">GENCO L.Export ltd</h1>
+              <h1 className="text-base font-bold text-white">GENCO Livestock</h1>
             </div>
           )}
         </div>

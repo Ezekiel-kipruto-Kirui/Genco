@@ -8,7 +8,7 @@ import {
   isProjectManager,
   resolvePermissionPrincipal,
 } from "@/contexts/authhelper";
-import { ref, get, push, update } from "firebase/database";
+import { ref, get, push, update, remove } from "firebase/database";
 import { db } from "@/lib/firebase";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { 
@@ -17,7 +17,7 @@ import {
 } from "recharts";
 import { 
   Users, GraduationCap, Beef, TrendingUp, Award, 
-  MapPin, Syringe, TargetIcon, Loader2, Calendar
+  MapPin, Syringe, TargetIcon, Loader2, Calendar, PencilLine, Trash2, UserX, MoreVertical
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,6 +25,13 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Dialog,
   DialogContent,
@@ -204,7 +211,6 @@ type StaffMarkFormState = {
 const EMPTY_STAFF_MARK_RECORDS: StaffMarkRecord[] = [];
 const EMPTY_STAFF_DIRECTORY_RECORDS: StaffDirectoryRecord[] = [];
 const EMPTY_STAFF_MANAGEMENT_ROWS: StaffManagementRow[] = [];
-const EMPTY_TOP_STAFF_AWARDED: Array<{ name: string; value: number }> = [];
 
 const createDefaultStaffForm = (): CreateStaffFormState => ({
   staffName: "",
@@ -428,7 +434,7 @@ type PerformanceReportData = {
   topLocations: Array<{ name: string; value: number }>;
   topCustomers: Array<{ name: string; value: number; county: string }>;
   totalGoatsPurchased: number;
-  topFieldOfficers: Array<{ name: string; value: number }>;
+  topFieldOfficers: Array<{ name: string; value: number; county: string }>;
   topStaffAwarded: Array<{ name: string; value: number }>;
   totalDosesGivenOut: number;
   uniqueCounties: number;
@@ -556,7 +562,7 @@ function computeLocalPerformanceReportData(
   const subcountyMap: Record<string, number> = {};
   const locationMap: Record<string, number> = {};
   const topCustomersMap: Record<string, { name: string; value: number; county: string }> = {};
-  const topFieldOfficersMap: Record<string, number> = {};
+  const topFieldOfficersMap: Record<string, { value: number; counties: Record<string, number> }> = {};
   const topStaffAwardedMap: Record<string, number> = {};
   const breedsByCountyMap: Record<string, number> = {};
   const breedsBySubcountyMap: Record<string, number> = {};
@@ -601,7 +607,10 @@ function computeLocalPerformanceReportData(
 
     const fieldOfficerName = typeof farmer.username === "string" ? farmer.username.trim() : "";
     if (fieldOfficerName) {
-      topFieldOfficersMap[fieldOfficerName] = (topFieldOfficersMap[fieldOfficerName] || 0) + 1;
+      const currentOfficer = topFieldOfficersMap[fieldOfficerName] || { value: 0, counties: {} };
+      currentOfficer.value += 1;
+      currentOfficer.counties[county] = (currentOfficer.counties[county] || 0) + 1;
+      topFieldOfficersMap[fieldOfficerName] = currentOfficer;
     }
 
     if (farmer.vaccinated === true) {
@@ -659,7 +668,14 @@ function computeLocalPerformanceReportData(
     .sort((a, b) => b.value - a.value)
     .slice(0, 5);
   const topFieldOfficers = Object.entries(topFieldOfficersMap)
-    .map(([name, value]) => ({ name, value }))
+    .map(([name, entry]) => {
+      const countyEntries = Object.entries(entry.counties);
+      const county =
+        countyEntries.length > 0 ?
+          countyEntries.sort((left, right) => right[1] - left[1])[0][0] :
+          "Unknown";
+      return { name, value: entry.value, county };
+    })
     .sort((a, b) => b.value - a.value)
     .slice(0, 5);
   const topStaffAwarded = Object.entries(topStaffAwardedMap)
@@ -965,7 +981,7 @@ const PerformanceReport = () => {
   const [createStaffForm, setCreateStaffForm] = useState<CreateStaffFormState>(createDefaultStaffForm);
   const [staffMarkForm, setStaffMarkForm] = useState<StaffMarkFormState>(createDefaultStaffMarkForm);
   const [isCreateStaffOpen, setIsCreateStaffOpen] = useState(false);
-  const [isStaffManagementOpen, setIsStaffManagementOpen] = useState(false);
+  const [editingStaffRow, setEditingStaffRow] = useState<StaffManagementRow | null>(null);
   const [isAwardDialogOpen, setIsAwardDialogOpen] = useState(false);
   const [selectedStaffRow, setSelectedStaffRow] = useState<StaffManagementRow | null>(null);
   const [isSavingStaffDirectory, setIsSavingStaffDirectory] = useState(false);
@@ -1378,26 +1394,32 @@ const PerformanceReport = () => {
     });
   }, [activeProgram, filteredStaffDirectoryRecords, filteredStaffMarkRecords, isHrReport]);
 
-  const hrTopStaffAwarded = useMemo(() => {
-    if (!isHrReport) return EMPTY_TOP_STAFF_AWARDED;
+  const openCreateStaffDialog = useCallback(() => {
+    setEditingStaffRow(null);
+    setCreateStaffForm(createDefaultStaffForm());
+    setIsCreateStaffOpen(true);
+  }, []);
 
-    const marksByStaff = new Map<string, { name: string; value: number }>();
-
-    filteredStaffMarkRecords.forEach((record) => {
-      const staffName = getLeaderName(record.staffName, "");
-      const normalizedName = normalizeStaffName(staffName);
-      const awardedMarks = getNumberField(record, "marks", "score", "awardedMarks");
-      if (!normalizedName || awardedMarks <= 0) return;
-      const current = marksByStaff.get(normalizedName) || { name: staffName, value: 0 };
-      current.value += awardedMarks;
-      if (!current.name) current.name = staffName;
-      marksByStaff.set(normalizedName, current);
+  const openEditStaffDialog = useCallback((staffRow: StaffManagementRow) => {
+    setEditingStaffRow(staffRow);
+    setCreateStaffForm({
+      staffName: staffRow.staffName,
+      role: staffRow.role === "Not assigned" ? "" : staffRow.role,
+      county: staffRow.county === "N/A" ? "" : staffRow.county,
+      phone: staffRow.phone === "N/A" ? "" : staffRow.phone,
+      notes: staffRow.notes,
     });
+    setIsCreateStaffOpen(true);
+  }, []);
 
-    return [...marksByStaff.values()]
-      .sort((first, second) => second.value - first.value)
-      .slice(0, 5);
-  }, [filteredStaffMarkRecords, isHrReport]);
+  const openAwardDialog = useCallback((staffRow: StaffManagementRow | null = null) => {
+    setSelectedStaffRow(staffRow);
+    setStaffMarkForm({
+      ...createDefaultStaffMarkForm(),
+      staffName: staffRow?.staffName || "",
+    });
+    setIsAwardDialogOpen(true);
+  }, []);
 
   const handleCreateStaff = useCallback(async () => {
     const staffName = createStaffForm.staffName.trim();
@@ -1415,13 +1437,14 @@ const PerformanceReport = () => {
     if (!activeProgram || normalizeProgramme(activeProgram) === ALL_PROGRAMMES_VALUE) {
       toast({
         title: "Programme required",
-        description: "Select a specific programme before creating staff.",
+        description: "Select a specific programme before saving staff.",
         variant: "destructive",
       });
       return;
     }
 
     const alreadyExists = staffDirectoryRecords.some((record) =>
+      record.id !== editingStaffRow?.id &&
       normalizeStaffName(record.staffName) === normalizeStaffName(staffName) &&
       normalizeProgramme(record.programme || activeProgram) === normalizeProgramme(activeProgram),
     );
@@ -1437,45 +1460,50 @@ const PerformanceReport = () => {
 
     try {
       setIsSavingStaffDirectory(true);
-      await push(ref(db, "hrStaffDirectory"), {
+      const payload = {
         staffName,
         role,
         county: createStaffForm.county.trim(),
         phone: createStaffForm.phone.trim(),
         notes: createStaffForm.notes.trim(),
         programme: normalizeProgramme(activeProgram),
-        status: "active",
-        createdAt: Date.now(),
-        createdBy: userName || "HR Manager",
-      });
+        status: editingStaffRow?.status || "active",
+        updatedAt: Date.now(),
+        updatedBy: userName || "HR Manager",
+      };
+
+      if (editingStaffRow) {
+        await update(ref(db, `hrStaffDirectory/${editingStaffRow.id}`), payload);
+      } else {
+        await push(ref(db, "hrStaffDirectory"), {
+          ...payload,
+          status: "active",
+          createdAt: Date.now(),
+          createdBy: userName || "HR Manager",
+        });
+      }
 
       setCreateStaffForm(createDefaultStaffForm());
+      setEditingStaffRow(null);
       setIsCreateStaffOpen(false);
       await fetchStaffDirectory();
       toast({
-        title: "Staff created",
-        description: `${staffName} is now available in the HR staff table.`,
+        title: editingStaffRow ? "Staff updated" : "Staff created",
+        description: editingStaffRow ?
+          `${staffName} has been updated in the HR staff table.` :
+          `${staffName} is now available in the HR staff table.`,
       });
     } catch (error) {
-      console.error("Error creating HR staff:", error);
+      console.error("Error saving HR staff:", error);
       toast({
-        title: "Create failed",
-        description: "We could not create the staff record right now.",
+        title: editingStaffRow ? "Update failed" : "Create failed",
+        description: "We could not save the staff record right now.",
         variant: "destructive",
       });
     } finally {
       setIsSavingStaffDirectory(false);
     }
-  }, [activeProgram, createStaffForm, fetchStaffDirectory, staffDirectoryRecords, toast, userName]);
-
-  const openAwardDialog = useCallback((staffRow: StaffManagementRow) => {
-    setSelectedStaffRow(staffRow);
-    setStaffMarkForm({
-      ...createDefaultStaffMarkForm(),
-      staffName: staffRow.staffName,
-    });
-    setIsAwardDialogOpen(true);
-  }, []);
+  }, [activeProgram, createStaffForm, editingStaffRow, fetchStaffDirectory, staffDirectoryRecords, toast, userName]);
 
   const handleToggleStaffStatus = useCallback(async (staffRow: StaffManagementRow) => {
     if (!staffRow.managedInDirectory) return;
@@ -1498,10 +1526,39 @@ const PerformanceReport = () => {
       toast({
         title: "Update failed",
         description: "We could not update the staff status right now.",
-        variant: "destructive",
+      variant: "destructive",
       });
     }
   }, [fetchStaffDirectory, toast, userName]);
+
+  const handleDeleteStaff = useCallback(async (staffRow: StaffManagementRow) => {
+    if (!staffRow.managedInDirectory) return;
+
+    const confirmed = window.confirm(`Delete ${staffRow.staffName} from the HR staff table?`);
+    if (!confirmed) return;
+
+    try {
+      setIsSavingStaffDirectory(true);
+      await remove(ref(db, `hrStaffDirectory/${staffRow.id}`));
+      if (selectedStaffRow?.id === staffRow.id) {
+        setSelectedStaffRow(null);
+      }
+      await fetchStaffDirectory();
+      toast({
+        title: "Staff deleted",
+        description: `${staffRow.staffName} has been removed from the HR staff table.`,
+      });
+    } catch (error) {
+      console.error("Error deleting HR staff:", error);
+      toast({
+        title: "Delete failed",
+        description: "We could not delete the staff record right now.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSavingStaffDirectory(false);
+    }
+  }, [fetchStaffDirectory, selectedStaffRow, toast]);
 
   const handleStaffMarkSubmit = useCallback(async () => {
     const staffName = staffMarkForm.staffName.trim();
@@ -1799,41 +1856,28 @@ const PerformanceReport = () => {
 
       {hasSection("hr-summary") && (
         <section>
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5 mb-6">
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 mb-6">
             <StatsCard
-              title="Total Goats Purchased"
+              title="Goats Purchased"
               value={data.totalGoatsPurchased.toLocaleString()}
               icon={Beef}
               color="orange"
             />
 
             <StatsCard
-              title="Total Registered Farmers"
+              title="Registered Farmers"
               value={data.totalFarmers.toLocaleString()}
               icon={Users}
+              subtext={`Trained farmers: ${data.totalTrainedFarmers.toLocaleString()}`}
               color="blue"
             />
 
             <StatsCard
-              title="Total Trained Farmers"
-              value={data.totalTrainedFarmers.toLocaleString()}
-              icon={GraduationCap}
-              color="yellow"
-            />
-
-            <StatsCard
-              title="Total Breeds Distributed"
+              title="Animal Health"
               value={data.totalBreedsDistributed.toLocaleString()}
-              icon={TargetIcon}
-              subtext={`Male: ${data.breedsMale} | Female: ${data.breedsFemale}`}
-              color="teal"
-            />
-
-            <StatsCard
-              title="Total Doses Given Out"
-              value={data.totalDosesGivenOut.toLocaleString()}
               icon={Syringe}
-              color="red"
+              subtext={`Breeds distributed: ${data.totalBreedsDistributed.toLocaleString()} | Doses given out: ${data.totalDosesGivenOut.toLocaleString()}`}
+              color="teal"
             />
           </div>
         </section>
@@ -1857,6 +1901,7 @@ const PerformanceReport = () => {
                       <div className="flex items-start justify-between gap-3">
                         <div>
                           <p className="text-sm font-semibold text-slate-900">{officer.name}</p>
+                          <p className="text-xs text-slate-500">County: {officer.county}</p>
                         </div>
                         <Badge className="border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-50">
                           {officer.value} farmers
@@ -1878,39 +1923,119 @@ const PerformanceReport = () => {
               </CardContent>
             </Card>
 
-            <Card className="border-0 shadow-lg bg-white">
-              <CardHeader className="pb-2">
+            <Card className="overflow-hidden border border-slate-200 bg-white shadow-lg">
+              <CardHeader className="border-b border-slate-100 bg-slate-50/70 pb-3">
                 {reportAudience === "hr" && (
                   <div className="mb-3 flex flex-wrap justify-end gap-2">
-                    <Button variant="outline" size="sm" onClick={() => setIsCreateStaffOpen(true)}>
+                    <Button variant="outline" size="sm" onClick={openCreateStaffDialog}>
                       Create Staff
                     </Button>
-                    <Button variant="outline" size="sm" onClick={() => setIsStaffManagementOpen(true)}>
-                      Staff Table
+                    <Button variant="outline" size="sm" onClick={() => openAwardDialog(null)}>
+                      <Award className="mr-1 h-4 w-4" />
+                      Award Marks
                     </Button>
                   </div>
                 )}
                 <CardTitle className="text-sm flex items-center gap-2 text-gray-800">
-                  <Award className="h-4 w-4 text-yellow-600" />
-                  Top Staff Awarded
+                  <Users className="h-4 w-4 text-yellow-600" />
+                  Staff Table
                 </CardTitle>
               </CardHeader>
-              <CardContent>
-              {hrTopStaffAwarded.length > 0 ? (
-                <ResponsiveContainer width="100%" height={250}>
-                  <BarChart data={hrTopStaffAwarded} layout="vertical" margin={HORIZONTAL_BAR_CHART_MARGIN}>
-                    <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f3f4f6" />
-                    <XAxis type="number" axisLine={false} tickLine={false} />
-                    <YAxis type="category" dataKey="name" width={HORIZONTAL_BAR_CHART_Y_AXIS_WIDTH} axisLine={false} tickLine={false} tick={{ fontSize: 11 }} />
-                    <Tooltip />
-                    <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={12} fill={COLORS.yellow} />
-                  </BarChart>
-                </ResponsiveContainer>
-              ) : (
-                <div className="flex h-[220px] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-500">
-                  No staff marks have been awarded for the selected programme and dates yet.
+              <CardContent className="p-0">
+                <div className="max-h-[360px] overflow-auto">
+                  <Table className="min-w-full">
+                    <TableHeader className="sticky top-0 z-10 bg-slate-50">
+                      <TableRow>
+                        <TableHead className="py-4">Staff</TableHead>
+                        <TableHead className="py-4">County</TableHead>
+                        <TableHead className="py-4">Role</TableHead>
+                        <TableHead className="py-4">Status</TableHead>
+                        <TableHead className="py-4">Total Marks</TableHead>
+                        <TableHead className="py-4">Awards</TableHead>
+                        <TableHead className="py-4 text-right">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {staffManagementRows.length > 0 ? staffManagementRows.map((staffRow) => (
+                        <TableRow key={staffRow.id} className="border-b border-slate-100 transition-colors hover:bg-slate-50/80">
+                          <TableCell className="py-4 font-medium text-slate-900">
+                            <div className="leading-tight">{staffRow.staffName}</div>
+                            {staffRow.lastAwardNote && (
+                              <div className="mt-1 text-xs text-slate-500 line-clamp-2">{staffRow.lastAwardNote}</div>
+                            )}
+                          </TableCell>
+                          <TableCell className="py-4">{staffRow.county}</TableCell>
+                          <TableCell className="py-4">{staffRow.role}</TableCell>
+                          <TableCell className="py-4">
+                            <Badge
+                              className={
+                                staffRow.status === "active" ?
+                                  "border-green-200 bg-green-50 text-green-700 hover:bg-green-50" :
+                                  staffRow.status === "inactive" ?
+                                    "border-slate-200 bg-slate-100 text-slate-700 hover:bg-slate-100" :
+                                    "border-yellow-200 bg-yellow-50 text-yellow-700 hover:bg-yellow-50"
+                              }
+                            >
+                              {staffRow.status}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="py-4">{staffRow.totalMarks}</TableCell>
+                          <TableCell className="py-4">{staffRow.awardCount}</TableCell>
+                          <TableCell className="py-4 text-right">
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-9 w-9 rounded-full border border-slate-200 bg-white hover:bg-slate-100"
+                                >
+                                  <MoreVertical className="h-4 w-4 text-slate-600" />
+                                  <span className="sr-only">Open staff actions</span>
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end" className="w-48">
+                                <DropdownMenuItem onClick={() => openAwardDialog(staffRow)}>
+                                  <Award className="mr-2 h-4 w-4" />
+                                  Award Marks
+                                </DropdownMenuItem>
+                                {staffRow.managedInDirectory ? (
+                                  <>
+                                    <DropdownMenuItem onClick={() => openEditStaffDialog(staffRow)}>
+                                      <PencilLine className="mr-2 h-4 w-4" />
+                                      Edit Staff
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem onClick={() => handleToggleStaffStatus(staffRow)}>
+                                      <UserX className="mr-2 h-4 w-4" />
+                                      {staffRow.status === "active" ? "Deactivate" : "Activate"}
+                                    </DropdownMenuItem>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem
+                                      onClick={() => handleDeleteStaff(staffRow)}
+                                      className="text-red-600 focus:bg-red-50 focus:text-red-700"
+                                    >
+                                      <Trash2 className="mr-2 h-4 w-4" />
+                                      Delete Staff
+                                    </DropdownMenuItem>
+                                  </>
+                                ) : (
+                                  <DropdownMenuItem disabled>
+                                    Marks only
+                                  </DropdownMenuItem>
+                                )}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </TableCell>
+                        </TableRow>
+                      )) : (
+                        <TableRow>
+                          <TableCell colSpan={7} className="py-10 text-center text-slate-500">
+                            No staff records found for the selected filters.
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </TableBody>
+                  </Table>
                 </div>
-              )}
               </CardContent>
             </Card>
           </div>
@@ -2011,14 +2136,20 @@ const PerformanceReport = () => {
         open={isCreateStaffOpen}
         onOpenChange={(open) => {
           setIsCreateStaffOpen(open);
-          if (!open) setCreateStaffForm(createDefaultStaffForm());
+          if (!open) {
+            setCreateStaffForm(createDefaultStaffForm());
+            setEditingStaffRow(null);
+          }
         }}
       >
         <DialogContent className="max-w-2xl bg-white">
           <DialogHeader>
-            <DialogTitle>Create Staff</DialogTitle>
+            <DialogTitle>{editingStaffRow ? "Edit Staff" : "Create Staff"}</DialogTitle>
             <DialogDescription>
-              Add a staff member to the HR table for {activeProgram || "the selected programme"}.
+              {editingStaffRow ?
+                `Update ${editingStaffRow.staffName} in the HR table for ${activeProgram || "the selected programme"}.` :
+                `Add a staff member to the HR table for ${activeProgram || "the selected programme"}.`
+              }
             </DialogDescription>
           </DialogHeader>
 
@@ -2076,88 +2207,8 @@ const PerformanceReport = () => {
               Programme: <span className="font-semibold text-slate-700">{activeProgram || "No programme selected"}</span>
             </p>
             <Button onClick={handleCreateStaff} disabled={isSavingStaffDirectory}>
-              {isSavingStaffDirectory ? "Saving..." : "Create Staff"}
+              {isSavingStaffDirectory ? "Saving..." : editingStaffRow ? "Save Changes" : "Create Staff"}
             </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={isStaffManagementOpen} onOpenChange={setIsStaffManagementOpen}>
-        <DialogContent className="max-w-6xl bg-white">
-          <DialogHeader>
-            <DialogTitle>HR Staff Table</DialogTitle>
-            <DialogDescription>
-              Manage staff records and award marks for {activeProgram || "the selected programme"}.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="max-h-[60vh] overflow-auto rounded-xl border border-slate-200">
-            <Table>
-              <TableHeader className="bg-slate-50">
-                <TableRow>
-                  <TableHead>Staff</TableHead>
-                  <TableHead>Role</TableHead>
-                  <TableHead>County</TableHead>
-                  <TableHead>Phone</TableHead>
-                  <TableHead>Programme</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Total Marks</TableHead>
-                  <TableHead>Awards</TableHead>
-                  <TableHead>Last Award</TableHead>
-                  <TableHead>Action</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {staffManagementRows.length > 0 ? staffManagementRows.map((staffRow) => (
-                  <TableRow key={staffRow.id}>
-                    <TableCell className="font-medium text-slate-900">
-                      <div>{staffRow.staffName}</div>
-                      {staffRow.lastAwardNote && (
-                        <div className="mt-1 text-xs text-slate-500">{staffRow.lastAwardNote}</div>
-                      )}
-                    </TableCell>
-                    <TableCell>{staffRow.role}</TableCell>
-                    <TableCell>{staffRow.county}</TableCell>
-                    <TableCell>{staffRow.phone}</TableCell>
-                    <TableCell>{staffRow.programme}</TableCell>
-                    <TableCell>
-                      <Badge
-                        className={
-                          staffRow.status === "active" ?
-                            "border-green-200 bg-green-50 text-green-700 hover:bg-green-50" :
-                            staffRow.status === "inactive" ?
-                              "border-slate-200 bg-slate-100 text-slate-700 hover:bg-slate-100" :
-                              "border-yellow-200 bg-yellow-50 text-yellow-700 hover:bg-yellow-50"
-                        }
-                      >
-                        {staffRow.status}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>{staffRow.totalMarks}</TableCell>
-                    <TableCell>{staffRow.awardCount}</TableCell>
-                    <TableCell>{staffRow.lastAwardDate}</TableCell>
-                    <TableCell>
-                      <div className="flex flex-wrap gap-2">
-                        <Button size="sm" variant="outline" onClick={() => openAwardDialog(staffRow)}>
-                          Award
-                        </Button>
-                        {staffRow.managedInDirectory && (
-                          <Button size="sm" variant="ghost" onClick={() => handleToggleStaffStatus(staffRow)}>
-                            {staffRow.status === "active" ? "Deactivate" : "Activate"}
-                          </Button>
-                        )}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                )) : (
-                  <TableRow>
-                    <TableCell colSpan={10} className="py-10 text-center text-slate-500">
-                      No staff records found for the current filters.
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
           </div>
         </DialogContent>
       </Dialog>

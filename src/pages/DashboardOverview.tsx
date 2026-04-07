@@ -4,6 +4,8 @@ import { useQuery } from "@tanstack/react-query";
 import {
   Activity,
   ArrowRight,
+  ArrowDown,
+  ArrowUp,
   Clock3,
   Eye,
   Leaf,
@@ -39,22 +41,31 @@ import { normalizeProgramme, resolveAccessibleProgrammes, resolveActiveProgramme
 
 type OverviewRecord = Record<string, any>;
 
-type ComparisonYears = {
-  year1: number;
-  year2: number;
-  availableYears: number[];
+type YearlyTrendPoint = {
+  name: string;
+  [year: string]: number | string;
+};
+
+type YearlyTrend = {
+  years: number[];
+  data: YearlyTrendPoint[];
+};
+
+type AnnualComparisonPoint = {
+  name: string;
+  goatsOnRecord: number;
+  goatsPurchased: number;
+};
+
+type AnnualComparison = {
+  years: number[];
+  data: AnnualComparisonPoint[];
 };
 
 type DonutSegment = {
   name: string;
   value: number;
   color: string;
-};
-
-type TrendPoint = {
-  name: string;
-  year1: number;
-  year2: number;
 };
 
 type CountyCoverage = {
@@ -91,11 +102,10 @@ interface OverviewSummaryData {
     totalGoatsPurchased: number;
     countiesCovered: number;
   };
-  comparisonYears: ComparisonYears;
   maintainedInfrastructure: DonutSegment[];
   registrationComparison: DonutSegment[];
-  animalCensusVsPurchased: DonutSegment[];
-  vaccinationTrend: TrendPoint[];
+  animalCensusComparison: AnnualComparison;
+  vaccinationTrend: YearlyTrend;
   countyCoverage: CountyCoverage[];
   recentLocations: RecentLocation[];
   recentActivities: RecentActivity[];
@@ -117,10 +127,9 @@ const LOCALHOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
 const USE_REMOTE_ANALYTICS =
   typeof window !== "undefined" && !LOCALHOSTS.has(window.location.hostname);
 
-const YEAR_ONE_COLOR = "#2710a1";
-const YEAR_TWO_COLOR = "#f89b0d";
+const SERIES_COLORS = ["#2710a1", "#f89b0d", "#ffea00", "#2cb100", "#0ea5e9", "#ef4444"];
 const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const COUNTY_BAR_COLORS = [YEAR_ONE_COLOR, YEAR_TWO_COLOR, "#ffea00", "#2cb100"];
+const COUNTY_BAR_COLORS = SERIES_COLORS.slice(0, 4);
 const SECONDARY_TEXT_CLASS = "text-gray-600";
 const RECENT_LOCATION_MAX_AGE_DAYS = 180;
 const RECENT_LOCATION_MAX_AGE_MS = RECENT_LOCATION_MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
@@ -130,27 +139,11 @@ const activityDateFormatter = new Intl.DateTimeFormat("en", {
   day: "numeric",
   year: "numeric",
 });
-const getComparisonYears = (referenceDate: Date = new Date()): ComparisonYears => ({
-  year1: referenceDate.getFullYear(),
-  year2: referenceDate.getFullYear(),
-  availableYears: [referenceDate.getFullYear()],
+const createEmptyYearlyTrend = (): YearlyTrend => ({
+  years: [],
+  data: MONTH_LABELS.map((name) => ({ name })),
 });
-const getComparisonYearLabel = (businessStartYear: number, comparisonYear: number, fallbackIndex = 1): string => {
-  if (comparisonYear === businessStartYear && fallbackIndex > 1) {
-    return `Year ${fallbackIndex}`;
-  }
-  const yearIndex = comparisonYear - businessStartYear + 1;
-  return `Year ${yearIndex >= 1 ? yearIndex : fallbackIndex}`;
-};
-const buildYearRange = (startYear: number, endYear: number): number[] => {
-  const safeStartYear = Math.min(startYear, endYear);
-  const safeEndYear = Math.max(startYear, endYear);
-  return Array.from({ length: safeEndYear - safeStartYear + 1 }, (_, index) => safeStartYear + index);
-};
-const EMPTY_DONUT_SEGMENTS: DonutSegment[] = [
-  { name: "Year 1", value: 0, color: YEAR_ONE_COLOR },
-  { name: "Year 2", value: 0, color: YEAR_TWO_COLOR },
-];
+const EMPTY_DONUT_SEGMENTS: DonutSegment[] = [];
 const EMPTY_COUNTY_COVERAGE: CountyCoverage[] = COUNTY_BAR_COLORS.map((color, index) => ({
   name: `County ${index + 1}`,
   value: 0,
@@ -169,14 +162,13 @@ const EMPTY_OVERVIEW_DATA: OverviewSummaryData = {
     totalGoatsPurchased: 0,
     countiesCovered: 0,
   },
-  comparisonYears: getComparisonYears(),
   maintainedInfrastructure: EMPTY_DONUT_SEGMENTS,
   registrationComparison: EMPTY_DONUT_SEGMENTS,
-  animalCensusVsPurchased: [
-    { name: "Goats on record", value: 0, color: "#ffc107" },
-    { name: "Goats purchased", value: 0, color: "#a80d10" },
-  ],
-  vaccinationTrend: MONTH_LABELS.map((name) => ({ name, year1: 0, year2: 0 })),
+  animalCensusComparison: {
+    years: [],
+    data: [],
+  },
+  vaccinationTrend: createEmptyYearlyTrend(),
   countyCoverage: EMPTY_COUNTY_COVERAGE,
   recentLocations: [],
   recentActivities: [],
@@ -186,8 +178,7 @@ const OVERVIEW_CACHE_TTL_MS = 10 * 60 * 1000;
 const buildOverviewCacheKey = (
   userId: string | null | undefined,
   programme: string | null | undefined,
-  selectedComparisonYear: number | null | undefined,
-) => cacheKey("overview-summary", userId || "anon", programme || "none", selectedComparisonYear ?? "auto");
+) => cacheKey("overview-summary-v3", userId || "anon", programme || "none");
 
 const parseDate = (value: unknown): Date | null => {
   if (!value) return null;
@@ -258,22 +249,65 @@ const getGoatTotal = (goats: unknown): number => {
     return getNumberField({ goats }, "goats");
   }
 
+  if (Array.isArray(goats)) {
+    return goats.length;
+  }
+
   if (goats && typeof goats === "object") {
     const record = goats as Record<string, unknown>;
-    if (Object.prototype.hasOwnProperty.call(record, "total")) {
-      return getNumberField(record, "total");
+    const directTotal = getNumberField(
+      record,
+      "total",
+      "goats",
+      "goat",
+      "noOfGoats",
+      "no of goats",
+      "numberOfGoats",
+      "goatsTotal",
+      "totalGoats",
+      "goatsCount",
+      "goatCount",
+    );
+
+    if (directTotal > 0) {
+      return directTotal;
     }
+
     return getNumberField(record, "male") + getNumberField(record, "female");
   }
 
   return 0;
 };
 
+const getFarmerGoatTotal = (record: Record<string, unknown>): number =>
+  Math.max(
+    getGoatTotal(record.goats ?? record.Goats),
+    getNumberField(
+      record,
+      "goats",
+      "goat",
+      "noOfGoats",
+      "no of goats",
+      "numberOfGoats",
+      "goatsTotal",
+      "totalGoats",
+      "goatsCount",
+      "goatCount",
+    ),
+    getArrayLikeSize(record.goats),
+    getArrayLikeSize(record.Goats),
+    0,
+  );
+
 const getOfftakeGoatsTotal = (record: Record<string, unknown>): number =>
   Math.max(
     getNumberField(record, "totalGoats"),
     getNumberField(record, "goatsBought"),
     getNumberField(record, "goats"),
+    getNumberField(record, "goat"),
+    getNumberField(record, "noOfGoats"),
+    getNumberField(record, "no of goats"),
+    getNumberField(record, "numberOfGoats"),
     getArrayLikeSize(record.goats),
     getArrayLikeSize(record.Goats),
     0,
@@ -332,117 +366,139 @@ const getFarmerVisitDate = (record: Record<string, unknown>) =>
     record.registrationDate,
   );
 
-const resolveComparisonYears = (
-  availableYears: number[],
-  selectedComparisonYear?: number | null,
-  referenceDate: Date = new Date(),
-): ComparisonYears => {
-  const normalizedYears = Array.from(
-    new Set(
-      availableYears
-        .map((year) => Math.trunc(year))
-        .filter((year) => Number.isFinite(year) && year > 0),
-    ),
-  ).sort((left, right) => left - right);
+const getSeriesColor = (index: number): string => SERIES_COLORS[index % SERIES_COLORS.length];
 
-  if (normalizedYears.length === 0) {
-    return getComparisonYears(referenceDate);
+const buildYearlySegments = (
+  records: OverviewRecord[],
+  getDateValue: (record: OverviewRecord) => Date | null,
+  includeRecord: (record: OverviewRecord) => boolean = () => true,
+): DonutSegment[] => {
+  const yearCounts = new Map<number, number>();
+
+  for (const record of records) {
+    if (!includeRecord(record)) continue;
+    const date = getDateValue(record);
+    if (!date) continue;
+
+    const year = date.getFullYear();
+    yearCounts.set(year, (yearCounts.get(year) || 0) + 1);
   }
 
-  const year1 = normalizedYears[0];
-  const latestKnownYear = normalizedYears[normalizedYears.length - 1] ?? year1;
-  const referenceYear = Math.max(referenceDate.getFullYear(), latestKnownYear);
-  const calendarYears = buildYearRange(year1, referenceYear);
-  const fallbackYear2 = calendarYears[calendarYears.length - 1] ?? year1;
-  const year2 =
-    selectedComparisonYear !== null &&
-    selectedComparisonYear !== undefined &&
-    calendarYears.includes(selectedComparisonYear)
-      ? selectedComparisonYear
-      : fallbackYear2;
+  return [...yearCounts.entries()]
+    .sort(([leftYear], [rightYear]) => leftYear - rightYear)
+    .map(([year, value], index) => ({
+      name: String(year),
+      value,
+      color: getSeriesColor(index),
+    }));
+};
+
+const buildYearlyTrend = (
+  records: OverviewRecord[],
+  getDateValue: (record: OverviewRecord) => Date | null,
+  getValue: (record: OverviewRecord) => number,
+  includeRecord: (record: OverviewRecord) => boolean = () => true,
+): YearlyTrend => {
+  const yearSet = new Set<number>();
+
+  for (const record of records) {
+    if (!includeRecord(record)) continue;
+    const date = getDateValue(record);
+    const value = getValue(record);
+    if (!date || value <= 0) continue;
+    yearSet.add(date.getFullYear());
+  }
+
+  const years = [...yearSet].sort((left, right) => left - right);
+  const yearLookup = new Set(years);
+  const data = MONTH_LABELS.map((name) => {
+    const point: YearlyTrendPoint = { name };
+    for (const year of years) {
+      point[String(year)] = 0;
+    }
+    return point;
+  });
+
+  for (const record of records) {
+    if (!includeRecord(record)) continue;
+    const date = getDateValue(record);
+    const value = getValue(record);
+    if (!date || value <= 0) continue;
+
+    const year = date.getFullYear();
+    if (!yearLookup.has(year)) continue;
+
+    const monthPoint = data[date.getMonth()];
+    const key = String(year);
+    const currentValue = typeof monthPoint[key] === "number" ? monthPoint[key] : 0;
+    monthPoint[key] = currentValue + value;
+  }
 
   return {
-    year1,
-    year2,
-    availableYears: calendarYears,
+    years,
+    data,
   };
 };
 
-const getOverviewRecordProgramme = (record: OverviewRecord) =>
-  normalizeProgramme(record.programme ?? record.Programme);
-
-const buildVaccinationTrend = (
+const buildAnnualComparison = (
   farmers: OverviewRecord[],
-  comparisonYears: ComparisonYears,
-): TrendPoint[] => {
-  const trend = MONTH_LABELS.map((name) => ({ name, year1: 0, year2: 0 }));
-
-  for (const farmer of farmers) {
-    if (!parseBoolean(farmer.vaccinated)) continue;
-
-    const date = getFarmerVaccinationDate(farmer);
-    const vaccinatedGoats = Math.max(getGoatTotal(farmer.goats), getNumberField(farmer, "goats"), 0);
-    if (!date || vaccinatedGoats <= 0) continue;
-
-    const monthIndex = date.getMonth();
-    if (date.getFullYear() === comparisonYears.year1) trend[monthIndex].year1 += vaccinatedGoats;
-    if (comparisonYears.year2 !== comparisonYears.year1 && date.getFullYear() === comparisonYears.year2) {
-      trend[monthIndex].year2 += vaccinatedGoats;
-    }
-  }
-
-  return trend;
-};
-
-const buildInfrastructureComparison = (
-  records: OverviewRecord[],
-  comparisonYears: ComparisonYears,
-): DonutSegment[] => {
-  let year1Value = 0;
-  let year2Value = 0;
-  const year2Label = getComparisonYearLabel(comparisonYears.year1, comparisonYears.year2, 2);
-
-  for (const record of records) {
-    const statuses = getInfrastructureStatuses(record);
-    if (!statuses.drilled && !statuses.maintained) continue;
-    const date = getInfrastructureRecordDate(record);
-    if (!date) continue;
-
-    if (date.getFullYear() === comparisonYears.year1) year1Value += 1;
-    if (comparisonYears.year2 !== comparisonYears.year1 && date.getFullYear() === comparisonYears.year2) {
-      year2Value += 1;
-    }
-  }
-
-  return [
-    { name: "Year 1", value: year1Value, color: YEAR_ONE_COLOR },
-    { name: year2Label, value: year2Value, color: YEAR_TWO_COLOR },
-  ];
-};
-
-const buildRegistrationComparison = (
-  farmers: OverviewRecord[],
-  comparisonYears: ComparisonYears,
-): DonutSegment[] => {
-  let year1Value = 0;
-  let year2Value = 0;
-  const year2Label = getComparisonYearLabel(comparisonYears.year1, comparisonYears.year2, 2);
+  offtakes: OverviewRecord[],
+): AnnualComparison => {
+  const yearSet = new Set<number>();
+  const goatsOnRecordByYear = new Map<number, number>();
+  const goatsPurchasedByYear = new Map<number, number>();
 
   for (const farmer of farmers) {
     const date = parseDate(farmer.createdAt || farmer.registrationDate);
     if (!date) continue;
 
-    if (date.getFullYear() === comparisonYears.year1) year1Value += 1;
-    if (comparisonYears.year2 !== comparisonYears.year1 && date.getFullYear() === comparisonYears.year2) {
-      year2Value += 1;
-    }
+    const year = date.getFullYear();
+    yearSet.add(year);
+    goatsOnRecordByYear.set(year, (goatsOnRecordByYear.get(year) || 0) + getFarmerGoatTotal(farmer));
+  }
+
+  for (const record of offtakes) {
+    const date = parseDate(record.date ?? record.Date ?? record.createdAt ?? record.created_at);
+    if (!date) continue;
+
+    const year = date.getFullYear();
+    yearSet.add(year);
+    goatsPurchasedByYear.set(year, (goatsPurchasedByYear.get(year) || 0) + getOfftakeGoatsTotal(record));
+  }
+
+  const years = [...yearSet].sort((left, right) => left - right);
+
+  return {
+    years,
+    data: years.map((year) => ({
+      name: String(year),
+      goatsOnRecord: goatsOnRecordByYear.get(year) || 0,
+      goatsPurchased: goatsPurchasedByYear.get(year) || 0,
+    })),
+  };
+};
+
+const buildInfrastructureComparison = (records: OverviewRecord[]): DonutSegment[] => {
+  let drilled = 0;
+  let equipped = 0;
+  let maintained = 0;
+
+  for (const record of records) {
+    const statuses = getInfrastructureStatuses(record);
+    if (statuses.drilled) drilled += 1;
+    if (statuses.equipped) equipped += 1;
+    if (statuses.maintained) maintained += 1;
   }
 
   return [
-    { name: "Year 1", value: year1Value, color: YEAR_ONE_COLOR },
-    { name: year2Label, value: year2Value, color: YEAR_TWO_COLOR },
+    { name: "Drilled", value: drilled, color: "#2710a1" },
+    { name: "Equipped", value: equipped, color: "#0ea5e9" },
+    { name: "Maintained", value: maintained, color: "#f89b0d" },
   ];
 };
+
+const getOverviewRecordProgramme = (record: OverviewRecord) =>
+  normalizeProgramme(record.programme ?? record.Programme);
 
 const buildRecentLocations = (farmers: OverviewRecord[]): RecentLocation[] => {
   const seen = new Set<string>();
@@ -494,11 +550,9 @@ const buildOverviewSummaryFromRecords = ({
   farmers,
   capacity,
   offtakes,
-  animalHealth,
   boreholes,
   activities,
-}: OverviewCollections, selectedComparisonYear?: number | null): OverviewSummaryData => {
-  const availableYears = new Set<number>();
+}: OverviewCollections): OverviewSummaryData => {
   let maleFarmers = 0;
   let femaleFarmers = 0;
   let totalGoats = 0;
@@ -507,16 +561,6 @@ const buildOverviewSummaryFromRecords = ({
   const countyMap: Record<string, number> = {};
 
   for (const farmer of farmers) {
-    const registrationDate = parseDate(farmer.createdAt || farmer.registrationDate);
-    if (registrationDate) {
-      availableYears.add(registrationDate.getFullYear());
-    }
-
-    const vaccinationDate = getFarmerVaccinationDate(farmer);
-    if (vaccinationDate) {
-      availableYears.add(vaccinationDate.getFullYear());
-    }
-
     const gender = String(farmer.gender || "").trim().toLowerCase();
     if (gender === "male") maleFarmers += 1;
     if (gender === "female") femaleFarmers += 1;
@@ -528,33 +572,6 @@ const buildOverviewSummaryFromRecords = ({
     const county = String(farmer.county || farmer.region || "").trim();
     if (county) countyMap[county] = (countyMap[county] || 0) + 1;
   }
-
-  for (const record of boreholes) {
-    const date = getInfrastructureRecordDate(record);
-    if (date) availableYears.add(date.getFullYear());
-  }
-
-  for (const record of animalHealth) {
-    const date = getActivityRecordDate(record);
-    if (date) availableYears.add(date.getFullYear());
-  }
-
-  for (const record of capacity) {
-    const date = parseDate(record.startDate ?? record.date ?? record.Date ?? record.createdAt ?? record.created_at);
-    if (date) availableYears.add(date.getFullYear());
-  }
-
-  for (const record of offtakes) {
-    const date = parseDate(record.date ?? record.Date ?? record.createdAt ?? record.created_at);
-    if (date) availableYears.add(date.getFullYear());
-  }
-
-  for (const record of activities) {
-    const date = getActivityRecordDate(record);
-    if (date) availableYears.add(date.getFullYear());
-  }
-
-  const comparisonYears = resolveComparisonYears([...availableYears], selectedComparisonYear);
 
   const totalAnimals = totalGoats + totalSheep + totalCattle;
   const trainedFarmers = capacity.reduce(
@@ -587,14 +604,18 @@ const buildOverviewSummaryFromRecords = ({
       totalGoatsPurchased,
       countiesCovered: Object.keys(countyMap).length,
     },
-    comparisonYears,
-    maintainedInfrastructure: buildInfrastructureComparison(boreholes, comparisonYears),
-    registrationComparison: buildRegistrationComparison(farmers, comparisonYears),
-    animalCensusVsPurchased: [
-      { name: "Goats on record", value: totalGoats, color: "#ffc107" },
-      { name: "Goats purchased", value: totalGoatsPurchased, color: "#a80d10" },
-    ],
-    vaccinationTrend: buildVaccinationTrend(farmers, comparisonYears),
+    maintainedInfrastructure: buildInfrastructureComparison(boreholes),
+    registrationComparison: buildYearlySegments(
+      farmers,
+      (record) => parseDate(record.createdAt || record.registrationDate),
+    ),
+    animalCensusComparison: buildAnnualComparison(farmers, offtakes),
+    vaccinationTrend: buildYearlyTrend(
+      farmers,
+      getFarmerVaccinationDate,
+      (record) => Math.max(getFarmerGoatTotal(record), getNumberField(record, "goats"), 0),
+      (record) => parseBoolean(record.vaccinated),
+    ),
     countyCoverage: countyCoverage.length > 0 ? countyCoverage : EMPTY_COUNTY_COVERAGE,
     recentLocations: buildRecentLocations(farmers),
     recentActivities: buildRecentActivities(activities),
@@ -635,37 +656,98 @@ const sanitizeDonutSegments = (
       color:
         typeof segment.color === "string" && segment.color.trim()
           ? segment.color
-          : fallback[index % fallback.length]?.color || YEAR_ONE_COLOR,
+          : fallback[index % fallback.length]?.color || SERIES_COLORS[0],
     };
   });
 };
 
-const relabelComparisonDonutSegments = (
-  segments: DonutSegment[],
-  businessStartYear: number,
-  comparisonYear: number,
-): DonutSegment[] => {
-  if (segments.length === 0) return segments;
+const cloneYearlyTrend = (trend: YearlyTrend): YearlyTrend => ({
+  years: [...trend.years],
+  data: trend.data.map((point) => ({ ...point })),
+});
 
-  return segments.map((segment, index) => ({
-    ...segment,
-    name: index === 0 ? "Year 1" : getComparisonYearLabel(businessStartYear, comparisonYear, index + 1),
-  }));
-};
+const cloneAnnualComparison = (comparison: AnnualComparison): AnnualComparison => ({
+  years: [...comparison.years],
+  data: comparison.data.map((point) => ({ ...point })),
+});
 
-const sanitizeTrendPoints = (value: unknown): TrendPoint[] => {
-  if (!Array.isArray(value) || value.length === 0) {
-    return EMPTY_OVERVIEW_DATA.vaccinationTrend.map((point) => ({ ...point }));
+const sanitizeYearlyTrend = (value: unknown, fallback: YearlyTrend = createEmptyYearlyTrend()): YearlyTrend => {
+  if (!value || typeof value !== "object") return cloneYearlyTrend(fallback);
+
+  const candidate = value as Partial<YearlyTrend>;
+  if (!Array.isArray(candidate.years) || !Array.isArray(candidate.data) || candidate.data.length === 0) {
+    return cloneYearlyTrend(fallback);
   }
 
-  return value.map((item, index) => {
-    const point = item && typeof item === "object" ? item as Partial<TrendPoint> : {};
-    return {
+  const years = Array.from(
+    new Set(
+      candidate.years
+        .map((year) => getSafeNumber(year))
+        .filter((year) => year > 0),
+    ),
+  ).sort((left, right) => left - right);
+
+  if (years.length === 0) {
+    return cloneYearlyTrend(fallback);
+  }
+
+  const data = candidate.data.map((item, index) => {
+    const point = item && typeof item === "object" ? item as Partial<YearlyTrendPoint> : {};
+    const nextPoint: YearlyTrendPoint = {
       name: typeof point.name === "string" && point.name.trim() ? point.name : MONTH_LABELS[index] || `Point ${index + 1}`,
-      year1: getSafeNumber(point.year1),
-      year2: getSafeNumber(point.year2),
+    };
+
+    for (const year of years) {
+      nextPoint[String(year)] = getSafeNumber(point[String(year)]);
+    }
+
+    return nextPoint;
+  });
+
+  return {
+    years,
+    data,
+  };
+};
+
+const sanitizeAnnualComparison = (
+  value: unknown,
+  fallback: AnnualComparison = EMPTY_OVERVIEW_DATA.animalCensusComparison,
+): AnnualComparison => {
+  if (!value || typeof value !== "object") return cloneAnnualComparison(fallback);
+
+  const candidate = value as Partial<AnnualComparison>;
+  if (!Array.isArray(candidate.years) || !Array.isArray(candidate.data) || candidate.data.length === 0) {
+    return cloneAnnualComparison(fallback);
+  }
+
+  const years = Array.from(
+    new Set(
+      candidate.years
+        .map((year) => getSafeNumber(year))
+        .filter((year) => year > 0),
+    ),
+  ).sort((left, right) => left - right);
+
+  if (years.length === 0) {
+    return cloneAnnualComparison(fallback);
+  }
+
+  const data = years.map((year, index) => {
+    const point = candidate.data[index] && typeof candidate.data[index] === "object"
+      ? candidate.data[index] as Partial<AnnualComparisonPoint>
+      : {};
+    return {
+      name: typeof point.name === "string" && point.name.trim() ? point.name : String(year),
+      goatsOnRecord: getSafeNumber(point.goatsOnRecord),
+      goatsPurchased: getSafeNumber(point.goatsPurchased),
     };
   });
+
+  return {
+    years,
+    data,
+  };
 };
 
 const sanitizeCountyCoverage = (value: unknown): CountyCoverage[] => {
@@ -721,42 +803,19 @@ const sanitizeRecentActivities = (value: unknown): RecentActivity[] => {
   });
 };
 
-const sanitizeComparisonYears = (value: unknown): ComparisonYears => {
-  const fallback = getComparisonYears();
-  if (!value || typeof value !== "object") return fallback;
-
-  const candidate = value as Partial<ComparisonYears>;
-  const year1 = getSafeNumber(candidate.year1, fallback.year1);
-  const year2 = getSafeNumber(candidate.year2, fallback.year2);
-  const availableYears = Array.isArray(candidate.availableYears)
-    ? Array.from(
-        new Set(
-          candidate.availableYears
-            .map((item) => getSafeNumber(item))
-            .filter((year) => year > 0),
-        ),
-      ).sort((left, right) => left - right)
-    : [];
-
-  return {
-    year1,
-    year2,
-    availableYears: availableYears.length > 0 ? availableYears : Array.from(new Set([year1, year2])).sort((left, right) => left - right),
-  };
-};
+const hasLegacyYearLabels = (segments: DonutSegment[]): boolean =>
+  segments.some((segment) => /^Year\s+\d+$/i.test(segment.name.trim()));
 
 const sanitizeOverviewSummary = (value: unknown): OverviewSummaryData => {
   if (!value || typeof value !== "object") return EMPTY_OVERVIEW_DATA;
 
   const data = value as Partial<OverviewSummaryData> & {
     stats?: Partial<OverviewSummaryData["stats"]>;
-    comparisonYears?: Partial<ComparisonYears>;
   };
   const stats: Partial<OverviewStats> | undefined =
     data.stats && typeof data.stats === "object"
       ? data.stats as Partial<OverviewStats>
       : undefined;
-  const comparisonYears = sanitizeComparisonYears(data.comparisonYears);
 
   return {
     stats: {
@@ -771,14 +830,14 @@ const sanitizeOverviewSummary = (value: unknown): OverviewSummaryData => {
       totalGoatsPurchased: getSafeNumber(stats?.totalGoatsPurchased),
       countiesCovered: getSafeNumber(stats?.countiesCovered),
     },
-    comparisonYears,
     maintainedInfrastructure: sanitizeDonutSegments(data.maintainedInfrastructure, EMPTY_DONUT_SEGMENTS),
     registrationComparison: sanitizeDonutSegments(data.registrationComparison, EMPTY_DONUT_SEGMENTS),
-    animalCensusVsPurchased: sanitizeDonutSegments(
-      data.animalCensusVsPurchased,
-      EMPTY_OVERVIEW_DATA.animalCensusVsPurchased,
+    animalCensusComparison: sanitizeAnnualComparison(
+      (data as Partial<OverviewSummaryData> & { animalCensusVsPurchased?: unknown }).animalCensusComparison ??
+        (data as Partial<OverviewSummaryData> & { animalCensusVsPurchased?: unknown }).animalCensusVsPurchased,
+      EMPTY_OVERVIEW_DATA.animalCensusComparison,
     ),
-    vaccinationTrend: sanitizeTrendPoints(data.vaccinationTrend),
+    vaccinationTrend: sanitizeYearlyTrend(data.vaccinationTrend, EMPTY_OVERVIEW_DATA.vaccinationTrend),
     countyCoverage: sanitizeCountyCoverage(data.countyCoverage),
     recentLocations: sanitizeRecentLocations(data.recentLocations),
     recentActivities: sanitizeRecentActivities(data.recentActivities),
@@ -789,6 +848,10 @@ const sanitizeOverviewSummary = (value: unknown): OverviewSummaryData => {
 const hasMeaningfulOverviewData = (value: unknown): boolean => {
   const data = sanitizeOverviewSummary(value);
 
+  if (hasLegacyYearLabels(data.maintainedInfrastructure) || hasLegacyYearLabels(data.registrationComparison)) {
+    return false;
+  }
+
   return (
     data.stats.totalFarmers > 0 ||
     data.stats.trainedFarmers > 0 ||
@@ -796,8 +859,8 @@ const hasMeaningfulOverviewData = (value: unknown): boolean => {
     data.stats.totalGoatsPurchased > 0 ||
     data.maintainedInfrastructure.some((item) => item.value > 0) ||
     data.registrationComparison.some((item) => item.value > 0) ||
-    data.animalCensusVsPurchased.some((item) => item.value > 0) ||
-    data.vaccinationTrend.some((item) => item.year1 > 0 || item.year2 > 0) ||
+    (data.animalCensusComparison.years.length > 0 && data.animalCensusComparison.data.some((point) => point.goatsOnRecord > 0 || point.goatsPurchased > 0)) ||
+    (data.vaccinationTrend.years.length > 0 && data.vaccinationTrend.data.some((point) => data.vaccinationTrend.years.some((year) => getSafeNumber(point[String(year)]) > 0))) ||
     data.countyCoverage.some((item) => item.value > 0) ||
     data.recentLocations.length > 0 ||
     data.recentActivities.length > 0
@@ -837,6 +900,61 @@ const formatRelativeTime = (value: string): string => {
   return "just now";
 };
 
+type TrendDirection = "up" | "down" | "flat";
+
+const getPercentChange = (current: number, previous: number | null | undefined): { direction: TrendDirection; label: string } => {
+  if (previous === null || previous === undefined || !Number.isFinite(previous)) {
+    return { direction: "flat", label: "0.0%" };
+  }
+
+  if (previous <= 0) {
+    if (current <= 0) return { direction: "flat", label: "0.0%" };
+    return { direction: "up", label: "100%+" };
+  }
+
+  const percentChange = ((current - previous) / previous) * 100;
+  if (Math.abs(percentChange) < 0.05) {
+    return { direction: "flat", label: "0.0%" };
+  }
+
+  return {
+    direction: percentChange > 0 ? "up" : "down",
+    label: `${Math.abs(percentChange).toFixed(1)}%`,
+  };
+};
+
+const TrendChangeBadge = ({
+  current,
+  previous,
+}: {
+  current: number;
+  previous: number | null | undefined;
+}) => {
+  const change = getPercentChange(current, previous);
+  const icon =
+    change.direction === "up" ? (
+      <ArrowUp className="h-3 w-3" />
+    ) : change.direction === "down" ? (
+      <ArrowDown className="h-3 w-3" />
+    ) : (
+      <ArrowRight className="h-3 w-3" />
+    );
+
+  const tone =
+    change.direction === "up"
+      ? "bg-emerald-50 text-emerald-700"
+      : change.direction === "down"
+        ? "bg-rose-50 text-rose-700"
+        : "bg-slate-100 text-slate-600";
+
+  return (
+    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ${tone}`}>
+      {icon}
+      {change.label}
+    </span>
+  );
+};
+
 const TopMetricCard = ({
   title,
   value,
@@ -854,11 +972,14 @@ const TopMetricCard = ({
   progressLabel: string;
   detail?: ReactNode;
 }) => (
-  <div className="rounded-[18px] border border-slate-200 bg-white px-4 py-4 shadow-[0_8px_30px_rgba(15,23,42,0.05)] sm:px-5">
+  <div
+    className="rounded-[18px] border border-l-4 border-slate-200 bg-white px-4 py-4 shadow-[0_8px_30px_rgba(15,23,42,0.05)] sm:px-5"
+    style={{ borderLeftColor: accentColor }}
+  >
     <div className="flex items-start justify-between gap-4">
       <div className="min-w-0 space-y-1.5">
         <p className={`text-sm font-medium tracking-[-0.02em] ${SECONDARY_TEXT_CLASS}`}>{title}</p>
-        <p className="text-[24px] font-semibold leading-none tracking-[-0.04em] text-slate-950 sm:text-[34px]">
+        <p className="text-[21px] font-semibold leading-none tracking-[-0.04em] text-slate-950 sm:text-[30px]">
           {formatWholeNumber(value)}
         </p>
       </div>
@@ -899,45 +1020,222 @@ const OverviewPanel = ({
   </div>
 );
 
-const ChartLegend = ({ items }: { items: DonutSegment[] }) => (
-  <div className={`mt-3 flex flex-wrap items-center justify-center gap-5 text-sm ${SECONDARY_TEXT_CLASS}`}>
-    {items.map((item) => (
-      <div key={item.name} className="flex items-center gap-2">
-        <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.color }} />
-        <span>{item.name}</span>
-        <span className={`font-semibold ${SECONDARY_TEXT_CLASS}`}>{formatWholeNumber(item.value)}</span>
-      </div>
-    ))}
-  </div>
-);
-
-const ComparisonYearSelector = ({
-  businessStartYear,
-  availableYears,
-  selectedYear,
-  onChange,
+const YearTrendPanel = ({
+  title,
+  trend,
+  tooltipValueLabel = "records",
 }: {
-  businessStartYear: number;
-  availableYears: number[];
-  selectedYear: number;
-  onChange: (value: number) => void;
+  title: string;
+  trend: YearlyTrend;
+  tooltipValueLabel?: string;
 }) => {
-  const options = availableYears.filter((year) => year > businessStartYear);
-  if (options.length === 0) return null;
+  const hasValues =
+    trend.years.length > 0 &&
+    trend.data.some((point) => trend.years.some((year) => getSafeNumber(point[String(year)]) > 0));
 
   return (
-    <Select value={String(selectedYear)} onValueChange={(value) => onChange(Number(value))}>
-      <SelectTrigger className={`h-8 w-[132px] rounded-xl border-slate-200 bg-white px-3 text-xs ${SECONDARY_TEXT_CLASS}`}>
-        <SelectValue placeholder="Select Year 2" />
-      </SelectTrigger>
-      <SelectContent>
-        {options.map((year) => (
-          <SelectItem key={year} value={String(year)}>
-            {`${getComparisonYearLabel(businessStartYear, year)} (${year})`}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
+    <OverviewPanel title={title} className="flex h-full min-h-[360px] flex-col">
+      <div className="mt-5 flex-1">
+        {hasValues ? (
+          <ResponsiveContainer width="100%" height={260}>
+            <AreaChart data={trend.data} margin={{ top: 16, right: 8, left: 0, bottom: 0 }}>
+              <defs>
+                {trend.years.map((year, index) => {
+                  const color = getSeriesColor(index);
+                  return (
+                    <linearGradient key={year} id={`overviewTrendFill-${title.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}-${year}`} x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={color} stopOpacity={index === trend.years.length - 1 ? 0.58 : 0.1} />
+                      <stop offset="100%" stopColor={color} stopOpacity={0.03} />
+                    </linearGradient>
+                  );
+                })}
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
+              <XAxis dataKey="name" tickLine={false} axisLine={false} tick={{ fill: "#9ca3af", fontSize: 12 }} />
+              <YAxis tickLine={false} axisLine={false} tick={{ fill: "#9ca3af", fontSize: 12 }} />
+              <Tooltip
+                content={({ active, payload, label }) => {
+                  if (!active || !payload?.length) return null;
+
+                  const entries = payload
+                    .map((item, index) => {
+                      const seriesYear = String(item.dataKey ?? "");
+                      const value = getSafeNumber(item.value);
+                      const color = typeof item.color === "string" ? item.color : getSeriesColor(index);
+                      return { seriesYear, value, color };
+                    })
+                    .filter((item) => item.seriesYear && item.value > 0);
+
+                  if (entries.length === 0) return null;
+
+                  const valueByYear = new Map(entries.map((entry) => [entry.seriesYear, entry.value]));
+
+                  return (
+                    <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-[0_12px_28px_rgba(15,23,42,0.12)]">
+                      <p className={`text-xs ${SECONDARY_TEXT_CLASS}`}>{String(label)}</p>
+                      <div className="mt-2 space-y-1">
+                        {entries.map((entry) => {
+                          const yearIndex = trend.years.findIndex((year) => String(year) === entry.seriesYear);
+                          const previousYear = yearIndex > 0 ? trend.years[yearIndex - 1] : null;
+                          const previousValue = previousYear !== null ? valueByYear.get(String(previousYear)) ?? null : null;
+
+                          return (
+                            <div key={entry.seriesYear} className="flex items-center justify-between gap-4">
+                              <div className="flex items-center gap-2">
+                                <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: entry.color }} />
+                                <span className="text-sm font-medium text-slate-700">{entry.seriesYear}</span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm font-semibold text-slate-900">
+                                  {formatWholeNumber(entry.value)} {tooltipValueLabel}
+                                </span>
+                                <TrendChangeBadge current={entry.value} previous={previousValue} />
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                }}
+              />
+              {trend.years.map((year, index) => {
+                const color = getSeriesColor(index);
+                const gradientId = `overviewTrendFill-${title.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}-${year}`;
+                const isLatestYear = index === trend.years.length - 1;
+
+                return (
+                  <Area
+                    key={year}
+                    type="monotone"
+                    dataKey={String(year)}
+                    stroke={color}
+                    strokeWidth={2.5}
+                    fill={isLatestYear ? `url(#${gradientId})` : "none"}
+                    fillOpacity={isLatestYear ? 1 : 0}
+                    dot={false}
+                    activeDot={{ r: 4 }}
+                  />
+                );
+              })}
+            </AreaChart>
+          </ResponsiveContainer>
+        ) : (
+          <div className={`flex h-[260px] items-center justify-center text-sm ${SECONDARY_TEXT_CLASS}`}>
+            No data available yet
+          </div>
+        )}
+      </div>
+    </OverviewPanel>
+  );
+};
+
+const AnnualComparisonPanel = ({
+  title,
+  comparison,
+}: {
+  title: string;
+  comparison: AnnualComparison;
+}) => {
+  const hasValues =
+    comparison.years.length > 0 &&
+    comparison.data.some((point) => point.goatsOnRecord > 0 || point.goatsPurchased > 0);
+
+  return (
+    <OverviewPanel title={title} className="flex h-full min-h-[360px] flex-col">
+      <div className="mt-5 flex-1">
+        {hasValues ? (
+          <ResponsiveContainer width="100%" height={260}>
+            <AreaChart data={comparison.data} margin={{ top: 16, right: 8, left: 0, bottom: 0 }}>
+              <defs>
+                <linearGradient id="overviewAnimalCensusRecordFill" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#2710a1" stopOpacity={0.55} />
+                  <stop offset="100%" stopColor="#2710a1" stopOpacity={0.05} />
+                </linearGradient>
+                <linearGradient id="overviewAnimalCensusPurchasedFill" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#f89b0d" stopOpacity={0.5} />
+                  <stop offset="100%" stopColor="#f89b0d" stopOpacity={0.05} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
+              <XAxis hide dataKey="name" />
+              <YAxis tickLine={false} axisLine={false} tick={{ fill: "#9ca3af", fontSize: 12 }} />
+              <Tooltip
+                content={({ active, payload, label }) => {
+                  if (!active || !payload?.length) return null;
+
+                  const entries = payload
+                    .map((item, index) => {
+                      const key = String(item.dataKey ?? "");
+                      const value = getSafeNumber(item.value);
+                      const color = typeof item.color === "string" ? item.color : getSeriesColor(index);
+                      const name = key === "goatsOnRecord" ? "Goats on record" : key === "goatsPurchased" ? "Goats purchased" : key;
+                      return { name, value, color };
+                    })
+                    .filter((item) => item.name && item.value > 0);
+
+                  if (entries.length === 0) return null;
+
+                  const currentIndex = comparison.data.findIndex((point) => point.name === String(label));
+                  const previousPoint = currentIndex > 0 ? comparison.data[currentIndex - 1] : null;
+
+                  return (
+                    <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-[0_12px_28px_rgba(15,23,42,0.12)]">
+                      <p className={`text-xs ${SECONDARY_TEXT_CLASS}`}>{String(label)}</p>
+                      <div className="mt-2 space-y-1">
+                        {entries.map((entry) => {
+                          const previousValue =
+                            entry.name === "Goats on record"
+                              ? previousPoint?.goatsOnRecord ?? null
+                              : entry.name === "Goats purchased"
+                                ? previousPoint?.goatsPurchased ?? null
+                                : null;
+
+                          return (
+                            <div key={entry.name} className="flex items-center justify-between gap-4">
+                              <div className="flex items-center gap-2">
+                                <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: entry.color }} />
+                                <span className="text-sm font-medium text-slate-700">{entry.name}</span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm font-semibold text-slate-900">{formatWholeNumber(entry.value)}</span>
+                                <TrendChangeBadge current={entry.value} previous={previousValue} />
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                }}
+              />
+              <Area
+                type="monotone"
+                dataKey="goatsOnRecord"
+                stroke="#2710a1"
+                strokeWidth={2.5}
+                fill="url(#overviewAnimalCensusRecordFill)"
+                dot={false}
+                activeDot={{ r: 4 }}
+              />
+              <Area
+                type="monotone"
+                dataKey="goatsPurchased"
+                stroke="#f89b0d"
+                strokeWidth={2.5}
+                fill="url(#overviewAnimalCensusPurchasedFill)"
+                dot={false}
+                activeDot={{ r: 4 }}
+              />
+            </AreaChart>
+          </ResponsiveContainer>
+        ) : (
+          <div className={`flex h-[260px] items-center justify-center text-sm ${SECONDARY_TEXT_CLASS}`}>
+            No data available yet
+          </div>
+        )}
+      </div>
+    </OverviewPanel>
   );
 };
 
@@ -946,11 +1244,13 @@ const DonutPanel = ({
   data,
   headerExtra,
   tooltipValueLabel = "records",
+  showTrendBadge = true,
 }: {
   title: string;
   data: DonutSegment[];
   headerExtra?: ReactNode;
   tooltipValueLabel?: string;
+  showTrendBadge?: boolean;
 }) => {
   const hasValues = data.some((item) => item.value > 0);
   const chartData = hasValues ? data : [{ name: "No data", value: 1, color: "#e2e8f0" }];
@@ -964,17 +1264,25 @@ const DonutPanel = ({
               content={({ active, payload }) => {
                 const segment = payload?.[0]?.payload as DonutSegment | undefined;
                 if (!active || !segment || !hasValues) return null;
+                const segmentIndex = data.findIndex((item) => item.name === segment.name);
+                const previousValue = segmentIndex > 0 ? data[segmentIndex - 1]?.value ?? null : null;
 
                 return (
                   <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-[0_12px_28px_rgba(15,23,42,0.12)]">
-                    <p className={`text-xs ${SECONDARY_TEXT_CLASS}`}>{segment.name}</p>
-                    <p className="mt-1 text-sm font-semibold text-slate-900">
-                      {formatWholeNumber(segment.value)} {tooltipValueLabel}
-                    </p>
-                  </div>
-                );
-              }}
-            />
+                    <div className="flex items-center gap-2">
+                      <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: segment.color }} />
+                      <span className="text-sm font-medium text-slate-700">{segment.name}</span>
+                    </div>
+                      <div className="mt-1 flex items-center gap-2">
+                        <span className="text-sm font-semibold text-slate-900">
+                          {formatWholeNumber(segment.value)} {tooltipValueLabel}
+                        </span>
+                        {showTrendBadge ? <TrendChangeBadge current={segment.value} previous={previousValue} /> : null}
+                      </div>
+                    </div>
+                  );
+                }}
+              />
             <Pie
               data={chartData}
               dataKey="value"
@@ -991,13 +1299,9 @@ const DonutPanel = ({
           </PieChart>
         </ResponsiveContainer>
       </div>
-      {hasValues ? (
-        <>
-          <ChartLegend items={data} />
-        </>
-      ) : (
+      {!hasValues ? (
         <p className={`mt-3 text-center text-sm ${SECONDARY_TEXT_CLASS}`}>No data available yet</p>
-      )}
+      ) : null}
     </OverviewPanel>
   );
 };
@@ -1211,7 +1515,6 @@ const DashboardOverview = () => {
     [accessibleProgrammes, userCanViewAllProgrammeData],
   );
   const [selectedProgramme, setSelectedProgramme] = useState("");
-  const [selectedComparisonYear, setSelectedComparisonYear] = useState<number | null>(null);
   const [localOverviewState, setLocalOverviewState] = useState<{
     key: string;
     data: OverviewSummaryData | null;
@@ -1221,8 +1524,8 @@ const DashboardOverview = () => {
   });
   const [localOverviewLoading, setLocalOverviewLoading] = useState(false);
   const overviewCacheStorageKey = useMemo(
-    () => buildOverviewCacheKey(user?.uid, selectedProgramme || null, selectedComparisonYear),
-    [selectedComparisonYear, selectedProgramme, user?.uid],
+    () => buildOverviewCacheKey(user?.uid, selectedProgramme || null),
+    [selectedProgramme, user?.uid],
   );
   const cachedOverviewData = useMemo(
     () => {
@@ -1238,7 +1541,6 @@ const DashboardOverview = () => {
   useEffect(() => {
     if (!userRole && !userAttribute) {
       setSelectedProgramme("");
-      setSelectedComparisonYear(null);
       return;
     }
 
@@ -1253,10 +1555,6 @@ const DashboardOverview = () => {
 
     setSelectedProgramme((current) => resolveActiveProgramme(current, accessibleProgrammes));
   }, [accessibleProgrammes, userAttribute, userCanViewAllProgrammeData, userRole]);
-
-  useEffect(() => {
-    setSelectedComparisonYear(null);
-  }, [selectedProgramme]);
 
   useEffect(() => {
     if (!selectedProgramme) {
@@ -1279,12 +1577,11 @@ const DashboardOverview = () => {
   const remoteOverviewEnabled = USE_REMOTE_ANALYTICS && Boolean(selectedProgramme) && !loading;
 
   const overviewQuery = useQuery({
-    queryKey: ["overview-analysis", user?.uid, userRole, userAttribute, selectedProgramme, selectedComparisonYear ?? "auto"],
+    queryKey: ["overview-analysis", user?.uid, userRole, userAttribute, selectedProgramme],
     queryFn: async () =>
       sanitizeOverviewSummary(await fetchAnalysisSummary({
         scope: "overview",
         programme: selectedProgramme === "All" ? "All" : selectedProgramme || null,
-        selectedYear: selectedComparisonYear,
       })),
     enabled: remoteOverviewEnabled,
     retry: 0,
@@ -1297,11 +1594,7 @@ const DashboardOverview = () => {
 
   const remoteOverviewData = overviewQuery.data as OverviewSummaryData | undefined;
   const remoteOverviewHasData = hasMeaningfulOverviewData(remoteOverviewData);
-  const remoteComparisonYearMatchesSelection =
-    selectedComparisonYear === null ||
-    !remoteOverviewData?.comparisonYears ||
-    remoteOverviewData.comparisonYears.year2 === selectedComparisonYear;
-  const remoteOverviewHasUsableData = remoteOverviewHasData && remoteComparisonYearMatchesSelection;
+  const remoteOverviewHasUsableData = remoteOverviewHasData;
 
   useEffect(() => {
     const remoteData = overviewQuery.data as OverviewSummaryData | undefined;
@@ -1371,7 +1664,7 @@ const DashboardOverview = () => {
           animalHealth: byProgramme(snapshotToArray(animalHealthSnap)),
           boreholes: byProgramme(snapshotToArray(boreholesSnap)),
           activities: byProgramme(snapshotToArray(activitiesSnap)),
-        }, selectedComparisonYear);
+        });
         const normalizedSummary = sanitizeOverviewSummary(summary);
 
         if (!cancelled) {
@@ -1401,7 +1694,7 @@ const DashboardOverview = () => {
     return () => {
       cancelled = true;
     };
-  }, [cachedOverviewData, hasImmediateOverviewData, overviewCacheStorageKey, selectedComparisonYear, selectedProgramme, shouldFetchLocalOverview]);
+  }, [cachedOverviewData, hasImmediateOverviewData, overviewCacheStorageKey, selectedProgramme, shouldFetchLocalOverview]);
 
   const overviewData = sanitizeOverviewSummary(
     (remoteOverviewHasUsableData ? remoteOverviewData : undefined) ??
@@ -1411,22 +1704,10 @@ const DashboardOverview = () => {
   );
 
   const stats = overviewData.stats ?? EMPTY_OVERVIEW_DATA.stats;
-  const comparisonYears = overviewData.comparisonYears ?? getComparisonYears();
-  const availableComparisonYearsKey = comparisonYears.availableYears.join(",");
-  const comparisonYearValue = selectedComparisonYear ?? comparisonYears.year2;
-  const comparisonYearLabel = getComparisonYearLabel(comparisonYears.year1, comparisonYearValue, 2);
-  const showComparisonSelector = comparisonYears.availableYears.some((year) => year > comparisonYears.year1);
-  const maintainedInfrastructureData = relabelComparisonDonutSegments(
-    overviewData.maintainedInfrastructure ?? EMPTY_DONUT_SEGMENTS,
-    comparisonYears.year1,
-    comparisonYearValue,
-  );
-  const registrationComparisonData = relabelComparisonDonutSegments(
-    overviewData.registrationComparison ?? EMPTY_DONUT_SEGMENTS,
-    comparisonYears.year1,
-    comparisonYearValue,
-  );
-  const registrationComparisonValue = overviewData.registrationComparison?.[1]?.value ?? overviewData.registrationComparison?.[0]?.value ?? 0;
+  const maintainedInfrastructureData = overviewData.maintainedInfrastructure ?? EMPTY_DONUT_SEGMENTS;
+  const registrationComparisonData = overviewData.registrationComparison ?? EMPTY_DONUT_SEGMENTS;
+  const latestRegistrationSegment = registrationComparisonData[registrationComparisonData.length - 1];
+  const registrationComparisonValue = latestRegistrationSegment?.value ?? registrationComparisonData[0]?.value ?? 0;
   const registrationPercentage = toPercentage(registrationComparisonValue, stats.totalFarmers);
   const trainingPercentage = toPercentage(stats.trainedFarmers, stats.totalFarmers);
   const censusPercentage = toPercentage(stats.totalGoatsPurchased, stats.totalGoats);
@@ -1436,16 +1717,6 @@ const DashboardOverview = () => {
     !overviewQuery.isError &&
     overviewQuery.isLoading;
   const isLoadingData = !hasOverviewData && (isLoadingRemoteOverview || localOverviewLoading || shouldFetchLocalOverview);
-  useEffect(() => {
-    if (
-      selectedComparisonYear !== null &&
-      hasOverviewData &&
-      comparisonYears.availableYears.length > 0 &&
-      !comparisonYears.availableYears.includes(selectedComparisonYear)
-    ) {
-      setSelectedComparisonYear(null);
-    }
-  }, [availableComparisonYearsKey, comparisonYears.availableYears, hasOverviewData, selectedComparisonYear]);
 
   if (loading) {
     return (
@@ -1487,21 +1758,6 @@ const DashboardOverview = () => {
               </Select>
             </div>
           ) : null}
-          {showComparisonSelector ? (
-            <div className="w-full max-w-[170px] space-y-2">
-              <Label htmlFor="overview-year-two" className={`text-xs uppercase tracking-[0.16em] ${SECONDARY_TEXT_CLASS}`}>
-                Year 2
-              </Label>
-              <div id="overview-year-two">
-                <ComparisonYearSelector
-                  businessStartYear={comparisonYears.year1}
-                  availableYears={comparisonYears.availableYears}
-                  selectedYear={comparisonYearValue}
-                  onChange={setSelectedComparisonYear}
-                />
-              </div>
-            </div>
-          ) : null}
         </div>
 
         {isLoadingData ? (
@@ -1513,8 +1769,8 @@ const DashboardOverview = () => {
                 title="Registered Farmers"
                 value={stats.totalFarmers}
                 progressValue={registrationPercentage}
-                progressLabel={formatProgressLabel(registrationPercentage, "Of Total")}
-                accentColor="#2ea55f"
+                progressLabel=""
+                accentColor="#2ea55f" 
                 icon={<UsersRound className="h-5 w-5 text-[#2ea55f]" />}
                 detail={
                   <>
@@ -1555,73 +1811,29 @@ const DashboardOverview = () => {
               <DonutPanel
                 title="INFRASTRUCTURE"
                 data={maintainedInfrastructureData}
-                tooltipValueLabel="drilled or maintained boreholes"
+                tooltipValueLabel="boreholes"
+                showTrendBadge={false}
               />
-              <DonutPanel
-                title="ANIMAL CENSUS VS GOATS PURCHASED"
-                data={overviewData.animalCensusVsPurchased ?? EMPTY_OVERVIEW_DATA.animalCensusVsPurchased}
+              <AnnualComparisonPanel
+                title="ANIMAL CENSUS"
+                comparison={overviewData.animalCensusComparison ?? EMPTY_OVERVIEW_DATA.animalCensusComparison}
               />
             </div>
 
             <div className="grid items-stretch gap-6 lg:grid-cols-2">
               <DonutPanel
-                title="FARMERS REGISTRATION RATE"
+                title="FARMERS REGISTRATION BY YEAR"
                 data={registrationComparisonData}
               />
               <RecentLocationsPanel locations={overviewData.recentLocations ?? EMPTY_OVERVIEW_DATA.recentLocations} />
             </div>
 
             <div className="grid items-stretch gap-6 lg:grid-cols-2">
-              <OverviewPanel
+              <YearTrendPanel
                 title="ANIMAL HEALTH (VACCINATION)"
-                className="flex h-full min-h-[360px] flex-col"
-              >
-                <div className="mt-5 flex-1">
-                  <ResponsiveContainer width="100%" height={260}>
-                    <AreaChart
-                      data={overviewData.vaccinationTrend ?? EMPTY_OVERVIEW_DATA.vaccinationTrend}
-                      margin={{ top: 16, right: 8, left: 0, bottom: 0 }}
-                    >
-                      <defs>
-                        <linearGradient id="overviewVaccinationFill" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor="#ff7a1a" stopOpacity={0.65} />
-                          <stop offset="100%" stopColor="#ff7a1a" stopOpacity={0.04} />
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
-                      <XAxis dataKey="name" tickLine={false} axisLine={false} tick={{ fill: "#9ca3af", fontSize: 12 }} />
-                      <YAxis tickLine={false} axisLine={false} tick={{ fill: "#9ca3af", fontSize: 12 }} />
-                      <Area
-                        type="monotone"
-                        dataKey="year1"
-                        stroke={YEAR_ONE_COLOR}
-                        strokeWidth={2}
-                        fillOpacity={0}
-                      />
-                      <Area
-                        type="monotone"
-                        dataKey="year2"
-                        stroke="#ff7a1a"
-                        strokeWidth={2.5}
-                        fill="url(#overviewVaccinationFill)"
-                      />
-                    </AreaChart>
-                  </ResponsiveContainer>
-                </div>
-
-                <div className={`mt-3 flex flex-wrap items-center justify-center gap-5 text-sm ${SECONDARY_TEXT_CLASS}`}>
-                  <div className="flex items-center gap-2">
-                    <span className="h-2.5 w-2.5 rounded-full bg-[#2710a1]" />
-                    <span>Year 1</span>
-                    <span className={`font-semibold ${SECONDARY_TEXT_CLASS}`}>{comparisonYears.year1}</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="h-2.5 w-2.5 rounded-full bg-[#ff7a1a]" />
-                    <span>{comparisonYearLabel}</span>
-                    <span className={`font-semibold ${SECONDARY_TEXT_CLASS}`}>{comparisonYearValue}</span>
-                  </div>
-                </div>
-              </OverviewPanel>
+                trend={overviewData.vaccinationTrend ?? EMPTY_OVERVIEW_DATA.vaccinationTrend}
+                tooltipValueLabel="vaccinated goats"
+              />
 
               <CountiesCoveredPanel data={overviewData.countyCoverage ?? EMPTY_COUNTY_COVERAGE} />
             </div>

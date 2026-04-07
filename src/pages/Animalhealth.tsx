@@ -10,7 +10,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
-import { canViewAllProgrammes, isChiefAdmin } from "@/contexts/authhelper";
+import {
+  canViewAllProgrammes,
+  isChiefAdmin,
+  isHummanResourceManager,
+  resolvePermissionPrincipal,
+} from "@/contexts/authhelper";
 import { 
   Users, 
   MapPin, 
@@ -240,29 +245,37 @@ const AnimalHealthPage = () => {
   });
   
   const { user, userRole, userAttribute, allowedProgrammes } = useAuth();
+  const permissionPrincipal = useMemo(
+    () => resolvePermissionPrincipal(userRole, userAttribute),
+    [userAttribute, userRole]
+  );
   const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
   const userCanViewAllProgrammeData = useMemo(
     () => canViewAllProgrammes(userRole, userAttribute),
     [userRole, userAttribute]
   );
-  const accessibleProgrammes = useMemo(
-    () => userCanViewAllProgrammeData ? [...PROGRAMME_OPTIONS] : getAssignedProgrammes(allowedProgrammes),
-    [allowedProgrammes, userCanViewAllProgrammeData]
+  const userCanReadAllAnimalHealthProgrammes = useMemo(
+    () => userCanViewAllProgrammeData || isHummanResourceManager(permissionPrincipal),
+    [permissionPrincipal, userCanViewAllProgrammeData]
   );
-  const hasProgrammeAccess = userCanViewAllProgrammeData || accessibleProgrammes.length > 0;
+  const accessibleProgrammes = useMemo(
+    () => userCanReadAllAnimalHealthProgrammes ? [...PROGRAMME_OPTIONS] : getAssignedProgrammes(allowedProgrammes),
+    [allowedProgrammes, userCanReadAllAnimalHealthProgrammes]
+  );
+  const hasProgrammeAccess = userCanReadAllAnimalHealthProgrammes || accessibleProgrammes.length > 0;
   const defaultProgrammeView = useMemo<ProgrammeView>(() => {
-    if (userCanViewAllProgrammeData) return "KPMD";
+    if (userCanReadAllAnimalHealthProgrammes) return "KPMD";
     return (accessibleProgrammes[0] || "KPMD") as Exclude<ProgrammeView, "ALL">;
-  }, [accessibleProgrammes, userCanViewAllProgrammeData]);
+  }, [accessibleProgrammes, userCanReadAllAnimalHealthProgrammes]);
   const animalHealthCacheKey = useMemo(
     () =>
       cacheKey(
         "admin-page",
         "animal-health",
         user?.uid || "anonymous",
-        userCanViewAllProgrammeData ? "all" : accessibleProgrammes.join("|") || "no-programme",
+        userCanReadAllAnimalHealthProgrammes ? "all" : accessibleProgrammes.join("|") || "no-programme",
       ),
-    [accessibleProgrammes, user?.uid, userCanViewAllProgrammeData]
+    [accessibleProgrammes, user?.uid, userCanReadAllAnimalHealthProgrammes]
   );
   const [searchTerm, setSearchTerm] = useState("");
   const [startDate, setStartDate] = useState("");
@@ -293,12 +306,12 @@ const AnimalHealthPage = () => {
 
   useEffect(() => {
     setProgrammeView((prev) => {
-      if (userCanViewAllProgrammeData) {
+      if (userCanReadAllAnimalHealthProgrammes) {
         return prev === "ALL" || accessibleProgrammes.includes(prev) ? prev : defaultProgrammeView;
       }
       return accessibleProgrammes.includes(prev) ? prev : defaultProgrammeView;
     });
-  }, [accessibleProgrammes, defaultProgrammeView, userCanViewAllProgrammeData]);
+  }, [accessibleProgrammes, defaultProgrammeView, userCanReadAllAnimalHealthProgrammes]);
 
   const fetchActivities = useCallback(async () => {
     try {
@@ -316,7 +329,7 @@ const AnimalHealthPage = () => {
             filterActivitiesByProgrammeAccess(
               cachedActivities,
               accessibleProgrammes,
-              userCanViewAllProgrammeData,
+              userCanReadAllAnimalHealthProgrammes,
             ),
           ),
         );
@@ -369,7 +382,7 @@ const AnimalHealthPage = () => {
           filterActivitiesByProgrammeAccess(
             activitiesData,
             accessibleProgrammes,
-            userCanViewAllProgrammeData,
+            userCanReadAllAnimalHealthProgrammes,
           ),
         );
         setActivities(sortedActivitiesData);
@@ -384,7 +397,7 @@ const AnimalHealthPage = () => {
     } finally {
       setLoading(false);
     }
-  }, [accessibleProgrammes, animalHealthCacheKey, hasProgrammeAccess, toast, userCanViewAllProgrammeData]);
+  }, [accessibleProgrammes, animalHealthCacheKey, hasProgrammeAccess, toast, userCanReadAllAnimalHealthProgrammes]);
 
   useEffect(() => {
     void fetchActivities();
@@ -961,13 +974,13 @@ const AnimalHealthPage = () => {
                 <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="w-full sm:max-w-[160px]" />
             </div>
 
-            {userIsChiefAdmin && hasProgrammeAccess && (
+            {(userCanReadAllAnimalHealthProgrammes || accessibleProgrammes.length > 1) && hasProgrammeAccess && (
               <div className="w-full sm:w-[280px] space-y-1">
                   <Label className="text-xs text-slate-600">Programme View</Label>
                   <Select value={programmeView} onValueChange={(value) => setProgrammeView(value as ProgrammeView)}>
                       <SelectTrigger
                         className="h-9"
-                        disabled={!userCanViewAllProgrammeData && accessibleProgrammes.length <= 1}
+                        disabled={!userCanReadAllAnimalHealthProgrammes && accessibleProgrammes.length <= 1}
                       >
                           <SelectValue placeholder="Select programme" />
                       </SelectTrigger>
@@ -977,7 +990,7 @@ const AnimalHealthPage = () => {
                               {programmeOption} ({activitiesByProgramme[programmeOption as keyof typeof activitiesByProgramme].length})
                             </SelectItem>
                           ))}
-                          {userCanViewAllProgrammeData && (
+                          {userCanReadAllAnimalHealthProgrammes && (
                             <SelectItem value="ALL">ALL ({filteredActivities.length})</SelectItem>
                           )}
                       </SelectContent>
