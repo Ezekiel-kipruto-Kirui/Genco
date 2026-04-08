@@ -434,7 +434,7 @@ const buildYearlyTrend = (
   const years = [...yearSet].sort((left, right) => left - right);
   const yearLookup = new Set(years);
   const data = MONTH_LABELS.map((name) => {
-    const point: Record<string, string | number> = { name };
+    const point: Record<string, string | number> = {name};
     for (const year of years) {
       point[String(year)] = 0;
     }
@@ -1172,7 +1172,7 @@ const createLivestockAnalytics = async (
     const username = String(farmer.username || "Unknown User").trim() || "Unknown User";
     if (!userMap[username]) {
       userMap[username] = {
-        periods: { q1: 0, q2: 0, q3: 0, year: 0 },
+        periods: {q1: 0, q2: 0, q3: 0, year: 0},
         counties: new Set<string>(),
       };
     }
@@ -1369,7 +1369,7 @@ const createPerformanceReport = async (
     const fieldOfficerName =
       typeof farmer.username === "string" ? farmer.username.trim() : "";
     if (fieldOfficerName) {
-      const currentOfficer = topFieldOfficersMap[fieldOfficerName] || { value: 0, counties: {} };
+      const currentOfficer = topFieldOfficersMap[fieldOfficerName] || {value: 0, counties: {}};
       currentOfficer.value += 1;
       currentOfficer.counties[county] = (currentOfficer.counties[county] || 0) + 1;
       topFieldOfficersMap[fieldOfficerName] = currentOfficer;

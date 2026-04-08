@@ -9,11 +9,12 @@ import {
   PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip, 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, BarChart, Bar 
 } from "recharts";
-import { Users, GraduationCap, Beef, Map, UserCheck, AlertCircle, Activity } from "lucide-react";
+import { Users, GraduationCap, Beef, Map, UserCheck, AlertCircle, Activity, Eye } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { canViewAllProgrammes, isChiefAdmin } from "@/contexts/authhelper";
 import { resolveAccessibleProgrammes, resolveActiveProgramme } from "@/lib/programme-access";
 
@@ -345,6 +346,12 @@ const getProgressStatus = (progressPercentage: number): ProgressStatus => {
   return "needs-attention";
 };
 
+const getTargetPeriodLabel = (mode: Exclude<FilterMode, "custom">): string => {
+  if (mode === "weekly") return "This Week Target";
+  if (mode === "monthly") return "This Month Target";
+  return "This Year Target";
+};
+
 const USE_REMOTE_ANALYTICS =
   typeof window !== "undefined" && !["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
 
@@ -364,6 +371,8 @@ const LivestockFarmersAnalytics = () => {
   const [weeklyPerformanceData, setWeeklyPerformanceData] = useState<TimeSeriesItem[]>([]); 
   const [subcountyPerformanceData, setSubcountyPerformanceData] = useState<any[]>([]);
   const [localUserProgressData, setLocalUserProgressData] = useState<UserProgress[]>([]);
+  const [selectedOfficer, setSelectedOfficer] = useState<UserProgress | null>(null);
+  const [isOfficerTargetsOpen, setIsOfficerTargetsOpen] = useState(false);
   
   const [stats, setStats] = useState({ 
     total: 0, 
@@ -383,6 +392,10 @@ const LivestockFarmersAnalytics = () => {
   const activeTarget = useMemo(
     () => calculateActiveTarget(dateRange, targetMode),
     [dateRange, targetMode],
+  );
+  const activeTargetLabel = useMemo(
+    () => getTargetPeriodLabel(targetMode),
+    [targetMode],
   );
   const userCanViewAllProgrammeData = useMemo(
     () => canViewAllProgrammes(userRole, userAttribute),
@@ -721,13 +734,29 @@ const LivestockFarmersAnalytics = () => {
       .slice(0, 15);
     setSubcountyPerformanceData(scData);
 
-    const userStats: Record<string, { periods: Record<ProgressPeriodKey, number>; counties: Set<string> }> = {};
-    const trackedFarmers = allFarmers.length > 0 ? allFarmers : data;
-
-    trackedFarmers.forEach((farmer) => {
+    const currentPeriodStats: Record<string, { count: number; counties: Set<string> }> = {};
+    data.forEach((farmer) => {
       const officerName = String(farmer.username || "Unknown User").trim() || "Unknown User";
-      if (!userStats[officerName]) {
-        userStats[officerName] = {
+      if (!currentPeriodStats[officerName]) {
+        currentPeriodStats[officerName] = {
+          count: 0,
+          counties: new Set<string>(),
+        };
+      }
+
+      currentPeriodStats[officerName].count += 1;
+
+      const county = String(farmer.county || "").trim();
+      if (county) {
+        currentPeriodStats[officerName].counties.add(county);
+      }
+    });
+
+    const quarterlyStats: Record<string, { periods: Record<ProgressPeriodKey, number>; counties: Set<string> }> = {};
+    allFarmers.forEach((farmer) => {
+      const officerName = String(farmer.username || "Unknown User").trim() || "Unknown User";
+      if (!quarterlyStats[officerName]) {
+        quarterlyStats[officerName] = {
           periods: { q1: 0, q2: 0, q3: 0, year: 0 },
           counties: new Set<string>(),
         };
@@ -737,21 +766,35 @@ const LivestockFarmersAnalytics = () => {
       if (farmerDate && farmerDate.getFullYear() === progressYear) {
         quarterTargets.forEach((period) => {
           if (farmerDate >= period.start && farmerDate <= period.end) {
-            userStats[officerName].periods[period.key] += 1;
+            quarterlyStats[officerName].periods[period.key] += 1;
           }
         });
       }
 
       const county = String(farmer.county || "").trim();
       if (county) {
-        userStats[officerName].counties.add(county);
+        quarterlyStats[officerName].counties.add(county);
       }
     });
 
-    const localProgress = Object.entries(userStats)
-      .map(([name, officerData]) => {
+    const officerNames = new Set<string>([
+      ...Object.keys(currentPeriodStats),
+      ...Object.keys(quarterlyStats),
+    ]);
+    const currentTarget = Math.max(1, Math.round(activeTarget));
+
+    const localProgress = [...officerNames]
+      .map((name) => {
+        const currentStats = currentPeriodStats[name] || { count: 0, counties: new Set<string>() };
+        const quarterData = quarterlyStats[name] || {
+          periods: { q1: 0, q2: 0, q3: 0, year: 0 },
+          counties: new Set<string>(),
+        };
+        const currentProgressPercentage = currentTarget > 0 ? (currentStats.count / currentTarget) * 100 : 0;
+        const currentStatus = getProgressStatus(currentProgressPercentage);
+        const counties = [...new Set([...currentStats.counties, ...quarterData.counties])];
         const periods = quarterTargets.map((period) => {
-          const count = officerData.periods[period.key];
+          const count = quarterData.periods[period.key];
           const progressPercentage = period.target > 0 ? (count / period.target) * 100 : 0;
           const status = getProgressStatus(progressPercentage);
           return {
@@ -764,16 +807,15 @@ const LivestockFarmersAnalytics = () => {
             met: count >= period.target,
           };
         });
-        const yearProgress = periods[periods.length - 1];
-        const counties = [...officerData.counties];
+
         return {
           id: name,
           name,
           region: counties.slice(0, 3).join(", ") + (counties.length > 3 ? "..." : ""),
-          farmersRegistered: yearProgress.count,
-          target: yearProgress.target,
-          progressPercentage: yearProgress.progressPercentage,
-          status: yearProgress.status,
+          farmersRegistered: currentStats.count,
+          target: currentTarget,
+          progressPercentage: currentProgressPercentage,
+          status: currentStatus,
           periods,
         };
       })
@@ -799,10 +841,21 @@ const LivestockFarmersAnalytics = () => {
               met: Number(user.farmersRegistered || 0) >= Number(user.target || TARGETS.yearly),
             },
           ];
-        return { ...user, periods } as UserProgress;
+        const farmersRegistered = Number(user.farmersRegistered || 0);
+        const target = Number(user.target || activeTarget || TARGETS.yearly);
+        const progressPercentage = target > 0 ? (farmersRegistered / target) * 100 : 0;
+        const status = getProgressStatus(progressPercentage);
+        return {
+          ...user,
+          farmersRegistered,
+          target,
+          progressPercentage,
+          status,
+          periods,
+        } as UserProgress;
       });
     },
-    [analyticsQuery.data, localUserProgressData],
+    [activeTarget, analyticsQuery.data, localUserProgressData],
   );
 
   const handleDateRangeChange = (key: string, value: string) => {
@@ -877,6 +930,11 @@ const LivestockFarmersAnalytics = () => {
       </Badge>
     </div>
   );
+
+  const openOfficerTargets = useCallback((officer: UserProgress) => {
+    setSelectedOfficer(officer);
+    setIsOfficerTargetsOpen(true);
+  }, []);
 
   const StatsCard = ({ title, value, icon: Icon, description, color = "navy" }: any) => (
     <Card className="relative overflow-hidden group hover:shadow-xl transition-all duration-300 border-0 bg-gradient-to-br from-white to-gray-50">
@@ -1041,105 +1099,8 @@ const LivestockFarmersAnalytics = () => {
                 Field Officers Performance
               </CardTitle>
               <Badge variant="outline" className="text-xs font-normal border-blue-200 text-blue-700">
-                Active Target: {activeTarget.toLocaleString()} Farmers
+                {activeTargetLabel}: {activeTarget.toLocaleString()} Farmers
               </Badge>
-            </div>
-          </CardHeader>
-          <CardContent className="p-0">
-            <div className="overflow-x-auto">
-              <table className="min-w-[880px] w-full border-collapse text-left">
-                <thead className="bg-blue-50">
-                  <tr>
-                    <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-blue-800">Field Officer</th>
-                    <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-blue-800">Counties Active</th>
-                    <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-blue-800">Farmers Registered</th>
-                    <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-blue-800">Target</th>
-                    <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-blue-800">Progress</th>
-                    <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-blue-800">Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {userProgressData.map((user) => (
-                    <tr key={user.id} className="border-b border-slate-100 transition-colors hover:bg-blue-50/40">
-                      <td className="px-4 py-4 font-medium text-slate-900">
-                        <div className="leading-tight">{user.name}</div>
-                      </td>
-                      <td className="px-4 py-4">
-                        <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-600">
-                          {user.region || "N/A"}
-                        </Badge>
-                      </td>
-                      <td className="px-4 py-4 font-semibold text-slate-900">
-                        {user.farmersRegistered.toLocaleString()}
-                      </td>
-                      <td className="px-4 py-4 text-slate-600">{user.target.toLocaleString()}</td>
-                      <td className="px-4 py-4">
-                        <div className="flex items-center gap-3">
-                          <div className="h-2 w-28 rounded-full bg-slate-100">
-                            <div
-                              className={`h-2 rounded-full transition-all duration-500 ${
-                                user.status === "achieved" ? "bg-green-500" :
-                                user.status === "on-track" ? "bg-blue-500" :
-                                user.status === "behind" ? "bg-yellow-500" :
-                                "bg-red-400"
-                              }`}
-                              style={{ width: `${Math.min(user.progressPercentage, 100)}%` }}
-                            />
-                          </div>
-                          <span className="w-12 text-right text-xs font-medium text-slate-600">
-                            {user.progressPercentage.toFixed(0)}%
-                          </span>
-                        </div>
-                      </td>
-                      <td className="px-4 py-4">
-                        <Badge
-                          className={
-                            user.status === "achieved" ? "border-green-200 bg-green-50 text-green-700" :
-                            user.status === "on-track" ? "border-blue-200 bg-blue-50 text-blue-700" :
-                            user.status === "behind" ? "border-yellow-200 bg-yellow-50 text-yellow-700" :
-                            "border-red-200 bg-red-50 text-red-700"
-                          }
-                          variant="outline"
-                        >
-                          {user.status === "achieved" ? "Target Achieved" :
-                           user.status === "on-track" ? "On Track" :
-                           user.status === "behind" ? "Behind Schedule" :
-                           "Needs Attention"}
-                        </Badge>
-                      </td>
-                    </tr>
-                  ))}
-                  {userProgressData.length === 0 && (
-                    <tr>
-                      <td colSpan={6} className="bg-gray-50 py-8 text-center text-gray-500">
-                        No farmer data available for the selected filters.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="overflow-hidden border border-slate-200 bg-white shadow-lg">
-          <CardHeader className="border-b border-slate-100 bg-slate-50/70">
-            <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-              <CardTitle className="flex items-center gap-2 text-base text-gray-800">
-                <UserCheck className="h-5 w-5 text-blue-600" />
-                Field Officers Quarterly Progress
-              </CardTitle>
-              <div className="flex flex-wrap gap-2">
-                {quarterTargets.map((period) => (
-                  <Badge
-                    key={period.key}
-                    variant="outline"
-                    className="text-xs font-normal border-blue-200 text-blue-700"
-                  >
-                    {period.label} target: {period.target.toLocaleString()} farmers
-                  </Badge>
-                ))}
-              </div>
             </div>
           </CardHeader>
           <CardContent className="p-0">
@@ -1149,20 +1110,16 @@ const LivestockFarmersAnalytics = () => {
                   <tr>
                     <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-blue-800">Field Officer</th>
                     <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-blue-800">Counties Active</th>
-                    <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-blue-800">Q1</th>
-                    <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-blue-800">Q2</th>
-                    <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-blue-800">Q3</th>
-                    <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-blue-800">Full Year</th>
+                    <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-blue-800">Farmers Registered</th>
+                    <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-blue-800">Target</th>
+                    <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-blue-800">Progress</th>
                     <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-blue-800">Status</th>
+                    <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-blue-800">View</th>
                   </tr>
                 </thead>
                 <tbody>
                   {userProgressData.map((user) => {
-                    const periods = user.periods;
-                    const q1 = periods.find((period) => period.key === "q1") || periods[0];
-                    const q2 = periods.find((period) => period.key === "q2") || periods[1] || q1;
-                    const q3 = periods.find((period) => period.key === "q3") || periods[2] || q2;
-                    const yearPeriod = periods.find((period) => period.key === "year") || periods[periods.length - 1] || q3;
+                    const hasMetCurrentTarget = user.farmersRegistered >= user.target;
                     return (
                       <tr key={user.id} className="border-b border-slate-100 transition-colors hover:bg-blue-50/40">
                         <td className="px-4 py-4 font-medium text-slate-900">
@@ -1173,25 +1130,50 @@ const LivestockFarmersAnalytics = () => {
                             {user.region || "N/A"}
                           </Badge>
                         </td>
-                        <td className="px-4 py-4">{renderPeriodCell(q1)}</td>
-                        <td className="px-4 py-4">{renderPeriodCell(q2)}</td>
-                        <td className="px-4 py-4">{renderPeriodCell(q3)}</td>
-                        <td className="px-4 py-4">{renderPeriodCell(yearPeriod)}</td>
+                        <td className="px-4 py-4 font-semibold text-slate-900">
+                          {user.farmersRegistered.toLocaleString()}
+                        </td>
+                        <td className="px-4 py-4 text-slate-600">{user.target.toLocaleString()}</td>
+                        <td className="px-4 py-4">
+                          <div className="flex items-center gap-3">
+                            <div className="h-2 w-28 rounded-full bg-slate-100">
+                              <div
+                                className={`h-2 rounded-full transition-all duration-500 ${
+                                  user.status === "achieved" ? "bg-green-500" :
+                                  user.status === "on-track" ? "bg-blue-500" :
+                                  user.status === "behind" ? "bg-yellow-500" :
+                                  "bg-red-400"
+                                }`}
+                                style={{ width: `${Math.min(user.progressPercentage, 100)}%` }}
+                              />
+                            </div>
+                            <span className="w-12 text-right text-xs font-medium text-slate-600">
+                              {user.progressPercentage.toFixed(0)}%
+                            </span>
+                          </div>
+                        </td>
                         <td className="px-4 py-4">
                           <Badge
-                            variant="outline"
                             className={
-                              user.status === "achieved" ? "border-green-200 bg-green-50 text-green-700" :
-                              user.status === "on-track" ? "border-blue-200 bg-blue-50 text-blue-700" :
-                              user.status === "behind" ? "border-yellow-200 bg-yellow-50 text-yellow-700" :
-                              "border-red-200 bg-red-50 text-red-700"
+                              hasMetCurrentTarget
+                                ? "border-green-200 bg-green-50 text-green-700"
+                                : "border-red-200 bg-red-50 text-red-700"
                             }
+                            variant="outline"
                           >
-                            {user.status === "achieved" ? "Target Achieved" :
-                             user.status === "on-track" ? "On Track" :
-                             user.status === "behind" ? "Behind Schedule" :
-                             "Needs Attention"}
+                            {hasMetCurrentTarget ? "Met target" : "Not met"}
                           </Badge>
+                        </td>
+                        <td className="px-4 py-4">
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            onClick={() => openOfficerTargets(user)}
+                            className="h-8 w-8 border-blue-200 p-0 text-blue-700 hover:bg-blue-50 hover:text-blue-800"
+                            aria-label={`View quarterly targets for ${user.name}`}
+                          >
+                            <Eye className="h-4 w-4" />
+                          </Button>
                         </td>
                       </tr>
                     );
@@ -1199,7 +1181,7 @@ const LivestockFarmersAnalytics = () => {
                   {userProgressData.length === 0 && (
                     <tr>
                       <td colSpan={7} className="bg-gray-50 py-8 text-center text-gray-500">
-                        No field officer progress data available for the selected programme.
+                        No farmer data available for the selected filters.
                       </td>
                     </tr>
                   )}
@@ -1209,6 +1191,99 @@ const LivestockFarmersAnalytics = () => {
           </CardContent>
         </Card>
       </div>
+
+      <Dialog open={isOfficerTargetsOpen} onOpenChange={setIsOfficerTargetsOpen}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-gray-800">
+              <Eye className="h-5 w-5 text-blue-600" />
+              {selectedOfficer ? `${selectedOfficer.name} Quarterly Targets` : "Quarterly Targets"}
+            </DialogTitle>
+            <DialogDescription>
+              View the selected field officer's current performance and quarterly target breakdown.
+            </DialogDescription>
+          </DialogHeader>
+
+          {selectedOfficer ? (
+            <div className="space-y-5">
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                  <p className="text-xs uppercase tracking-wide text-slate-500">Current Period</p>
+                  <p className="mt-1 text-sm font-semibold text-slate-900">{activeTargetLabel}</p>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                  <p className="text-xs uppercase tracking-wide text-slate-500">Registered</p>
+                  <p className="mt-1 text-sm font-semibold text-slate-900">
+                    {selectedOfficer.farmersRegistered.toLocaleString()} farmers
+                  </p>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                  <p className="text-xs uppercase tracking-wide text-slate-500">Target Result</p>
+                  <p className="mt-1 text-sm font-semibold text-slate-900">
+                    {selectedOfficer.farmersRegistered >= selectedOfficer.target ? "Met target" : "Not met"}
+                  </p>
+                </div>
+              </div>
+
+              <div className="overflow-hidden rounded-xl border border-slate-200">
+                <table className="w-full border-collapse text-left">
+                  <thead className="bg-blue-50">
+                    <tr>
+                      <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-blue-800">Period</th>
+                      <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-blue-800">Farmers</th>
+                      <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-blue-800">Target</th>
+                      <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-blue-800">Progress</th>
+                      <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-blue-800">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {selectedOfficer.periods.map((period) => {
+                      const progressPercent = Math.min(period.progressPercentage, 100);
+                      return (
+                        <tr key={period.key} className="border-b border-slate-100">
+                          <td className="px-4 py-4 font-medium text-slate-900">{period.label}</td>
+                          <td className="px-4 py-4 text-slate-700">{period.count.toLocaleString()}</td>
+                          <td className="px-4 py-4 text-slate-700">{period.target.toLocaleString()}</td>
+                          <td className="px-4 py-4">
+                            <div className="flex items-center gap-3">
+                              <div className="h-2 w-28 rounded-full bg-slate-100">
+                                <div
+                                  className={`h-2 rounded-full transition-all duration-500 ${
+                                    period.status === "achieved" ? "bg-green-500" :
+                                    period.status === "on-track" ? "bg-blue-500" :
+                                    period.status === "behind" ? "bg-yellow-500" :
+                                    "bg-red-400"
+                                  }`}
+                                  style={{ width: `${progressPercent}%` }}
+                                />
+                              </div>
+                              <span className="text-xs font-medium text-slate-600">
+                                {period.progressPercentage.toFixed(0)}%
+                              </span>
+                            </div>
+                          </td>
+                          <td className="px-4 py-4">
+                            <Badge
+                              variant="outline"
+                              className={
+                                period.met
+                                  ? "border-green-200 bg-green-50 text-green-700"
+                                  : "border-red-200 bg-red-50 text-red-700"
+                              }
+                            >
+                              {period.met ? "Met target" : "Not met"}
+                            </Badge>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
 
       <div className="grid gap-6 md:grid-cols-2">
         <Card className="border-0 shadow-lg bg-white">

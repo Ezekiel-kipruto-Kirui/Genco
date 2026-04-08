@@ -676,8 +676,7 @@ function computeLocalPerformanceReportData(
           "Unknown";
       return { name, value: entry.value, county };
     })
-    .sort((a, b) => b.value - a.value)
-    .slice(0, 5);
+    .sort((a, b) => b.value - a.value);
   const topStaffAwarded = Object.entries(topStaffAwardedMap)
     .map(([name, value]) => ({ name, value }))
     .sort((a, b) => b.value - a.value)
@@ -1886,32 +1885,40 @@ const PerformanceReport = () => {
       {hasSection("hr-rankings") && (
         <section>
           <div className="grid gap-6 lg:grid-cols-2 mb-6">
-            <Card className="border-0 shadow-lg bg-white">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm flex items-center gap-2 text-gray-800">
+            <Card className="overflow-hidden border border-slate-200 bg-white shadow-lg">
+              <CardHeader className="border-b border-slate-100 bg-slate-50/70 pb-3">
+                <CardTitle className="flex items-center gap-2 text-sm text-gray-800">
                   <Users className="h-4 w-4 text-blue-600" />
                   Top Field Officers
                 </CardTitle>
               </CardHeader>
-              <CardContent className="space-y-3">
-                {data.topFieldOfficers.length > 0 ? data.topFieldOfficers.map((officer) => {
+              <CardContent className="space-y-3 pt-4">
+                {data.topFieldOfficers.length > 0 ? data.topFieldOfficers.map((officer, index) => {
                   const share = topFieldOfficerPeak > 0 ? (officer.value / topFieldOfficerPeak) * 100 : 0;
                   return (
-                    <div key={officer.name} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <p className="text-sm font-semibold text-slate-900">{officer.name}</p>
-                          <p className="text-xs text-slate-500">County: {officer.county}</p>
+                    <div key={`${officer.name}-${index}`} className="rounded-2xl border border-slate-200 bg-slate-50 p-1 shadow-sm">
+                      <div className="flex items-center gap-4">
+                        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-600 text-xs font-semibold text-white shadow-sm">
+                          {index + 1}
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex min-w-0 items-center gap-2">
+                            <p className="truncate text-sm font-semibold text-slate-900">{officer.name}</p>
+                            <span className="shrink-0 text-slate-300">•</span>
+                            <p className="truncate text-xs text-slate-500">County: {officer.county}</p>
+                          </div>
                         </div>
-                        <Badge className="border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-50">
+                        <div className="min-w-[160px] max-w-[260px] flex-1">
+                          <div className="h-2 overflow-hidden rounded-full bg-slate-200">
+                            <div
+                              className="h-full rounded-full bg-gradient-to-r from-blue-500 to-blue-700 transition-all"
+                              style={{ width: `${Math.max(share, 10)}%` }}
+                            />
+                          </div>
+                        </div>
+                        <Badge className="shrink-0 whitespace-nowrap border-blue-200 bg-blue-50 px-3 py-1 text-blue-700 hover:bg-blue-50">
                           {officer.value} farmers
                         </Badge>
-                      </div>
-                      <div className="mt-3 h-2 rounded-full bg-slate-200">
-                        <div
-                          className="h-2 rounded-full bg-blue-700 transition-all"
-                          style={{ width: `${Math.max(share, 10)}%` }}
-                        />
                       </div>
                     </div>
                   );
@@ -1946,27 +1953,27 @@ const PerformanceReport = () => {
                   <Table className="min-w-full">
                     <TableHeader className="sticky top-0 z-10 bg-slate-50">
                       <TableRow>
-                        <TableHead className="py-4">Staff</TableHead>
-                        <TableHead className="py-4">County</TableHead>
-                        <TableHead className="py-4">Role</TableHead>
-                        <TableHead className="py-4">Status</TableHead>
-                        <TableHead className="py-4">Total Marks</TableHead>
-                        <TableHead className="py-4">Awards</TableHead>
-                        <TableHead className="py-4 text-right">Actions</TableHead>
+                        <TableHead className="py-2 text-xs">Staff</TableHead>
+                        <TableHead className="py-2 text-xs">County</TableHead>
+                        <TableHead className="py-2 text-xs">Role</TableHead>
+                        <TableHead className="py-2 text-xs">Status</TableHead>
+                        <TableHead className="py-2 text-xs">Total Marks</TableHead>
+                        <TableHead className="py-2 text-xs">Awards</TableHead>
+                        <TableHead className="py-2 text-xs text-right">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {staffManagementRows.length > 0 ? staffManagementRows.map((staffRow) => (
                         <TableRow key={staffRow.id} className="border-b border-slate-100 transition-colors hover:bg-slate-50/80">
-                          <TableCell className="py-4 font-medium text-slate-900">
+                          <TableCell className="py-1 text-xs font-medium text-slate-900">
                             <div className="leading-tight">{staffRow.staffName}</div>
                             {staffRow.lastAwardNote && (
                               <div className="mt-1 text-xs text-slate-500 line-clamp-2">{staffRow.lastAwardNote}</div>
                             )}
                           </TableCell>
-                          <TableCell className="py-4">{staffRow.county}</TableCell>
-                          <TableCell className="py-4">{staffRow.role}</TableCell>
-                          <TableCell className="py-4">
+                          <TableCell className="py-1 text-xs">{staffRow.county}</TableCell>
+                          <TableCell className="py-1 text-xs">{staffRow.role}</TableCell>
+                          <TableCell className="py-1 text-xs">
                             <Badge
                               className={
                                 staffRow.status === "active" ?
@@ -1979,9 +1986,9 @@ const PerformanceReport = () => {
                               {staffRow.status}
                             </Badge>
                           </TableCell>
-                          <TableCell className="py-4">{staffRow.totalMarks}</TableCell>
-                          <TableCell className="py-4">{staffRow.awardCount}</TableCell>
-                          <TableCell className="py-4 text-right">
+                          <TableCell className="py-1 text-xs">{staffRow.totalMarks}</TableCell>
+                          <TableCell className="py-1 text-xs">{staffRow.awardCount}</TableCell>
+                          <TableCell className="py-1 text-xs text-right">
                             <DropdownMenu>
                               <DropdownMenuTrigger asChild>
                                 <Button
@@ -2039,6 +2046,26 @@ const PerformanceReport = () => {
               </CardContent>
             </Card>
           </div>
+
+          <Card className="border-0 shadow-lg bg-white">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm flex items-center gap-2 text-gray-800">
+                <TrendingUp className="h-4 w-4 text-teal-600" />
+                Breeds Distributed Per Subcounty
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={280}>
+                <BarChart data={data.breedsBySubcountyData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
+                  <XAxis dataKey="name" angle={-45} textAnchor="end" height={70} interval={0} tick={{fontSize: 10}} />
+                  <YAxis />
+                  <Tooltip />
+                  <Bar dataKey="value" radius={[4, 4, 0, 0]} barSize={20} fill={COLORS.teal} />
+                </BarChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
         </section>
       )}
 
@@ -2109,26 +2136,6 @@ const PerformanceReport = () => {
               </CardContent>
             </Card>
           </div>
-
-          <Card className="border-0 shadow-lg bg-white">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm flex items-center gap-2 text-gray-800">
-                <TrendingUp className="h-4 w-4 text-teal-600" />
-                Breeds Distributed Per Subcounty
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <ResponsiveContainer width="100%" height={280}>
-                <BarChart data={data.breedsBySubcountyData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
-                  <XAxis dataKey="name" angle={-45} textAnchor="end" height={70} interval={0} tick={{fontSize: 10}} />
-                  <YAxis />
-                  <Tooltip />
-                  <Bar dataKey="value" radius={[4, 4, 0, 0]} barSize={20} fill={COLORS.teal} />
-                </BarChart>
-              </ResponsiveContainer>
-            </CardContent>
-          </Card>
         </section>
       )}
 

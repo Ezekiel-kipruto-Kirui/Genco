@@ -4,8 +4,6 @@ import { useQuery } from "@tanstack/react-query";
 import {
   Activity,
   ArrowRight,
-  ArrowDown,
-  ArrowUp,
   Clock3,
   Eye,
   Leaf,
@@ -900,61 +898,6 @@ const formatRelativeTime = (value: string): string => {
   return "just now";
 };
 
-type TrendDirection = "up" | "down" | "flat";
-
-const getPercentChange = (current: number, previous: number | null | undefined): { direction: TrendDirection; label: string } => {
-  if (previous === null || previous === undefined || !Number.isFinite(previous)) {
-    return { direction: "flat", label: "0.0%" };
-  }
-
-  if (previous <= 0) {
-    if (current <= 0) return { direction: "flat", label: "0.0%" };
-    return { direction: "up", label: "100%+" };
-  }
-
-  const percentChange = ((current - previous) / previous) * 100;
-  if (Math.abs(percentChange) < 0.05) {
-    return { direction: "flat", label: "0.0%" };
-  }
-
-  return {
-    direction: percentChange > 0 ? "up" : "down",
-    label: `${Math.abs(percentChange).toFixed(1)}%`,
-  };
-};
-
-const TrendChangeBadge = ({
-  current,
-  previous,
-}: {
-  current: number;
-  previous: number | null | undefined;
-}) => {
-  const change = getPercentChange(current, previous);
-  const icon =
-    change.direction === "up" ? (
-      <ArrowUp className="h-3 w-3" />
-    ) : change.direction === "down" ? (
-      <ArrowDown className="h-3 w-3" />
-    ) : (
-      <ArrowRight className="h-3 w-3" />
-    );
-
-  const tone =
-    change.direction === "up"
-      ? "bg-emerald-50 text-emerald-700"
-      : change.direction === "down"
-        ? "bg-rose-50 text-rose-700"
-        : "bg-slate-100 text-slate-600";
-
-  return (
-    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ${tone}`}>
-      {icon}
-      {change.label}
-    </span>
-  );
-};
-
 const TopMetricCard = ({
   title,
   value,
@@ -1068,32 +1011,21 @@ const YearTrendPanel = ({
 
                   if (entries.length === 0) return null;
 
-                  const valueByYear = new Map(entries.map((entry) => [entry.seriesYear, entry.value]));
-
                   return (
                     <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-[0_12px_28px_rgba(15,23,42,0.12)]">
                       <p className={`text-xs ${SECONDARY_TEXT_CLASS}`}>{String(label)}</p>
                       <div className="mt-2 space-y-1">
-                        {entries.map((entry) => {
-                          const yearIndex = trend.years.findIndex((year) => String(year) === entry.seriesYear);
-                          const previousYear = yearIndex > 0 ? trend.years[yearIndex - 1] : null;
-                          const previousValue = previousYear !== null ? valueByYear.get(String(previousYear)) ?? null : null;
-
-                          return (
-                            <div key={entry.seriesYear} className="flex items-center justify-between gap-4">
-                              <div className="flex items-center gap-2">
-                                <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: entry.color }} />
-                                <span className="text-sm font-medium text-slate-700">{entry.seriesYear}</span>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <span className="text-sm font-semibold text-slate-900">
-                                  {formatWholeNumber(entry.value)} {tooltipValueLabel}
-                                </span>
-                                <TrendChangeBadge current={entry.value} previous={previousValue} />
-                              </div>
+                        {entries.map((entry) => (
+                          <div key={entry.seriesYear} className="flex items-center justify-between gap-4">
+                            <div className="flex items-center gap-2">
+                              <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: entry.color }} />
+                              <span className="text-sm font-medium text-slate-700">{entry.seriesYear}</span>
                             </div>
-                          );
-                        })}
+                            <span className="text-sm font-semibold text-slate-900">
+                              {formatWholeNumber(entry.value)} {tooltipValueLabel}
+                            </span>
+                          </div>
+                        ))}
                       </div>
                     </div>
                   );
@@ -1176,34 +1108,19 @@ const AnnualComparisonPanel = ({
 
                   if (entries.length === 0) return null;
 
-                  const currentIndex = comparison.data.findIndex((point) => point.name === String(label));
-                  const previousPoint = currentIndex > 0 ? comparison.data[currentIndex - 1] : null;
-
                   return (
                     <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-[0_12px_28px_rgba(15,23,42,0.12)]">
                       <p className={`text-xs ${SECONDARY_TEXT_CLASS}`}>{String(label)}</p>
                       <div className="mt-2 space-y-1">
-                        {entries.map((entry) => {
-                          const previousValue =
-                            entry.name === "Goats on record"
-                              ? previousPoint?.goatsOnRecord ?? null
-                              : entry.name === "Goats purchased"
-                                ? previousPoint?.goatsPurchased ?? null
-                                : null;
-
-                          return (
-                            <div key={entry.name} className="flex items-center justify-between gap-4">
-                              <div className="flex items-center gap-2">
-                                <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: entry.color }} />
-                                <span className="text-sm font-medium text-slate-700">{entry.name}</span>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <span className="text-sm font-semibold text-slate-900">{formatWholeNumber(entry.value)}</span>
-                                <TrendChangeBadge current={entry.value} previous={previousValue} />
-                              </div>
+                        {entries.map((entry) => (
+                          <div key={entry.name} className="flex items-center justify-between gap-4">
+                            <div className="flex items-center gap-2">
+                              <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: entry.color }} />
+                              <span className="text-sm font-medium text-slate-700">{entry.name}</span>
                             </div>
-                          );
-                        })}
+                            <span className="text-sm font-semibold text-slate-900">{formatWholeNumber(entry.value)}</span>
+                          </div>
+                        ))}
                       </div>
                     </div>
                   );
@@ -1244,13 +1161,13 @@ const DonutPanel = ({
   data,
   headerExtra,
   tooltipValueLabel = "records",
-  showTrendBadge = true,
+  legendItems,
 }: {
   title: string;
   data: DonutSegment[];
   headerExtra?: ReactNode;
   tooltipValueLabel?: string;
-  showTrendBadge?: boolean;
+  legendItems?: Array<Pick<DonutSegment, "name" | "color">>;
 }) => {
   const hasValues = data.some((item) => item.value > 0);
   const chartData = hasValues ? data : [{ name: "No data", value: 1, color: "#e2e8f0" }];
@@ -1264,8 +1181,6 @@ const DonutPanel = ({
               content={({ active, payload }) => {
                 const segment = payload?.[0]?.payload as DonutSegment | undefined;
                 if (!active || !segment || !hasValues) return null;
-                const segmentIndex = data.findIndex((item) => item.name === segment.name);
-                const previousValue = segmentIndex > 0 ? data[segmentIndex - 1]?.value ?? null : null;
 
                 return (
                   <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-[0_12px_28px_rgba(15,23,42,0.12)]">
@@ -1273,15 +1188,14 @@ const DonutPanel = ({
                       <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: segment.color }} />
                       <span className="text-sm font-medium text-slate-700">{segment.name}</span>
                     </div>
-                      <div className="mt-1 flex items-center gap-2">
-                        <span className="text-sm font-semibold text-slate-900">
-                          {formatWholeNumber(segment.value)} {tooltipValueLabel}
-                        </span>
-                        {showTrendBadge ? <TrendChangeBadge current={segment.value} previous={previousValue} /> : null}
-                      </div>
+                    <div className="mt-1 flex items-center gap-2">
+                      <span className="text-sm font-semibold text-slate-900">
+                        {formatWholeNumber(segment.value)} {tooltipValueLabel}
+                      </span>
                     </div>
-                  );
-                }}
+                  </div>
+                );
+              }}
               />
             <Pie
               data={chartData}
@@ -1299,6 +1213,16 @@ const DonutPanel = ({
           </PieChart>
         </ResponsiveContainer>
       </div>
+      {hasValues && legendItems?.length ? (
+        <div className="mt-3 flex flex-wrap justify-center gap-3">
+          {legendItems.map((item) => (
+            <div key={item.name} className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-700">
+              <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.color }} />
+              <span>{item.name}</span>
+            </div>
+          ))}
+        </div>
+      ) : null}
       {!hasValues ? (
         <p className={`mt-3 text-center text-sm ${SECONDARY_TEXT_CLASS}`}>No data available yet</p>
       ) : null}
@@ -1812,7 +1736,7 @@ const DashboardOverview = () => {
                 title="INFRASTRUCTURE"
                 data={maintainedInfrastructureData}
                 tooltipValueLabel="boreholes"
-                showTrendBadge={false}
+                legendItems={maintainedInfrastructureData}
               />
               <AnnualComparisonPanel
                 title="ANIMAL CENSUS"

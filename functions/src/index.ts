@@ -740,6 +740,75 @@ const sendHrNewRequisitionEmail = async (
   await sendEmail(hrRecipients, subject, text, html);
 };
 
+const sendProjectManagerNewRequisitionEmail = async (
+  requisitionId: string,
+  record: RequisitionRecord,
+): Promise<void> => {
+  const pmRecipients = await getEmailsByRole(
+    ROLE_PROJECT_MANAGER_IDENTIFIERS,
+    record.programme,
+  );
+
+  if (pmRecipients.length === 0) {
+    logger.warn("No Project Manager recipients found for new requisition", {
+      requisitionId,
+      programme: record.programme || "N/A",
+    });
+    return;
+  }
+
+  const submittedDate = formatSubmittedDate(record.submittedAt);
+  const requesterName = getRequesterName(record);
+  const purpose =
+    typeof record.tripPurpose === "string" && record.tripPurpose.trim() ?
+      record.tripPurpose.trim() :
+      (typeof record.fuelPurpose === "string" && record.fuelPurpose.trim() ?
+        record.fuelPurpose.trim() :
+        "N/A");
+  const county = typeof record.county === "string" && record.county.trim() ?
+    record.county.trim() :
+    "N/A";
+  const subcounty = typeof record.subcounty === "string" &&
+      record.subcounty.trim() ?
+    record.subcounty.trim() :
+    "N/A";
+  const subject = "New Pending Requisition";
+  const text = [
+    "Dear Project Manager,",
+    "",
+    "A new pending requisition has been submitted.",
+    "",
+    `Requester: ${requesterName}`,
+    `Programme: ${record.programme || "N/A"}`,
+    `Date Submitted: ${submittedDate}`,
+    `Type: ${record.type || "N/A"}`,
+    `Amount: ${formatAmount(record)}`,
+    `Purpose: ${purpose}`,
+    `County: ${county}`,
+    `Subcounty: ${subcounty}`,
+    "",
+    "Please log in to the system to review and take the necessary action.",
+  ].join("\n");
+  const html = [
+    "<p>Dear Project Manager,</p>",
+    "<p>A new pending requisition has been submitted.</p>",
+    "<p>",
+    `<strong>Requester:</strong> ${requesterName}<br/>`,
+    `<strong>Programme:</strong> ${record.programme || "N/A"}<br/>`,
+    `<strong>Date Submitted:</strong> ${submittedDate}<br/>`,
+    `<strong>Type:</strong> ${record.type || "N/A"}<br/>`,
+    `<strong>Amount:</strong> ${formatAmount(record)}<br/>`,
+    `<strong>Purpose:</strong> ${purpose}<br/>`,
+    `<strong>County:</strong> ${county}<br/>`,
+    `<strong>Subcounty:</strong> ${subcounty}`,
+    "</p>",
+    "<p>Please log in to the system to review and take the necessary " +
+      "action.</p>",
+  ].join("");
+
+  await sendEmail(pmRecipients, subject, text, html);
+};
+
 const sendProjectManagerNewRequisitionSms = async (
   requisitionId: string,
   record: RequisitionRecord,
@@ -1003,6 +1072,7 @@ export const notifyRequisitionStatusEmails = onValueWritten(
     const requisitionId = String(event.params.requisitionId);
     const previousStatus = normalize(before?.status);
     const nextStatus = normalize(after.status);
+    const isPendingStatus = !nextStatus || nextStatus === "pending";
     const previousAuthorizedBy = normalize(before?.authorizedBy);
     const nextAuthorizedBy = normalize(after.authorizedBy);
     const previousTransactionCompletedBy =
@@ -1010,10 +1080,16 @@ export const notifyRequisitionStatusEmails = onValueWritten(
     const nextTransactionCompletedBy = normalize(after.transactionCompletedBy);
 
     if (!before && after) {
-      await Promise.all([
+      const notifications = [
         sendProjectManagerNewRequisitionSms(requisitionId, after),
         sendHrNewRequisitionEmail(requisitionId, after),
-      ]);
+      ];
+      if (isPendingStatus) {
+        notifications.push(
+          sendProjectManagerNewRequisitionEmail(requisitionId, after),
+        );
+      }
+      await Promise.all(notifications);
       return;
     }
 
