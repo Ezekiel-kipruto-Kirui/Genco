@@ -2047,62 +2047,73 @@ const PerformanceReport = () => {
             </Card>
           </div>
 
-          <Card className="border-0 shadow-lg bg-white">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm flex items-center gap-2 text-gray-800">
-                <TrendingUp className="h-4 w-4 text-teal-600" />
-                Breeds Distributed Per Subcounty
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <ResponsiveContainer width="100%" height={280}>
-                <BarChart data={data.breedsBySubcountyData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
-                  <XAxis dataKey="name" angle={-45} textAnchor="end" height={70} interval={0} tick={{fontSize: 10}} />
-                  <YAxis />
-                  <Tooltip />
-                  <Bar dataKey="value" radius={[4, 4, 0, 0]} barSize={20} fill={COLORS.teal} />
-                </BarChart>
-              </ResponsiveContainer>
-            </CardContent>
-          </Card>
         </section>
       )}
 
       {hasSection("hr-distribution") && (
         <section>
-          <div className="grid gap-6 md:grid-cols-2 mb-6">
-            <Card className="border-0 shadow-lg bg-white">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm flex items-center gap-2 text-gray-800">
-                  <MapPin className="h-4 w-4 text-green-600" />
-                  Top Location In Registration
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ResponsiveContainer width="100%" height={280}>
-                  <BarChart
-                    data={data.topLocations}
-                    margin={{ top: 8, right: 12, left: 0, bottom: 44 }}
-                  >
-                    <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f3f4f6" />
-                    <XAxis
-                      dataKey="name"
-                      axisLine={false}
-                      tickLine={false}
-                      interval={0}
-                      angle={-18}
-                      textAnchor="end"
-                      height={56}
-                      tick={{ fontSize: 11 }}
-                    />
-                    <YAxis type="number" allowDecimals={false} axisLine={false} tickLine={false} />
-                    <Tooltip />
-                    <Bar dataKey="value" radius={[4, 4, 0, 0]} barSize={24} fill={COLORS.green} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
+          <div className="grid gap-6 md:grid-cols-2 mb-6 items-start">
+            <div className="space-y-6">
+              <Card className="border-0 shadow-lg bg-white">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm flex items-center gap-2 text-gray-800">
+                    <MapPin className="h-4 w-4 text-green-600" />
+                    Top Location In Registration
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <ResponsiveContainer width="100%" height={280}>
+                    <BarChart
+                      data={data.topLocations}
+                      margin={{ top: 8, right: 12, left: 0, bottom: 44 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f3f4f6" />
+                      <XAxis
+                        dataKey="name"
+                        axisLine={false}
+                        tickLine={false}
+                        interval={0}
+                        angle={-18}
+                        textAnchor="end"
+                        height={56}
+                        tick={{ fontSize: 11 }}
+                      />
+                      <YAxis type="number" allowDecimals={false} axisLine={false} tickLine={false} />
+                      <Tooltip />
+                      <Bar dataKey="value" radius={[4, 4, 0, 0]} barSize={24} fill={COLORS.green} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </CardContent>
+              </Card>
+
+              <Card className="border-0 shadow-lg bg-white">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm flex items-center gap-2 text-gray-800">
+                    <TrendingUp className="h-4 w-4 text-teal-600" />
+                    Breeds Distributed Per Subcounty
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <ResponsiveContainer width="100%" height={280}>
+                    <AreaChart data={data.breedsBySubcountyData} margin={{ top: 10, right: 20, left: 0, bottom: 10 }}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f3f4f6" />
+                      <XAxis dataKey="name" angle={-45} textAnchor="end" height={70} interval={0} tick={{ fontSize: 10 }} />
+                      <YAxis />
+                      <Tooltip />
+                      <Area
+                        type="monotone"
+                        dataKey="value"
+                        stroke={COLORS.teal}
+                        strokeWidth={3}
+                        fill={COLORS.teal}
+                        fillOpacity={0.15}
+                        activeDot={{ r: 5 }}
+                      />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </CardContent>
+              </Card>
+            </div>
 
             <Card className="border-0 shadow-lg bg-white">
               <CardHeader className="pb-2">
