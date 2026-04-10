@@ -997,7 +997,11 @@ const LivestockFarmersAnalytics = () => {
     </Card>
   );
 
-  if (analyticsQuery.isLoading || loading) {
+  const isPageLoading = USE_REMOTE_ANALYTICS
+    ? ((accessibleProgrammes.length > 0 && !activeProgram) || (analyticsQuery.isLoading && !analyticsQuery.data))
+    : loading;
+
+  if (isPageLoading) {
     return (
       <div className="flex justify-center items-center h-64">
         <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent"></div>

@@ -28,7 +28,6 @@ import {
   SidebarMenuSub,
   SidebarMenuSubButton,
   SidebarMenuSubItem,
-  SidebarSeparator,
   useSidebar,
 } from "@/components/ui/sidebar";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -199,10 +198,11 @@ export function DashboardSidebar() {
   const showBottomRequisition = canAccessRequisition(userRole, userAttribute);
   const sidebarItemClassName = "h-8 gap-2 px-1 py-0.5";
   const sidebarSubItemClassName = "h-6 gap-1 px-0.5";
+  const footerItemClassName = `${sidebarItemClassName} border-l-2 border-l-yellow-500/80`;
 
   return (
     <Sidebar className={`${collapsed ? "w-14" : "w-64"} bg-green-700 text-white`} collapsible="icon">
-      <SidebarHeader className="bg-green-700 pb-3">
+      <SidebarHeader className="border-b border-orange-500 bg-green-700 p-2">
         <div className="flex items-center gap-2 p-1.5">
           <div className="flex h-8 w-8 items-center justify-center rounded-full bg-white/20 shadow backdrop-blur">
             <img src="/img/logo.png" className="h-8 w-8 rounded-full object-cover" alt="GenCo Logo" />
@@ -214,8 +214,6 @@ export function DashboardSidebar() {
           )}
         </div>
       </SidebarHeader>
-
-      <SidebarSeparator className="bg-white/20" />
 
       <SidebarContent className="bg-green-700">
         <SidebarGroup>
@@ -349,17 +347,15 @@ export function DashboardSidebar() {
         )}
       </SidebarContent>
 
-      <SidebarSeparator className="bg-white/20" />
-
-      <SidebarFooter className="bg-green-700 pt-2">
+      <SidebarFooter className="border-t border-yellow-500 bg-green-700 pt-2">
         <SidebarMenu>
           {canAccessUserManagement(userRole, userAttribute) && (
             <SidebarMenuItem>
-              <SidebarMenuButton asChild className={sidebarItemClassName}>
+              <SidebarMenuButton asChild className={footerItemClassName}>
                 <NavLink
                   to="/dashboard/users"
                   className="text-green-50 transition-colors hover:bg-green-600"
-                  activeClassName="bg-white font-bold text-green-700 shadow-sm"
+                  activeClassName="border-yellow-500 bg-white font-bold text-green-700 shadow-sm"
                 >
                   <Settings className="h-4 w-4" />
                   {!collapsed && <span>Site Management</span>}
@@ -371,7 +367,7 @@ export function DashboardSidebar() {
           <SidebarMenuItem>
             <SidebarMenuButton
               onClick={signOutUser}
-              className={`${sidebarItemClassName} text-green-50 transition-colors hover:bg-green-600`}
+              className={`${footerItemClassName} text-green-50 transition-colors hover:bg-green-600`}
             >
               <LogOut className="h-4 w-4" />
               {!collapsed && <span>Logout</span>}
