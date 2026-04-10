@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { createUserWithEmailAndPassword, deleteUser } from "firebase/auth";
-import { ref, get, set, update, remove, push, serverTimestamp } from "firebase/database";
-import { db, secondaryAuth } from "@/lib/firebase";
+import { ref, set, update, remove, push, serverTimestamp } from "firebase/database";
+import { db, secondaryAuth, invalidateCollectionCache } from "@/lib/firebase";
 import { fetchCollection } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -478,6 +478,7 @@ const TableRow = ({ record, selectedRecords, onSelectRecord, onView, onEdit, onD
         ) : "N/A"}
       </td>
       <td className="py-2 px-4 text-sm">{formatDate(record.createdAt)}</td>
+      <td className="py-2 px-4 text-sm">{formatDateTime(record.lastLogin)}</td>
       <td className="py-2 px-4 text-sm">
         <div className="flex gap-2">
           <Button
@@ -921,6 +922,7 @@ const UserManagementPage = () => {
       });
 
       removeCachedValue(USER_MANAGEMENT_CACHE_KEY);
+      invalidateCollectionCache("users");
       setIsEditDialogOpen(false);
       setEditingRecord(null);
       fetchAllData();
@@ -985,6 +987,7 @@ const UserManagementPage = () => {
       });
 
       removeCachedValue(USER_MANAGEMENT_CACHE_KEY);
+      invalidateCollectionCache("users");
       fetchAllData();
 
     } catch (error: any) {
@@ -1024,6 +1027,7 @@ const UserManagementPage = () => {
       });
 
       removeCachedValue(USER_MANAGEMENT_CACHE_KEY);
+      invalidateCollectionCache("users");
       setIsDeleteDialogOpen(false);
       setRecordToDelete(null);
       setSelectedRecords(prev => prev.filter(id => id !== recordToDelete.id));
@@ -1057,6 +1061,7 @@ const UserManagementPage = () => {
       });
 
       removeCachedValue(USER_MANAGEMENT_CACHE_KEY);
+      invalidateCollectionCache("users");
       setIsBulkDeleteDialogOpen(false);
       setSelectedRecords([]);
       fetchAllData();
@@ -1210,6 +1215,7 @@ const UserManagementPage = () => {
                       <th className="text-left py-2 px-4 font-medium text-gray-600">Status</th>
                       <th className="text-left py-2 px-4 font-medium text-gray-600">Attribute</th>
                       <th className="text-left py-2 px-4 font-medium text-gray-600">Created</th>
+                      <th className="text-left py-2 px-4 font-medium text-gray-600">Last Login</th>
                       <th className="text-left py-2 px-4 font-medium text-gray-600">Actions</th>
                     </tr>
                   </thead>

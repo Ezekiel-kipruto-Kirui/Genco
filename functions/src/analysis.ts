@@ -867,6 +867,7 @@ const emptyPerformance = () => ({
   countyPerformanceData: [],
   subcountyPerformanceData: [],
   registrationTrendData: [],
+  registrationTrendComparisonData: [],
   topLocations: [],
   topCustomers: [],
   totalGoatsPurchased: 0,
@@ -1334,6 +1335,7 @@ const createPerformanceReport = async (
   const selectedYearNumber = typeof selectedYear === "string" ? Number.parseInt(selectedYear, 10) : (typeof selectedYear === "number" ? selectedYear : null);
   const currentYear = new Date().getFullYear();
   const trendYear = selectedYearNumber && !Number.isNaN(selectedYearNumber) ? selectedYearNumber : null;
+  const trendComparisonYears = Array.from({length: 5}, (_, index) => currentYear - 4 + index);
 
   for (const farmer of filteredFarmers) {
     const gender = String(farmer.gender || "").trim().toLowerCase();
@@ -1453,30 +1455,42 @@ const createPerformanceReport = async (
     }
     if (frame === "monthly") {
       const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+      const analysisYear = trendYear ?? currentYear;
       months.forEach((monthName, index) => {
         const count = filteredFarmers.filter((farmer) => {
           const date = parseDate(farmer.createdAt || farmer.registrationDate);
           if (!date) return false;
           if (trendYear === null) return date.getMonth() === index;
-          const monthStart = new Date(trendYear, index, 1);
-          const monthEnd = new Date(trendYear, index + 1, 0);
+          const monthStart = new Date(analysisYear, index, 1);
+          const monthEnd = new Date(analysisYear, index + 1, 0);
           return date >= monthStart && date <= monthEnd;
         }).length;
         trendData.push({name: monthName, registrations: count});
       });
       return trendData;
     }
-    const yearlyTrendYears = trendYear !== null ?
-      Array.from({length: 5}, (_, index) => trendYear - 4 + index) :
-      Array.from(
-        new Set(
-          filteredFarmers
-            .map((farmer) => parseDate(farmer.createdAt || farmer.registrationDate)?.getFullYear() ?? null)
-            .filter((year): year is number => year !== null),
-        ),
-      ).sort((left, right) => left - right);
-    const resolvedYears = yearlyTrendYears.length > 0 ? yearlyTrendYears : [currentYear];
-    for (const year of resolvedYears) {
+    if (trendYear !== null) {
+      const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+      months.forEach((monthName, index) => {
+        const monthStart = new Date(trendYear, index, 1);
+        const monthEnd = new Date(trendYear, index + 1, 0);
+        const count = filteredFarmers.filter((farmer) => {
+          const date = parseDate(farmer.createdAt || farmer.registrationDate);
+          return !!date && date >= monthStart && date <= monthEnd;
+        }).length;
+        trendData.push({name: monthName, registrations: count});
+      });
+      return trendData;
+    }
+    const resolvedYears = Array.from(
+      new Set(
+        filteredFarmers
+          .map((farmer) => parseDate(farmer.createdAt || farmer.registrationDate)?.getFullYear() ?? null)
+          .filter((year): year is number => year !== null),
+      ),
+    ).sort((left, right) => left - right);
+
+    for (const year of (resolvedYears.length > 0 ? resolvedYears : trendComparisonYears)) {
       const yearStart = new Date(year, 0, 1);
       const yearEnd = new Date(year, 11, 31);
       const count = filteredFarmers.filter((farmer) => {
@@ -1487,6 +1501,15 @@ const createPerformanceReport = async (
     }
     return trendData;
   })();
+  const registrationTrendComparisonData = trendComparisonYears.map((year) => {
+    const yearStart = new Date(year, 0, 1);
+    const yearEnd = new Date(year, 11, 31);
+    const count = farmers.filter((farmer) => {
+      const date = parseDate(farmer.createdAt || farmer.registrationDate);
+      return !!date && date >= yearStart && date <= yearEnd;
+    }).length;
+    return {name: String(year), registrations: count};
+  });
   const uniqueCounties = new Set(filteredFarmers.map((farmer) => String(farmer.county || "").trim()).filter(Boolean)).size;
   const totalBreedsDistributed = breedsMale + breedsFemale;
   const breedsByCountyData = Object.entries(breedsByCountyMap).map(([name, value]) => ({name, value})).sort((a, b) => b.value - a.value);
@@ -1513,6 +1536,7 @@ const createPerformanceReport = async (
     countyPerformanceData,
     subcountyPerformanceData,
     registrationTrendData,
+    registrationTrendComparisonData,
     topLocations,
     topCustomers,
     totalGoatsPurchased,

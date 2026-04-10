@@ -699,7 +699,7 @@ const StatsCard = ({ title, value, icon: Icon, subText, color = "blue", trend = 
           <div className="text-3xl font-bold text-gray-900 tracking-tight">{value}</div>
           {trend !== 'neutral' && (
             <span className={`text-xs font-bold ${trend === 'up' ? 'text-green-600' : 'text-red-600'}`}>
-              {trend === 'up' ? '↑' : '↓'}
+              {trend === 'up' ? 'â†‘' : 'â†“'}
             </span>
           )}
         </div>
@@ -751,8 +751,8 @@ const SalesReport = () => {
   }, [currentYear]);
 
   const userCanViewAllProgrammeData = useMemo(
-    () => canViewAllProgrammes(userRole, userAttribute),
-    [userRole, userAttribute]
+    () => canViewAllProgrammes(userRole, userAttribute, allowedProgrammes),
+    [allowedProgrammes, userRole, userAttribute]
   );
   const accessibleProgrammes = useMemo(
     () => resolveAccessibleProgrammes(userCanViewAllProgrammeData, allowedProgrammes),
@@ -760,7 +760,7 @@ const SalesReport = () => {
   );
   const permissionPrincipal = useMemo(
     () => resolvePermissionPrincipal(userRole, userAttribute),
-    [userRole, userAttribute]
+    [allowedProgrammes, userRole, userAttribute]
   );
   const userCanManageSalesInputs = useMemo(
     () => isChiefAdmin(permissionPrincipal) || isAdmin(permissionPrincipal),
@@ -1193,14 +1193,14 @@ const SalesReport = () => {
               title="Total Animals" 
               value={millify(stats.totalAnimals)} 
               icon={Package} 
-              subText={`Goats: ${stats.totalGoats} (${goatPct}%) • Sheep: ${stats.totalSheep} (${sheepPct}%)`} 
+              subText={`Goats: ${stats.totalGoats} (${goatPct}%) â€¢ Sheep: ${stats.totalSheep} (${sheepPct}%)`} 
               color="blue" 
             />
             <StatsCard 
               title="Total COST" 
               value={millify(stats.totalPurchaseCost)} 
               icon={DollarSign} 
-              subText={`Cost/Goat: ${formatCurrency(stats.costPerGoat)} • Avg/Kg: ${formatCurrency(stats.avgCostPerKgCarcass)}`} 
+              subText={`Cost/Goat: ${formatCurrency(stats.costPerGoat)} â€¢ Avg/Kg: ${formatCurrency(stats.avgCostPerKgCarcass)}`} 
               color="green" 
             />
             <StatsCard 
@@ -1326,7 +1326,7 @@ const SalesReport = () => {
                           <p className="text-sm font-bold text-gray-800">{farmer.name}</p>
                           <p className="text-[11px] text-gray-500 flex items-center gap-1">
                              <MapPin className="h-3 w-3" />
-                             {farmer.county} • {farmer.animals} animals
+                             {farmer.county} â€¢ {farmer.animals} animals
                           </p>
                         </div>
                       </div>

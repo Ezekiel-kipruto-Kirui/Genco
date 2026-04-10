@@ -2,6 +2,7 @@ import { initializeApp, getApps, getApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
 import { getAnalytics } from "firebase/analytics";
 import { getDatabase, ref, get } from "firebase/database";
+import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
 
 // --- Types ---
 
@@ -51,40 +52,74 @@ export const analytics =
 
 // --- Helpers ---
 
+const COLLECTION_CACHE_TTL_MS = 5 * 60 * 1000;
+const inFlightCollectionRequests = new Map<string, Promise<DatabaseRecord<any>[]>>();
+
+const buildCollectionCacheKey = (path: string) =>
+  cacheKey("collection", auth.currentUser?.uid || "anon", path);
+
 /**
  * Helper function to fetch data from Realtime Database.
- * 
+ *
  * @param path - The database path to fetch from (e.g., "users")
  * @returns An array of objects, each enriched with the record's 'id'.
  */
 export const fetchCollection = async <T = Record<string, any>>(
-  path: string
+  path: string,
+  ttlMs = COLLECTION_CACHE_TTL_MS,
 ): Promise<DatabaseRecord<T>[]> => {
+  const cacheName = buildCollectionCacheKey(path);
+  const cached = readCachedValue<DatabaseRecord<T>[]>(cacheName, ttlMs);
+  if (cached) return cached;
+
+  const inFlight = inFlightCollectionRequests.get(cacheName);
+  if (inFlight) return inFlight as Promise<DatabaseRecord<T>[]>;
+
+  const request = (async () => {
+    try {
+      const dbRef = ref(db, path);
+      const snapshot = await get(dbRef);
+
+      if (!snapshot.exists()) {
+        writeCachedValue(cacheName, []);
+        return [];
+      }
+
+      const data = snapshot.val();
+
+      // Handle the case where data might not be an object (e.g., a primitive value at the path)
+      if (typeof data !== "object" || data === null) {
+        console.warn(`Path ${path} does not contain a collection/object.`);
+        writeCachedValue(cacheName, []);
+        return [];
+      }
+
+      // Convert object → array with id (Firestore-like structure)
+      const records = Object.entries(data).map(([id, value]) => ({
+        id,
+        ...(value as T),
+      }));
+      writeCachedValue(cacheName, records);
+      return records;
+    } catch (err) {
+      console.error(`Error fetching collection at ${path}:`, err);
+      throw err;
+    }
+  })();
+
+  inFlightCollectionRequests.set(cacheName, request);
+
   try {
-    const dbRef = ref(db, path);
-    const snapshot = await get(dbRef);
-
-    if (!snapshot.exists()) {
-      return [];
-    }
-
-    const data = snapshot.val();
-
-    // Handle the case where data might not be an object (e.g., a primitive value at the path)
-    if (typeof data !== 'object' || data === null) {
-      console.warn(`Path ${path} does not contain a collection/object.`);
-      return [];
-    }
-
-    // Convert object → array with id (Firestore-like structure)
-    return Object.entries(data).map(([id, value]) => ({
-      id,
-      ...(value as T),
-    }));
-  } catch (err) {
-    console.error(`Error fetching collection at ${path}:`, err);
-    throw err;
+    return await request;
+  } finally {
+    inFlightCollectionRequests.delete(cacheName);
   }
+};
+
+export const invalidateCollectionCache = (path: string): void => {
+  const cacheName = buildCollectionCacheKey(path);
+  inFlightCollectionRequests.delete(cacheName);
+  removeCachedValue(cacheName);
 };
 
 // Interface for the full data fetch payload

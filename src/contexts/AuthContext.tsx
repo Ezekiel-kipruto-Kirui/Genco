@@ -1,11 +1,12 @@
 import { createContext, useContext, useEffect, useRef, useState, type FC, type ReactNode } from "react";
 import { User, onAuthStateChanged, signInWithEmailAndPassword, signOut } from "firebase/auth";
-import { equalTo, get, orderByChild, query, ref } from "firebase/database";
-import { auth, db } from "@/lib/firebase";
+import { equalTo, get, orderByChild, query, ref, serverTimestamp, update } from "firebase/database";
+import { auth, db, invalidateCollectionCache } from "@/lib/firebase";
 import { useToast } from "@/hooks/use-toast";
 import { isMobileUser } from "@/contexts/authhelper";
 
 interface UserProfile {
+  recordId: string | null;
   role: string | null;
   allowedProgrammes: Record<string, boolean> | null;
   name: string | null;
@@ -77,6 +78,19 @@ export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
     return null;
   };
 
+  const touchLastLogin = async (recordId: string | null) => {
+    if (!recordId) return;
+
+    try {
+      await update(ref(db, `users/${recordId}`), {
+        lastLogin: serverTimestamp(),
+      });
+      invalidateCollectionCache("users");
+    } catch (error) {
+      console.error("Error updating last login:", error);
+    }
+  };
+
   const fetchUserProfile = async (uid: string): Promise<UserProfile> => {
     try {
       const userRef = ref(db, `users/${uid}`);
@@ -85,6 +99,7 @@ export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
       if (snapshot.exists()) {
         const userData = snapshot.val();
         return {
+          recordId: uid,
           role: userData.role || null,
           allowedProgrammes: userData.allowedProgrammes || null,
           name: userData.name || null,
@@ -98,9 +113,11 @@ export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
 
       if (matchingUsersSnapshot.exists()) {
         const data = matchingUsersSnapshot.val() as Record<string, any>;
-        const match = Object.values(data)[0];
-        if (match) {
+        const matchEntry = Object.entries(data)[0];
+        if (matchEntry) {
+          const [recordId, match] = matchEntry;
           return {
+            recordId,
             role: match.role || null,
             allowedProgrammes: match.allowedProgrammes || null,
             name: match.name || null,
@@ -109,10 +126,10 @@ export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
         }
       }
 
-      return { role: null, allowedProgrammes: null, name: null, userAttribute: null };
+      return { recordId: null, role: null, allowedProgrammes: null, name: null, userAttribute: null };
     } catch (error) {
       console.error("Error fetching user profile:", error);
-      return { role: null, allowedProgrammes: null, name: null, userAttribute: null };
+      return { recordId: null, role: null, allowedProgrammes: null, name: null, userAttribute: null };
     }
   };
 
@@ -137,6 +154,10 @@ export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
       try {
         const profile = await fetchUserProfile(firebaseUser.uid);
         if (!isMounted) return;
+
+        if (pendingLoginRef.current) {
+          await touchLastLogin(profile.recordId);
+        }
 
         if (isMobileUser(profile.role, profile.userAttribute)) {
           pendingLoginRef.current = false;
@@ -177,6 +198,7 @@ export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
         }
       } catch (error) {
         console.error("Auth initialization error:", error);
+        pendingLoginRef.current = false;
         clearAuthState();
       } finally {
         if (isMounted) setLoading(false);

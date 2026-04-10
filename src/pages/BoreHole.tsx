@@ -385,7 +385,7 @@ const BoreholePage = () => {
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadProgress, setUploadProgress] = useState<number>(0);
   
-  const searchTimeoutRef = useRef<NodeJS.Timeout>();
+  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const currentMonth = useMemo(getCurrentMonthDates, []);
 
@@ -431,8 +431,8 @@ const BoreholePage = () => {
     [userAttribute, userRole]
   );
   const userCanViewAllProgrammeData = useMemo(
-    () => canViewAllProgrammes(userRole, userAttribute),
-    [userRole, userAttribute]
+    () => canViewAllProgrammes(userRole, userAttribute, allowedProgrammes),
+    [allowedProgrammes, userRole, userAttribute]
   );
   const accessibleProgrammes = useMemo(
     () => resolveAccessibleProgrammes(userCanViewAllProgrammeData, allowedProgrammes),
@@ -1446,7 +1446,7 @@ const BoreholePage = () => {
               {/* Pagination */}
               <div className="flex flex-col sm:flex-row items-center justify-between p-4 border-t bg-gray-50 gap-4">
                 <div className="text-sm text-muted-foreground">
-                  {filteredBoreholes.length} total records • Page {pagination.page} of {pagination.totalPages}
+                  {filteredBoreholes.length} total records â€¢ Page {pagination.page} of {pagination.totalPages}
                 </div>
                 <div className="flex gap-2">
                   <Button

@@ -190,8 +190,8 @@ const CapacityBuildingPage = () => {
   
   const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
   const userCanViewAllProgrammeData = useMemo(
-    () => canViewAllProgrammes(userRole, userAttribute),
-    [userRole, userAttribute]
+    () => canViewAllProgrammes(userRole, userAttribute, allowedProgrammes),
+    [allowedProgrammes, userRole, userAttribute]
   );
   const accessibleProgrammes = useMemo(
     () => resolveAccessibleProgrammes(userCanViewAllProgrammeData, allowedProgrammes),
@@ -900,7 +900,7 @@ const CapacityBuildingPage = () => {
                 </table>
               </div>
               <div className="flex flex-col sm:flex-row items-center justify-between p-4 border-t bg-gray-50 gap-4">
-                <span className="text-sm text-muted-foreground">{filteredRecords.length} total records • Page {pagination.page} of {pagination.totalPages}</span>
+                <span className="text-sm text-muted-foreground">{filteredRecords.length} total records â€¢ Page {pagination.page} of {pagination.totalPages}</span>
                 <div className="flex gap-2">
                   <Button size="sm" variant="outline" disabled={!pagination.hasPrev} onClick={() => handlePageChange(pagination.page - 1)}>Previous</Button>
                   <Button size="sm" variant="outline" disabled={!pagination.hasNext} onClick={() => handlePageChange(pagination.page + 1)}>Next</Button>

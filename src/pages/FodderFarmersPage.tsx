@@ -146,7 +146,7 @@ const FodderFarmersPage = () => {
   // New state for file type selection
   const [uploadFileType, setUploadFileType] = useState<"csv" | "json">("csv");
   
-  const searchTimeoutRef = useRef<NodeJS.Timeout>();
+  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const currentMonth = useMemo(getCurrentMonthDates, []);
 
@@ -175,8 +175,8 @@ const FodderFarmersPage = () => {
 
   const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
   const userCanViewAllProgrammeData = useMemo(
-    () => canViewAllProgrammes(userRole, userAttribute),
-    [userRole, userAttribute]
+    () => canViewAllProgrammes(userRole, userAttribute, allowedProgrammes),
+    [allowedProgrammes, userRole, userAttribute]
   );
   const accessibleProgrammes = useMemo(
     () => resolveAccessibleProgrammes(userCanViewAllProgrammeData, allowedProgrammes),
@@ -787,7 +787,7 @@ const FodderFarmersPage = () => {
                 </table>
               </div>
               <div className="flex items-center justify-between p-4 border-t bg-gray-50">
-                <div className="text-sm text-muted-foreground">Page {pagination.page} of {pagination.totalPages} • {filteredFodder.length} total records • {currentPageRecords.length} on this page</div>
+                <div className="text-sm text-muted-foreground">Page {pagination.page} of {pagination.totalPages} â€¢ {filteredFodder.length} total records â€¢ {currentPageRecords.length} on this page</div>
                 <div className="flex gap-2">
                   <Button variant="outline" size="sm" disabled={!pagination.hasPrev} onClick={() => handlePageChange(pagination.page - 1)} className="border-gray-300 hover:bg-gray-100">Previous</Button>
                   <Button variant="outline" size="sm" disabled={!pagination.hasNext} onClick={() => handlePageChange(pagination.page + 1)} className="border-gray-300 hover:bg-gray-100">Next</Button>

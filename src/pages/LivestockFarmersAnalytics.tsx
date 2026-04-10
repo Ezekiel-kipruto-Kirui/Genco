@@ -63,7 +63,7 @@ interface TrainingData {
 
 type ProgressStatus = "achieved" | "on-track" | "behind" | "needs-attention";
 
-type ProgressPeriodKey = "q1" | "q2" | "q3" | "year";
+type ProgressPeriodKey = "q1" | "q2" | "q3" | "q4";
 
 interface ProgressPeriod {
   key: ProgressPeriodKey;
@@ -346,11 +346,46 @@ const getProgressStatus = (progressPercentage: number): ProgressStatus => {
   return "needs-attention";
 };
 
-const getTargetPeriodLabel = (mode: Exclude<FilterMode, "custom">): string => {
-  if (mode === "weekly") return "This Week Target";
-  if (mode === "monthly") return "This Month Target";
-  return "This Year Target";
+const getAnalysisYearFromDateRange = (dateRange: { startDate?: string; endDate?: string }): number => {
+  const startYear = parseDate(dateRange.startDate)?.getFullYear();
+  if (typeof startYear === "number" && Number.isFinite(startYear)) return startYear;
+
+  const endYear = parseDate(dateRange.endDate)?.getFullYear();
+  if (typeof endYear === "number" && Number.isFinite(endYear)) return endYear;
+
+  return new Date().getFullYear();
 };
+
+const buildQuarterTargets = (year: number) => [
+  {
+    key: "q1" as const,
+    label: `Q1 ${year}`,
+    start: new Date(year, 0, 1),
+    end: new Date(year, 2, 31),
+    target: PROGRESS_MONTHLY_TARGET * 3,
+  },
+  {
+    key: "q2" as const,
+    label: `Q2 ${year}`,
+    start: new Date(year, 3, 1),
+    end: new Date(year, 5, 30),
+    target: PROGRESS_MONTHLY_TARGET * 3,
+  },
+  {
+    key: "q3" as const,
+    label: `Q3 ${year}`,
+    start: new Date(year, 6, 1),
+    end: new Date(year, 8, 30),
+    target: PROGRESS_MONTHLY_TARGET * 3,
+  },
+  {
+    key: "q4" as const,
+    label: `Q4 ${year}`,
+    start: new Date(year, 9, 1),
+    end: new Date(year, 11, 31),
+    target: PROGRESS_MONTHLY_TARGET * 3,
+  },
+];
 
 const USE_REMOTE_ANALYTICS =
   typeof window !== "undefined" && !["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
@@ -393,46 +428,22 @@ const LivestockFarmersAnalytics = () => {
     () => calculateActiveTarget(dateRange, targetMode),
     [dateRange, targetMode],
   );
-  const activeTargetLabel = useMemo(
-    () => getTargetPeriodLabel(targetMode),
-    [targetMode],
-  );
   const userCanViewAllProgrammeData = useMemo(
-    () => canViewAllProgrammes(userRole, userAttribute),
-    [userRole, userAttribute]
+    () => canViewAllProgrammes(userRole, userAttribute, allowedProgrammes),
+    [allowedProgrammes, userRole, userAttribute]
   );
   const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
-  const progressYear = new Date().getFullYear();
-  const quarterTargets = useMemo(() => [
-    {
-      key: "q1" as const,
-      label: "Q1",
-      start: new Date(progressYear, 0, 1),
-      end: new Date(progressYear, 2, 31),
-      target: PROGRESS_MONTHLY_TARGET * 3,
-    },
-    {
-      key: "q2" as const,
-      label: "Q2",
-      start: new Date(progressYear, 0, 1),
-      end: new Date(progressYear, 5, 30),
-      target: PROGRESS_MONTHLY_TARGET * 6,
-    },
-    {
-      key: "q3" as const,
-      label: "Q3",
-      start: new Date(progressYear, 0, 1),
-      end: new Date(progressYear, 8, 30),
-      target: PROGRESS_MONTHLY_TARGET * 9,
-    },
-    {
-      key: "year" as const,
-      label: "Full Year",
-      start: new Date(progressYear, 0, 1),
-      end: new Date(progressYear, 11, 31),
-      target: PROGRESS_MONTHLY_TARGET * 12,
-    },
-  ], [progressYear]);
+  const analysisYear = useMemo(
+    () => getAnalysisYearFromDateRange(dateRange),
+    [dateRange]
+  );
+  const currentYear = new Date().getFullYear();
+  const currentQuarter = Math.ceil((new Date().getMonth() + 1) / 3);
+  const quarterTargets = useMemo(() => {
+    const allQuarterTargets = buildQuarterTargets(analysisYear);
+    if (analysisYear !== currentYear) return allQuarterTargets;
+    return allQuarterTargets.filter((_, index) => index < currentQuarter);
+  }, [analysisYear, currentYear, currentQuarter]);
   const accessibleProgrammes = useMemo(
     () => resolveAccessibleProgrammes(userCanViewAllProgrammeData, allowedProgrammes),
     [allowedProgrammes, userCanViewAllProgrammeData]
@@ -459,6 +470,7 @@ const LivestockFarmersAnalytics = () => {
         target: activeTarget,
       }),
     enabled: USE_REMOTE_ANALYTICS && !!activeProgram,
+    placeholderData: (previousData) => previousData,
     staleTime: 2 * 60 * 1000,
   });
 
@@ -757,13 +769,13 @@ const LivestockFarmersAnalytics = () => {
       const officerName = String(farmer.username || "Unknown User").trim() || "Unknown User";
       if (!quarterlyStats[officerName]) {
         quarterlyStats[officerName] = {
-          periods: { q1: 0, q2: 0, q3: 0, year: 0 },
+          periods: { q1: 0, q2: 0, q3: 0, q4: 0 },
           counties: new Set<string>(),
         };
       }
 
       const farmerDate = parseDate(farmer.createdAt || farmer.registrationDate);
-      if (farmerDate && farmerDate.getFullYear() === progressYear) {
+      if (farmerDate && farmerDate.getFullYear() === analysisYear) {
         quarterTargets.forEach((period) => {
           if (farmerDate >= period.start && farmerDate <= period.end) {
             quarterlyStats[officerName].periods[period.key] += 1;
@@ -787,7 +799,7 @@ const LivestockFarmersAnalytics = () => {
       .map((name) => {
         const currentStats = currentPeriodStats[name] || { count: 0, counties: new Set<string>() };
         const quarterData = quarterlyStats[name] || {
-          periods: { q1: 0, q2: 0, q3: 0, year: 0 },
+          periods: { q1: 0, q2: 0, q3: 0, q4: 0 },
           counties: new Set<string>(),
         };
         const currentProgressPercentage = currentTarget > 0 ? (currentStats.count / currentTarget) * 100 : 0;
@@ -830,17 +842,15 @@ const LivestockFarmersAnalytics = () => {
       return rawProgressData.map((user: any) => {
         const periods = Array.isArray(user.periods) && user.periods.length > 0 ?
           user.periods :
-          [
-            {
-              key: "year" as const,
-              label: "Full Year",
-              count: Number(user.farmersRegistered || 0),
-              target: Number(user.target || TARGETS.yearly),
-              progressPercentage: Number(user.progressPercentage || 0),
-              status: (user.status || "needs-attention") as ProgressStatus,
-              met: Number(user.farmersRegistered || 0) >= Number(user.target || TARGETS.yearly),
-            },
-          ];
+          quarterTargets.map((period) => ({
+            key: period.key,
+            label: period.label,
+            count: 0,
+            target: period.target,
+            progressPercentage: 0,
+            status: "needs-attention" as ProgressStatus,
+            met: false,
+          }));
         const farmersRegistered = Number(user.farmersRegistered || 0);
         const target = Number(user.target || activeTarget || TARGETS.yearly);
         const progressPercentage = target > 0 ? (farmersRegistered / target) * 100 : 0;
@@ -855,7 +865,7 @@ const LivestockFarmersAnalytics = () => {
         } as UserProgress;
       });
     },
-    [activeTarget, analyticsQuery.data, localUserProgressData],
+    [activeTarget, analyticsQuery.data, localUserProgressData, quarterTargets],
   );
 
   const handleDateRangeChange = (key: string, value: string) => {
@@ -905,6 +915,25 @@ const LivestockFarmersAnalytics = () => {
       >
         {`${(percent * 100).toFixed(0)}%`}
       </text>
+    );
+  }, []);
+
+  const renderAnimalCensusTooltip = useCallback(({ active, payload }: any) => {
+    if (!active || !payload?.length) return null;
+
+    const segment = payload[0]?.payload;
+    if (!segment) return null;
+
+    return (
+      <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-[0_12px_28px_rgba(15,23,42,0.12)]">
+        <div className="flex items-center gap-2">
+          <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: segment.color }} />
+          <span className="text-sm font-medium text-slate-700">{segment.name}</span>
+        </div>
+        <p className="mt-1 text-sm font-semibold text-slate-900">
+          {Number(segment.value || 0).toLocaleString()} animals
+        </p>
+      </div>
     );
   }, []);
 
@@ -968,7 +997,7 @@ const LivestockFarmersAnalytics = () => {
     </Card>
   );
 
-  if (analyticsQuery.isLoading || analyticsQuery.isFetching) {
+  if (analyticsQuery.isLoading || loading) {
     return (
       <div className="flex justify-center items-center h-64">
         <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent"></div>
@@ -985,7 +1014,7 @@ const LivestockFarmersAnalytics = () => {
         <Card className="w-full border-0 bg-white shadow-lg">
           <CardContent className="p-4">
             <div className="space-y-3">
-              <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+              <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 items-center gap-2 flex-wrap">
                 <Input
                   type="date"
                   value={dateRange.startDate}
@@ -1014,9 +1043,7 @@ const LivestockFarmersAnalytics = () => {
                     </SelectContent>
                   </Select>
                 ) : null}
-              </div>
-
-              <div className="grid grid-cols-2 gap-2 lg:grid-cols-3">
+              
                 <Button
                   variant="outline"
                   size="sm"
@@ -1098,9 +1125,7 @@ const LivestockFarmersAnalytics = () => {
                 <UserCheck className="h-5 w-5 text-blue-600" />
                 Field Officers Performance
               </CardTitle>
-              <Badge variant="outline" className="text-xs font-normal border-blue-200 text-blue-700">
-                {activeTargetLabel}: {activeTarget.toLocaleString()} Farmers
-              </Badge>
+              
             </div>
           </CardHeader>
           <CardContent className="p-0">
@@ -1108,13 +1133,13 @@ const LivestockFarmersAnalytics = () => {
               <table className="min-w-[980px] w-full border-collapse text-left">
                 <thead className="bg-blue-50">
                   <tr>
-                    <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-blue-800">Field Officer</th>
-                    <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-blue-800">Counties Active</th>
-                    <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-blue-800">Farmers Registered</th>
-                    <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-blue-800">Target</th>
-                    <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-blue-800">Progress</th>
-                    <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-blue-800">Status</th>
-                    <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-blue-800">View</th>
+                    <th className="px-4 py-2 text-xs font-semibold uppercase tracking-wide text-blue-800">Field Officer</th>
+                    <th className="px-4 py-2 text-xs font-semibold uppercase tracking-wide text-blue-800">Counties Active</th>
+                    <th className="px-4 py-2 text-xs font-semibold uppercase tracking-wide text-blue-800">Farmers Registered</th>
+                    <th className="px-4 py-2 text-xs font-semibold uppercase tracking-wide text-blue-800">Target</th>
+                    <th className="px-4 py-2 text-xs font-semibold uppercase tracking-wide text-blue-800">Progress</th>
+                    <th className="px-4 py-2 text-xs font-semibold uppercase tracking-wide text-blue-800">Status</th>
+                    <th className="px-4 py-2 text-xs font-semibold uppercase tracking-wide text-blue-800">View</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1122,19 +1147,19 @@ const LivestockFarmersAnalytics = () => {
                     const hasMetCurrentTarget = user.farmersRegistered >= user.target;
                     return (
                       <tr key={user.id} className="border-b border-slate-100 transition-colors hover:bg-blue-50/40">
-                        <td className="px-4 py-4 font-medium text-slate-900">
+                        <td className="px-4 py-2 font-medium text-slate-900">
                           <div className="leading-tight">{user.name}</div>
                         </td>
-                        <td className="px-4 py-4">
+                        <td className="px-4 py-2">
                           <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-600">
                             {user.region || "N/A"}
                           </Badge>
                         </td>
-                        <td className="px-4 py-4 font-semibold text-slate-900">
+                        <td className="px-4 py-2 font-semibold text-slate-900">
                           {user.farmersRegistered.toLocaleString()}
                         </td>
-                        <td className="px-4 py-4 text-slate-600">{user.target.toLocaleString()}</td>
-                        <td className="px-4 py-4">
+                        <td className="px-4 py-2 text-slate-600">{user.target.toLocaleString()}</td>
+                        <td className="px-4 py-2">
                           <div className="flex items-center gap-3">
                             <div className="h-2 w-28 rounded-full bg-slate-100">
                               <div
@@ -1152,7 +1177,7 @@ const LivestockFarmersAnalytics = () => {
                             </span>
                           </div>
                         </td>
-                        <td className="px-4 py-4">
+                        <td className="px-4 py-2">
                           <Badge
                             className={
                               hasMetCurrentTarget
@@ -1164,7 +1189,7 @@ const LivestockFarmersAnalytics = () => {
                             {hasMetCurrentTarget ? "Met target" : "Not met"}
                           </Badge>
                         </td>
-                        <td className="px-4 py-4">
+                        <td className="px-4 py-2">
                           <Button
                             variant="outline"
                             size="icon"
@@ -1197,19 +1222,17 @@ const LivestockFarmersAnalytics = () => {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-gray-800">
               <Eye className="h-5 w-5 text-blue-600" />
-              {selectedOfficer ? `${selectedOfficer.name} Quarterly Targets` : "Quarterly Targets"}
+              {selectedOfficer ? `${selectedOfficer.name} Quarterly Targets ${analysisYear}` : `Quarterly Targets (${analysisYear})`}
             </DialogTitle>
-            <DialogDescription>
-              View the selected field officer's current performance and quarterly target breakdown.
-            </DialogDescription>
+           
           </DialogHeader>
 
           {selectedOfficer ? (
             <div className="space-y-5">
               <div className="grid gap-3 sm:grid-cols-3">
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                  <p className="text-xs uppercase tracking-wide text-slate-500">Current Period</p>
-                  <p className="mt-1 text-sm font-semibold text-slate-900">{activeTargetLabel}</p>
+                  <p className="text-xs uppercase tracking-wide text-slate-500">Analysis Year</p>
+                  <p className="mt-1 text-sm font-semibold text-slate-900">{analysisYear}</p>
                 </div>
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
                   <p className="text-xs uppercase tracking-wide text-slate-500">Registered</p>
@@ -1326,32 +1349,52 @@ const LivestockFarmersAnalytics = () => {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <ResponsiveContainer width="100%" height={250}>
-              <PieChart>
-                <Pie
-                  data={animalCensusData}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={60}
-                  outerRadius={100}
-                  paddingAngle={2}
-                  dataKey="value"
-                  label={renderCustomizedLabel}
-                  labelLine={false}
-                  startAngle={90}
-                  endAngle={-270}
-                >
-                  {animalCensusData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.color} />
+            {animalCensusData.length > 0 ? (
+              <>
+                <div className="mx-auto h-[280px] w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={animalCensusData}
+                        cx="50%"
+                        cy="50%"
+                        outerRadius={108}
+                        paddingAngle={2}
+                        dataKey="value"
+                        label={renderCustomizedLabel}
+                        labelLine={false}
+                        startAngle={90}
+                        endAngle={-270}
+                        stroke="#ffffff"
+                        strokeWidth={2}
+                      >
+                        {animalCensusData.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={entry.color} />
+                        ))}
+                      </Pie>
+                      <Tooltip content={renderAnimalCensusTooltip} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+
+                <div className="mt-2 flex flex-wrap justify-center gap-2">
+                  {animalCensusData.map((item) => (
+                    <div
+                      key={item.name}
+                      className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-700"
+                    >
+                      <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.color }} />
+                      <span>{item.name}</span>
+                      <span className="font-semibold text-slate-900">{item.value.toLocaleString()}</span>
+                    </div>
                   ))}
-                </Pie>
-                <Tooltip formatter={(value: number) => [value.toLocaleString(), "Animals"]} />
-                <Legend />
-              </PieChart>
-            </ResponsiveContainer>
-            <div className="text-center mt-2">
-               <p className="text-xs text-gray-500">Total Livestock: {stats.totalAnimals.toLocaleString()}</p>
-            </div>
+                </div>
+              </>
+            ) : (
+              <div className="flex h-[280px] items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-500">
+                No data available yet
+              </div>
+            )}
           </CardContent>
         </Card>
 

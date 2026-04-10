@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import { onValue, orderByChild, equalTo, query, ref, remove, update, push, get, set } from "firebase/database";
-import { db } from "@/lib/firebase";
+import { onValue, orderByChild, equalTo, query, ref, remove, update, push, set } from "firebase/database";
+import { db, fetchCollection } from "@/lib/firebase";
 import { canViewAllProgrammes, isChiefAdmin, isOfftakeOfficer, resolvePermissionPrincipal } from "@/contexts/authhelper";
 import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
@@ -482,13 +482,13 @@ const OrdersPage = () => {
   });
 
   const userCanViewAllProgrammeData = useMemo(
-    () => canViewAllProgrammes(userRole, userAttribute),
-    [userRole, userAttribute]
+    () => canViewAllProgrammes(userRole, userAttribute, allowedProgrammes),
+    [allowedProgrammes, userRole, userAttribute]
   );
   const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
   const permissionPrincipal = useMemo(
     () => resolvePermissionPrincipal(userRole, userAttribute),
-    [userRole, userAttribute]
+    [allowedProgrammes, userRole, userAttribute]
   );
   const userCanCreateOrders = useMemo(
     () => isChiefAdmin(permissionPrincipal) || isOfftakeOfficer(permissionPrincipal),
@@ -599,19 +599,12 @@ const OrdersPage = () => {
     const loadFieldOfficers = async () => {
       setFieldOfficersLoading(true);
       try {
-        const snapshot = await get(ref(db, "users"));
-        const data = snapshot.val() as Record<string, FieldOfficerRecord> | null;
-        if (!data) {
-          if (isActive) setFieldOfficers([]);
-          return;
-        }
-
-        const officers = Object.entries(data)
-          .map(([id, record]) => {
+        const officers = (await fetchCollection<FieldOfficerRecord>("users"))
+          .map((record) => {
             if (!isMobileUserRecord(record)) return null;
 
             return {
-              id,
+              id: record.id,
               name: getOfficerDisplayName(record),
               phone: getOfficerPhone(record),
               aliases: [

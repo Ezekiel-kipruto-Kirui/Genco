@@ -319,7 +319,7 @@ const RequisitionsPage = () => {
   
   const docRef = useRef<HTMLDivElement>(null);
   const currentMonth = useMemo(getCurrentMonthDates, []);
-  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   
   // Filters
   const [filters, setFilters] = useState<Filters>(() => createDefaultFilters());
@@ -344,7 +344,7 @@ const RequisitionsPage = () => {
 
   const permissionPrincipal = useMemo(
     () => resolvePermissionPrincipal(userRole, userAttribute),
-    [userRole, userAttribute]
+    [allowedProgrammes, userRole, userAttribute]
   );
   const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
   const userHasProjectManagerRights = useMemo(() => isProjectManager(permissionPrincipal), [permissionPrincipal]);
@@ -362,17 +362,18 @@ const RequisitionsPage = () => {
     [userHasHummanResourceRights, userHasFinanceRights]
   );
   const userCanViewAllProgrammes = useMemo(
-    () => canViewAllProgrammes(userRole, userAttribute),
-    [userRole, userAttribute]
+    () => canViewAllProgrammes(userRole, userAttribute, allowedProgrammes),
+    [allowedProgrammes, userRole, userAttribute]
   );
   const canViewAllRequisitionProgrammes = useMemo(
-    () => userCanViewAllProgrammes || userHasFinanceRights,
-    [userCanViewAllProgrammes, userHasFinanceRights]
+    () => userCanViewAllProgrammes,
+    [userCanViewAllProgrammes]
   );
   const accessibleProgrammes = useMemo(
     () => resolveAccessibleProgrammes(canViewAllRequisitionProgrammes, allowedProgrammes),
     [allowedProgrammes, canViewAllRequisitionProgrammes]
   );
+  const showProgrammeSelector = accessibleProgrammes.length > 1;
   const canApproveRequisition =
     isAdmin(permissionPrincipal) ||
     isChiefAdmin(permissionPrincipal) ||
@@ -1819,7 +1820,7 @@ const RequisitionsPage = () => {
 
     /* Main wrapper */
     .print-content-wrapper {
-        position: static !important;  /* 🔥 FIXED */
+        position: static !important;  /* ðŸ”¥ FIXED */
         width: 100% !important;
         max-width: 100% !important;
         margin: 0 !important;
@@ -1914,6 +1915,23 @@ const RequisitionsPage = () => {
         </div>
          
          <div className="flex flex-col xl:flex-row gap-4 w-full xl:w-auto">
+          {showProgrammeSelector && (
+            <div className="w-full sm:w-[220px]">
+              <Select value={activeProgram} onValueChange={setActiveProgram}>
+                <SelectTrigger className="h-9 w-full border-gray-300 bg-white px-6 text-sm font-medium text-gray-700 shadow-sm focus:border-blue-500 xl:w-auto">
+                  <SelectValue placeholder="All Programmes" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL_PROGRAMMES_VALUE}>All Programmes</SelectItem>
+                  {accessibleProgrammes.map((programme) => (
+                    <SelectItem key={programme} value={programme}>
+                      {programme}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
           
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full xl:w-auto relative z-50">
               
@@ -1970,6 +1988,23 @@ const RequisitionsPage = () => {
         </div>
          
          <div className="flex flex-col xl:flex-row gap-4 w-full xl:w-auto">
+          {showProgrammeSelector && (
+            <div className="w-full sm:w-[220px]">
+              <Select value={activeProgram} onValueChange={setActiveProgram}>
+                <SelectTrigger className="h-9 w-full border-gray-300 bg-white px-6 text-sm font-medium text-gray-700 shadow-sm focus:border-blue-500 xl:w-auto">
+                  <SelectValue placeholder="All Programmes" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL_PROGRAMMES_VALUE}>All Programmes</SelectItem>
+                  {accessibleProgrammes.map((programme) => (
+                    <SelectItem key={programme} value={programme}>
+                      {programme}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
           
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full xl:w-auto relative z-50">
               
@@ -2308,7 +2343,7 @@ const RequisitionsPage = () => {
               </div>
 
               <div className="flex flex-col sm:flex-row items-center justify-between p-4 border-t bg-gray-50 gap-4">
-                <div className="text-sm text-muted-foreground">{filteredRequisitions.length} total records • Page {pagination.page} of {pagination.totalPages}</div>
+                <div className="text-sm text-muted-foreground">{filteredRequisitions.length} total records Page {pagination.page} of {pagination.totalPages}</div>
                 <div className="flex gap-2">
                   <Button variant="outline" size="sm" disabled={!pagination.hasPrev} onClick={() => handlePageChange(pagination.page - 1)}>Previous</Button>
                   <Button variant="outline" size="sm" disabled={!pagination.hasNext} onClick={() => handlePageChange(pagination.page + 1)}>Next</Button>
@@ -2340,6 +2375,7 @@ const RequisitionsPage = () => {
 
                   <div className="mt-5 flex flex-col gap-2 mb-2 text-sm">
                     <div className="flex flex-row gap-2"><span className="text-gray-700 text-[17px]">Date of Request:</span><span className="font-medium flex-1 text-[17px]">{formatDate(viewingRecord.submittedAt)}</span></div>
+                    <div className="flex flex-row gap-2"><span className="text-gray-700 text-[17px]">Programme:</span><span className="font-medium flex-1 text-[17px]">{viewingRecord.programme || 'N/A'}</span></div>
                     <div className="flex flex-row gap-2"><span className="text-gray-700 text-[17px]">County:</span><span className="font-medium flex-1 text-[17px]">{viewingRecord.county}</span></div>
                     <div className="flex flex-row gap-2"><span className="text-gray-700 text-[17px]">Sub County:</span><span className="font-medium flex-1 text-[17px]">{viewingRecord.subcounty}</span></div>
                     <div className="flex flex-row gap-2"><span className="text-gray-700 text-[17px]">Requested By:</span><span className="font-medium flex-1 text-[17px]">{getOfficerName(viewingRecord)}</span></div>
@@ -2908,4 +2944,3 @@ const RequisitionsPage = () => {
 };
 
 export default RequisitionsPage;
-

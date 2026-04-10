@@ -126,8 +126,8 @@ const ActivitiesPage = () => {
   const { user, userRole, userAttribute, allowedProgrammes } = useAuth();
   const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
   const userCanViewAllProgrammeData = useMemo(
-    () => canViewAllProgrammes(userRole, userAttribute),
-    [userRole, userAttribute]
+    () => canViewAllProgrammes(userRole, userAttribute, allowedProgrammes),
+    [allowedProgrammes, userRole, userAttribute]
   );
   const accessibleProgrammes = useMemo(
     () => userCanViewAllProgrammeData ? [...PROGRAMME_OPTIONS] : getAssignedProgrammes(allowedProgrammes),

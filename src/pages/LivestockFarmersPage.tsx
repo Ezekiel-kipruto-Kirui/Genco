@@ -245,7 +245,7 @@ const LivestockFarmersPage = () => {
   const [bulkSmsMessage, setBulkSmsMessage] = useState("");
   const [bulkSmsSending, setBulkSmsSending] = useState(false);
   const currentMonth = useMemo(getCurrentMonthDates, []);
-  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   
   const [filters, setFilters] = useState<Filters>({
     search: "",
@@ -299,8 +299,8 @@ const LivestockFarmersPage = () => {
 
   const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
   const userCanViewAllProgrammeData = useMemo(
-    () => canViewAllProgrammes(userRole, userAttribute),
-    [userRole, userAttribute]
+    () => canViewAllProgrammes(userRole, userAttribute, allowedProgrammes),
+    [allowedProgrammes, userRole, userAttribute]
   );
   const accessibleProgrammes = useMemo(
     () => resolveAccessibleProgrammes(userCanViewAllProgrammeData, allowedProgrammes),
@@ -1278,7 +1278,7 @@ const LivestockFarmersPage = () => {
               </div>
 
               <div className="flex flex-col sm:flex-row items-center justify-between p-4 border-t bg-gray-50 gap-4">
-                <div className="text-sm text-muted-foreground">{filteredFarmers.length} total records • Page {pagination.page} of {pagination.totalPages}</div>
+                <div className="text-sm text-muted-foreground">{filteredFarmers.length} total records â€¢ Page {pagination.page} of {pagination.totalPages}</div>
                 <div className="flex gap-2">
                   <Button variant="outline" size="sm" disabled={!pagination.hasPrev} onClick={() => handlePageChange(pagination.page - 1)}>Previous</Button>
                   <Button variant="outline" size="sm" disabled={!pagination.hasNext} onClick={() => handlePageChange(pagination.page + 1)}>Next</Button>
@@ -1302,7 +1302,7 @@ const LivestockFarmersPage = () => {
                     <div className="bg-blue-100 p-3 rounded-full"><Users className="h-6 w-6 text-blue-600" /></div>
                     <div>
                        <h3 className="font-bold text-lg">{viewingRecord.name}</h3>
-                       <p className="text-sm text-gray-600">{viewingRecord.farmerId} • {viewingRecord.programme}</p>
+                       <p className="text-sm text-gray-600">{viewingRecord.farmerId} â€¢ {viewingRecord.programme}</p>
                     </div>
                  </div>
                  <div className="text-right">

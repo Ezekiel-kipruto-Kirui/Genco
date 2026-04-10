@@ -433,7 +433,7 @@ const HayStoragePage = () => {
   const [saving, setSaving] = useState(false);
   const [adding, setAdding] = useState(false);
 
-  const searchTimeoutRef = useRef<NodeJS.Timeout>();
+  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const currentMonth = useMemo(getCurrentMonthDates, []);
 
@@ -473,8 +473,8 @@ const HayStoragePage = () => {
     [userAttribute, userRole]
   );
   const userCanViewAllProgrammeData = useMemo(
-    () => canViewAllProgrammes(userRole, userAttribute),
-    [userRole, userAttribute]
+    () => canViewAllProgrammes(userRole, userAttribute, allowedProgrammes),
+    [allowedProgrammes, userRole, userAttribute]
   );
   const accessibleProgrammes = useMemo(
     () => resolveAccessibleProgrammes(userCanViewAllProgrammeData, allowedProgrammes),
@@ -1155,7 +1155,7 @@ const HayStoragePage = () => {
                 </table>
               </div>
               <div className="flex items-center justify-between p-4 border-t bg-gray-50">
-                <div className="text-sm text-muted-foreground">{filteredHayStorage.length} total records • {getCurrentPageRecords().length} on this page</div>
+                <div className="text-sm text-muted-foreground">{filteredHayStorage.length} total records â€¢ {getCurrentPageRecords().length} on this page</div>
                 <div className="flex gap-2">
                   <Button variant="outline" size="sm" disabled={!pagination.hasPrev} onClick={() => handlePageChange(pagination.page - 1)} className="border-gray-300 hover:bg-gray-100">Previous</Button>
                   <Button variant="outline" size="sm" disabled={!pagination.hasNext} onClick={() => handlePageChange(pagination.page + 1)} className="border-gray-300 hover:bg-gray-100">Next</Button>

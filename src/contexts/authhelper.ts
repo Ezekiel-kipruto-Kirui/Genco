@@ -36,6 +36,7 @@ const FULL_ACCESS_ATTRIBUTE_IDENTIFIERS = new Set([
   "m&e officer",
   "mne officer",
 ]);
+const PROGRAMME_OPTIONS = ["KPMD", "RANGE"] as const;
 const DISPLAY_NAME_MAP: Record<string, string> = {
   admin: "Admin",
   "chief-admin": "Chief Admin",
@@ -141,16 +142,25 @@ export const isFullAccessAttribute = (value: string | null | undefined): boolean
 
 export const canViewAllProgrammes = (
   userRole: string | null | undefined,
-  userAttribute?: string | null
+  userAttribute?: string | null,
+  allowedProgrammes?: Record<string, boolean> | null
 ): boolean => {
   if (isMobileUser(userRole, userAttribute)) return false;
   const principal = resolvePermissionPrincipal(userRole, userAttribute);
-  return (
+  const hasRoleBasedFullAccess = (
     isChiefAdmin(principal) ||
     isAdmin(principal) ||
     isFullAccessAttribute(principal) ||
     isOfftakeOfficer(principal)
   );
+  if (!hasRoleBasedFullAccess) return false;
+
+  const assignedProgrammes = PROGRAMME_OPTIONS.filter(
+    (programme) => allowedProgrammes?.[programme] === true
+  );
+
+  if (assignedProgrammes.length === 0) return true;
+  return assignedProgrammes.length >= PROGRAMME_OPTIONS.length;
 };
 
 export const canAccessDashboard = (

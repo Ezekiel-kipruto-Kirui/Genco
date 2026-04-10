@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useMemo, useRef, memo } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { getAuth } from "firebase/auth";
-import { ref, set, update, remove, onValue, push, query, orderByChild, equalTo, get } from "firebase/database";
-import { db } from "@/lib/firebase";
+import { ref, set, update, remove, onValue, push, query, orderByChild, equalTo } from "firebase/database";
+import { db, fetchCollection } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -333,7 +333,7 @@ const LivestockOfftakePage = () => {
     gender: "all"
   });
 
-  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [stats, setStats] = useState<Stats>({
@@ -375,8 +375,8 @@ const LivestockOfftakePage = () => {
 
   const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
   const userCanViewAllProgrammeData = useMemo(
-    () => canViewAllProgrammes(userRole, userAttribute),
-    [userRole, userAttribute]
+    () => canViewAllProgrammes(userRole, userAttribute, allowedProgrammes),
+    [allowedProgrammes, userRole, userAttribute]
   );
   const requireChiefAdmin = () => {
     if (userIsChiefAdmin) return true;
@@ -1478,15 +1478,12 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
     const farmerPhonesById = new Map<string, string>();
 
     try {
-      const farmersSnapshot = await get(ref(db, "farmers"));
-      const farmersData = farmersSnapshot.val() as Record<string, Record<string, unknown>> | null;
-      if (farmersData) {
-        for (const farmer of Object.values(farmersData)) {
-          const farmerIdNumber = typeof farmer.idNumber === "string" ? farmer.idNumber.trim().toLowerCase() : "";
-          const farmerPhone = getFarmerPhoneFromRecord(farmer);
-          if (farmerIdNumber && farmerPhone && !farmerPhonesById.has(farmerIdNumber)) {
-            farmerPhonesById.set(farmerIdNumber, farmerPhone);
-          }
+      const farmersData = await fetchCollection<any>("farmers");
+      for (const farmer of farmersData) {
+        const farmerIdNumber = typeof farmer.idNumber === "string" ? farmer.idNumber.trim().toLowerCase() : "";
+        const farmerPhone = getFarmerPhoneFromRecord(farmer);
+        if (farmerIdNumber && farmerPhone && !farmerPhonesById.has(farmerIdNumber)) {
+          farmerPhonesById.set(farmerIdNumber, farmerPhone);
         }
       }
     } catch (error) {
@@ -1868,7 +1865,7 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
               </div>
               <div className="flex items-center justify-between p-4 border-t bg-gray-50">
                 <div className="text-sm text-muted-foreground">
-                  {filteredOfftake.length} total records • Page {pagination.page} of {pagination.totalPages}
+                  {filteredOfftake.length} total records â€¢ Page {pagination.page} of {pagination.totalPages}
                 </div>
                 <div className="flex gap-2">
                   <Button variant="outline" size="sm" disabled={!pagination.hasPrev} onClick={() => handlePageChange(pagination.page - 1)}>Previous</Button>

@@ -8,8 +8,8 @@ import {
   isProjectManager,
   resolvePermissionPrincipal,
 } from "@/contexts/authhelper";
-import { ref, get, push, update, remove } from "firebase/database";
-import { db } from "@/lib/firebase";
+import { ref, push, update, remove } from "firebase/database";
+import { db, fetchCollection, invalidateCollectionCache } from "@/lib/firebase";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { 
   PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip, 
@@ -17,7 +17,7 @@ import {
 } from "recharts";
 import { 
   Users, GraduationCap, Beef, TrendingUp, Award, 
-  MapPin, Syringe, TargetIcon, Loader2, Calendar, PencilLine, Trash2, UserX, MoreVertical
+  MapPin, Syringe, TargetIcon, Loader2, Calendar, PencilLine, Trash2, UserX, MoreVertical, ChevronLeft
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -431,6 +431,7 @@ type PerformanceReportData = {
   countyPerformanceData: Array<{ name: string; value: number }>;
   subcountyPerformanceData: Array<{ name: string; value: number }>;
   registrationTrendData: Array<{ name: string; registrations: number }>;
+  registrationTrendComparisonData: Array<{ name: string; registrations: number }>;
   topLocations: Array<{ name: string; value: number }>;
   topCustomers: Array<{ name: string; value: number; county: string }>;
   totalGoatsPurchased: number;
@@ -472,6 +473,7 @@ const EMPTY_PERFORMANCE_DATA: PerformanceReportData = {
   countyPerformanceData: [],
   subcountyPerformanceData: [],
   registrationTrendData: [],
+  registrationTrendComparisonData: [],
   topLocations: [],
   topCustomers: [],
   totalGoatsPurchased: 0,
@@ -545,6 +547,10 @@ function computeLocalPerformanceReportData(
     return (includeAllProgrammes || programme === requestedProgramme) &&
       isDateInRange(recordDate, dateRange.startDate, dateRange.endDate);
   });
+  const programmeFarmers = farmers.filter((farmer) => {
+    const programme = normalizeProgramme(farmer.programme);
+    return includeAllProgrammes || programme === requestedProgramme;
+  });
 
   let maleFarmers = 0;
   let femaleFarmers = 0;
@@ -573,6 +579,7 @@ function computeLocalPerformanceReportData(
   const selectedYearNumber = selectedYear && Number.isFinite(selectedYear) ? selectedYear : null;
   const currentYear = new Date().getFullYear();
   const trendYear = selectedYearNumber ?? null;
+  const trendComparisonYears = Array.from({ length: 5 }, (_, index) => currentYear - 4 + index);
 
   for (const farmer of filteredFarmers) {
     const gender = String(farmer.gender || "").trim().toLowerCase();
@@ -700,13 +707,14 @@ function computeLocalPerformanceReportData(
 
     if (timeFrame === "monthly") {
       const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+      const analysisYear = trendYear ?? currentYear;
       months.forEach((monthName, index) => {
         const count = filteredFarmers.filter((farmer) => {
           const date = parseDate(farmer.createdAt || farmer.registrationDate);
           if (!date) return false;
           if (trendYear === null) return date.getMonth() === index;
-          const monthStart = new Date(trendYear, index, 1);
-          const monthEnd = new Date(trendYear, index + 1, 0);
+          const monthStart = new Date(analysisYear, index, 1);
+          const monthEnd = new Date(analysisYear, index + 1, 0);
           return date >= monthStart && date <= monthEnd;
         }).length;
         trendData.push({ name: monthName, registrations: count });
@@ -714,19 +722,30 @@ function computeLocalPerformanceReportData(
       return trendData;
     }
 
-    const yearlyTrendYears =
-      trendYear !== null ?
-        Array.from({ length: 5 }, (_, index) => trendYear - 4 + index) :
-        Array.from(
-          new Set(
-            filteredFarmers
-              .map((farmer) => parseDate(farmer.createdAt || farmer.registrationDate)?.getFullYear() ?? null)
-              .filter((year): year is number => year !== null),
-          ),
-        ).sort((left, right) => left - right);
-    const resolvedYears = yearlyTrendYears.length > 0 ? yearlyTrendYears : [currentYear];
+    if (trendYear !== null) {
+      const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+      months.forEach((monthName, index) => {
+        const monthStart = new Date(trendYear, index, 1);
+        const monthEnd = new Date(trendYear, index + 1, 0);
+        const count = filteredFarmers.filter((farmer) => {
+          const date = parseDate(farmer.createdAt || farmer.registrationDate);
+          return !!date && date >= monthStart && date <= monthEnd;
+        }).length;
+        trendData.push({ name: monthName, registrations: count });
+      });
+      return trendData;
+    }
 
-    for (const year of resolvedYears) {
+    const resolvedYears =
+      Array.from(
+        new Set(
+          filteredFarmers
+            .map((farmer) => parseDate(farmer.createdAt || farmer.registrationDate)?.getFullYear() ?? null)
+            .filter((year): year is number => year !== null),
+        ),
+      ).sort((left, right) => left - right);
+
+    for (const year of (resolvedYears.length > 0 ? resolvedYears : trendComparisonYears)) {
       const yearStart = new Date(year, 0, 1);
       const yearEnd = new Date(year, 11, 31);
       const count = filteredFarmers.filter((farmer) => {
@@ -737,6 +756,15 @@ function computeLocalPerformanceReportData(
     }
     return trendData;
   })();
+  const registrationTrendComparisonData = trendComparisonYears.map((year) => {
+    const yearStart = new Date(year, 0, 1);
+    const yearEnd = new Date(year, 11, 31);
+    const count = programmeFarmers.filter((farmer) => {
+      const date = parseDate(farmer.createdAt || farmer.registrationDate);
+      return !!date && date >= yearStart && date <= yearEnd;
+    }).length;
+    return { name: String(year), registrations: count };
+  });
   const uniqueCounties = new Set(
     filteredFarmers.map((farmer) => String(farmer.county || "").trim()).filter(Boolean),
   ).size;
@@ -781,6 +809,7 @@ function computeLocalPerformanceReportData(
     countyPerformanceData,
     subcountyPerformanceData,
     registrationTrendData,
+    registrationTrendComparisonData,
     topLocations,
     topCustomers,
     totalGoatsPurchased,
@@ -836,6 +865,7 @@ const useProcessedData = (
         selectedYear,
       }),
     enabled: USE_REMOTE_ANALYTICS && !!selectedProgramme,
+    placeholderData: (previousData) => previousData,
     staleTime: 2 * 60 * 1000,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
@@ -866,7 +896,7 @@ const useProcessedData = (
 
   return {
     data: USE_REMOTE_ANALYTICS ? remoteData : localData ?? EMPTY_PERFORMANCE_DATA,
-    isLoading: queryResult.isLoading || queryResult.isFetching,
+    isLoading: queryResult.isLoading,
   };
 };
 
@@ -991,6 +1021,7 @@ const PerformanceReport = () => {
     endDate: currentMonthDates.endDate,
   });
   const [timeFrame, setTimeFrame] = useState<'weekly' | 'monthly' | 'yearly'>('monthly');
+  const [registrationTrendMode, setRegistrationTrendMode] = useState<"auto" | "yearly">("auto");
   
   const currentYear = new Date().getFullYear();
   const [selectedYear, setSelectedYear] = useState<string>(String(currentYear));
@@ -1005,9 +1036,11 @@ const PerformanceReport = () => {
   }, [currentYear]);
 
   const [activeProgram, setActiveProgram] = useState<string>(""); 
+  const filterStripRef = useRef<HTMLDivElement | null>(null);
+  const [showFilterStartCue, setShowFilterStartCue] = useState(false);
   const userCanViewAllProgrammeData = useMemo(
-    () => canViewAllProgrammes(userRole, userAttribute),
-    [userRole, userAttribute]
+    () => canViewAllProgrammes(userRole, userAttribute, allowedProgrammes),
+    [allowedProgrammes, userRole, userAttribute]
   );
   const accessibleProgrammes = useMemo(
     () => resolveAccessibleProgrammes(userCanViewAllProgrammeData, allowedProgrammes),
@@ -1015,7 +1048,7 @@ const PerformanceReport = () => {
   );
   const reportAudience = useMemo(
     () => resolveReportAudience(userRole, userAttribute),
-    [userRole, userAttribute]
+    [allowedProgrammes, userRole, userAttribute]
   );
   const isHrReport = reportAudience === "hr";
   const reportViewProfile = REPORT_VIEW_PROFILES[reportAudience];
@@ -1082,82 +1115,54 @@ const PerformanceReport = () => {
         animalHealthList = cacheRef.current.animalHealth;
         offtakeList = cacheRef.current.offtakes;
       } else {
-        const farmersRef = ref(db, 'farmers');
-        const farmersSnap = await get(farmersRef);
+        const [farmersRaw, trainingRaw, animalHealthRaw, offtakeRaw] = await Promise.all([
+          fetchCollection<Farmer>("farmers"),
+          fetchCollection<TrainingRecord>("capacityBuilding"),
+          fetchCollection<AnimalHealthRecord>("AnimalHealthActivities"),
+          fetchCollection<OfftakeRecord>("offtakes"),
+        ]);
 
-        if (farmersSnap.exists()) {
-          farmersSnap.forEach((childSnapshot) => {
-            const fData = childSnapshot.val();
-            const id = childSnapshot.key || '';
-            farmersList.push({
-              id,
-              ...fData,
-              goats: fData.goats || { total: 0, male: 0, female: 0 },
-              sheep: fData.sheep || 0,
-              cattle: fData.cattle || 0,
-              vaccinated: fData.vaccinated || false,
-              vaccines: fData.vaccines || [],
-              femaleBreeds: fData.femaleBreeds || 0,
-              maleBreeds: fData.maleBreeds || 0,
-              programme: fData.programme || undefined
-            });
-          });
-        }
+        farmersList = farmersRaw.map((record) => ({
+          ...record,
+          goats: record.goats || { total: 0, male: 0, female: 0 },
+          sheep: record.sheep || 0,
+          cattle: record.cattle || 0,
+          vaccinated: record.vaccinated || false,
+          vaccines: record.vaccines || [],
+          femaleBreeds: record.femaleBreeds || 0,
+          maleBreeds: record.maleBreeds || 0,
+          programme: record.programme || undefined,
+        }));
 
-        const trainingRef = ref(db, 'capacityBuilding');
-        const trainingSnap = await get(trainingRef);
+        trainingList = trainingRaw.map((record) => ({
+          ...record,
+          programme: record.programme || undefined,
+        }));
 
-        if (trainingSnap.exists()) {
-          trainingSnap.forEach((childSnapshot) => {
-            const tData = childSnapshot.val();
-            trainingList.push({
-              id: childSnapshot.key || '',
-              ...tData,
-              programme: tData.programme || undefined
-            });
-          });
-        }
+        animalHealthList = animalHealthRaw.map((record) => ({
+          ...record,
+          date: record.date || "",
+          createdAt: record.createdAt,
+          programme: record.programme || undefined,
+          county: record.county || "",
+          subcounty: record.subcounty || "",
+          location: record.location || record.subcounty || record.county || "",
+          vaccines: Array.isArray(record.vaccines) ? record.vaccines : undefined,
+          vaccinetype: record.vaccinetype || undefined,
+          number_doses: record.number_doses,
+        }));
 
-        const animalHealthRef = ref(db, 'AnimalHealthActivities');
-        const animalHealthSnap = await get(animalHealthRef);
-
-        if (animalHealthSnap.exists()) {
-          animalHealthSnap.forEach((childSnapshot) => {
-            const activity = childSnapshot.val();
-            animalHealthList.push({
-              id: childSnapshot.key || '',
-              date: activity.date || '',
-              createdAt: activity.createdAt,
-              programme: activity.programme || undefined,
-              county: activity.county || activity.County || '',
-              subcounty: activity.subcounty || activity.Subcounty || '',
-              location: activity.location || activity.Location || activity.subcounty || activity.Subcounty || activity.county || activity.County || '',
-              vaccines: Array.isArray(activity.vaccines) ? activity.vaccines : undefined,
-              vaccinetype: activity.vaccinetype || undefined,
-              number_doses: activity.number_doses,
-            });
-          });
-        }
-
-        const offtakesRef = ref(db, 'offtakes');
-        const offtakesSnap = await get(offtakesRef);
-
-        if (offtakesSnap.exists()) {
-          offtakesSnap.forEach((childSnapshot) => {
-            const record = childSnapshot.val();
-            offtakeList.push({
-              id: childSnapshot.key || '',
-              date: record.date,
-              Date: record.Date,
-              createdAt: record.createdAt,
-              programme: record.programme || record.Programme || undefined,
-              totalGoats: record.totalGoats,
-              goatsBought: record.goatsBought,
-              goats: record.goats,
-              Goats: record.Goats,
-            });
-          });
-        }
+        offtakeList = offtakeRaw.map((record) => ({
+          ...record,
+          date: record.date,
+          Date: record.Date,
+          createdAt: record.createdAt,
+          programme: record.programme || undefined,
+          totalGoats: record.totalGoats,
+          goatsBought: record.goatsBought,
+          goats: record.goats,
+          Goats: record.Goats,
+        }));
 
         cacheRef.current = {
           farmers: farmersList,
@@ -1187,17 +1192,8 @@ const PerformanceReport = () => {
     }
 
     try {
-      const staffDirectorySnap = await get(ref(db, "hrStaffDirectory"));
-      if (!staffDirectorySnap.exists()) {
-        setStaffDirectoryRecords(EMPTY_STAFF_DIRECTORY_RECORDS);
-        return;
-      }
-
-      const staffDirectory = Object.entries(staffDirectorySnap.val() as Record<string, StaffDirectoryRecord>)
-        .map(([id, record]) => ({
-          id,
-          ...record,
-        }))
+      const staffDirectory = await fetchCollection<StaffDirectoryRecord>("hrStaffDirectory");
+      const filteredDirectory = staffDirectory
         .filter((record) => {
           if (!allowedProgrammeSet) return true;
           const programme = normalizeProgramme(record.programme);
@@ -1209,7 +1205,7 @@ const PerformanceReport = () => {
           return firstDate - secondDate;
       });
 
-      setStaffDirectoryRecords(staffDirectory);
+      setStaffDirectoryRecords(filteredDirectory);
     } catch (error) {
       console.error("Error fetching HR staff directory:", error);
       toast({
@@ -1227,17 +1223,7 @@ const PerformanceReport = () => {
     }
 
     try {
-      const staffMarksSnap = await get(ref(db, "hrStaffMarks"));
-      if (!staffMarksSnap.exists()) {
-        setStaffMarkRecords(EMPTY_STAFF_MARK_RECORDS);
-        return;
-      }
-
-      const marks = Object.entries(staffMarksSnap.val() as Record<string, StaffMarkRecord>)
-        .map(([id, record]) => ({
-          id,
-          ...record,
-        }))
+      const marks = (await fetchCollection<StaffMarkRecord>("hrStaffMarks"))
         .filter((record) => {
           if (!allowedProgrammeSet) return true;
           const programme = normalizeProgramme(record.programme);
@@ -1482,6 +1468,7 @@ const PerformanceReport = () => {
         });
       }
 
+      invalidateCollectionCache("hrStaffDirectory");
       setCreateStaffForm(createDefaultStaffForm());
       setEditingStaffRow(null);
       setIsCreateStaffOpen(false);
@@ -1515,6 +1502,7 @@ const PerformanceReport = () => {
         updatedAt: Date.now(),
         updatedBy: userName || "HR Manager",
       });
+      invalidateCollectionCache("hrStaffDirectory");
       await fetchStaffDirectory();
       toast({
         title: "Staff updated",
@@ -1542,6 +1530,7 @@ const PerformanceReport = () => {
       if (selectedStaffRow?.id === staffRow.id) {
         setSelectedStaffRow(null);
       }
+      invalidateCollectionCache("hrStaffDirectory");
       await fetchStaffDirectory();
       toast({
         title: "Staff deleted",
@@ -1604,6 +1593,7 @@ const PerformanceReport = () => {
         periodEnd: dateRange.endDate || "",
       });
 
+      invalidateCollectionCache("hrStaffMarks");
       setStaffMarkForm(createDefaultStaffMarkForm());
       setSelectedStaffRow(null);
       setIsAwardDialogOpen(false);
@@ -1648,8 +1638,45 @@ const PerformanceReport = () => {
     }
   }, [activeProgram, accessibleProgrammes, canViewAllReportProgrammes]);
 
+  const updateFilterStripCue = useCallback(() => {
+    const strip = filterStripRef.current;
+    if (!strip) {
+      setShowFilterStartCue(false);
+      return;
+    }
+
+    const hasOverflow = strip.scrollWidth > strip.clientWidth + 8;
+    setShowFilterStartCue(hasOverflow);
+  }, []);
+
+  const scrollFilterStripToStart = useCallback(() => {
+    filterStripRef.current?.scrollTo({ left: 0, behavior: "smooth" });
+  }, []);
+
+  useEffect(() => {
+    updateFilterStripCue();
+
+    const strip = filterStripRef.current;
+    if (!strip) return;
+
+    const handleScroll = () => updateFilterStripCue();
+    strip.addEventListener("scroll", handleScroll, { passive: true });
+
+    const resizeObserver =
+      typeof ResizeObserver !== "undefined" ? new ResizeObserver(handleScroll) : null;
+    resizeObserver?.observe(strip);
+    window.addEventListener("resize", handleScroll);
+
+    return () => {
+      strip.removeEventListener("scroll", handleScroll);
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", handleScroll);
+    };
+  }, [updateFilterStripCue]);
+
   const handleDateRangeChange = useCallback((key: string, value: string) => {
     setDateRange(prev => ({ ...prev, [key]: value }));
+    setRegistrationTrendMode("auto");
   }, []);
 
   const handleYearChange = useCallback((year: string) => {
@@ -1661,6 +1688,7 @@ const PerformanceReport = () => {
         endDate: "",
       });
       setTimeFrame('yearly');
+      setRegistrationTrendMode("auto");
       return;
     }
     const yearNum = parseInt(year, 10);
@@ -1671,6 +1699,7 @@ const PerformanceReport = () => {
       endDate: `${yearNum}-12-31` 
     });
     setTimeFrame('yearly'); 
+    setRegistrationTrendMode("auto");
   }, []);
 
   // --- New Handler for Quarter Dropdown ---
@@ -1694,6 +1723,7 @@ const PerformanceReport = () => {
       setDateRange(getQ4Dates(yearNum));
       setTimeFrame('yearly');
     }
+    setRegistrationTrendMode("auto");
   }, [selectedYear]);
 
   // --- Updated Clear Filters ---
@@ -1705,6 +1735,7 @@ const PerformanceReport = () => {
       endDate: "",
     });
     setTimeFrame('yearly');
+    setRegistrationTrendMode("auto");
     if (canViewAllReportProgrammes) {
       setActiveProgram(ALL_PROGRAMMES_VALUE);
     } else {
@@ -1716,15 +1747,30 @@ const PerformanceReport = () => {
     const dates = getCurrentWeekDates();
     setDateRange(dates);
     setTimeFrame('weekly');
+    setSelectedYear(String(currentYear));
     setSelectedQuarter("");
+    setRegistrationTrendMode("auto");
   }, []);
 
   const setMonthFilter = useCallback(() => {
     const dates = getCurrentMonthDates();
     setDateRange(dates);
     setTimeFrame('monthly');
+    setSelectedYear(String(currentYear));
     setSelectedQuarter("");
+    setRegistrationTrendMode("auto");
   }, []);
+
+  const setYearFilter = useCallback(() => {
+    setSelectedYear(String(currentYear));
+    setSelectedQuarter("");
+    setDateRange({
+      startDate: `${currentYear}-01-01`,
+      endDate: `${currentYear}-12-31`,
+    });
+    setTimeFrame('yearly');
+    setRegistrationTrendMode("auto");
+  }, [currentYear]);
 
   const renderCustomizedLabel = useCallback(({ cx, cy, midAngle, innerRadius, outerRadius, percent }: any) => {
     if (percent === 0) return null;
@@ -1749,6 +1795,14 @@ const PerformanceReport = () => {
   }, []);
 
   const topFieldOfficerPeak = data.topFieldOfficers[0]?.value || 0;
+  const topCustomerPeak = data.topCustomers[0]?.value || 0;
+  const registrationTrendChartData = useMemo(
+    () =>
+      registrationTrendMode === "yearly" && data.registrationTrendComparisonData.length > 0 ?
+        data.registrationTrendComparisonData :
+        data.registrationTrendData,
+    [data.registrationTrendComparisonData, data.registrationTrendData, registrationTrendMode],
+  );
 
   if (analysisLoading || loading) {
     return (
@@ -1768,15 +1822,33 @@ const PerformanceReport = () => {
           </div>
         ) : null}
 
-        <Card className="w-full md:w-auto border-0 shadow-lg bg-white">
-          <CardContent className="px-3 py-2.5 md:px-3 md:py-3">
-            <div className="flex flex-colmd:flex-row lg:flex-row xl:flex-row gap-3 items-end">
+        <Card className="w-full border-0 shadow-lg bg-white">
+          <CardContent className="px-3 py-3">
+            {showFilterStartCue ? (
+              <div className="mb-2 flex items-center justify-start">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={scrollFilterStripToStart}
+                  className="h-8 gap-2 rounded-full border-dashed border-blue-200 bg-blue-50/80 px-3 text-blue-700 shadow-sm hover:bg-blue-100 hover:text-blue-800"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                  Earlier filters
+                </Button>
+              </div>
+            ) : null}
+            <div
+              ref={filterStripRef}
+              className="w-full overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+            >
+              <div className="flex min-w-max flex-nowrap items-center gap-2">
               
               {/* Year Selector */}
-                <div className="w-full md:w-40 space-y-0">
+            
                   
                   <Select value={selectedYear || undefined} onValueChange={handleYearChange}>
-                  <SelectTrigger className="h-9">
+                  <SelectTrigger className="h-9 w-[150px] shrink-0">
                     <div className="flex items-center gap-2">
                         <Calendar className="h-4 w-4 text-gray-500" />
                         <SelectValue placeholder="Select Year" />
@@ -1789,14 +1861,14 @@ const PerformanceReport = () => {
                      ))}
                   </SelectContent>
                 </Select>
-              </div>
+              
 
               {/* Programme Selector */}
               {showProgrammeFilter && (
-                <div className="w-full md:w-48 space-y-1">
+              
                  
                   <Select value={activeProgram} onValueChange={setActiveProgram}>
-                    <SelectTrigger className="h-9">
+                    <SelectTrigger className="h-9 w-[150px] shrink-0">
                       <SelectValue placeholder="Select Programme" />
                     </SelectTrigger>
                     <SelectContent>
@@ -1805,19 +1877,19 @@ const PerformanceReport = () => {
                       <SelectItem value="KPMD">KPMD</SelectItem>                     
                     </SelectContent>
                   </Select>
-                </div>
+                
               )}
 
               {/* Quarter Selector (Replaces Q1-Q4 Buttons) */}
               
-              <div className="w-full md:w-40 space-y-0">
+           
         
                 <Select
                   value={selectedQuarter || undefined}
                   onValueChange={handleQuarterChange}
                   disabled={selectedYear === ALL_YEARS_VALUE}
                 >
-                  <SelectTrigger className="h-9">
+                  <SelectTrigger className="h-9 w-[150px] shrink-0">
                     <SelectValue placeholder={selectedYear === ALL_YEARS_VALUE ? "Select Year First" : "Quarter"} />
                   </SelectTrigger>
                   <SelectContent>
@@ -1827,13 +1899,13 @@ const PerformanceReport = () => {
                     <SelectItem value="q4">Q4 (Full Year)</SelectItem>
                   </SelectContent>
                 </Select>
-              </div>                  
+                              
                   <Input
                     id="startDate"
                     type="date"
                     value={dateRange.startDate}
                     onChange={(e) => handleDateRangeChange("startDate", e.target.value)}
-                    className="border-gray-200 text-xs focus:border-blue-500 h-9 pr-2"
+                    className="h-9 w-[150px] shrink-0 border-gray-200 pr-2 text-xs focus:border-blue-500"
                   />
                 
                  
@@ -1842,12 +1914,14 @@ const PerformanceReport = () => {
                     type="date"
                     value={dateRange.endDate}
                     onChange={(e) => handleDateRangeChange("endDate", e.target.value)}
-                    className="border-gray-200 text-xs focus:border-blue-500 h-9 pr-2"
+                    className="h-9 w-[150px] shrink-0 border-gray-200 pr-2 text-xs focus:border-blue-500"
                   />
-                <Button variant="outline" onClick={setWeekFilter} size="sm">This Week</Button>
-                <Button variant="outline" onClick={setMonthFilter} size="sm">This Month</Button>
-                <Button onClick={clearFilters} variant="ghost" size="sm" className="text-red-500 hover:text-red-600">Reset</Button>
+                <Button variant="outline" onClick={setWeekFilter} size="sm" className="h-9 shrink-0">This Week</Button>
+                <Button variant="outline" onClick={setMonthFilter} size="sm" className="h-9 shrink-0">This Month</Button>
+                <Button variant="outline" onClick={setYearFilter} size="sm" className="h-9 shrink-0">This Year</Button>
+                <Button onClick={clearFilters} variant="ghost" size="sm" className="h-9 shrink-0 text-red-500 hover:text-red-600">Reset</Button>
               
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -1904,7 +1978,6 @@ const PerformanceReport = () => {
                         <div className="min-w-0 flex-1">
                           <div className="flex min-w-0 items-center gap-2">
                             <p className="truncate text-sm font-semibold text-slate-900">{officer.name}</p>
-                            <span className="shrink-0 text-slate-300">•</span>
                             <p className="truncate text-xs text-slate-500">County: {officer.county}</p>
                           </div>
                         </div>
@@ -2505,19 +2578,19 @@ const PerformanceReport = () => {
             title="Total Trained Farmers" 
             value={data.totalTrainedFarmers.toLocaleString()} 
             icon={GraduationCap}
-            subtext="Farmers trained in selected period"
+            subtext=""
             color="yellow"
           />
         </div>
 
         <div className="grid gap-6 md:grid-cols-2 mb-6">
           <Card className="border-0 shadow-lg bg-white h-[350px]">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm flex items-center gap-2 text-gray-800">
-                <MapPin className="h-4 w-4 text-purple-600" />
-                County Performance (Farmers)
-              </CardTitle>
-            </CardHeader>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm flex items-center gap-2 text-gray-800">
+                  <MapPin className="h-4 w-4 text-purple-600" />
+                  Registration Per County
+                </CardTitle>
+              </CardHeader>
             <CardContent>
               <ResponsiveContainer width="100%" height={280}>
                 <PieChart>
@@ -2544,30 +2617,28 @@ const PerformanceReport = () => {
           </Card>
 
           <Card className="border-0 shadow-lg bg-white h-[350px]">
-            <CardHeader className="pb-2">
-              <div className="flex justify-between items-center">
-                <CardTitle className="text-sm flex items-center gap-2 text-gray-800">
-                  <TrendingUp className="h-4 w-4 text-blue-600" />
-                  Farmers Registration Trend
-                </CardTitle>
-                <div className="flex gap-1">
-                  {(['weekly', 'monthly', 'yearly'] as const).map((frame) => (
-                    <Button 
-                      key={frame}
-                      variant={timeFrame === frame ? 'default' : 'ghost'} 
-                      size="sm" 
-                      onClick={() => setTimeFrame(frame)}
-                      className="text-xs h-7 px-2"
-                    >
-                      {frame}
-                    </Button>
-                  ))}
+              <CardHeader className="pb-2">
+                <div className="flex items-center justify-between gap-3">
+                  <CardTitle className="text-sm flex items-center gap-2 text-gray-800">
+                    <TrendingUp className="h-4 w-4 text-blue-600" />
+                    Farmers Registration Trend
+                  </CardTitle>
+                  <Button
+                    type="button"
+                    variant={registrationTrendMode === "yearly" ? "default" : "outline"}
+                    size="sm"
+                    className="h-8 px-3 text-xs"
+                    onClick={() =>
+                      setRegistrationTrendMode((mode) => (mode === "yearly" ? "auto" : "yearly"))
+                    }
+                  >
+                    Yearly
+                  </Button>
                 </div>
-              </div>
-            </CardHeader>
+              </CardHeader>
             <CardContent>
               <ResponsiveContainer width="100%" height={280}>
-                <AreaChart data={data.registrationTrendData}>
+                <AreaChart data={registrationTrendChartData}>
                   <defs>
                     <linearGradient id="colorReg" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor={COLORS.darkBlue} stopOpacity={0.8}/>
@@ -2590,7 +2661,7 @@ const PerformanceReport = () => {
             <CardHeader className="pb-2">
               <CardTitle className="text-sm flex items-center gap-2 text-gray-800">
                 <MapPin className="h-4 w-4 text-green-600" />
-                Top Locations
+                Top Locations in Registrations
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -2614,23 +2685,50 @@ const PerformanceReport = () => {
             <CardHeader className="pb-2">
               <CardTitle className="text-sm flex items-center gap-2 text-gray-800">
                 <Users className="h-4 w-4 text-blue-600" />
-                Top Customers (Farmers by Herd Size)
+                Top Farmers Per Herd Size
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <ResponsiveContainer width="100%" height={250}>
-                <BarChart data={data.topCustomers} layout="vertical" margin={HORIZONTAL_BAR_CHART_MARGIN}>
-                  <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f3f4f6" />
-                  <XAxis type="number" axisLine={false} tickLine={false} />
-                  <YAxis type="category" dataKey="name" width={HORIZONTAL_BAR_CHART_Y_AXIS_WIDTH} axisLine={false} tickLine={false} tick={{fontSize: 11}} />
-                  <Tooltip />
-                  <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={12}>
-                    {data.topCustomers.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={COLORS.darkBlue} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
+              <div className="h-[250px] space-y-3 overflow-y-auto pr-2">
+                {data.topCustomers.length > 0 ? (
+                  data.topCustomers.map((farmer, index) => {
+                    const share = topCustomerPeak > 0 ? (farmer.value / topCustomerPeak) * 100 : 0;
+                    return (
+                      <div
+                        key={`${farmer.name}-${index}`}
+                        className="rounded-2xl border border-slate-200 bg-slate-50 p-3 shadow-sm"
+                      >
+                        <div className="flex items-center gap-4">
+                          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-blue-600 text-xs font-semibold text-white shadow-sm">
+                            {index + 1}
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex min-w-0 flex-wrap items-center gap-2">
+                              <p className="truncate text-sm font-semibold text-slate-900">{farmer.name}</p>
+                              <p className="truncate text-xs text-slate-500">County: {farmer.county || "N/A"}</p>
+                            </div>
+                          </div>
+                          <div className="min-w-[140px] max-w-[220px] flex-1">
+                            <div className="h-2 overflow-hidden rounded-full bg-slate-200">
+                              <div
+                                className="h-full rounded-full bg-gradient-to-r from-blue-500 to-blue-700 transition-all"
+                                style={{ width: `${Math.max(share, 10)}%` }}
+                              />
+                            </div>
+                          </div>
+                          <Badge className="shrink-0 whitespace-nowrap border-blue-200 bg-blue-50 px-3 py-1 text-blue-700 hover:bg-blue-50">
+                            {Number(farmer.value).toLocaleString()} farmers
+                          </Badge>
+                        </div>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div className="flex h-full items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-500">
+                    No farmer data available
+                  </div>
+                )}
+              </div>
             </CardContent>
           </Card>
         </div>

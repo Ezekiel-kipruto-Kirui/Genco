@@ -17,8 +17,11 @@ export const getAssignedProgrammes = (
 export const resolveAccessibleProgrammes = (
   canViewAllProgrammeData: boolean,
   allowedProgrammes: Record<string, boolean> | null | undefined
-): ProgrammeOption[] =>
-  canViewAllProgrammeData ? [...PROGRAMME_OPTIONS] : getAssignedProgrammes(allowedProgrammes);
+): ProgrammeOption[] => {
+  const assignedProgrammes = getAssignedProgrammes(allowedProgrammes);
+  if (assignedProgrammes.length > 0) return assignedProgrammes;
+  return canViewAllProgrammeData ? [...PROGRAMME_OPTIONS] : [];
+};
 
 export const resolveActiveProgramme = (
   currentProgramme: string | null | undefined,

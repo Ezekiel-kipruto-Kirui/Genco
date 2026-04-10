@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useCallback } from "react";
 // REALTIME DATABASE IMPORTS
 import { ref, get, push, remove, update } from "firebase/database";
@@ -13,8 +13,6 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   canViewAllProgrammes,
   isChiefAdmin,
-  isHummanResourceManager,
-  resolvePermissionPrincipal,
 } from "@/contexts/authhelper";
 import { 
   Users, 
@@ -245,18 +243,14 @@ const AnimalHealthPage = () => {
   });
   
   const { user, userRole, userAttribute, allowedProgrammes } = useAuth();
-  const permissionPrincipal = useMemo(
-    () => resolvePermissionPrincipal(userRole, userAttribute),
-    [userAttribute, userRole]
-  );
   const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
   const userCanViewAllProgrammeData = useMemo(
-    () => canViewAllProgrammes(userRole, userAttribute),
-    [userRole, userAttribute]
+    () => canViewAllProgrammes(userRole, userAttribute, allowedProgrammes),
+    [allowedProgrammes, userRole, userAttribute]
   );
   const userCanReadAllAnimalHealthProgrammes = useMemo(
-    () => userCanViewAllProgrammeData || isHummanResourceManager(permissionPrincipal),
-    [permissionPrincipal, userCanViewAllProgrammeData]
+    () => userCanViewAllProgrammeData,
+    [userCanViewAllProgrammeData]
   );
   const accessibleProgrammes = useMemo(
     () => userCanReadAllAnimalHealthProgrammes ? [...PROGRAMME_OPTIONS] : getAssignedProgrammes(allowedProgrammes),

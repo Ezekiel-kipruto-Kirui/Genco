@@ -1,5 +1,4 @@
-﻿import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { get, ref } from "firebase/database";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Activity,
@@ -34,7 +33,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { canViewAllProgrammes } from "@/contexts/authhelper";
 import { fetchAnalysisSummary } from "@/lib/analysis";
 import { cacheKey, readCachedValue, writeCachedValue } from "@/lib/data-cache";
-import { db } from "@/lib/firebase";
+import { fetchCollection } from "@/lib/firebase";
 import { normalizeProgramme, resolveAccessibleProgrammes, resolveActiveProgramme } from "@/lib/programme-access";
 
 type OverviewRecord = Record<string, any>;
@@ -1425,7 +1424,7 @@ const OverviewLoading = () => (
 const DashboardOverview = () => {
   const { user, userRole, userAttribute, allowedProgrammes, loading } = useAuth();
   const userCanViewAllProgrammeData = useMemo(
-    () => canViewAllProgrammes(userRole, userAttribute),
+    () => canViewAllProgrammes(userRole, userAttribute, allowedProgrammes),
     [userAttribute, userRole],
   );
 
@@ -1557,24 +1556,16 @@ const DashboardOverview = () => {
       setLocalOverviewLoading(!hasImmediateOverviewData);
 
       try {
-        const [farmersSnap, capacitySnap, offtakesSnap, animalHealthSnap, boreholesSnap, activitiesSnap] = await Promise.all([
-          get(ref(db, "farmers")),
-          get(ref(db, "capacityBuilding")),
-          get(ref(db, "offtakes")),
-          get(ref(db, "AnimalHealthActivities")),
-          get(ref(db, "BoreholeStorage")),
-          get(ref(db, "Recent Activities")),
+        const [farmersRecords, capacityRecords, offtakesRecords, animalHealthRecords, boreholeRecords, activityRecords] = await Promise.all([
+          fetchCollection<OverviewRecord>("farmers"),
+          fetchCollection<OverviewRecord>("capacityBuilding"),
+          fetchCollection<OverviewRecord>("offtakes"),
+          fetchCollection<OverviewRecord>("AnimalHealthActivities"),
+          fetchCollection<OverviewRecord>("BoreholeStorage"),
+          fetchCollection<OverviewRecord>("Recent Activities"),
         ]);
 
         if (cancelled) return;
-
-        const snapshotToArray = (snapshot: Awaited<ReturnType<typeof get>>): OverviewRecord[] =>
-          snapshot.exists()
-            ? Object.entries(snapshot.val() as Record<string, OverviewRecord>).map(([id, record]) => ({
-                id,
-                ...record,
-              }))
-            : [];
 
         const requestedProgramme = normalizeProgramme(selectedProgramme);
         const includeAllProgrammes = selectedProgramme === "All" || !requestedProgramme;
@@ -1582,12 +1573,12 @@ const DashboardOverview = () => {
           records.filter((record) => includeAllProgrammes || getOverviewRecordProgramme(record) === requestedProgramme);
 
         const summary = buildOverviewSummaryFromRecords({
-          farmers: byProgramme(snapshotToArray(farmersSnap)),
-          capacity: byProgramme(snapshotToArray(capacitySnap)),
-          offtakes: byProgramme(snapshotToArray(offtakesSnap)),
-          animalHealth: byProgramme(snapshotToArray(animalHealthSnap)),
-          boreholes: byProgramme(snapshotToArray(boreholesSnap)),
-          activities: byProgramme(snapshotToArray(activitiesSnap)),
+          farmers: byProgramme(farmersRecords),
+          capacity: byProgramme(capacityRecords),
+          offtakes: byProgramme(offtakesRecords),
+          animalHealth: byProgramme(animalHealthRecords),
+          boreholes: byProgramme(boreholeRecords),
+          activities: byProgramme(activityRecords),
         });
         const normalizedSummary = sanitizeOverviewSummary(summary);
 
