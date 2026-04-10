@@ -32,7 +32,18 @@ const NotFound = lazy(() => import("./pages/NotFound"));
 const RequsitionPage = lazy(() => import("./pages/requisitionpage"));
 const OrdersPage = lazy(() => import("./pages/OrdersPage"));
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 5 * 60 * 1000,
+      gcTime: 30 * 60 * 1000,
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: false,
+      refetchOnMount: false,
+      retry: 1,
+    },
+  },
+});
 const FULL_ACCESS_IDENTITIES = ["admin", "chief-admin", "ceo", "chief operational manager", "mne officer"];
 const PROJECT_MANAGER_IDENTITIES = ["project manager"];
 const FINANCE_IDENTITIES = ["finance"];

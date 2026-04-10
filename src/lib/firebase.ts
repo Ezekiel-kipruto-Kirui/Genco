@@ -176,3 +176,24 @@ export const fetchData = async (): Promise<AppData> => {
     throw error;
   }
 };
+
+const APP_CACHE_WARMUP_COLLECTIONS = [
+  "AnimalHealthActivities",
+  "Recent Activities",
+  "hrStaffDirectory",
+  "hrStaffMarks",
+  "orders",
+  "requisitions",
+] as const;
+
+/**
+ * Preloads the most frequently used collections in the background.
+ * This is intentionally separate from direct page fetches so navigation can
+ * reuse the shared cache immediately after login.
+ */
+export const warmAppCaches = async (): Promise<void> => {
+  await Promise.all([
+    fetchData(),
+    ...APP_CACHE_WARMUP_COLLECTIONS.map((path) => fetchCollection(path)),
+  ]);
+};

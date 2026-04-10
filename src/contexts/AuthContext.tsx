@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useRef, useState, type FC, type ReactNode } from "react";
 import { User, onAuthStateChanged, signInWithEmailAndPassword, signOut } from "firebase/auth";
 import { equalTo, get, orderByChild, query, ref, serverTimestamp, update } from "firebase/database";
-import { auth, db, invalidateCollectionCache } from "@/lib/firebase";
+import { auth, db, invalidateCollectionCache, warmAppCaches } from "@/lib/firebase";
 import { useToast } from "@/hooks/use-toast";
 import { isMobileUser } from "@/contexts/authhelper";
 
@@ -182,6 +182,14 @@ export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
         setUserAttribute(profile.userAttribute);
         setAllowedProgrammes(profile.allowedProgrammes);
         setUserName(profile.name || firebaseUser.displayName || firebaseUser.email || "Admin");
+
+        if (typeof window !== "undefined") {
+          window.setTimeout(() => {
+            void warmAppCaches().catch((error) => {
+              console.error("Error warming application caches:", error);
+            });
+          }, 0);
+        }
 
         if (profile.role) {
           localStorage.setItem(ROLE_STORAGE_KEY, profile.role);
