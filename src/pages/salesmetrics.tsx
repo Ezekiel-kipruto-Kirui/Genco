@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+﻿import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import {
@@ -74,7 +74,6 @@ interface OfftakeData {
   totalPrice?: number;
   phone?: string;
   username?: string;
-  idNumber?: string;
 }
 
 interface SalesInputs {
@@ -1396,11 +1395,9 @@ const SalesReport = () => {
                   Monthly Purchase Trend
                 </CardTitle>
               </CardHeader>
-            <CardContent className="px-4 sm:px-6 pb-6">
-              <div className="w-full overflow-x-auto">
-                <div className="h-[380px] min-w-[720px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={monthlyTrend} margin={{ top: 10, right: 20, left: 0, bottom: 80 }}>
+            <CardContent className="px-6 pb-6">
+              <ResponsiveContainer width="100%" height={380}>
+                <AreaChart data={monthlyTrend}>
                   <defs>
                     <linearGradient id="colorTrend" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor={COLORS.darkBlue} stopOpacity={0.2}/>
@@ -1439,8 +1436,6 @@ const SalesReport = () => {
                   />
                 </AreaChart>
               </ResponsiveContainer>
-                </div>
-              </div>
             </CardContent>
           </Card>
         </section>
@@ -1476,11 +1471,9 @@ const SalesReport = () => {
                 Monthly Requisition Trend
               </CardTitle>
             </CardHeader>
-            <CardContent className="px-4 sm:px-6 pb-6">
-              <div className="w-full overflow-x-auto">
-                <div className="h-[380px] min-w-[720px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={requisitionTrend} margin={{ top: 10, right: 20, left: 0, bottom: 80 }}>
+            <CardContent className="px-6 pb-6">
+              <ResponsiveContainer width="100%" height={380}>
+                <AreaChart data={requisitionTrend}>
                   <defs>
                     <linearGradient id="colorRequisitionTrend" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor={COLORS.orange} stopOpacity={0.24}/>
@@ -1519,8 +1512,6 @@ const SalesReport = () => {
                   />
                 </AreaChart>
               </ResponsiveContainer>
-                </div>
-              </div>
             </CardContent>
           </Card>
         </section>

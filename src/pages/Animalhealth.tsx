@@ -959,54 +959,77 @@ const AnimalHealthPage = () => {
 
         {/* Action Buttons & Search */}
         <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 space-y-4">
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full lg:w-auto flex-1">
-                <div className="relative flex-1 min-w-0">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-                    <Input placeholder="Search..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="pl-9 w-full sm:max-w-sm" />
-                </div>
-                <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="w-full sm:max-w-[160px]" />
-                <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="w-full sm:max-w-[160px]" />
+          <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_280px] lg:items-end">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 min-w-0">
+              <div className="relative flex-1 min-w-0">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                <Input
+                  placeholder="Search..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="pl-9 w-full"
+                />
+              </div>
+              <Input
+                type="date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                className="w-full sm:max-w-[160px]"
+              />
+              <Input
+                type="date"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+                className="w-full sm:max-w-[160px]"
+              />
             </div>
 
             {(userCanReadAllAnimalHealthProgrammes || accessibleProgrammes.length > 1) && hasProgrammeAccess && (
               <div className="w-full sm:w-[280px] space-y-1">
-                  <Label className="text-xs text-slate-600">Programme View</Label>
-                  <Select value={programmeView} onValueChange={(value) => setProgrammeView(value as ProgrammeView)}>
-                      <SelectTrigger
-                        className="h-9"
-                        disabled={!userCanReadAllAnimalHealthProgrammes && accessibleProgrammes.length <= 1}
-                      >
-                          <SelectValue placeholder="Select programme" />
-                      </SelectTrigger>
-                      <SelectContent>
-                          {accessibleProgrammes.map((programmeOption) => (
-                            <SelectItem key={programmeOption} value={programmeOption}>
-                              {programmeOption} ({activitiesByProgramme[programmeOption as keyof typeof activitiesByProgramme].length})
-                            </SelectItem>
-                          ))}
-                          {userCanReadAllAnimalHealthProgrammes && (
-                            <SelectItem value="ALL">ALL ({filteredActivities.length})</SelectItem>
-                          )}
-                      </SelectContent>
-                  </Select>
+                <Label className="text-xs text-slate-600">Programme View</Label>
+                <Select value={programmeView} onValueChange={(value) => setProgrammeView(value as ProgrammeView)}>
+                  <SelectTrigger
+                    className="h-9"
+                    disabled={!userCanReadAllAnimalHealthProgrammes && accessibleProgrammes.length <= 1}
+                  >
+                    <SelectValue placeholder="Select programme" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {accessibleProgrammes.map((programmeOption) => (
+                      <SelectItem key={programmeOption} value={programmeOption}>
+                        {programmeOption} ({activitiesByProgramme[programmeOption as keyof typeof activitiesByProgramme].length})
+                      </SelectItem>
+                    ))}
+                    {userCanReadAllAnimalHealthProgrammes && (
+                      <SelectItem value="ALL">ALL ({filteredActivities.length})</SelectItem>
+                    )}
+                  </SelectContent>
+                </Select>
               </div>
             )}
-            
+          </div>
+
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
             <div className="flex flex-wrap items-center gap-2">
-                {userIsChiefAdmin && isSelecting && selectedActivities.length > 0 && (
-                    <Button variant="destructive" size="sm" onClick={handleDeleteMultipleActivities}>
-                        <Trash2 className="h-4 w-4 mr-1" /> Delete Selected ({selectedActivities.length})
-                    </Button>
-                )}
-                {userIsChiefAdmin && (
-                  <Button variant="outline" size="sm" onClick={() => { setIsSelecting(!isSelecting); setSelectedActivities([]); }}>
-                      {isSelecting ? "Cancel Selection" : <><CheckSquare className="h-4 w-4 mr-1" /> Select</>}
-                  </Button>
-                )}
-                <Button variant="outline" size="sm" onClick={exportToCSV}>
-                    <Download className="h-4 w-4 mr-1" /> Export
+              {userIsChiefAdmin && isSelecting && selectedActivities.length > 0 && (
+                <Button variant="destructive" size="sm" onClick={handleDeleteMultipleActivities}>
+                  <Trash2 className="h-4 w-4 mr-1" /> Delete Selected ({selectedActivities.length})
                 </Button>
+              )}
+              {userIsChiefAdmin && (
+                <Button variant="outline" size="sm" onClick={() => { setIsSelecting(!isSelecting); setSelectedActivities([]); }}>
+                  {isSelecting ? "Cancel Selection" : <><CheckSquare className="h-4 w-4 mr-1" /> Select</>}
+                </Button>
+              )}
             </div>
+            {userIsChiefAdmin && (
+              <div className="flex items-center gap-2 sm:justify-end">
+                <Button variant="outline" size="sm" onClick={exportToCSV} className="w-full sm:w-auto">
+                  <Download className="h-4 w-4 mr-1" /> Export
+                </Button>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Activities Table */}

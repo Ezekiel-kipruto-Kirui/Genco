@@ -17,7 +17,7 @@ import {
 } from "recharts";
 import { 
   Users, GraduationCap, Beef, TrendingUp, Award, 
-  MapPin, Syringe, TargetIcon, Loader2, Calendar, PencilLine, Trash2, UserX, MoreVertical, ChevronLeft
+  MapPin, Syringe, TargetIcon, Loader2, Calendar, PencilLine, Trash2, UserX, MoreVertical, ChevronLeft, ChevronRight
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1037,7 +1037,6 @@ const PerformanceReport = () => {
 
   const [activeProgram, setActiveProgram] = useState<string>(""); 
   const filterStripRef = useRef<HTMLDivElement | null>(null);
-  const [showFilterStartCue, setShowFilterStartCue] = useState(false);
   const userCanViewAllProgrammeData = useMemo(
     () => canViewAllProgrammes(userRole, userAttribute, allowedProgrammes),
     [allowedProgrammes, userRole, userAttribute]
@@ -1638,41 +1637,26 @@ const PerformanceReport = () => {
     }
   }, [activeProgram, accessibleProgrammes, canViewAllReportProgrammes]);
 
-  const updateFilterStripCue = useCallback(() => {
+  const scrollFilterStripBy = useCallback((direction: "left" | "right") => {
     const strip = filterStripRef.current;
-    if (!strip) {
-      setShowFilterStartCue(false);
-      return;
-    }
-
-    const hasOverflow = strip.scrollWidth > strip.clientWidth + 8;
-    setShowFilterStartCue(hasOverflow);
-  }, []);
-
-  const scrollFilterStripToStart = useCallback(() => {
-    filterStripRef.current?.scrollTo({ left: 0, behavior: "smooth" });
+    if (!strip) return;
+    const delta = Math.max(220, Math.floor(strip.clientWidth * 0.75));
+    strip.scrollBy({ left: direction === "left" ? -delta : delta, behavior: "smooth" });
   }, []);
 
   useEffect(() => {
-    updateFilterStripCue();
-
     const strip = filterStripRef.current;
     if (!strip) return;
 
-    const handleScroll = () => updateFilterStripCue();
-    strip.addEventListener("scroll", handleScroll, { passive: true });
-
-    const resizeObserver =
-      typeof ResizeObserver !== "undefined" ? new ResizeObserver(handleScroll) : null;
-    resizeObserver?.observe(strip);
-    window.addEventListener("resize", handleScroll);
+    const handleResize = () => {
+      strip.scrollTo({ left: Math.min(strip.scrollLeft, Math.max(0, strip.scrollWidth - strip.clientWidth)), behavior: "auto" });
+    };
+    window.addEventListener("resize", handleResize);
 
     return () => {
-      strip.removeEventListener("scroll", handleScroll);
-      resizeObserver?.disconnect();
-      window.removeEventListener("resize", handleScroll);
+      window.removeEventListener("resize", handleResize);
     };
-  }, [updateFilterStripCue]);
+  }, []);
 
   const handleDateRangeChange = useCallback((key: string, value: string) => {
     setDateRange(prev => ({ ...prev, [key]: value }));
@@ -1824,104 +1808,102 @@ const PerformanceReport = () => {
 
         <Card className="w-full border-0 shadow-lg bg-white">
           <CardContent className="px-3 py-3">
-            {showFilterStartCue ? (
-              <div className="mb-2 flex items-center justify-start">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={scrollFilterStripToStart}
-                  className="h-8 gap-2 rounded-full border-dashed border-blue-200 bg-blue-50/80 px-3 text-blue-700 shadow-sm hover:bg-blue-100 hover:text-blue-800"
-                >
-                  <ChevronLeft className="h-4 w-4" />
-                  Earlier filters
-                </Button>
-              </div>
-            ) : null}
-            <div
-              ref={filterStripRef}
-              className="w-full overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
-            >
-              <div className="flex min-w-max flex-nowrap items-center gap-2">
-              
-              {/* Year Selector */}
-            
-                  
-                  <Select value={selectedYear || undefined} onValueChange={handleYearChange}>
-                  <SelectTrigger className="h-9 w-[150px] shrink-0">
-                    <div className="flex items-center gap-2">
-                        <Calendar className="h-4 w-4 text-gray-500" />
-                        <SelectValue placeholder="Select Year" />
-                    </div>
-                  </SelectTrigger>
-                  <SelectContent>
-                     <SelectItem value={ALL_YEARS_VALUE}>Years</SelectItem>
-                     {availableYears.map(year => (
-                       <SelectItem key={year} value={year}>{year}</SelectItem>
-                     ))}
-                  </SelectContent>
-                </Select>
-              
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={() => scrollFilterStripBy("left")}
+                className="h-9 w-9 shrink-0 rounded-full border border-slate-200 bg-white text-slate-800 shadow-sm hover:bg-slate-50 sm:hidden"
+              >
+                <ChevronLeft className="h-5 w-5" />
+                <span className="sr-only">Scroll filters left</span>
+              </Button>
 
-              {/* Programme Selector */}
-              {showProgrammeFilter && (
-              
-                 
-                  <Select value={activeProgram} onValueChange={setActiveProgram}>
-                    <SelectTrigger className="h-9 w-[150px] shrink-0">
-                      <SelectValue placeholder="Select Programme" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value={ALL_PROGRAMMES_VALUE}>Programme</SelectItem>
-                       <SelectItem value="RANGE">RANGE</SelectItem>
-                      <SelectItem value="KPMD">KPMD</SelectItem>                     
-                    </SelectContent>
-                  </Select>
-                
-              )}
-
-              {/* Quarter Selector (Replaces Q1-Q4 Buttons) */}
-              
-           
-        
-                <Select
-                  value={selectedQuarter || undefined}
-                  onValueChange={handleQuarterChange}
-                  disabled={selectedYear === ALL_YEARS_VALUE}
+              <div className="min-w-0 flex-1 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+                <div
+                  ref={filterStripRef}
+                  className="w-full overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
                 >
-                  <SelectTrigger className="h-9 w-[150px] shrink-0">
-                    <SelectValue placeholder={selectedYear === ALL_YEARS_VALUE ? "Select Year First" : "Quarter"} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="q1">Q1 (Jan-Mar)</SelectItem>
-                    <SelectItem value="q2">Q2 (Jan-Jun)</SelectItem>
-                    <SelectItem value="q3">Q3 (Jan-Sep)</SelectItem>
-                    <SelectItem value="q4">Q4 (Full Year)</SelectItem>
-                  </SelectContent>
-                </Select>
-                              
-                  <Input
-                    id="startDate"
-                    type="date"
-                    value={dateRange.startDate}
-                    onChange={(e) => handleDateRangeChange("startDate", e.target.value)}
-                    className="h-9 w-[150px] shrink-0 border-gray-200 pr-2 text-xs focus:border-blue-500"
-                  />
-                
-                 
-                  <Input
-                    id="endDate"
-                    type="date"
-                    value={dateRange.endDate}
-                    onChange={(e) => handleDateRangeChange("endDate", e.target.value)}
-                    className="h-9 w-[150px] shrink-0 border-gray-200 pr-2 text-xs focus:border-blue-500"
-                  />
-                <Button variant="outline" onClick={setWeekFilter} size="sm" className="h-9 shrink-0">This Week</Button>
-                <Button variant="outline" onClick={setMonthFilter} size="sm" className="h-9 shrink-0">This Month</Button>
-                <Button variant="outline" onClick={setYearFilter} size="sm" className="h-9 shrink-0">This Year</Button>
-                <Button onClick={clearFilters} variant="ghost" size="sm" className="h-9 shrink-0 text-red-500 hover:text-red-600">Clear</Button>
-              
+                  <div className="flex min-w-max flex-nowrap items-center gap-2 p-1">
+                    <Select value={selectedYear || undefined} onValueChange={handleYearChange}>
+                      <SelectTrigger className="h-9 w-[150px] shrink-0">
+                        <div className="flex items-center gap-2">
+                          <Calendar className="h-4 w-4 text-gray-500" />
+                          <SelectValue placeholder="Select Year" />
+                        </div>
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={ALL_YEARS_VALUE}>Years</SelectItem>
+                        {availableYears.map((year) => (
+                          <SelectItem key={year} value={year}>{year}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+
+                    {showProgrammeFilter && (
+                      <Select value={activeProgram} onValueChange={setActiveProgram}>
+                        <SelectTrigger className="h-9 w-[150px] shrink-0">
+                          <SelectValue placeholder="Select Programme" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value={ALL_PROGRAMMES_VALUE}>Programme</SelectItem>
+                          <SelectItem value="RANGE">RANGE</SelectItem>
+                          <SelectItem value="KPMD">KPMD</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    )}
+
+                    <Select
+                      value={selectedQuarter || undefined}
+                      onValueChange={handleQuarterChange}
+                      disabled={selectedYear === ALL_YEARS_VALUE}
+                    >
+                      <SelectTrigger className="h-9 w-[150px] shrink-0">
+                        <SelectValue placeholder={selectedYear === ALL_YEARS_VALUE ? "Select Year First" : "Quarter"} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="q1">Q1 (Jan-Mar)</SelectItem>
+                        <SelectItem value="q2">Q2 (Jan-Jun)</SelectItem>
+                        <SelectItem value="q3">Q3 (Jan-Sep)</SelectItem>
+                        <SelectItem value="q4">Q4 (Full Year)</SelectItem>
+                      </SelectContent>
+                    </Select>
+
+                    <Input
+                      id="startDate"
+                      type="date"
+                      value={dateRange.startDate}
+                      onChange={(e) => handleDateRangeChange("startDate", e.target.value)}
+                      className="h-9 w-[150px] shrink-0 border-gray-200 pr-2 text-xs focus:border-blue-500"
+                    />
+
+                    <Input
+                      id="endDate"
+                      type="date"
+                      value={dateRange.endDate}
+                      onChange={(e) => handleDateRangeChange("endDate", e.target.value)}
+                      className="h-9 w-[150px] shrink-0 border-gray-200 pr-2 text-xs focus:border-blue-500"
+                    />
+
+                    <Button variant="outline" onClick={setWeekFilter} size="sm" className="h-9 shrink-0">This Week</Button>
+                    <Button variant="outline" onClick={setMonthFilter} size="sm" className="h-9 shrink-0">This Month</Button>
+                    <Button variant="outline" onClick={setYearFilter} size="sm" className="h-9 shrink-0">This Year</Button>
+                    <Button onClick={clearFilters} variant="ghost" size="sm" className="h-9 shrink-0 text-red-500 hover:text-red-600">Clear</Button>
+                  </div>
+                </div>
               </div>
+
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={() => scrollFilterStripBy("right")}
+                className="h-9 w-9 shrink-0 rounded-full border border-slate-200 bg-white text-slate-800 shadow-sm hover:bg-slate-50 sm:hidden"
+              >
+                <ChevronRight className="h-5 w-5" />
+                <span className="sr-only">Scroll filters right</span>
+              </Button>
             </div>
           </CardContent>
         </Card>
