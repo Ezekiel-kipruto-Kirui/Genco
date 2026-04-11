@@ -146,10 +146,10 @@ interface SalesAnalyticsPayload {
   genderData: Array<{ name: string; value: number }>;
   countyData: Array<{ name: string; count: number }>;
   topLocations: Array<{ name: string; count: number }>;
-  topFarmers: Array<{ name: string; revenue: number; animals: number; goats: number; county: string; records: number }>;
+  topFarmers: Array<{ name: string; purchaseCost: number; animals: number; goats: number; county: string; records: number }>;
   monthlyTrend: Array<{ month: string; revenue: number; volume: number }>;
   requisitionTrend: Array<{ month: string; count: number; amount: number }>;
-  top3Months: Array<{ month: string; revenue: number; volume: number }>;
+  top3Months: Array<{ month: string; animalsPurchased: number; purchaseCost: number }>;
 }
 
 // --- Optimized Data Cache Manager ---
@@ -181,6 +181,7 @@ class DataCache {
 const dataCache = new DataCache();
 const USE_REMOTE_ANALYTICS =
   typeof window !== "undefined" && !["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
+const SALES_ANALYTICS_QUERY_VERSION = "v3";
 
 // --- Helper Functions ---
 
@@ -456,8 +457,8 @@ const buildLocalSalesAnalytics = (
   const genderCounts: Record<string, number> = { Male: 0, Female: 0 };
   const countySales: Record<string, number> = {};
   const locationSales: Record<string, number> = {};
-  const farmerSales: Record<string, { name: string; revenue: number; animals: number; goats: number; county: string; records: number }> = {};
-  const monthlyData: Record<string, { monthName: string; revenue: number; volume: number }> = {};
+  const farmerSales: Record<string, { name: string; purchaseCost: number; animals: number; goats: number; county: string; records: number }> = {};
+  const monthlyData: Record<string, { monthName: string; revenue: number; volume: number; animalsPurchased: number; purchaseCost: number }> = {};
   const requisitionMonthlyData: Record<string, { monthName: string; count: number; amount: number }> = {};
   const filteredOrders = orders.filter((record) => {
     const recordProgramme = normalizeProgrammeToken(record.programme);
@@ -513,13 +514,13 @@ const buildLocalSalesAnalytics = (
     locationSales[location] = (locationSales[location] || 0) + txAnimals;
 
     if (!farmerSales[beneficiaryKey]) {
-      farmerSales[beneficiaryKey] = { name: farmerName, revenue: 0, animals: 0, goats: 0, county, records: 0 };
+      farmerSales[beneficiaryKey] = { name: farmerName, purchaseCost: 0, animals: 0, goats: 0, county, records: 0 };
     } else if (county !== "Unknown") {
       farmerSales[beneficiaryKey].county = county;
     }
     farmerSales[beneficiaryKey].name = farmerName || farmerSales[beneficiaryKey].name;
-    farmerSales[beneficiaryKey].revenue += txCarcassWeight * salesInputs.pricePerKg;
-    farmerSales[beneficiaryKey].animals += txGoats;
+    farmerSales[beneficiaryKey].purchaseCost += txCost;
+    farmerSales[beneficiaryKey].animals += txAnimals;
     farmerSales[beneficiaryKey].goats += txGoats;
     farmerSales[beneficiaryKey].records += 1;
 
@@ -528,10 +529,12 @@ const buildLocalSalesAnalytics = (
       const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
       const monthName = date.toLocaleString("default", { month: "short" });
       if (!monthlyData[monthKey]) {
-        monthlyData[monthKey] = { monthName, revenue: 0, volume: 0 };
+        monthlyData[monthKey] = { monthName, revenue: 0, volume: 0, animalsPurchased: 0, purchaseCost: 0 };
       }
       monthlyData[monthKey].revenue += txCarcassWeight * salesInputs.pricePerKg;
       monthlyData[monthKey].volume += txAnimals;
+      monthlyData[monthKey].animalsPurchased += txAnimals;
+      monthlyData[monthKey].purchaseCost += txCost;
     }
   }
 
@@ -597,7 +600,7 @@ const buildLocalSalesAnalytics = (
       .sort((a, b) => b.count - a.count)
       .slice(0, 10),
     topFarmers: Object.values(farmerSales)
-      .sort((a, b) => (b.goats - a.goats) || (b.revenue - a.revenue))
+      .sort((a, b) => (b.animals - a.animals) || (b.purchaseCost - a.purchaseCost))
       .slice(0, 5),
     monthlyTrend: ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"].map((month) => {
       const match = Object.values(monthlyData).find((entry) => entry.monthName === month);
@@ -608,12 +611,12 @@ const buildLocalSalesAnalytics = (
       return { month, count: match ? match.count : 0, amount: match ? match.amount : 0 };
     }),
     top3Months: Object.values(monthlyData)
-      .sort((a, b) => b.revenue - a.revenue)
+      .sort((a, b) => (b.animalsPurchased - a.animalsPurchased) || (b.purchaseCost - a.purchaseCost))
       .slice(0, 3)
       .map((entry) => ({
         month: entry.monthName,
-        revenue: entry.revenue,
-        volume: entry.volume,
+        animalsPurchased: entry.animalsPurchased,
+        purchaseCost: entry.purchaseCost,
       })),
   };
 };
@@ -634,6 +637,7 @@ const useOfftakeData = (
 
   const queryResult = useQuery({
     queryKey: [
+      SALES_ANALYTICS_QUERY_VERSION,
       "sales-report",
       selectedProgramme,
       dateRange.startDate,
@@ -699,7 +703,7 @@ const StatsCard = ({ title, value, icon: Icon, subText, color = "blue", trend = 
           <div className="text-3xl font-bold text-gray-900 tracking-tight">{value}</div>
           {trend !== 'neutral' && (
             <span className={`text-xs font-bold ${trend === 'up' ? 'text-green-600' : 'text-red-600'}`}>
-              {trend === 'up' ? 'â†‘' : 'â†“'}
+              {trend === 'up' ? 'Ã¢â€ â€˜' : 'Ã¢â€ â€œ'}
             </span>
           )}
         </div>
@@ -1193,14 +1197,14 @@ const SalesReport = () => {
               title="Total Animals" 
               value={millify(stats.totalAnimals)} 
               icon={Package} 
-              subText={`Goats: ${stats.totalGoats} (${goatPct}%) â€¢ Sheep: ${stats.totalSheep} (${sheepPct}%)`} 
+              subText={`Goats: ${stats.totalGoats} (${goatPct}%) Sheep: ${stats.totalSheep} (${sheepPct}%)`} 
               color="blue" 
             />
             <StatsCard 
               title="Total COST" 
               value={millify(stats.totalPurchaseCost)} 
               icon={DollarSign} 
-              subText={`Cost/Goat: ${formatCurrency(stats.costPerGoat)} â€¢ Avg/Kg: ${formatCurrency(stats.avgCostPerKgCarcass)}`} 
+              subText={`Cost/Goat: ${formatCurrency(stats.costPerGoat)} Avg/Kg: ${formatCurrency(stats.avgCostPerKgCarcass)}`} 
               color="green" 
             />
             <StatsCard 
@@ -1264,11 +1268,12 @@ const SalesReport = () => {
                           </div>
                           <div>
                             <p className="text-sm font-bold text-gray-800">{m.month}</p>
-                            <p className="text-[11px] text-gray-500">{m.volume} animals sold</p>
+                            <p className="text-[11px] text-gray-500">{m.animalsPurchased.toLocaleString()} animals purchased</p>
                           </div>
                         </div>
                         <div className="text-right">
-                          <p className="text-sm font-bold text-green-700">{formatCurrency(m.revenue)}</p>
+                          <p className="text-sm font-bold text-green-700">{formatCurrency(m.purchaseCost)}</p>
+                          <p className="text-[11px] text-gray-500">Purchase cost</p>
                         </div>
                       </div>
                     ))}
@@ -1326,12 +1331,15 @@ const SalesReport = () => {
                           <p className="text-sm font-bold text-gray-800">{farmer.name}</p>
                           <p className="text-[11px] text-gray-500 flex items-center gap-1">
                              <MapPin className="h-3 w-3" />
-                             {farmer.county} â€¢ {farmer.animals} animals
+                             <span>{farmer.county || "Unknown"}</span>
+                             <span className="text-gray-300">|</span>
+                             <span>{farmer.animals.toLocaleString()} animals purchased</span>
                           </p>
                         </div>
                       </div>
                       <div className="text-right">
-                        <p className="text-sm font-bold text-green-700">{formatCurrency(farmer.revenue)}</p>
+                        <p className="text-sm font-bold text-green-700">{formatCurrency(farmer.purchaseCost)}</p>
+                        <p className="text-[11px] text-gray-500">Purchase cost</p>
                       </div>
                     </div>
                   )) : (
@@ -1382,15 +1390,17 @@ const SalesReport = () => {
           </div>
 
           <Card className="border-0 shadow-sm bg-white rounded-2xl">
-            <CardHeader className="pb-4 pt-6 px-6">
-              <CardTitle className="text-sm font-bold flex items-center gap-2 text-gray-800">
-                <TrendingUp className="h-4 w-4 text-blue-600" />
-                Monthly Offtake Trend
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="px-6 pb-6">
-              <ResponsiveContainer width="100%" height={350}>
-                <AreaChart data={monthlyTrend}>
+              <CardHeader className="pb-4 pt-6 px-6">
+                <CardTitle className="text-sm font-bold flex items-center gap-2 text-gray-800">
+                  <TrendingUp className="h-4 w-4 text-blue-600" />
+                  Monthly Purchase Trend
+                </CardTitle>
+              </CardHeader>
+            <CardContent className="px-4 sm:px-6 pb-6">
+              <div className="w-full overflow-x-auto">
+                <div className="h-[380px] min-w-[720px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={monthlyTrend} margin={{ top: 10, right: 20, left: 0, bottom: 80 }}>
                   <defs>
                     <linearGradient id="colorTrend" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor={COLORS.darkBlue} stopOpacity={0.2}/>
@@ -1398,13 +1408,24 @@ const SalesReport = () => {
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
-                  <XAxis dataKey="month" tick={{ fontSize: 12, fill: '#64748b' }} axisLine={false} tickLine={false} />
+                  <XAxis
+                    dataKey="month"
+                    tick={{ fontSize: 10, fill: "#64748b" }}
+                    axisLine={false}
+                    tickLine={false}
+                    interval={0}
+                    minTickGap={0}
+                    height={54}
+                    tickMargin={12}
+                    angle={-35}
+                    textAnchor="end"
+                  />
                   <YAxis tick={{ fontSize: 12, fill: '#64748b' }} axisLine={false} tickLine={false} />
                   <Tooltip 
                     contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
                     formatter={(value: number, name: string) => [
-                      name === 'volume' ? `${value} Animals` : formatCurrency(value), 
-                      name === 'volume' ? 'Volume' : 'Revenue'
+                      name === 'volume' ? `${value} Animals Purchased` : formatCurrency(value), 
+                      name === 'volume' ? 'Animals Purchased' : 'Revenue'
                     ]} 
                   />
                   <Area 
@@ -1418,6 +1439,8 @@ const SalesReport = () => {
                   />
                 </AreaChart>
               </ResponsiveContainer>
+                </div>
+              </div>
             </CardContent>
           </Card>
         </section>
@@ -1453,9 +1476,11 @@ const SalesReport = () => {
                 Monthly Requisition Trend
               </CardTitle>
             </CardHeader>
-            <CardContent className="px-6 pb-6">
-              <ResponsiveContainer width="100%" height={350}>
-                <AreaChart data={requisitionTrend}>
+            <CardContent className="px-4 sm:px-6 pb-6">
+              <div className="w-full overflow-x-auto">
+                <div className="h-[380px] min-w-[720px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={requisitionTrend} margin={{ top: 10, right: 20, left: 0, bottom: 80 }}>
                   <defs>
                     <linearGradient id="colorRequisitionTrend" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor={COLORS.orange} stopOpacity={0.24}/>
@@ -1463,7 +1488,18 @@ const SalesReport = () => {
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
-                  <XAxis dataKey="month" tick={{ fontSize: 12, fill: '#64748b' }} axisLine={false} tickLine={false} />
+                  <XAxis
+                    dataKey="month"
+                    tick={{ fontSize: 10, fill: "#64748b" }}
+                    axisLine={false}
+                    tickLine={false}
+                    interval={0}
+                    minTickGap={0}
+                    height={54}
+                    tickMargin={12}
+                    angle={-35}
+                    textAnchor="end"
+                  />
                   <YAxis tick={{ fontSize: 12, fill: '#64748b' }} axisLine={false} tickLine={false} />
                   <Tooltip 
                     contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
@@ -1483,6 +1519,8 @@ const SalesReport = () => {
                   />
                 </AreaChart>
               </ResponsiveContainer>
+                </div>
+              </div>
             </CardContent>
           </Card>
         </section>
@@ -1536,3 +1574,4 @@ const SalesReport = () => {
 };
 
 export default SalesReport;
+

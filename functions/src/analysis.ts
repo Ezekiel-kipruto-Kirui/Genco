@@ -4,6 +4,8 @@ import {onCall, HttpsError} from "firebase-functions/v2/https";
 
 const PROGRAMME_OPTIONS = ["KPMD", "RANGE"] as const;
 const CACHE_TTL_MS = 2 * 60 * 1000;
+const ANALYSIS_CACHE_VERSION = "v4";
+const QUARTER_TARGET_MILESTONES = [352, 702, 1053, 1404];
 const CHART_COLORS = {
   male: "#1e3a8a",
   female: "#f97316",
@@ -51,7 +53,7 @@ interface AnalysisProfile {
   allowedProgrammes: string[];
 }
 
-type ProgressPeriodKey = "q1" | "q2" | "q3" | "year";
+type ProgressPeriodKey = "q1" | "q2" | "q3" | "q4";
 type ProgressStatus = "achieved" | "on-track" | "behind" | "needs-attention";
 
 interface CacheEntry {
@@ -744,6 +746,7 @@ const cacheKey = (uid: string, request: AnalysisRequest): string => {
   const expenses = request.salesInputs?.expenses ?? "";
 
   return [
+    ANALYSIS_CACHE_VERSION,
     uid,
     request.scope || "",
     programme,
@@ -1092,6 +1095,11 @@ const createLivestockAnalytics = async (
     fetchCollectionByProgrammes("farmers", programmes),
     fetchCollectionByProgrammes("capacityBuilding", programmes),
   ]);
+  const analysisYear =
+    parseDate(dateRange?.startDate)?.getFullYear() ??
+    parseDate(dateRange?.endDate)?.getFullYear() ??
+    new Date().getFullYear();
+  const activeTarget = Math.max(1, Math.round(target ?? 1404));
 
   const filteredFarmers = filterRecordsByDateRange(
     farmers,
@@ -1115,38 +1123,40 @@ const createLivestockAnalytics = async (
     4: {farmers: 0, animals: 0},
   };
   const subcountyMap: Record<string, number> = {};
-  const currentYear = new Date().getFullYear();
   const quarterTargets = [
     {
       key: "q1" as const,
-      label: "Q1",
-      start: new Date(currentYear, 0, 1),
-      end: new Date(currentYear, 2, 31),
-      target: 351,
+      label: `Q1 ${analysisYear}`,
+      start: new Date(analysisYear, 0, 1),
+      end: new Date(analysisYear, 2, 31),
+      target: QUARTER_TARGET_MILESTONES[0],
     },
     {
       key: "q2" as const,
-      label: "Q2",
-      start: new Date(currentYear, 0, 1),
-      end: new Date(currentYear, 5, 30),
-      target: 702,
+      label: `Q2 ${analysisYear}`,
+      start: new Date(analysisYear, 3, 1),
+      end: new Date(analysisYear, 5, 30),
+      target: QUARTER_TARGET_MILESTONES[1],
     },
     {
       key: "q3" as const,
-      label: "Q3",
-      start: new Date(currentYear, 0, 1),
-      end: new Date(currentYear, 8, 30),
-      target: 1053,
+      label: `Q3 ${analysisYear}`,
+      start: new Date(analysisYear, 6, 1),
+      end: new Date(analysisYear, 8, 30),
+      target: QUARTER_TARGET_MILESTONES[2],
     },
     {
-      key: "year" as const,
-      label: "Full Year",
-      start: new Date(currentYear, 0, 1),
-      end: new Date(currentYear, 11, 31),
-      target: 1404,
+      key: "q4" as const,
+      label: `Q4 ${analysisYear}`,
+      start: new Date(analysisYear, 9, 1),
+      end: new Date(analysisYear, 11, 31),
+      target: QUARTER_TARGET_MILESTONES[3],
     },
   ];
-  const userMap: Record<string, {periods: Record<ProgressPeriodKey, number>; counties: Set<string>}> = {};
+  const userMap: Record<
+    string,
+    {periods: Record<ProgressPeriodKey, number>; counties: Set<string>; currentCount: number}
+  > = {};
 
   for (const farmer of filteredFarmers) {
     const gender = String(farmer.gender || "").trim().toLowerCase();
@@ -1173,11 +1183,13 @@ const createLivestockAnalytics = async (
     const username = String(farmer.username || "Unknown User").trim() || "Unknown User";
     if (!userMap[username]) {
       userMap[username] = {
-        periods: {q1: 0, q2: 0, q3: 0, year: 0},
+        periods: {q1: 0, q2: 0, q3: 0, q4: 0},
         counties: new Set<string>(),
+        currentCount: 0,
       };
     }
-    if (farmerDate && farmerDate.getFullYear() === currentYear) {
+    userMap[username].currentCount += 1;
+    if (farmerDate && farmerDate.getFullYear() === analysisYear) {
       quarterTargets.forEach((period) => {
         if (farmerDate >= period.start && farmerDate <= period.end) {
           userMap[username].periods[period.key] += 1;
@@ -1231,16 +1243,19 @@ const createLivestockAnalytics = async (
           met: count >= period.target,
         };
       });
-      const yearProgress = periods[periods.length - 1];
+      const registeredCount = data.currentCount;
+      const targetValue = activeTarget;
+      const progressPercentage = targetValue > 0 ? (registeredCount / targetValue) * 100 : 0;
+      const status = progressPercentage >= 100 ? "achieved" : progressPercentage >= 75 ? "on-track" : progressPercentage >= 50 ? "behind" : "needs-attention";
       const counties = [...data.counties];
       return {
         id: name,
         name,
         region: counties.slice(0, 3).join(", ") + (counties.length > 3 ? "..." : ""),
-        farmersRegistered: yearProgress.count,
-        target: yearProgress.target,
-        progressPercentage: yearProgress.progressPercentage,
-        status: yearProgress.status,
+        farmersRegistered: registeredCount,
+        target: targetValue,
+        progressPercentage,
+        status,
         periods,
       };
     })
@@ -1607,7 +1622,7 @@ const createSalesReport = async (
   const countySales: Record<string, number> = {};
   const locationSales: Record<string, number> = {};
   const farmerSales: Record<string, {name: string; revenue: number; animals: number; goats: number; county: string; records: number}> = {};
-  const monthlyData: Record<string, {monthName: string; revenue: number; volume: number}> = {};
+  const monthlyData: Record<string, {monthName: string; revenue: number; volume: number; animalsPurchased: number; purchaseCost: number}> = {};
   const requisitionMonthlyData: Record<string, {monthName: string; count: number; amount: number}> = {};
   const pricePerKg = parseNumber(salesInputs?.pricePerKg);
   const expenses = parseNumber(salesInputs?.expenses);
@@ -1626,7 +1641,8 @@ const createSalesReport = async (
     totalGoats += txGoats;
     totalSheep += txSheep;
     totalCattle += txCattle;
-    totalAnimalsCount += txGoats + txSheep + txCattle;
+    const txAnimals = txGoats + txSheep + txCattle;
+    totalAnimalsCount += txAnimals;
 
     const allAnimals = [...goatsArr, ...sheepArr, ...cattleArr];
     let txCarcassWeight = 0;
@@ -1659,7 +1675,7 @@ const createSalesReport = async (
     }
     farmerSales[beneficiaryKey].name = farmerName || farmerSales[beneficiaryKey].name;
     farmerSales[beneficiaryKey].revenue += txCarcassWeight * pricePerKg;
-    farmerSales[beneficiaryKey].animals += txGoats;
+    farmerSales[beneficiaryKey].animals += txAnimals;
     farmerSales[beneficiaryKey].goats += txGoats;
     farmerSales[beneficiaryKey].records += 1;
 
@@ -1668,10 +1684,12 @@ const createSalesReport = async (
       const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
       const monthName = date.toLocaleString("default", {month: "short"});
       if (!monthlyData[monthKey]) {
-        monthlyData[monthKey] = {monthName, revenue: 0, volume: 0};
+        monthlyData[monthKey] = {monthName, revenue: 0, volume: 0, animalsPurchased: 0, purchaseCost: 0};
       }
       monthlyData[monthKey].revenue += txCarcassWeight * pricePerKg;
       monthlyData[monthKey].volume += txGoats + txSheep + txCattle;
+      monthlyData[monthKey].animalsPurchased += txAnimals;
+      monthlyData[monthKey].purchaseCost += txCost;
     }
   }
 
@@ -1714,7 +1732,7 @@ const createSalesReport = async (
     .sort((a, b) => b.count - a.count)
     .slice(0, 10);
   const topFarmers = Object.values(farmerSales)
-    .sort((a, b) => (b.goats - a.goats) || (b.revenue - a.revenue))
+    .sort((a, b) => (b.animals - a.animals) || (b.revenue - a.revenue))
     .slice(0, 5);
   const monthlyTrend = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"].map((month) => {
     const match = Object.values(monthlyData).find((entry) => entry.monthName === month);
@@ -1725,12 +1743,12 @@ const createSalesReport = async (
     return {month, count: match ? match.count : 0, amount: match ? match.amount : 0};
   });
   const top3Months = Object.values(monthlyData)
-    .sort((a, b) => b.revenue - a.revenue)
+    .sort((a, b) => (b.animalsPurchased - a.animalsPurchased) || (b.purchaseCost - a.purchaseCost))
     .slice(0, 3)
     .map((entry) => ({
       month: entry.monthName,
-      revenue: entry.revenue,
-      volume: entry.volume,
+      animalsPurchased: entry.animalsPurchased,
+      purchaseCost: entry.purchaseCost,
     }));
 
   return {

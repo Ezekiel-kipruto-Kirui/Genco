@@ -1919,7 +1919,7 @@ const PerformanceReport = () => {
                 <Button variant="outline" onClick={setWeekFilter} size="sm" className="h-9 shrink-0">This Week</Button>
                 <Button variant="outline" onClick={setMonthFilter} size="sm" className="h-9 shrink-0">This Month</Button>
                 <Button variant="outline" onClick={setYearFilter} size="sm" className="h-9 shrink-0">This Year</Button>
-                <Button onClick={clearFilters} variant="ghost" size="sm" className="h-9 shrink-0 text-red-500 hover:text-red-600">Reset</Button>
+                <Button onClick={clearFilters} variant="ghost" size="sm" className="h-9 shrink-0 text-red-500 hover:text-red-600">Clear</Button>
               
               </div>
             </div>
@@ -2717,7 +2717,7 @@ const PerformanceReport = () => {
                             </div>
                           </div>
                           <Badge className="shrink-0 whitespace-nowrap border-blue-200 bg-blue-50 px-3 py-1 text-blue-700 hover:bg-blue-50">
-                            {Number(farmer.value).toLocaleString()} farmers
+                            {Number(farmer.value).toLocaleString()} goats
                           </Badge>
                         </div>
                       </div>

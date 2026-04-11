@@ -9,6 +9,8 @@ export type AnalysisScope =
   | "performance-report"
   | "sales-report";
 
+const ANALYSIS_CACHE_VERSION = "v4";
+
 export interface AnalysisRequest {
   scope: AnalysisScope;
   programme?: string | null;
@@ -25,6 +27,7 @@ const OVERVIEW_CACHE_TTL_MS = 10 * 60 * 1000;
 const buildCacheKey = (request: AnalysisRequest): string =>
   cacheKey(
     "analysis",
+    ANALYSIS_CACHE_VERSION,
     auth.currentUser?.uid || "anon",
     request.scope,
     request.programme || "all",

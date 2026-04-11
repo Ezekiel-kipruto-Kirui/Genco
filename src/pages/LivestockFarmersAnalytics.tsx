@@ -12,7 +12,6 @@ import {
 import { Users, GraduationCap, Beef, Map, UserCheck, AlertCircle, Activity, Eye } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { canViewAllProgrammes, isChiefAdmin } from "@/contexts/authhelper";
@@ -31,10 +30,10 @@ const BAR_COLORS = [COLORS.navy, COLORS.orange, COLORS.yellow];
 const TARGETS = {
   weekly: 30,
   monthly: 117,
-  quarterly: 351,
   yearly: 1404
 };
-const PROGRESS_MONTHLY_TARGET = 117;
+const QUARTER_TARGET_MILESTONES = [352, 702, 1053, 1404];
+const PROGRESS_ANALYTICS_QUERY_VERSION = "v3";
 
 // --- Interfaces ---
 interface FarmerData {
@@ -362,28 +361,28 @@ const buildQuarterTargets = (year: number) => [
     label: `Q1 ${year}`,
     start: new Date(year, 0, 1),
     end: new Date(year, 2, 31),
-    target: PROGRESS_MONTHLY_TARGET * 3,
+    target: QUARTER_TARGET_MILESTONES[0],
   },
   {
     key: "q2" as const,
     label: `Q2 ${year}`,
     start: new Date(year, 3, 1),
     end: new Date(year, 5, 30),
-    target: PROGRESS_MONTHLY_TARGET * 3,
+    target: QUARTER_TARGET_MILESTONES[1],
   },
   {
     key: "q3" as const,
     label: `Q3 ${year}`,
     start: new Date(year, 6, 1),
     end: new Date(year, 8, 30),
-    target: PROGRESS_MONTHLY_TARGET * 3,
+    target: QUARTER_TARGET_MILESTONES[2],
   },
   {
     key: "q4" as const,
     label: `Q4 ${year}`,
     start: new Date(year, 9, 1),
     end: new Date(year, 11, 31),
-    target: PROGRESS_MONTHLY_TARGET * 3,
+    target: QUARTER_TARGET_MILESTONES[3],
   },
 ];
 
@@ -437,13 +436,15 @@ const LivestockFarmersAnalytics = () => {
     () => getAnalysisYearFromDateRange(dateRange),
     [dateRange]
   );
-  const currentYear = new Date().getFullYear();
-  const currentQuarter = Math.ceil((new Date().getMonth() + 1) / 3);
+  const availableYears = useMemo(() => {
+    const currentYear = new Date().getFullYear();
+    const years = Array.from({ length: 10 }, (_, index) => String(currentYear - index));
+    const selectedYear = String(analysisYear);
+    return years.includes(selectedYear) ? years : [selectedYear, ...years];
+  }, [analysisYear]);
   const quarterTargets = useMemo(() => {
-    const allQuarterTargets = buildQuarterTargets(analysisYear);
-    if (analysisYear !== currentYear) return allQuarterTargets;
-    return allQuarterTargets.filter((_, index) => index < currentQuarter);
-  }, [analysisYear, currentYear, currentQuarter]);
+    return buildQuarterTargets(analysisYear);
+  }, [analysisYear]);
   const accessibleProgrammes = useMemo(
     () => resolveAccessibleProgrammes(userCanViewAllProgrammeData, allowedProgrammes),
     [allowedProgrammes, userCanViewAllProgrammeData]
@@ -451,6 +452,7 @@ const LivestockFarmersAnalytics = () => {
 
   const analyticsQuery = useQuery({
     queryKey: [
+      PROGRESS_ANALYTICS_QUERY_VERSION,
       "livestock-analytics",
       user?.uid,
       userRole,
@@ -852,7 +854,7 @@ const LivestockFarmersAnalytics = () => {
             met: false,
           }));
         const farmersRegistered = Number(user.farmersRegistered || 0);
-        const target = Number(user.target || activeTarget || TARGETS.yearly);
+        const target = Number(activeTarget || user.target || TARGETS.yearly);
         const progressPercentage = target > 0 ? (farmersRegistered / target) * 100 : 0;
         const status = getProgressStatus(progressPercentage);
         return {
@@ -886,6 +888,17 @@ const LivestockFarmersAnalytics = () => {
 
   const setYearFilter = () => {
     setDateRange(getCurrentYearDates());
+    setFilterMode("yearly");
+  };
+
+  const handleYearChange = (yearValue: string) => {
+    const year = Number.parseInt(yearValue, 10);
+    if (!Number.isFinite(year)) return;
+
+    setDateRange({
+      startDate: `${year}-01-01`,
+      endDate: `${year}-12-31`,
+    });
     setFilterMode("yearly");
   };
 
@@ -941,24 +954,6 @@ const LivestockFarmersAnalytics = () => {
     isActive
       ? "text-xs h-9 bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100"
       : "text-xs h-9";
-
-  const getPeriodBadgeClass = (status: ProgressStatus) => {
-    if (status === "achieved") return "border-green-200 bg-green-50 text-green-700";
-    if (status === "on-track") return "border-blue-200 bg-blue-50 text-blue-700";
-    if (status === "behind") return "border-yellow-200 bg-yellow-50 text-yellow-700";
-    return "border-red-200 bg-red-50 text-red-700";
-  };
-
-  const renderPeriodCell = (period: ProgressPeriod) => (
-    <div className="flex flex-wrap items-center gap-2">
-      <span className="text-sm font-semibold text-slate-900">
-        {period.count.toLocaleString()}
-      </span>
-      <Badge variant="outline" className={`text-[11px] font-semibold ${getPeriodBadgeClass(period.status)}`}>
-        {period.met ? "Met target" : "Not met"}
-      </Badge>
-    </div>
-  );
 
   const openOfficerTargets = useCallback((officer: UserProgress) => {
     setSelectedOfficer(officer);
@@ -1018,7 +1013,7 @@ const LivestockFarmersAnalytics = () => {
         <Card className="w-full border-0 bg-white shadow-lg">
           <CardContent className="p-4">
             <div className="space-y-3">
-              <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 items-center gap-2 flex-wrap">
+              <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 items-center gap-2 flex-wrap">
                 <Input
                   type="date"
                   value={dateRange.startDate}
@@ -1047,6 +1042,19 @@ const LivestockFarmersAnalytics = () => {
                     </SelectContent>
                   </Select>
                 ) : null}
+
+                <Select value={String(analysisYear)} onValueChange={handleYearChange}>
+                  <SelectTrigger className="h-9 w-full border-gray-200 text-sm">
+                    <SelectValue placeholder="Select Year" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {availableYears.map((year) => (
+                      <SelectItem key={year} value={year}>
+                        {year}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               
                 <Button
                   variant="outline"
@@ -1155,9 +1163,7 @@ const LivestockFarmersAnalytics = () => {
                           <div className="leading-tight">{user.name}</div>
                         </td>
                         <td className="px-4 py-2">
-                          <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-600">
-                            {user.region || "N/A"}
-                          </Badge>
+                          <span className="text-sm text-slate-600">{user.region || "N/A"}</span>
                         </td>
                         <td className="px-4 py-2 font-semibold text-slate-900">
                           {user.farmersRegistered.toLocaleString()}
@@ -1182,16 +1188,9 @@ const LivestockFarmersAnalytics = () => {
                           </div>
                         </td>
                         <td className="px-4 py-2">
-                          <Badge
-                            className={
-                              hasMetCurrentTarget
-                                ? "border-green-200 bg-green-50 text-green-700"
-                                : "border-red-200 bg-red-50 text-red-700"
-                            }
-                            variant="outline"
-                          >
-                            {hasMetCurrentTarget ? "Met target" : "Not met"}
-                          </Badge>
+                          <span className={`text-sm font-semibold ${hasMetCurrentTarget ? "text-green-700" : "text-red-700"}`}>
+                            {hasMetCurrentTarget ? "Met target" : "Action Needed"}
+                          </span>
                         </td>
                         <td className="px-4 py-2">
                           <Button
@@ -1246,8 +1245,10 @@ const LivestockFarmersAnalytics = () => {
                 </div>
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
                   <p className="text-xs uppercase tracking-wide text-slate-500">Target Result</p>
-                  <p className="mt-1 text-sm font-semibold text-slate-900">
-                    {selectedOfficer.farmersRegistered >= selectedOfficer.target ? "Met target" : "Not met"}
+                  <p className={`mt-1 text-sm font-semibold ${
+                    selectedOfficer.farmersRegistered >= selectedOfficer.target ? "text-green-700" : "text-red-700"
+                  }`}>
+                    {selectedOfficer.farmersRegistered >= selectedOfficer.target ? "Met target" : "Action Needed"}
                   </p>
                 </div>
               </div>
@@ -1290,16 +1291,9 @@ const LivestockFarmersAnalytics = () => {
                             </div>
                           </td>
                           <td className="px-4 py-4">
-                            <Badge
-                              variant="outline"
-                              className={
-                                period.met
-                                  ? "border-green-200 bg-green-50 text-green-700"
-                                  : "border-red-200 bg-red-50 text-red-700"
-                              }
-                            >
-                              {period.met ? "Met target" : "Not met"}
-                            </Badge>
+                            <span className={`text-sm font-semibold ${period.met ? "text-green-700" : "text-red-700"}`}>
+                              {period.met ? "Met target" : "Action Needed"}
+                            </span>
                           </td>
                         </tr>
                       );
