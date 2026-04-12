@@ -1014,7 +1014,11 @@ const SalesReport = () => {
     }
   }, [activeProgram]);
 
-  const formatCurrency = (val: number) => `KES ${val.toLocaleString(undefined, {maximumFractionDigits: 0})}`;
+const formatCurrency = (val?: number | null) =>
+  `KES ${Number.isFinite(Number(val)) ? Number(val).toLocaleString(undefined, { maximumFractionDigits: 0 }) : "0"}`;
+
+const formatNumber = (val?: number | null) =>
+  Number.isFinite(Number(val)) ? Number(val).toLocaleString() : "0";
   const openSalesInputsDialog = () => {
     if (!userCanManageSalesInputs) {
       return;
@@ -1267,7 +1271,7 @@ const SalesReport = () => {
                           </div>
                           <div>
                             <p className="text-sm font-bold text-gray-800">{m.month}</p>
-                            <p className="text-[11px] text-gray-500">{m.animalsPurchased.toLocaleString()} animals purchased</p>
+                            <p className="text-[11px] text-gray-500">{formatNumber(m.animalsPurchased)} animals purchased</p>
                           </div>
                         </div>
                         <div className="text-right">
@@ -1332,7 +1336,7 @@ const SalesReport = () => {
                              <MapPin className="h-3 w-3" />
                              <span>{farmer.county || "Unknown"}</span>
                              <span className="text-gray-300">|</span>
-                             <span>{farmer.animals.toLocaleString()} animals purchased</span>
+                             <span>{formatNumber(farmer.animals)} animals purchased</span>
                           </p>
                         </div>
                       </div>
@@ -1459,7 +1463,7 @@ const SalesReport = () => {
               title="Expenses In Requisitions"
               value={millify(stats.requisitionExpenses)}
               icon={DollarSign}
-              subText={`${stats.totalRequisitions.toLocaleString()} requisitions in the selected range`}
+              subText={`${formatNumber(stats.totalRequisitions)} requisitions in the selected range`}
               color="orange"
             />
           </div>

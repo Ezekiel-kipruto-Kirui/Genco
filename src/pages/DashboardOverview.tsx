@@ -1737,8 +1737,10 @@ const DashboardOverview = () => {
 
             <div className="grid items-stretch gap-6 lg:grid-cols-2">
               <DonutPanel
-                title="FARMERS REGISTRATION BY YEAR"
+                title="FARMERS REGISTRATION PER YEAR"
                 data={registrationComparisonData}
+                tooltipValueLabel="farmers"
+                legendItems={registrationComparisonData}
               />
               <RecentLocationsPanel locations={overviewData.recentLocations ?? EMPTY_OVERVIEW_DATA.recentLocations} />
             </div>
