@@ -827,6 +827,10 @@ const SalesReport = () => {
   }, [accessibleProgrammes, userCanViewAllProgrammeData]);
 
   useEffect(() => {
+    if (USE_REMOTE_ANALYTICS) {
+      setLoading(false);
+      return;
+    }
     if (unsubscribeRef.current) {
       unsubscribeRef.current();
       unsubscribeRef.current = null;

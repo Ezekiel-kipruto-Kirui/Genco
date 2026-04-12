@@ -485,15 +485,14 @@ const LivestockFarmersAnalytics = () => {
     },
     [dateRange, selectedYear]
   );
+  const quarterYear = analysisYear ?? getToday().getFullYear();
   const analysisYearLabel = analysisYear ?? "All years";
   const availableYears = useMemo(() => {
     const currentYear = new Date().getFullYear();
     const years = Array.from({ length: 10 }, (_, index) => String(currentYear - index));
     return selectedYear && !years.includes(selectedYear) ? [selectedYear, ...years] : years;
   }, [selectedYear]);
-  const quarterTargets = useMemo(() => {
-    return analysisYear ? buildQuarterTargets(analysisYear) : [];
-  }, [analysisYear]);
+  const quarterTargets = useMemo(() => buildQuarterTargets(quarterYear), [quarterYear]);
   const accessibleProgrammes = useMemo(
     () => resolveAccessibleProgrammes(userCanViewAllProgrammeData, allowedProgrammes),
     [allowedProgrammes, userCanViewAllProgrammeData]
@@ -828,7 +827,7 @@ const LivestockFarmersAnalytics = () => {
       }
     });
 
-    const quarterCountingCutoff = analysisYear ? getQuarterCountingCutoff(analysisYear) : null;
+    const quarterCountingCutoff = getQuarterCountingCutoff(quarterYear);
     const quarterlyStats: Record<string, { periods: Record<ProgressPeriodKey, number>; counties: Set<string> }> = {};
     allFarmers.forEach((farmer) => {
       const officerName = String(farmer.username || "Unknown User").trim() || "Unknown User";
@@ -842,9 +841,8 @@ const LivestockFarmersAnalytics = () => {
       const farmerDate = parseDate(farmer.createdAt || farmer.registrationDate);
       if (
         farmerDate &&
-        analysisYear &&
         quarterCountingCutoff &&
-        farmerDate.getFullYear() === analysisYear &&
+        farmerDate.getFullYear() === quarterYear &&
         farmerDate <= quarterCountingCutoff
       ) {
         quarterTargets.forEach((period) => {
@@ -878,7 +876,7 @@ const LivestockFarmersAnalytics = () => {
         const counties = [...new Set([...currentStats.counties, ...quarterData.counties])];
         const periods = quarterTargets.map((period) => {
           const count = quarterData.periods[period.key];
-          const upcoming = analysisYear ? isUpcomingQuarter(period.start, analysisYear) : false;
+          const upcoming = isUpcomingQuarter(period.start, quarterYear);
           const progressPercentage = period.target > 0 ? (count / period.target) * 100 : 0;
           const status = upcoming ? "not-started" : getProgressStatus(progressPercentage);
           return {
@@ -921,9 +919,9 @@ const LivestockFarmersAnalytics = () => {
             count: 0,
             target: period.target,
             progressPercentage: 0,
-            status: (analysisYear && isUpcomingQuarter(period.start, analysisYear) ? "not-started" : "needs-attention") as ProgressStatus,
+            status: (isUpcomingQuarter(period.start, quarterYear) ? "not-started" : "needs-attention") as ProgressStatus,
             met: false,
-            upcoming: analysisYear ? isUpcomingQuarter(period.start, analysisYear) : false,
+            upcoming: isUpcomingQuarter(period.start, quarterYear),
           }));
         const farmersRegistered = Number(user.farmersRegistered || 0);
         const target = Number(activeTarget || user.target || TARGETS.yearly);
@@ -939,7 +937,7 @@ const LivestockFarmersAnalytics = () => {
         } as UserProgress;
       });
     },
-    [activeTarget, analysisYear, analyticsQuery.data, localUserProgressData, quarterTargets],
+    [activeTarget, analyticsQuery.data, localUserProgressData, quarterTargets, quarterYear],
   );
 
   const handleDateRangeChange = (key: string, value: string) => {
@@ -1366,7 +1364,7 @@ const LivestockFarmersAnalytics = () => {
                     {selectedOfficer.periods.map((period) => {
                       const progressPercent = Math.min(period.progressPercentage, 100);
                       const fallbackQuarter = quarterTargets.find((entry) => entry.key === period.key);
-                      const isUpcoming = period.upcoming ?? (analysisYear && fallbackQuarter ? isUpcomingQuarter(fallbackQuarter.start, analysisYear) : false);
+                      const isUpcoming = period.upcoming ?? (fallbackQuarter ? isUpcomingQuarter(fallbackQuarter.start, quarterYear) : false);
                       return (
                         <tr key={period.key} className="border-b border-slate-100">
                           <td className="px-4 py-4 font-medium text-slate-900">{period.label}</td>
