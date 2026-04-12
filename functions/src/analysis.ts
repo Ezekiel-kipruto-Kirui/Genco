@@ -4,7 +4,7 @@ import {onCall, HttpsError} from "firebase-functions/v2/https";
 
 const PROGRAMME_OPTIONS = ["KPMD", "RANGE"] as const;
 const CACHE_TTL_MS = 2 * 60 * 1000;
-const ANALYSIS_CACHE_VERSION = "v4";
+const ANALYSIS_CACHE_VERSION = "v5";
 const QUARTER_TARGET_MILESTONES = [352, 702, 1053, 1404];
 const CHART_COLORS = {
   male: "#1e3a8a",
@@ -18,6 +18,33 @@ const INFRASTRUCTURE_SERIES_COLORS = {
   drilled: "#2710a1",
   equipped: "#0ea5e9",
   maintained: "#f89b0d",
+};
+
+const getQuarterCountingCutoff = (year: number): Date | null => {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const currentYear = today.getFullYear();
+
+  if (year < currentYear) {
+    const endOfYear = new Date(year, 11, 31);
+    endOfYear.setHours(23, 59, 59, 999);
+    return endOfYear;
+  }
+
+  if (year > currentYear) return null;
+
+  const endOfToday = new Date(today);
+  endOfToday.setHours(23, 59, 59, 999);
+  return endOfToday;
+};
+
+const isUpcomingQuarter = (periodStart: Date, analysisYear: number): boolean => {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const currentYear = today.getFullYear();
+  if (analysisYear > currentYear) return true;
+  if (analysisYear < currentYear) return false;
+  return periodStart > today;
 };
 const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const RECENT_LOCATION_MAX_AGE_DAYS = 180;
@@ -54,7 +81,7 @@ interface AnalysisProfile {
 }
 
 type ProgressPeriodKey = "q1" | "q2" | "q3" | "q4";
-type ProgressStatus = "achieved" | "on-track" | "behind" | "needs-attention";
+type ProgressStatus = "target-met" | "on-track" | "needs-attention" | "not-started";
 
 interface CacheEntry {
   expiresAt: number;
@@ -1153,6 +1180,7 @@ const createLivestockAnalytics = async (
       target: QUARTER_TARGET_MILESTONES[3],
     },
   ];
+  const quarterCountingCutoff = getQuarterCountingCutoff(analysisYear);
   const userMap: Record<
     string,
     {periods: Record<ProgressPeriodKey, number>; counties: Set<string>; currentCount: number}
@@ -1189,7 +1217,7 @@ const createLivestockAnalytics = async (
       };
     }
     userMap[username].currentCount += 1;
-    if (farmerDate && farmerDate.getFullYear() === analysisYear) {
+    if (farmerDate && quarterCountingCutoff && farmerDate.getFullYear() === analysisYear && farmerDate <= quarterCountingCutoff) {
       quarterTargets.forEach((period) => {
         if (farmerDate >= period.start && farmerDate <= period.end) {
           userMap[username].periods[period.key] += 1;
@@ -1228,11 +1256,12 @@ const createLivestockAnalytics = async (
     .map(([name, data]) => {
       const periods = quarterTargets.map((period) => {
         const count = data.periods[period.key];
+        const upcoming = isUpcomingQuarter(period.start, analysisYear);
         const progressPercentage = period.target > 0 ? (count / period.target) * 100 : 0;
         let status: ProgressStatus = "needs-attention";
-        if (progressPercentage >= 100) status = "achieved";
-        else if (progressPercentage >= 75) status = "on-track";
-        else if (progressPercentage >= 50) status = "behind";
+        if (upcoming) status = "not-started";
+        else if (progressPercentage >= 100) status = "target-met";
+        else if (progressPercentage >= 50) status = "on-track";
         return {
           key: period.key,
           label: period.label,
@@ -1240,13 +1269,15 @@ const createLivestockAnalytics = async (
           target: period.target,
           progressPercentage,
           status,
-          met: count >= period.target,
+          met: !upcoming && count >= period.target,
         };
       });
       const registeredCount = data.currentCount;
       const targetValue = activeTarget;
       const progressPercentage = targetValue > 0 ? (registeredCount / targetValue) * 100 : 0;
-      const status = progressPercentage >= 100 ? "achieved" : progressPercentage >= 75 ? "on-track" : progressPercentage >= 50 ? "behind" : "needs-attention";
+      let status: ProgressStatus = "needs-attention";
+      if (progressPercentage >= 100) status = "target-met";
+      else if (progressPercentage >= 50) status = "on-track";
       const counties = [...data.counties];
       return {
         id: name,

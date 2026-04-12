@@ -33,7 +33,16 @@ const TARGETS = {
   yearly: 1404
 };
 const QUARTER_TARGET_MILESTONES = [352, 702, 1053, 1404];
-const PROGRESS_ANALYTICS_QUERY_VERSION = "v3";
+const PROGRESS_ANALYTICS_QUERY_VERSION = "v4";
+const EMPTY_STATS = {
+  total: 0,
+  trained: 0,
+  totalAnimals: 0,
+  trainingRate: 0,
+  maleFarmers: 0,
+  femaleFarmers: 0,
+  totalTrainedFromCapacity: 0,
+};
 
 // --- Interfaces ---
 interface FarmerData {
@@ -60,7 +69,7 @@ interface TrainingData {
   programme?: string;
 }
 
-type ProgressStatus = "achieved" | "on-track" | "behind" | "needs-attention";
+type ProgressStatus = "target-met" | "on-track" | "needs-attention" | "not-started";
 
 type ProgressPeriodKey = "q1" | "q2" | "q3" | "q4";
 
@@ -72,6 +81,7 @@ interface ProgressPeriod {
   progressPercentage: number;
   status: ProgressStatus;
   met: boolean;
+  upcoming?: boolean;
 }
 
 interface UserProgress {
@@ -339,20 +349,61 @@ const getGoatTotal = (goats: any): number => {
 };
 
 const getProgressStatus = (progressPercentage: number): ProgressStatus => {
-  if (progressPercentage >= 100) return "achieved";
-  if (progressPercentage >= 75) return "on-track";
-  if (progressPercentage >= 50) return "behind";
+  if (progressPercentage >= 100) return "target-met";
+  if (progressPercentage >= 50) return "on-track";
   return "needs-attention";
 };
 
-const getAnalysisYearFromDateRange = (dateRange: { startDate?: string; endDate?: string }): number => {
+const getAnalysisYearFromDateRange = (
+  dateRange: { startDate?: string; endDate?: string },
+): number | null => {
   const startYear = parseDate(dateRange.startDate)?.getFullYear();
   if (typeof startYear === "number" && Number.isFinite(startYear)) return startYear;
 
   const endYear = parseDate(dateRange.endDate)?.getFullYear();
   if (typeof endYear === "number" && Number.isFinite(endYear)) return endYear;
 
-  return new Date().getFullYear();
+  return null;
+};
+
+const getSelectedYearFromDateRange = (dateRange: { startDate?: string; endDate?: string }): string => {
+  const startYear = parseDate(dateRange.startDate)?.getFullYear();
+  const endYear = parseDate(dateRange.endDate)?.getFullYear();
+
+  if (typeof startYear === "number" && Number.isFinite(startYear) &&
+      typeof endYear === "number" && Number.isFinite(endYear)) {
+    return startYear === endYear ? String(startYear) : "";
+  }
+  if (typeof startYear === "number" && Number.isFinite(startYear)) return String(startYear);
+  if (typeof endYear === "number" && Number.isFinite(endYear)) return String(endYear);
+  return "";
+};
+
+const getQuarterCountingCutoff = (year: number): Date | null => {
+  const today = getToday();
+  const currentYear = today.getFullYear();
+
+  if (year < currentYear) {
+    const endOfYear = new Date(year, 11, 31);
+    endOfYear.setHours(23, 59, 59, 999);
+    return endOfYear;
+  }
+
+  if (year > currentYear) {
+    return null;
+  }
+
+  const endOfToday = new Date(today);
+  endOfToday.setHours(23, 59, 59, 999);
+  return endOfToday;
+};
+
+const isUpcomingQuarter = (periodStart: Date, analysisYear: number): boolean => {
+  const today = getToday();
+  const currentYear = today.getFullYear();
+  if (analysisYear > currentYear) return true;
+  if (analysisYear < currentYear) return false;
+  return periodStart > today;
 };
 
 const buildQuarterTargets = (year: number) => [
@@ -408,17 +459,11 @@ const LivestockFarmersAnalytics = () => {
   const [selectedOfficer, setSelectedOfficer] = useState<UserProgress | null>(null);
   const [isOfficerTargetsOpen, setIsOfficerTargetsOpen] = useState(false);
   
-  const [stats, setStats] = useState({ 
-    total: 0, 
-    trained: 0, 
-    totalAnimals: 0,
-    trainingRate: 0,
-    maleFarmers: 0,
-    femaleFarmers: 0,
-    totalTrainedFromCapacity: 0
-  });
+  const [stats, setStats] = useState(EMPTY_STATS);
 
   const [dateRange, setDateRange] = useState(getCurrentYearDates);
+  const [selectedYear, setSelectedYear] = useState(() => String(getToday().getFullYear()));
+  const hasActiveDateFilters = Boolean(dateRange.startDate || dateRange.endDate);
   const targetMode = useMemo(
     () => resolveTargetMode(dateRange, filterMode),
     [dateRange, filterMode],
@@ -433,22 +478,35 @@ const LivestockFarmersAnalytics = () => {
   );
   const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
   const analysisYear = useMemo(
-    () => getAnalysisYearFromDateRange(dateRange),
-    [dateRange]
+    () => {
+      const parsedSelectedYear = Number.parseInt(selectedYear, 10);
+      if (Number.isFinite(parsedSelectedYear)) return parsedSelectedYear;
+      return getAnalysisYearFromDateRange(dateRange);
+    },
+    [dateRange, selectedYear]
   );
+  const analysisYearLabel = analysisYear ?? "All years";
   const availableYears = useMemo(() => {
     const currentYear = new Date().getFullYear();
     const years = Array.from({ length: 10 }, (_, index) => String(currentYear - index));
-    const selectedYear = String(analysisYear);
-    return years.includes(selectedYear) ? years : [selectedYear, ...years];
-  }, [analysisYear]);
+    return selectedYear && !years.includes(selectedYear) ? [selectedYear, ...years] : years;
+  }, [selectedYear]);
   const quarterTargets = useMemo(() => {
-    return buildQuarterTargets(analysisYear);
+    return analysisYear ? buildQuarterTargets(analysisYear) : [];
   }, [analysisYear]);
   const accessibleProgrammes = useMemo(
     () => resolveAccessibleProgrammes(userCanViewAllProgrammeData, allowedProgrammes),
     [allowedProgrammes, userCanViewAllProgrammeData]
   );
+  const resetAnalyticsState = useCallback(() => {
+    setStats(EMPTY_STATS);
+    setGenderData([]);
+    setAnimalCensusData([]);
+    setWeeklyPerformanceData([]);
+    setSubcountyPerformanceData([]);
+    setFilteredData([]);
+    setLocalUserProgressData([]);
+  }, []);
 
   const analyticsQuery = useQuery({
     queryKey: [
@@ -460,6 +518,7 @@ const LivestockFarmersAnalytics = () => {
       activeProgram,
       dateRange.startDate,
       dateRange.endDate,
+      selectedYear,
       targetMode,
       activeTarget,
     ],
@@ -467,7 +526,8 @@ const LivestockFarmersAnalytics = () => {
       fetchAnalysisSummary({
         scope: "livestock-analytics",
         programme: activeProgram || null,
-        dateRange,
+        dateRange: hasActiveDateFilters ? dateRange : null,
+        selectedYear: selectedYear || null,
         timeFrame: targetMode,
         target: activeTarget,
       }),
@@ -494,7 +554,7 @@ const LivestockFarmersAnalytics = () => {
     setWeeklyPerformanceData(analysis.weeklyPerformanceData || []);
     setSubcountyPerformanceData(analysis.subcountyPerformanceData || []);
     setFilteredData([]);
-  }, [analyticsQuery.data]);
+  }, [analyticsQuery.data, hasActiveDateFilters, resetAnalyticsState]);
 
   // --- 1. Fetch User Permissions ---
   useEffect(() => {
@@ -629,7 +689,7 @@ const LivestockFarmersAnalytics = () => {
   useEffect(() => {
     if (USE_REMOTE_ANALYTICS) return;
     applyFilters();
-  }, [activeTarget, allFarmers, dateRange, filterMode, trainingRecords]);
+  }, [activeTarget, allFarmers, dateRange, filterMode, hasActiveDateFilters, resetAnalyticsState, trainingRecords]);
 
   const isDateInRange = (date: any, startDate: string, endDate: string): boolean => {
     if (!startDate && !endDate) return true;
@@ -647,9 +707,11 @@ const LivestockFarmersAnalytics = () => {
   };
 
   const applyFilters = () => {
-    const filtered = allFarmers.filter(farmer => 
-      isDateInRange(farmer.createdAt, dateRange.startDate, dateRange.endDate)
-    );
+    const filtered = hasActiveDateFilters
+      ? allFarmers.filter((farmer) =>
+        isDateInRange(farmer.createdAt, dateRange.startDate, dateRange.endDate)
+      )
+      : allFarmers;
     setFilteredData(filtered);
     updateAnalytics(filtered);
   };
@@ -766,6 +828,7 @@ const LivestockFarmersAnalytics = () => {
       }
     });
 
+    const quarterCountingCutoff = analysisYear ? getQuarterCountingCutoff(analysisYear) : null;
     const quarterlyStats: Record<string, { periods: Record<ProgressPeriodKey, number>; counties: Set<string> }> = {};
     allFarmers.forEach((farmer) => {
       const officerName = String(farmer.username || "Unknown User").trim() || "Unknown User";
@@ -777,7 +840,13 @@ const LivestockFarmersAnalytics = () => {
       }
 
       const farmerDate = parseDate(farmer.createdAt || farmer.registrationDate);
-      if (farmerDate && farmerDate.getFullYear() === analysisYear) {
+      if (
+        farmerDate &&
+        analysisYear &&
+        quarterCountingCutoff &&
+        farmerDate.getFullYear() === analysisYear &&
+        farmerDate <= quarterCountingCutoff
+      ) {
         quarterTargets.forEach((period) => {
           if (farmerDate >= period.start && farmerDate <= period.end) {
             quarterlyStats[officerName].periods[period.key] += 1;
@@ -809,8 +878,9 @@ const LivestockFarmersAnalytics = () => {
         const counties = [...new Set([...currentStats.counties, ...quarterData.counties])];
         const periods = quarterTargets.map((period) => {
           const count = quarterData.periods[period.key];
+          const upcoming = analysisYear ? isUpcomingQuarter(period.start, analysisYear) : false;
           const progressPercentage = period.target > 0 ? (count / period.target) * 100 : 0;
-          const status = getProgressStatus(progressPercentage);
+          const status = upcoming ? "not-started" : getProgressStatus(progressPercentage);
           return {
             key: period.key,
             label: period.label,
@@ -818,7 +888,8 @@ const LivestockFarmersAnalytics = () => {
             target: period.target,
             progressPercentage,
             status,
-            met: count >= period.target,
+            met: !upcoming && count >= period.target,
+            upcoming,
           };
         });
 
@@ -850,8 +921,9 @@ const LivestockFarmersAnalytics = () => {
             count: 0,
             target: period.target,
             progressPercentage: 0,
-            status: "needs-attention" as ProgressStatus,
+            status: (analysisYear && isUpcomingQuarter(period.start, analysisYear) ? "not-started" : "needs-attention") as ProgressStatus,
             met: false,
+            upcoming: analysisYear ? isUpcomingQuarter(period.start, analysisYear) : false,
           }));
         const farmersRegistered = Number(user.farmersRegistered || 0);
         const target = Number(activeTarget || user.target || TARGETS.yearly);
@@ -867,27 +939,34 @@ const LivestockFarmersAnalytics = () => {
         } as UserProgress;
       });
     },
-    [activeTarget, analyticsQuery.data, localUserProgressData, quarterTargets],
+    [activeTarget, analysisYear, analyticsQuery.data, localUserProgressData, quarterTargets],
   );
 
   const handleDateRangeChange = (key: string, value: string) => {
-    setDateRange(prev => ({ ...prev, [key]: value }));
+    setDateRange(prev => {
+      const nextRange = { ...prev, [key]: value };
+      setSelectedYear(getSelectedYearFromDateRange(nextRange));
+      return nextRange;
+    });
     setFilterMode("custom");
   };
 
   // Filter Buttons
   const setWeekFilter = () => {
     setDateRange(getCurrentWeekDates());
+    setSelectedYear(String(getToday().getFullYear()));
     setFilterMode("weekly");
   };
 
   const setMonthFilter = () => {
     setDateRange(getCurrentMonthDates());
+    setSelectedYear(String(getToday().getFullYear()));
     setFilterMode("monthly");
   };
 
   const setYearFilter = () => {
     setDateRange(getCurrentYearDates());
+    setSelectedYear(String(getToday().getFullYear()));
     setFilterMode("yearly");
   };
 
@@ -895,6 +974,7 @@ const LivestockFarmersAnalytics = () => {
     const year = Number.parseInt(yearValue, 10);
     if (!Number.isFinite(year)) return;
 
+    setSelectedYear(yearValue);
     setDateRange({
       startDate: `${year}-01-01`,
       endDate: `${year}-12-31`,
@@ -903,9 +983,11 @@ const LivestockFarmersAnalytics = () => {
   };
 
   const clearFilters = () => {
-    const currentYearRange = getCurrentYearDates();
-    setDateRange(currentYearRange);
-    setFilterMode("yearly");
+    setDateRange({ startDate: "", endDate: "" });
+    setSelectedYear("");
+    setFilterMode("custom");
+    setSelectedOfficer(null);
+    setIsOfficerTargetsOpen(false);
   };
 
   const renderCustomizedLabel = useCallback(({
@@ -1018,6 +1100,7 @@ const LivestockFarmersAnalytics = () => {
                   type="date"
                   value={dateRange.startDate}
                   onChange={(e) => handleDateRangeChange("startDate", e.target.value)}
+                  disabled={!hasActiveDateFilters}
                   className="h-9 border-gray-200 px-3 text-sm focus:border-blue-500"
                 />
 
@@ -1025,6 +1108,7 @@ const LivestockFarmersAnalytics = () => {
                   type="date"
                   value={dateRange.endDate}
                   onChange={(e) => handleDateRangeChange("endDate", e.target.value)}
+                  disabled={!hasActiveDateFilters}
                   className="h-9 border-gray-200 px-3 text-sm focus:border-blue-500"
                 />
 
@@ -1043,7 +1127,7 @@ const LivestockFarmersAnalytics = () => {
                   </Select>
                 ) : null}
 
-                <Select value={String(analysisYear)} onValueChange={handleYearChange}>
+                <Select value={selectedYear || ""} onValueChange={handleYearChange} disabled={!hasActiveDateFilters}>
                   <SelectTrigger className="h-9 w-full border-gray-200 text-sm">
                     <SelectValue placeholder="Select Year" />
                   </SelectTrigger>
@@ -1089,7 +1173,7 @@ const LivestockFarmersAnalytics = () => {
         </Card>
       </div>
 
-      {stats.total === 0 ? (
+      {hasActiveDateFilters && stats.total === 0 && filteredData.length === 0 ? (
         <Card className="border-amber-200 bg-amber-50">
           <CardHeader>
             <CardTitle className="flex items-center text-base text-amber-800">
@@ -1099,7 +1183,7 @@ const LivestockFarmersAnalytics = () => {
           </CardHeader>
           <CardContent>
             <p className="text-sm text-amber-700">
-              No farmers were found for the selected date range. Change the dates or use Clear to return to the current year.
+              No farmers were found for the selected date range. Change the dates or use Clear to reset the filters.
             </p>
           </CardContent>
         </Card>
@@ -1156,7 +1240,12 @@ const LivestockFarmersAnalytics = () => {
                 </thead>
                 <tbody>
                   {userProgressData.map((user) => {
-                    const hasMetCurrentTarget = user.farmersRegistered >= user.target;
+                    const statusLabel =
+                      user.status === "target-met"
+                        ? "Target met"
+                        : user.status === "on-track"
+                          ? "On track"
+                          : "Action Needed";
                     return (
                       <tr key={user.id} className="border-b border-slate-100 transition-colors hover:bg-blue-50/40">
                         <td className="px-4 py-2 font-medium text-slate-900">
@@ -1174,9 +1263,8 @@ const LivestockFarmersAnalytics = () => {
                             <div className="h-2 w-28 rounded-full bg-slate-100">
                               <div
                                 className={`h-2 rounded-full transition-all duration-500 ${
-                                  user.status === "achieved" ? "bg-green-500" :
+                                  user.status === "target-met" ? "bg-green-500" :
                                   user.status === "on-track" ? "bg-blue-500" :
-                                  user.status === "behind" ? "bg-yellow-500" :
                                   "bg-red-400"
                                 }`}
                                 style={{ width: `${Math.min(user.progressPercentage, 100)}%` }}
@@ -1188,8 +1276,12 @@ const LivestockFarmersAnalytics = () => {
                           </div>
                         </td>
                         <td className="px-4 py-2">
-                          <span className={`text-sm font-semibold ${hasMetCurrentTarget ? "text-green-700" : "text-red-700"}`}>
-                            {hasMetCurrentTarget ? "Met target" : "Action Needed"}
+                          <span className={`text-sm font-semibold ${
+                            user.status === "target-met" ? "text-green-700" :
+                            user.status === "on-track" ? "text-blue-700" :
+                            "text-red-700"
+                          }`}>
+                            {statusLabel}
                           </span>
                         </td>
                         <td className="px-4 py-2">
@@ -1206,7 +1298,7 @@ const LivestockFarmersAnalytics = () => {
                       </tr>
                     );
                   })}
-                  {userProgressData.length === 0 && (
+                  {userProgressData.length === 0 && hasActiveDateFilters && stats.total === 0 && filteredData.length === 0 && (
                     <tr>
                       <td colSpan={7} className="bg-gray-50 py-8 text-center text-gray-500">
                         No farmer data available for the selected filters.
@@ -1225,7 +1317,7 @@ const LivestockFarmersAnalytics = () => {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-gray-800">
               <Eye className="h-5 w-5 text-blue-600" />
-              {selectedOfficer ? `${selectedOfficer.name} Quarterly Targets ${analysisYear}` : `Quarterly Targets (${analysisYear})`}
+              {selectedOfficer ? `${selectedOfficer.name} Quarterly Targets ${analysisYearLabel}` : `Quarterly Targets (${analysisYearLabel})`}
             </DialogTitle>
            
           </DialogHeader>
@@ -1235,7 +1327,7 @@ const LivestockFarmersAnalytics = () => {
               <div className="grid gap-3 sm:grid-cols-3">
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
                   <p className="text-xs uppercase tracking-wide text-slate-500">Analysis Year</p>
-                  <p className="mt-1 text-sm font-semibold text-slate-900">{analysisYear}</p>
+                  <p className="mt-1 text-sm font-semibold text-slate-900">{analysisYearLabel}</p>
                 </div>
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
                   <p className="text-xs uppercase tracking-wide text-slate-500">Registered</p>
@@ -1246,9 +1338,15 @@ const LivestockFarmersAnalytics = () => {
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
                   <p className="text-xs uppercase tracking-wide text-slate-500">Target Result</p>
                   <p className={`mt-1 text-sm font-semibold ${
-                    selectedOfficer.farmersRegistered >= selectedOfficer.target ? "text-green-700" : "text-red-700"
+                    selectedOfficer.farmersRegistered >= selectedOfficer.target ? "text-green-700" :
+                    selectedOfficer.farmersRegistered / Math.max(1, selectedOfficer.target) >= 0.5 ? "text-blue-700" :
+                    "text-red-700"
                   }`}>
-                    {selectedOfficer.farmersRegistered >= selectedOfficer.target ? "Met target" : "Action Needed"}
+                    {selectedOfficer.farmersRegistered >= selectedOfficer.target
+                      ? "Target met"
+                      : selectedOfficer.farmersRegistered / Math.max(1, selectedOfficer.target) >= 0.5
+                        ? "On track"
+                        : "Action Needed"}
                   </p>
                 </div>
               </div>
@@ -1267,6 +1365,8 @@ const LivestockFarmersAnalytics = () => {
                   <tbody>
                     {selectedOfficer.periods.map((period) => {
                       const progressPercent = Math.min(period.progressPercentage, 100);
+                      const fallbackQuarter = quarterTargets.find((entry) => entry.key === period.key);
+                      const isUpcoming = period.upcoming ?? (analysisYear && fallbackQuarter ? isUpcomingQuarter(fallbackQuarter.start, analysisYear) : false);
                       return (
                         <tr key={period.key} className="border-b border-slate-100">
                           <td className="px-4 py-4 font-medium text-slate-900">{period.label}</td>
@@ -1276,23 +1376,31 @@ const LivestockFarmersAnalytics = () => {
                             <div className="flex items-center gap-3">
                               <div className="h-2 w-28 rounded-full bg-slate-100">
                                 <div
-                                  className={`h-2 rounded-full transition-all duration-500 ${
-                                    period.status === "achieved" ? "bg-green-500" :
-                                    period.status === "on-track" ? "bg-blue-500" :
-                                    period.status === "behind" ? "bg-yellow-500" :
-                                    "bg-red-400"
-                                  }`}
-                                  style={{ width: `${progressPercent}%` }}
-                                />
-                              </div>
+                                className={`h-2 rounded-full transition-all duration-500 ${
+                                  period.status === "target-met" ? "bg-green-500" :
+                                  period.status === "on-track" ? "bg-blue-500" :
+                                  period.status === "not-started" ? "bg-slate-300" :
+                                  "bg-red-400"
+                                }`}
+                                style={{ width: `${progressPercent}%` }}
+                              />
+                            </div>
                               <span className="text-xs font-medium text-slate-600">
                                 {period.progressPercentage.toFixed(0)}%
                               </span>
                             </div>
                           </td>
                           <td className="px-4 py-4">
-                            <span className={`text-sm font-semibold ${period.met ? "text-green-700" : "text-red-700"}`}>
-                              {period.met ? "Met target" : "Action Needed"}
+                            <span className={`text-sm font-semibold ${
+                              period.status === "target-met" ? "text-green-700" :
+                              period.status === "on-track" ? "text-blue-700" :
+                              period.status === "not-started" ? "text-slate-600" :
+                              "text-red-700"
+                            }`}>
+                              {period.status === "target-met" ? "Target met" :
+                                period.status === "on-track" ? "On track" :
+                                period.status === "not-started" ? "Not started" :
+                                "Action Needed"}
                             </span>
                           </td>
                         </tr>
