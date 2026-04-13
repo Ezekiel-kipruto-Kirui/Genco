@@ -1098,7 +1098,7 @@ const formatNumber = (val?: number | null) =>
         <div className="flex flex-col gap-4 md:gap-6">
           <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
             <div>
-              <h1 className="text-xl md:text-xl font-bold text-gray-900 tracking-tight">Finance Dashboard</h1>
+              <h1 className="text-md md:text-xl font-bold text-gray-900 tracking-tight">Sales metrics dashboard</h1>
               <p className="text-sm text-gray-500 mt-1 flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-blue-600"></span>
                 Viewing Data: <span className="font-semibold text-blue-700">{activeProgram || "All Programmes"}</span>
