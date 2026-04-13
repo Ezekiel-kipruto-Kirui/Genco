@@ -119,9 +119,9 @@ const AVAILABLE_PROGRAMMES = [
   "RANGE"
 ];
 const USER_ATTRIBUTE_OPTIONS = [
-  "CEO",
-  "Project Manager",
-  "Chief Operations Manager",
+  "Chief Executive Officer",
+  "Chief operational Officer",
+  "Project Officer",
   "Human Resource Manager",
   "M&E Officer",
   "Finance",
@@ -140,7 +140,8 @@ const LEGACY_ROLE_ATTRIBUTE_MAP: Record<string, string> = {
   "human resource manager": "Human Resource Manager",
   "humman resource manger": "Human Resource Manager",
   "human resource manger": "Human Resource Manager",
-  "project manager": "Project Manager",
+  "project manager": "Project Officer",
+  "project officer": "Project Officer",
   "m&e officer": "M&E Officer",
   "mne officer": "M&E Officer",
   "me officer": "M&E Officer",
@@ -148,10 +149,12 @@ const LEGACY_ROLE_ATTRIBUTE_MAP: Record<string, string> = {
   "monitoring & evaluation officer": "M&E Officer",
   "finance": "Finance",
   "offtake officer": "Offtake Officer",
-  "ceo": "CEO",
-  "chief operations manager": "Chief Operations Manager",
-  "chief operational manager": "Chief Operations Manager",
-  "chief operatons manger": "Chief Operations Manager",
+  "ceo": "Chief Executive Officer",
+  "chief executive officer": "Chief Executive Officer",
+  "chief operations manager": "Chief operational Officer",
+  "chief operational manager": "Chief operational Officer",
+  "chief operational officer": "Chief operational Officer",
+  "chief operatons manger": "Chief operational Officer",
 };
 
 const USER_MANAGEMENT_CACHE_KEY = cacheKey("admin-page", "users");

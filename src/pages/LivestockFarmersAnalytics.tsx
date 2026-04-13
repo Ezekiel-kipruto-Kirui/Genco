@@ -272,61 +272,24 @@ const countCoveredWeeks = (start: Date, end: Date): number => {
   return Math.max(1, total);
 };
 
-const countCoveredMonths = (start: Date, end: Date): number => {
-  let total = 0;
-  let cursor = new Date(start.getFullYear(), start.getMonth(), 1);
-  cursor.setHours(0, 0, 0, 0);
-
-  while (cursor <= end) {
-    total += 1;
-    cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
-    cursor.setHours(0, 0, 0, 0);
-  }
-
-  return Math.max(1, total);
-};
-
-const countCoveredYears = (start: Date, end: Date): number =>
-  Math.max(1, end.getFullYear() - start.getFullYear() + 1);
-
 const resolveTargetMode = (
   dateRange: { startDate?: string; endDate?: string },
   filterMode: FilterMode,
 ): Exclude<FilterMode, "custom"> => {
   if (filterMode !== "custom") return filterMode;
   if (!dateRange.startDate && !dateRange.endDate) return "yearly";
-
-  const { start, end } = normalizeDateRange(dateRange);
-  const sameMonth = start.getFullYear() === end.getFullYear() && start.getMonth() === end.getMonth();
-  const sameYear = start.getFullYear() === end.getFullYear();
-
-  if (isSameCalendarWeek(start, end)) return "weekly";
-  if (sameMonth) return "monthly";
-  if (sameYear) return "monthly";
-  return "yearly";
+  return "weekly";
 };
 
 const calculateActiveTarget = (
   dateRange: { startDate?: string; endDate?: string },
   targetMode: Exclude<FilterMode, "custom">,
 ): number => {
-  if (!dateRange.startDate && !dateRange.endDate) {
-    return targetMode === "weekly"
-      ? TARGETS.weekly
-      : targetMode === "monthly"
-        ? TARGETS.monthly
-        : TARGETS.yearly;
-  }
+  if (!dateRange.startDate && !dateRange.endDate) return TARGETS.yearly;
   const { start, end } = normalizeDateRange(dateRange);
-
-  const target =
-    targetMode === "weekly"
-      ? countCoveredWeeks(start, end) * TARGETS.weekly
-      : targetMode === "monthly"
-        ? countCoveredMonths(start, end) * TARGETS.monthly
-        : countCoveredYears(start, end) * TARGETS.yearly;
-
-  return Math.max(1, Math.round(target));
+  if (targetMode === "weekly") return countCoveredWeeks(start, end) * TARGETS.weekly;
+  if (targetMode === "monthly") return TARGETS.monthly;
+  return TARGETS.yearly;
 };
 
 const normalizeProgramme = (value: unknown): string =>
@@ -434,14 +397,14 @@ const buildQuarterTargets = (year: number) => [
     label: `Q3 ${year}`,
     start: new Date(year, 6, 1),
     end: new Date(year, 8, 30),
-    target: QUARTER_TARGET_MILESTONES[2],
+    target: year === getToday().getFullYear() ? 0 : QUARTER_TARGET_MILESTONES[2],
   },
   {
     key: "q4" as const,
     label: `Q4 ${year}`,
     start: new Date(year, 9, 1),
     end: new Date(year, 11, 31),
-    target: QUARTER_TARGET_MILESTONES[3],
+    target: year === getToday().getFullYear() ? 0 : QUARTER_TARGET_MILESTONES[3],
   },
 ];
 
