@@ -16,7 +16,7 @@ import {
 } from "recharts";
 import { 
   Beef, TrendingUp, Award, Star, 
-  MapPin, DollarSign, Package, Users, Loader2, Calendar, Filter, Zap, ChevronDown, Calculator
+  MapPin, DollarSign, Package, Users, Loader2, Calendar, Filter, Zap, ChevronDown, Calculator, ChevronLeft, ChevronRight
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -145,7 +145,15 @@ interface SalesAnalyticsPayload {
   genderData: Array<{ name: string; value: number }>;
   countyData: Array<{ name: string; count: number }>;
   topLocations: Array<{ name: string; count: number }>;
-  topFarmers: Array<{ name: string; purchaseCost: number; animals: number; goats: number; county: string; records: number }>;
+  topFarmers: Array<{
+    name: string;
+    purchaseCost?: number;
+    revenue?: number;
+    animals: number;
+    goats: number;
+    county: string;
+    records: number;
+  }>;
   monthlyTrend: Array<{ month: string; revenue: number; volume: number }>;
   requisitionTrend: Array<{ month: string; count: number; amount: number }>;
   top3Months: Array<{ month: string; animalsPurchased: number; purchaseCost: number }>;
@@ -793,6 +801,7 @@ const SalesReport = () => {
   } = useOfftakeData(offtakeData, orderData, requisitionData, dateRange, analysisProgramme, salesInputs);
 
   const unsubscribeRef = useRef<(() => void) | null>(null);
+  const filterStripRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     try {
@@ -1060,6 +1069,12 @@ const formatNumber = (val?: number | null) =>
     });
   };
   const handleProgramChange = (program: string) => { setActiveProgram(program); setSelectedProgramme(program); };
+  const scrollFilterStripBy = useCallback((direction: "left" | "right") => {
+    const strip = filterStripRef.current;
+    if (!strip) return;
+    const offset = direction === "left" ? -220 : 220;
+    strip.scrollBy({ left: offset, behavior: "smooth" });
+  }, []);
 
   const goatPct = stats.totalAnimals > 0 ? ((stats.totalGoats / stats.totalAnimals) * 100).toFixed(1) : 0;
   const sheepPct = stats.totalAnimals > 0 ? ((stats.totalSheep / stats.totalAnimals) * 100).toFixed(1) : 0;
@@ -1098,86 +1113,110 @@ const formatNumber = (val?: number | null) =>
             )}
           </div>
 
-          {/* Modern Responsive Filter Control Panel */}
-          <div className="w-full lg:w-auto border-0 shadow-lg bg-white p-2"> 
-            <div className="flex flex-col lg:flex-row gap-2 items-center ">
-              
-              
-             
-                <Select value={selectedYear} onValueChange={handleYearChange}>
-                  <SelectTrigger className="h-10 w-full rounded-lg border-gray-300 focus:ring-blue-500 focus:border-blue-500 bg-gray-50/50">
-                    <Calendar className="h-4 w-4 text-gray-500 mr-2" />
-                    <SelectValue placeholder="Year" />
-                  </SelectTrigger>
-                  <SelectContent>
-                     {availableYears.map(year => <SelectItem key={year} value={year}>{year}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-             
+          <Card className="w-full border-0 bg-white shadow-lg">
+            <CardContent className="px-3 py-3">
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => scrollFilterStripBy("left")}
+                  className="h-9 w-9 shrink-0 rounded-full border border-slate-200 bg-white text-slate-800 shadow-sm hover:bg-slate-50 sm:hidden"
+                >
+                  <ChevronLeft className="h-5 w-5" />
+                  <span className="sr-only">Scroll filters left</span>
+                </Button>
 
-          
-              {showProgrammeFilter && (
-                <div className="sm:col-span-1 xl:col-span-2 space-y-1.5">
-                  <Select value={activeProgram} onValueChange={handleProgramChange}>
-                    <SelectTrigger className="h-10 w-full rounded-lg border-gray-300 focus:ring-blue-500 focus:border-blue-500 bg-gray-50/50">
-                      <SelectValue placeholder="Select" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="KPMD">KPMD</SelectItem>
-                      <SelectItem value="RANGE">RANGE</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
-
-            
-              
-                  <Input
-                    id="startDate"
-                    type="date"
-                    value={dateRange.startDate}
-                    onChange={(e) => handleDateRangeChange("startDate", e.target.value)}
-                    className="h-10 w-full min-w-0 text-sm rounded-lg border-gray-300 focus:ring-blue-500 focus:border-blue-500 bg-gray-50/50 pr-2"
-                  />
-                
-                  
-                  <Input
-                    id="endDate"
-                    type="date"
-                    value={dateRange.endDate}
-                    onChange={(e) => handleDateRangeChange("endDate", e.target.value)}
-                    className="h-10 w-full min-w-0 text-sm rounded-lg border-gray-300 focus:ring-blue-500 focus:border-blue-500 bg-gray-50/50 pr-2"
-                  />
-                  <Button variant="outline" onClick={setWeekFilter} size="sm" className="rounded-lg text-xs h-9 px-3">Week</Button>
-                  <Button variant="outline" onClick={setMonthFilter} size="sm" className="rounded-lg text-xs h-9 px-3">Month</Button>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="outline" size="sm" className="rounded-lg text-xs h-9 px-3 gap-1">
-                        Quarters <ChevronDown className="h-3 w-3" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem onClick={() => setQFilter(1)}>Q1 (Jan-Mar)</DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => setQFilter(2)}>Q2 (Apr-Jun)</DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => setQFilter(3)}>Q3 (Jul-Sep)</DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => setQFilter(4)}>Q4 (Oct-Dec)</DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>                  
-                  
-                  {/* Added type="button" to prevent form submission issues */}
-                  <Button 
-                    type="button"
-                    onClick={clearFilters} 
-                    variant="ghost" 
-                    size="sm" 
-                    className="rounded-lg text-xs h-9 px-3 text-red-500 hover:bg-red-50 hover:text-red-600"
+                <div className="min-w-0 flex-1 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+                  <div
+                    ref={filterStripRef}
+                    className="w-full overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
                   >
-                    Reset
-                  </Button>
-                
-            
-            </div>
-          </div>
+                    <div className="flex min-w-max flex-nowrap items-center gap-2 p-1">
+                      <Select value={selectedYear} onValueChange={handleYearChange}>
+                        <SelectTrigger className="h-9 w-[150px] shrink-0 border-gray-200 text-sm">
+                          <div className="flex items-center gap-2">
+                            <Calendar className="h-4 w-4 text-gray-500" />
+                            <SelectValue placeholder="Year" />
+                          </div>
+                        </SelectTrigger>
+                        <SelectContent>
+                          {availableYears.map((year) => (
+                            <SelectItem key={year} value={year}>{year}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+
+                      {showProgrammeFilter && (
+                        <Select value={activeProgram} onValueChange={handleProgramChange}>
+                          <SelectTrigger className="h-9 w-[150px] shrink-0 border-gray-200 text-sm">
+                            <SelectValue placeholder="Select" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="KPMD">KPMD</SelectItem>
+                            <SelectItem value="RANGE">RANGE</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      )}
+
+                      <Input
+                        id="startDate"
+                        type="date"
+                        value={dateRange.startDate}
+                        onChange={(e) => handleDateRangeChange("startDate", e.target.value)}
+                        className="h-9 w-[150px] shrink-0 border-gray-200 pr-2 text-xs focus:border-blue-500"
+                      />
+
+                      <Input
+                        id="endDate"
+                        type="date"
+                        value={dateRange.endDate}
+                        onChange={(e) => handleDateRangeChange("endDate", e.target.value)}
+                        className="h-9 w-[150px] shrink-0 border-gray-200 pr-2 text-xs focus:border-blue-500"
+                      />
+
+                      <Button variant="outline" onClick={setWeekFilter} size="sm" className="h-9 shrink-0 text-xs">Week</Button>
+                      <Button variant="outline" onClick={setMonthFilter} size="sm" className="h-9 shrink-0 text-xs">Month</Button>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="outline" size="sm" className="h-9 shrink-0 text-xs gap-1">
+                            Quarters <ChevronDown className="h-3 w-3" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem onClick={() => setQFilter(1)}>Q1 (Jan-Mar)</DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => setQFilter(2)}>Q2 (Apr-Jun)</DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => setQFilter(3)}>Q3 (Jul-Sep)</DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => setQFilter(4)}>Q4 (Oct-Dec)</DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+
+                      <Button
+                        type="button"
+                        onClick={clearFilters}
+                        variant="ghost"
+                        size="sm"
+                        className="h-9 shrink-0 text-red-500 hover:text-red-600"
+                      >
+                        Reset
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => scrollFilterStripBy("right")}
+                  className="h-9 w-9 shrink-0 rounded-full border border-slate-200 bg-white text-slate-800 shadow-sm hover:bg-slate-50 sm:hidden"
+                >
+                  <ChevronRight className="h-5 w-5" />
+                  <span className="sr-only">Scroll filters right</span>
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
 
           <div className="grid gap-2 sm:grid-cols-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-xs text-slate-700">
             <p><span className="font-semibold">Price/Kg:</span> {formatCurrency(stats.pricePerKg)} (carcass)</p>
@@ -1279,7 +1318,7 @@ const formatNumber = (val?: number | null) =>
                           </div>
                         </div>
                         <div className="text-right">
-                          <p className="text-sm font-bold text-green-700">{formatCurrency(m.purchaseCost)}</p>
+                          <p className="text-sm font-bold text-green-700">{formatCurrency(m.purchaseCost ?? 0)}</p>
                           <p className="text-[11px] text-gray-500">Purchase cost</p>
                         </div>
                       </div>
@@ -1335,7 +1374,10 @@ const formatNumber = (val?: number | null) =>
                           {idx + 1}
                         </div>
                         <div>
-                          <p className="text-sm font-bold text-gray-800">{farmer.name}</p>
+                        <p className="text-sm font-bold text-gray-800">
+                          <span className="inline md:hidden">{farmer.name?.split(" ")[0] || farmer.name}</span>
+                          <span className="hidden md:inline">{farmer.name}</span>
+                        </p>
                           <p className="text-[11px] text-gray-500 flex items-center gap-1">
                              <MapPin className="h-3 w-3" />
                              <span>{farmer.county || "Unknown"}</span>
@@ -1345,7 +1387,9 @@ const formatNumber = (val?: number | null) =>
                         </div>
                       </div>
                       <div className="text-right">
-                        <p className="text-sm font-bold text-green-700">{formatCurrency(farmer.purchaseCost)}</p>
+                        <p className="text-sm font-bold text-green-700">
+                          {formatCurrency(farmer.purchaseCost ?? farmer.revenue ?? 0)}
+                        </p>
                         <p className="text-[11px] text-gray-500">Purchase cost</p>
                       </div>
                     </div>

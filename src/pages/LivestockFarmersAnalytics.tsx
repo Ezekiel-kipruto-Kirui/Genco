@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { ref, onValue } from "firebase/database";
 import { db } from "@/lib/firebase"; // Ensure this is getDatabase()
 import { useAuth } from "@/contexts/AuthContext";
@@ -9,7 +9,7 @@ import {
   PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip, 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, BarChart, Bar 
 } from "recharts";
-import { Users, GraduationCap, Beef, Map, UserCheck, AlertCircle, Activity, Eye } from "lucide-react";
+import { Users, GraduationCap, Beef, Map, UserCheck, AlertCircle, Activity, Eye, ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -294,6 +294,7 @@ const resolveTargetMode = (
   filterMode: FilterMode,
 ): Exclude<FilterMode, "custom"> => {
   if (filterMode !== "custom") return filterMode;
+  if (!dateRange.startDate && !dateRange.endDate) return "yearly";
 
   const { start, end } = normalizeDateRange(dateRange);
   const sameMonth = start.getFullYear() === end.getFullYear() && start.getMonth() === end.getMonth();
@@ -309,6 +310,13 @@ const calculateActiveTarget = (
   dateRange: { startDate?: string; endDate?: string },
   targetMode: Exclude<FilterMode, "custom">,
 ): number => {
+  if (!dateRange.startDate && !dateRange.endDate) {
+    return targetMode === "weekly"
+      ? TARGETS.weekly
+      : targetMode === "monthly"
+        ? TARGETS.monthly
+        : TARGETS.yearly;
+  }
   const { start, end } = normalizeDateRange(dateRange);
 
   const target =
@@ -458,6 +466,7 @@ const LivestockFarmersAnalytics = () => {
   const [localUserProgressData, setLocalUserProgressData] = useState<UserProgress[]>([]);
   const [selectedOfficer, setSelectedOfficer] = useState<UserProgress | null>(null);
   const [isOfficerTargetsOpen, setIsOfficerTargetsOpen] = useState(false);
+  const filterStripRef = useRef<HTMLDivElement | null>(null);
   
   const [stats, setStats] = useState(EMPTY_STATS);
 
@@ -468,10 +477,28 @@ const LivestockFarmersAnalytics = () => {
     () => resolveTargetMode(dateRange, filterMode),
     [dateRange, filterMode],
   );
-  const activeTarget = useMemo(
-    () => calculateActiveTarget(dateRange, targetMode),
-    [dateRange, targetMode],
-  );
+  const coverageYears = useMemo(() => {
+    if (hasActiveDateFilters) return null;
+    const years = allFarmers
+      .map((farmer) => parseDate(farmer.createdAt || farmer.registrationDate)?.getFullYear())
+      .filter((year): year is number => typeof year === "number" && Number.isFinite(year));
+    if (years.length === 0) return null;
+    const minYear = Math.min(...years);
+    const maxYear = Math.max(...years);
+    return {
+      count: Math.max(1, maxYear - minYear + 1),
+      start: minYear,
+      end: maxYear,
+    };
+  }, [allFarmers, hasActiveDateFilters]);
+
+  const computedTarget = useMemo(() => {
+    if (!hasActiveDateFilters && coverageYears?.count) {
+      return coverageYears.count * TARGETS.yearly;
+    }
+    return calculateActiveTarget(dateRange, targetMode);
+  }, [coverageYears, dateRange, hasActiveDateFilters, targetMode]);
+
   const userCanViewAllProgrammeData = useMemo(
     () => canViewAllProgrammes(userRole, userAttribute, allowedProgrammes),
     [allowedProgrammes, userRole, userAttribute]
@@ -519,7 +546,7 @@ const LivestockFarmersAnalytics = () => {
       dateRange.endDate,
       selectedYear,
       targetMode,
-      activeTarget,
+      computedTarget,
     ],
     queryFn: () =>
       fetchAnalysisSummary({
@@ -528,12 +555,20 @@ const LivestockFarmersAnalytics = () => {
         dateRange: hasActiveDateFilters ? dateRange : null,
         selectedYear: selectedYear || null,
         timeFrame: targetMode,
-        target: activeTarget,
+        target: hasActiveDateFilters ? computedTarget : null,
       }),
     enabled: USE_REMOTE_ANALYTICS && !!activeProgram,
     placeholderData: (previousData) => previousData,
     staleTime: 2 * 60 * 1000,
   });
+
+  const effectiveTarget = useMemo(() => {
+    if (!hasActiveDateFilters && USE_REMOTE_ANALYTICS) {
+      const serverTarget = Number((analyticsQuery.data as any)?.activeTarget);
+      return Number.isFinite(serverTarget) && serverTarget > 0 ? serverTarget : computedTarget;
+    }
+    return computedTarget;
+  }, [analyticsQuery.data, computedTarget, hasActiveDateFilters]);
 
   useEffect(() => {
     const analysis = analyticsQuery.data as any;
@@ -688,7 +723,7 @@ const LivestockFarmersAnalytics = () => {
   useEffect(() => {
     if (USE_REMOTE_ANALYTICS) return;
     applyFilters();
-  }, [activeTarget, allFarmers, dateRange, filterMode, hasActiveDateFilters, resetAnalyticsState, trainingRecords]);
+  }, [allFarmers, dateRange, effectiveTarget, filterMode, hasActiveDateFilters, resetAnalyticsState, trainingRecords]);
 
   const isDateInRange = (date: any, startDate: string, endDate: string): boolean => {
     if (!startDate && !endDate) return true;
@@ -862,7 +897,7 @@ const LivestockFarmersAnalytics = () => {
       ...Object.keys(currentPeriodStats),
       ...Object.keys(quarterlyStats),
     ]);
-    const currentTarget = Math.max(1, Math.round(activeTarget));
+    const currentTarget = Math.max(1, Math.round(effectiveTarget));
 
     const localProgress = [...officerNames]
       .map((name) => {
@@ -924,7 +959,7 @@ const LivestockFarmersAnalytics = () => {
             upcoming: isUpcomingQuarter(period.start, quarterYear),
           }));
         const farmersRegistered = Number(user.farmersRegistered || 0);
-        const target = Number(activeTarget || user.target || TARGETS.yearly);
+        const target = Number(effectiveTarget || user.target || TARGETS.yearly);
         const progressPercentage = target > 0 ? (farmersRegistered / target) * 100 : 0;
         const status = getProgressStatus(progressPercentage);
         return {
@@ -937,7 +972,7 @@ const LivestockFarmersAnalytics = () => {
         } as UserProgress;
       });
     },
-    [activeTarget, analyticsQuery.data, localUserProgressData, quarterTargets, quarterYear],
+    [analyticsQuery.data, effectiveTarget, localUserProgressData, quarterTargets, quarterYear],
   );
 
   const handleDateRangeChange = (key: string, value: string) => {
@@ -1035,6 +1070,13 @@ const LivestockFarmersAnalytics = () => {
       ? "text-xs h-9 bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100"
       : "text-xs h-9";
 
+  const scrollFilterStripBy = useCallback((direction: "left" | "right") => {
+    const strip = filterStripRef.current;
+    if (!strip) return;
+    const offset = direction === "left" ? -220 : 220;
+    strip.scrollBy({ left: offset, behavior: "smooth" });
+  }, []);
+
   const openOfficerTargets = useCallback((officer: UserProgress) => {
     setSelectedOfficer(officer);
     setIsOfficerTargetsOpen(true);
@@ -1091,81 +1133,108 @@ const LivestockFarmersAnalytics = () => {
         <h1 className="text-lg font-semibold tracking-tight text-gray-900">Livestock Farmers Dashboard</h1>
 
         <Card className="w-full border-0 bg-white shadow-lg">
-          <CardContent className="p-4">
-            <div className="space-y-3">
-              <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 items-center gap-2 flex-wrap">
-                <Input
-                  type="date"
-                  value={dateRange.startDate}
-                  onChange={(e) => handleDateRangeChange("startDate", e.target.value)}
-                  disabled={!hasActiveDateFilters}
-                  className="h-9 border-gray-200 px-3 text-sm focus:border-blue-500"
-                />
+          <CardContent className="px-3 py-3">
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={() => scrollFilterStripBy("left")}
+                className="h-9 w-9 shrink-0 rounded-full border border-slate-200 bg-white text-slate-800 shadow-sm hover:bg-slate-50 sm:hidden"
+              >
+                <ChevronLeft className="h-5 w-5" />
+                <span className="sr-only">Scroll filters left</span>
+              </Button>
 
-                <Input
-                  type="date"
-                  value={dateRange.endDate}
-                  onChange={(e) => handleDateRangeChange("endDate", e.target.value)}
-                  disabled={!hasActiveDateFilters}
-                  className="h-9 border-gray-200 px-3 text-sm focus:border-blue-500"
-                />
+              <div className="min-w-0 flex-1 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+                <div
+                  ref={filterStripRef}
+                  className="w-full overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+                >
+                  <div className="flex min-w-max flex-nowrap items-center gap-2 p-1">
+                    <Input
+                      type="date"
+                      value={dateRange.startDate}
+                      onChange={(e) => handleDateRangeChange("startDate", e.target.value)}
+                      className="h-9 w-[150px] shrink-0 border-gray-200 pr-2 text-xs focus:border-blue-500"
+                    />
 
-                {availablePrograms.length > 1 ? (
-                  <Select value={activeProgram} onValueChange={setActiveProgram}>
-                    <SelectTrigger className="h-9 w-full border-gray-200 text-sm">
-                      <SelectValue placeholder="Select Programme" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {availablePrograms.map((p) => (
-                        <SelectItem key={p} value={p}>
-                          {p}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                ) : null}
+                    <Input
+                      type="date"
+                      value={dateRange.endDate}
+                      onChange={(e) => handleDateRangeChange("endDate", e.target.value)}
+                      className="h-9 w-[150px] shrink-0 border-gray-200 pr-2 text-xs focus:border-blue-500"
+                    />
 
-                <Select value={selectedYear || ""} onValueChange={handleYearChange} disabled={!hasActiveDateFilters}>
-                  <SelectTrigger className="h-9 w-full border-gray-200 text-sm">
-                    <SelectValue placeholder="Select Year" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {availableYears.map((year) => (
-                      <SelectItem key={year} value={year}>
-                        {year}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={setWeekFilter}
-                  className={`${getFilterButtonClass(filterMode === "weekly")} w-full`}
-                >
-                  This Week
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={setMonthFilter}
-                  className={`${getFilterButtonClass(filterMode === "monthly")} w-full`}
-                >
-                  This Month
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={setYearFilter}
-                  className={`${getFilterButtonClass(filterMode === "yearly")} w-full`}
-                >
-                  This Year
-                </Button>
-                <Button size="sm" onClick={clearFilters} variant="secondary" className="h-9 w-full text-xs">
-                  Clear
-                </Button>
+                    {availablePrograms.length > 1 ? (
+                      <Select value={activeProgram} onValueChange={setActiveProgram}>
+                        <SelectTrigger className="h-9 w-[150px] shrink-0 border-gray-200 text-sm">
+                          <SelectValue placeholder="Select Programme" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {availablePrograms.map((p) => (
+                            <SelectItem key={p} value={p}>
+                              {p}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    ) : null}
+
+                    <Select value={selectedYear || ""} onValueChange={handleYearChange}>
+                      <SelectTrigger className="h-9 w-[150px] shrink-0 border-gray-200 text-sm">
+                        <SelectValue placeholder="Select Year" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {availableYears.map((year) => (
+                          <SelectItem key={year} value={year}>
+                            {year}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+
+                    <Button
+                      variant="outline"
+                      onClick={setWeekFilter}
+                      size="sm"
+                      className={getFilterButtonClass(filterMode === "weekly")}
+                    >
+                      This Week
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={setMonthFilter}
+                      size="sm"
+                      className={getFilterButtonClass(filterMode === "monthly")}
+                    >
+                      This Month
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={setYearFilter}
+                      size="sm"
+                      className={getFilterButtonClass(filterMode === "yearly")}
+                    >
+                      This Year
+                    </Button>
+                    <Button onClick={clearFilters} variant="ghost" size="sm" className="h-9 shrink-0 text-red-500 hover:text-red-600">
+                      Clear
+                    </Button>
+                  </div>
+                </div>
               </div>
+
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={() => scrollFilterStripBy("right")}
+                className="h-9 w-9 shrink-0 rounded-full border border-slate-200 bg-white text-slate-800 shadow-sm hover:bg-slate-50 sm:hidden"
+              >
+                <ChevronRight className="h-5 w-5" />
+                <span className="sr-only">Scroll filters right</span>
+              </Button>
             </div>
           </CardContent>
         </Card>

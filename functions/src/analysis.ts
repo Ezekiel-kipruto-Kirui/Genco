@@ -1126,7 +1126,29 @@ const createLivestockAnalytics = async (
     parseDate(dateRange?.startDate)?.getFullYear() ??
     parseDate(dateRange?.endDate)?.getFullYear() ??
     new Date().getFullYear();
-  const activeTarget = Math.max(1, Math.round(target ?? 1404));
+  const hasDateRange = Boolean(dateRange?.startDate || dateRange?.endDate);
+  const coverageYears = (() => {
+    let minYear = Number.POSITIVE_INFINITY;
+    let maxYear = Number.NEGATIVE_INFINITY;
+    for (const farmer of farmers) {
+      const date = parseDate(farmer.createdAt || farmer.registrationDate);
+      if (!date) continue;
+      const year = date.getFullYear();
+      minYear = Math.min(minYear, year);
+      maxYear = Math.max(maxYear, year);
+    }
+    if (!Number.isFinite(minYear) || !Number.isFinite(maxYear)) {
+      return {count: 0, startYear: null, endYear: null};
+    }
+    return {
+      count: Math.max(1, maxYear - minYear + 1),
+      startYear: minYear,
+      endYear: maxYear,
+    };
+  })();
+  const activeTarget = hasDateRange
+    ? Math.max(1, Math.round(target ?? 1404))
+    : Math.max(1, (coverageYears.count || 1) * 1404);
 
   const filteredFarmers = filterRecordsByDateRange(
     farmers,
@@ -1307,6 +1329,10 @@ const createLivestockAnalytics = async (
     weeklyPerformanceData,
     subcountyPerformanceData,
     userProgressData,
+    activeTarget,
+    coverageStartYear: coverageYears.startYear,
+    coverageEndYear: coverageYears.endYear,
+    coverageYears: coverageYears.count,
   };
 };
 
