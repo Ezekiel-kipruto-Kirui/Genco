@@ -44,8 +44,8 @@ const queryClient = new QueryClient({
     },
   },
 });
-const FULL_ACCESS_IDENTITIES = ["admin", "chief-admin", "ceo", "chief operational manager", "mne officer"];
-const PROJECT_MANAGER_IDENTITIES = ["project manager"];
+const FULL_ACCESS_IDENTITIES = ["admin", "chief-admin", "ceo", "chief executive officer", "chief operations manager", "chief operational manager", "chief operational officer", "mne officer", "m&e officer", "me officer", "monitoring and evaluation officer", "monitoring & evaluation officer"];
+const PROJECT_MANAGER_IDENTITIES = ["project manager", "project officer"];
 const FINANCE_IDENTITIES = ["finance"];
 const HR_IDENTITIES = [
   "human resource manager",

@@ -120,7 +120,7 @@ const AVAILABLE_PROGRAMMES = [
 ];
 const USER_ATTRIBUTE_OPTIONS = [
   "Chief Executive Officer",
-  "Chief operational Officer",
+  "Chief Operations Manager",
   "Project Officer",
   "Human Resource Manager",
   "M&E Officer",
@@ -151,10 +151,10 @@ const LEGACY_ROLE_ATTRIBUTE_MAP: Record<string, string> = {
   "offtake officer": "Offtake Officer",
   "ceo": "Chief Executive Officer",
   "chief executive officer": "Chief Executive Officer",
-  "chief operations manager": "Chief operational Officer",
-  "chief operational manager": "Chief operational Officer",
-  "chief operational officer": "Chief operational Officer",
-  "chief operatons manger": "Chief operational Officer",
+  "chief operations manager": "Chief Operations Manager",
+  "chief operational manager": "Chief Operations Manager",
+  "chief operational officer": "Chief Operations Manager",
+  "chief operatons manger": "Chief Operations Manager",
 };
 
 const USER_MANAGEMENT_CACHE_KEY = cacheKey("admin-page", "users");

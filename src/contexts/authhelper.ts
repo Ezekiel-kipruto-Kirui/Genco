@@ -17,7 +17,7 @@ const HR_IDENTIFIERS = new Set([
   "hr",
 ]);
 
-const PROJECT_MANAGER_IDENTIFIERS = new Set(["project manager"]);
+const PROJECT_MANAGER_IDENTIFIERS = new Set(["project manager", "project officer"]);
 const FINANCE_IDENTIFIERS = new Set(["finance"]);
 const OFFTAKE_IDENTIFIERS = new Set(["offtake officer"]);
 const MOBILE_IDENTIFIERS = new Set(["mobile", "mobile user"]);
@@ -30,11 +30,16 @@ const ME_IDENTIFIERS = new Set([
 ]);
 const FULL_ACCESS_ATTRIBUTE_IDENTIFIERS = new Set([
   "ceo",
+  "chief executive officer",
   "chief operations manager",
   "chief operational manager",
+  "chief operational officer",
   "chief operatons manger",
   "m&e officer",
   "mne officer",
+  "me officer",
+  "monitoring and evaluation officer",
+  "monitoring & evaluation officer",
 ]);
 const PROGRAMME_OPTIONS = ["KPMD", "RANGE"] as const;
 const DISPLAY_NAME_MAP: Record<string, string> = {
@@ -45,7 +50,9 @@ const DISPLAY_NAME_MAP: Record<string, string> = {
   user: "User",
   ceo: "CEO",
   cio: "CEO",
+  "chief executive officer": "Chief Executive Officer",
   "project manager": "Project Manager",
+  "project officer": "Project Officer",
   "humman resource manager": "Human Resource Manager",
   "human resource manager": "Human Resource Manager",
   "humman resource manger": "Human Resource Manager",
@@ -54,7 +61,9 @@ const DISPLAY_NAME_MAP: Record<string, string> = {
   "offtake officer": "Offtake Officer",
   "chief operations manager": "Chief Operations Manager",
   "chief operational manager": "Chief Operations Manager",
+  "chief operational officer": "Chief Operations Manager",
   "chief operatons manger": "Chief Operations Manager",
+  "chief executive officer": "Chief Executive Officer",
   "m&e officer": "M&E Officer",
   "mne officer": "M&E Officer",
   "me officer": "M&E Officer",
@@ -106,17 +115,25 @@ export const isChiefAdmin = (value: string | null | undefined): boolean => norma
 
 export const isAdmin = (value: string | null | undefined): boolean => normalizeRole(value) === "admin";
 
-export const isProjectManager = (value: string | null | undefined): boolean =>
-  PROJECT_MANAGER_IDENTIFIERS.has(normalizeRole(value));
+export const isProjectManager = (value: string | null | undefined): boolean => {
+  const normalized = normalizeAttribute(value) || normalizeRole(value);
+  return PROJECT_MANAGER_IDENTIFIERS.has(normalized);
+};
 
-export const isHummanResourceManager = (value: string | null | undefined): boolean =>
-  HR_IDENTIFIERS.has(normalizeRole(value));
+export const isHummanResourceManager = (value: string | null | undefined): boolean => {
+  const normalized = normalizeAttribute(value) || normalizeRole(value);
+  return HR_IDENTIFIERS.has(normalized);
+};
 
-export const isFinance = (value: string | null | undefined): boolean =>
-  FINANCE_IDENTIFIERS.has(normalizeRole(value));
+export const isFinance = (value: string | null | undefined): boolean => {
+  const normalized = normalizeAttribute(value) || normalizeRole(value);
+  return FINANCE_IDENTIFIERS.has(normalized);
+};
 
-export const isOfftakeOfficer = (value: string | null | undefined): boolean =>
-  OFFTAKE_IDENTIFIERS.has(normalizeRole(value));
+export const isOfftakeOfficer = (value: string | null | undefined): boolean => {
+  const normalized = normalizeAttribute(value) || normalizeRole(value);
+  return OFFTAKE_IDENTIFIERS.has(normalized);
+};
 
 export const isMobileUser = (
   userRole: string | null | undefined,
@@ -135,10 +152,13 @@ export const isMobileUser = (
 
 export const isMonitoringAndEvaluationOfficer = (
   value: string | null | undefined
-): boolean => ME_IDENTIFIERS.has(normalizeRole(value));
+): boolean => {
+  const normalized = normalizeAttribute(value) || normalizeRole(value);
+  return ME_IDENTIFIERS.has(normalized);
+};
 
 export const isFullAccessAttribute = (value: string | null | undefined): boolean =>
-  FULL_ACCESS_ATTRIBUTE_IDENTIFIERS.has(normalizeRole(value));
+  FULL_ACCESS_ATTRIBUTE_IDENTIFIERS.has(normalizeAttribute(value));
 
 export const canViewAllProgrammes = (
   userRole: string | null | undefined,
