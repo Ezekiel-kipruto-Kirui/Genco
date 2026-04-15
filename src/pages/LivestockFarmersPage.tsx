@@ -924,7 +924,7 @@ const LivestockFarmersPage = () => {
         'Vaccinated', 'Traceability', 'Vaccines', 
         'Programme', 'Field Officer', 'Created By', 'Registration Date',
         'Dewormed', 'Deworming Date', 'Vaccination Date',
-        'Aggregation Group', 'Bucks Served', 'Female Breeds', 'Male Breeds', 'Tug Number',
+        'Aggregation Group', 'Bucks Served', 'Female Breeds', 'Male Breeds', 'Tag Number',
         'Age 1-4', 'Age 5-8', 'Age 8+'
       ];
 
@@ -1371,7 +1371,7 @@ const LivestockFarmersPage = () => {
                     <DetailRow label="Bucks Served" value={viewingRecord.bucksServed || 'N/A'} />
                     <DetailRow label="Male Breeds" value={viewingRecord.maleBreeds || 'N/A'} />
                     <DetailRow label="Female Breeds" value={viewingRecord.femaleBreeds || 'N/A'} />
-                    <DetailRow label="Tug Number" value={viewingRecord.tugNumber || 'N/A'} />
+                    <DetailRow label="Tag Number" value={viewingRecord.tugNumber || 'N/A'} />
                 </div>
               </div>
               <div className="col-span-1 sm:col-span-2 border-t pt-4">
@@ -1462,7 +1462,7 @@ const LivestockFarmersPage = () => {
                 <Input type="number" value={editForm.femaleBreeds} onChange={e => setEditForm({...editForm, femaleBreeds: e.target.value})} />
             </div>
             <div className="space-y-2">
-                <Label>Tug Number</Label>
+                <Label>Tag Number</Label>
                 <Input value={editForm.tugNumber} onChange={e => setEditForm({...editForm, tugNumber: e.target.value})} />
             </div>
             <div className="col-span-1 sm:col-span-2 my-2 border-t pt-2">

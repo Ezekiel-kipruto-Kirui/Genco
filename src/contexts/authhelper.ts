@@ -33,8 +33,11 @@ const FULL_ACCESS_ATTRIBUTE_IDENTIFIERS = new Set([
   "chief executive officer",
   "chief operations manager",
   "chief operational manager",
+  "chief operations officer",
   "chief operational officer",
   "chief operatons manger",
+  "project manager",
+  "project officer",
   "m&e officer",
   "mne officer",
   "me officer",
@@ -42,34 +45,34 @@ const FULL_ACCESS_ATTRIBUTE_IDENTIFIERS = new Set([
   "monitoring & evaluation officer",
 ]);
 const PROGRAMME_OPTIONS = ["KPMD", "RANGE"] as const;
-const DISPLAY_NAME_MAP: Record<string, string> = {
-  admin: "Admin",
-  "chief-admin": "Chief Admin",
-  "chief admin": "Chief Admin",
-  mobile: "Mobile User",
-  user: "User",
-  ceo: "CEO",
-  cio: "CEO",
-  "chief executive officer": "Chief Executive Officer",
-  "project manager": "Project Manager",
-  "project officer": "Project Officer",
-  "humman resource manager": "Human Resource Manager",
-  "human resource manager": "Human Resource Manager",
-  "humman resource manger": "Human Resource Manager",
-  "human resource manger": "Human Resource Manager",
-  finance: "Finance",
-  "offtake officer": "Offtake Officer",
-  "chief operations manager": "Chief Operations Manager",
-  "chief operational manager": "Chief Operations Manager",
-  "chief operational officer": "Chief Operations Manager",
-  "chief operatons manger": "Chief Operations Manager",
-  "chief executive officer": "Chief Executive Officer",
-  "m&e officer": "M&E Officer",
-  "mne officer": "M&E Officer",
-  "me officer": "M&E Officer",
-  "monitoring and evaluation officer": "M&E Officer",
-  "monitoring & evaluation officer": "M&E Officer",
-};
+const DISPLAY_NAME_MAP = new Map<string, string>([
+  ["admin", "Admin"],
+  ["chief-admin", "Chief Admin"],
+  ["chief admin", "Chief Admin"],
+  ["mobile", "Mobile User"],
+  ["user", "User"],
+  ["ceo", "Chief Executive Officer"],
+  ["cio", "Chief Executive Officer"],
+  ["chief executive officer", "Chief Executive Officer"],
+  ["project manager", "Project Officer"],
+  ["project officer", "Project Officer"],
+  ["humman resource manager", "Human Resource Manager"],
+  ["human resource manager", "Human Resource Manager"],
+  ["humman resource manger", "Human Resource Manager"],
+  ["human resource manger", "Human Resource Manager"],
+  ["finance", "Finance"],
+  ["offtake officer", "Offtake Officer"],
+  ["chief operations manager", "Chief Operations Officer"],
+  ["chief operational manager", "Chief Operations Officer"],
+  ["chief operations officer", "Chief Operations Officer"],
+  ["chief operational officer", "Chief Operations Officer"],
+  ["chief operatons manger", "Chief Operations Officer"],
+  ["m&e officer", "M&E Officer"],
+  ["mne officer", "M&E Officer"],
+  ["me officer", "M&E Officer"],
+  ["monitoring and evaluation officer", "M&E Officer"],
+  ["monitoring & evaluation officer", "M&E Officer"],
+]);
 
 const toTitleCase = (value: string): string =>
   value
@@ -85,7 +88,7 @@ const formatDisplayName = (value: string): string => {
   if (!trimmed) return "";
 
   const normalized = normalizeText(trimmed);
-  const mappedDisplayName = DISPLAY_NAME_MAP[normalized];
+  const mappedDisplayName = DISPLAY_NAME_MAP.get(normalized);
   if (mappedDisplayName) return mappedDisplayName;
 
   if (/[A-Z]/.test(trimmed)) return trimmed;
@@ -168,7 +171,9 @@ export const canViewAllProgrammes = (
   if (isMobileUser(userRole, userAttribute)) return false;
   const principal = resolvePermissionPrincipal(userRole, userAttribute);
   const hasRoleBasedFullAccess = (
+    isChiefAdmin(userRole) ||
     isChiefAdmin(principal) ||
+    isAdmin(userRole) ||
     isAdmin(principal) ||
     isFullAccessAttribute(principal) ||
     isOfftakeOfficer(principal)

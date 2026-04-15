@@ -39,6 +39,8 @@ interface UserRecord {
   email?: string;
   phoneNumber?: string;
   phone?: string;
+  county?: string;
+  subcounty?: string;
   role?: string;
   createdAt?: any;
   lastLogin?: any;
@@ -82,6 +84,8 @@ interface EditForm {
   name: string;
   email: string;
   phoneNumber: string;
+  county: string;
+  subcounty: string;
   role: string;
   status: string;
   customAttribute: string;
@@ -92,6 +96,8 @@ interface AddUserForm {
   name: string;
   email: string;
   phoneNumber: string;
+  county: string;
+  subcounty: string;
   role: string;
   password: string;
   confirmPassword: string;
@@ -120,7 +126,7 @@ const AVAILABLE_PROGRAMMES = [
 ];
 const USER_ATTRIBUTE_OPTIONS = [
   "Chief Executive Officer",
-  "Chief Operations Manager",
+  "Chief Operations Officer",
   "Project Officer",
   "Human Resource Manager",
   "M&E Officer",
@@ -134,7 +140,8 @@ const ROLE_OPTIONS = [
   { value: "chief-admin", label: "Chief Admin" },
   { value: "mobile", label: "Mobile User" },
 ] as const;
-const SYSTEM_ROLE_VALUES = new Set(ROLE_OPTIONS.map((option) => option.value));
+type SystemRole = (typeof ROLE_OPTIONS)[number]["value"];
+const SYSTEM_ROLE_VALUES: ReadonlySet<string> = new Set(ROLE_OPTIONS.map((option) => option.value));
 const LEGACY_ROLE_ATTRIBUTE_MAP: Record<string, string> = {
   "humman resource manager": "Human Resource Manager",
   "human resource manager": "Human Resource Manager",
@@ -151,10 +158,10 @@ const LEGACY_ROLE_ATTRIBUTE_MAP: Record<string, string> = {
   "offtake officer": "Offtake Officer",
   "ceo": "Chief Executive Officer",
   "chief executive officer": "Chief Executive Officer",
-  "chief operations manager": "Chief Operations Manager",
-  "chief operational manager": "Chief Operations Manager",
-  "chief operational officer": "Chief Operations Manager",
-  "chief operatons manger": "Chief Operations Manager",
+  "chief operations manager": "Chief Operations Officer",
+  "chief operational manager": "Chief Operations Officer",
+  "chief operational officer": "Chief Operations Officer",
+  "chief operatons manger": "Chief Operations Officer",
 };
 
 const USER_MANAGEMENT_CACHE_KEY = cacheKey("admin-page", "users");
@@ -184,11 +191,14 @@ const formatRoleLabel = (role: string): string =>
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(" ");
 
-const normalizeSystemRole = (role: string | null | undefined): string => {
+const normalizeSystemRole = (role: string | null | undefined): SystemRole => {
   const normalized = normalizeRole(role);
-  if (SYSTEM_ROLE_VALUES.has(normalized)) return normalized;
+  if (SYSTEM_ROLE_VALUES.has(normalized)) return normalized as SystemRole;
   return "user";
 };
+
+const isMobileSystemRole = (role: string | null | undefined): boolean =>
+  normalizeSystemRole(role) === "mobile";
 
 const getAttributeFromLegacyRole = (
   role: string | null | undefined,
@@ -591,6 +601,8 @@ const UserManagementPage = () => {
     name: "",
     email: "",
     phoneNumber: "",
+    county: "",
+    subcounty: "",
     role: "",
     status: "active",
     customAttribute: "",
@@ -601,12 +613,26 @@ const UserManagementPage = () => {
     name: "",
     email: "",
     phoneNumber: "",
+    county: "",
+    subcounty: "",
     role: "user",
     password: "",
     confirmPassword: "",
     customAttribute: "",
     allowedProgrammes: initialProgrammes
   });
+  const addFormIsMobile = isMobileSystemRole(addForm.role);
+  const editFormIsMobile = isMobileSystemRole(editForm.role);
+
+  const handleRoleFormChange = (value: string, isEdit: boolean) => {
+    const setter = isEdit ? setEditForm : setAddForm;
+    setter((prev) => ({
+      ...prev,
+      role: value,
+      county: isMobileSystemRole(value) ? prev.county : "",
+      subcounty: isMobileSystemRole(value) ? prev.subcounty : "",
+    }));
+  };
 
   // Data fetching
   const fetchAllData = useCallback(async () => {
@@ -862,6 +888,8 @@ const UserManagementPage = () => {
       name: record.name || "",
       email: record.email || "",
       phoneNumber: record.phoneNumber || record.phone || "",
+      county: record.county || "",
+      subcounty: record.subcounty || "",
       role: getEffectiveRole(record),
       status: record.status || "active",
       customAttribute: getEffectiveAttribute(record),
@@ -881,6 +909,8 @@ const UserManagementPage = () => {
       name: "",
       email: "",
       phoneNumber: "",
+      county: "",
+      subcounty: "",
       role: "user",
       password: "",
       confirmPassword: "",
@@ -908,10 +938,21 @@ const UserManagementPage = () => {
 
     try {
       const normalizedRole = normalizeSystemRole(editForm.role);
+      if (normalizedRole === "mobile" && (!editForm.county.trim() || !editForm.subcounty.trim())) {
+        toast({
+          title: "Missing location",
+          description: "County and subcounty are required for mobile users.",
+          variant: "destructive",
+        });
+        return;
+      }
+
       await update(ref(db, `users/${editingRecord.id}`), {
         name: editForm.name,
         email: editForm.email,
         phoneNumber: editForm.phoneNumber.trim(),
+        county: normalizedRole === "mobile" ? editForm.county.trim() : "",
+        subcounty: normalizedRole === "mobile" ? editForm.subcounty.trim() : "",
         role: normalizedRole,
         status: editForm.status,
         accessControl: buildAccessControl(editForm.customAttribute),
@@ -953,6 +994,15 @@ const UserManagementPage = () => {
 
     try {
       setAddLoading(true);
+      const normalizedRole = normalizeSystemRole(addForm.role);
+      if (normalizedRole === "mobile" && (!addForm.county.trim() || !addForm.subcounty.trim())) {
+        toast({
+          title: "Missing location",
+          description: "County and subcounty are required for mobile users.",
+          variant: "destructive",
+        });
+        return;
+      }
 
       const userCredential = await createUserWithEmailAndPassword(
         secondaryAuth,
@@ -967,7 +1017,9 @@ const UserManagementPage = () => {
         name: addForm.name,
         email: addForm.email,
         phoneNumber: addForm.phoneNumber.trim(),
-        role: normalizeSystemRole(addForm.role),
+        county: normalizedRole === "mobile" ? addForm.county.trim() : "",
+        subcounty: normalizedRole === "mobile" ? addForm.subcounty.trim() : "",
+        role: normalizedRole,
         status: "active",
         accessControl: buildAccessControl(addForm.customAttribute),
         allowedProgrammes: addForm.allowedProgrammes,
@@ -982,6 +1034,8 @@ const UserManagementPage = () => {
         name: "",
         email: "",
         phoneNumber: "",
+        county: "",
+        subcounty: "",
         role: "user",
         password: "",
         confirmPassword: "",
@@ -1330,6 +1384,22 @@ const UserManagementPage = () => {
                 <p className="text-sm text-slate-900 font-medium">{getEffectiveAttribute(viewingRecord) || "N/A"}</p>
               </div>
 
+              {(viewingRecord.county || viewingRecord.subcounty) && (
+                <div className="bg-slate-50 rounded-xl p-4">
+                  <h3 className="font-semibold text-slate-800 mb-3">Coverage Area</h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <Label className="text-sm font-medium text-slate-600">County</Label>
+                      <p className="text-slate-900 font-medium">{viewingRecord.county || "N/A"}</p>
+                    </div>
+                    <div>
+                      <Label className="text-sm font-medium text-slate-600">Sub County</Label>
+                      <p className="text-slate-900 font-medium">{viewingRecord.subcounty || "N/A"}</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <div className="bg-slate-50 rounded-xl p-4">
                 <h3 className="font-semibold text-slate-800 mb-3 flex items-center gap-2">
                   <Calendar className="h-4 w-4" /> Account Information
@@ -1384,7 +1454,7 @@ const UserManagementPage = () => {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="add-role" className="text-sm font-medium text-slate-700">System Role *</Label>
-                  <Select value={addForm.role} onValueChange={(value) => setAddForm(prev => ({ ...prev, role: value }))}>
+                  <Select value={addForm.role} onValueChange={(value) => handleRoleFormChange(value, false)}>
                     <SelectTrigger className="bg-white border-slate-300"><SelectValue placeholder="Select role" /></SelectTrigger>
                     <SelectContent>
                       {ROLE_OPTIONS.map((roleOption) => (
@@ -1417,6 +1487,31 @@ const UserManagementPage = () => {
                   </Select>
                 </div>
               </div>
+
+              {addFormIsMobile && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="add-county" className="text-sm font-medium text-slate-700">County *</Label>
+                    <Input
+                      id="add-county"
+                      value={addForm.county}
+                      onChange={(e) => setAddForm((prev) => ({ ...prev, county: e.target.value }))}
+                      className="bg-white border-slate-300"
+                      placeholder="Enter county"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="add-subcounty" className="text-sm font-medium text-slate-700">Sub County *</Label>
+                    <Input
+                      id="add-subcounty"
+                      value={addForm.subcounty}
+                      onChange={(e) => setAddForm((prev) => ({ ...prev, subcounty: e.target.value }))}
+                      className="bg-white border-slate-300"
+                      placeholder="Enter sub county"
+                    />
+                  </div>
+                </div>
+              )}
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
@@ -1488,7 +1583,7 @@ const UserManagementPage = () => {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="edit-role" className="text-sm font-medium text-slate-700">System Role</Label>
-                  <Select value={editForm.role} onValueChange={(value) => setEditForm(prev => ({ ...prev, role: value }))}>
+                  <Select value={editForm.role} onValueChange={(value) => handleRoleFormChange(value, true)}>
                     <SelectTrigger className="bg-white border-slate-300"><SelectValue placeholder="Select role" /></SelectTrigger>
                     <SelectContent>
                       {ROLE_OPTIONS.map((roleOption) => (
@@ -1531,6 +1626,31 @@ const UserManagementPage = () => {
                   </Select>
                 </div>
               </div>
+
+              {editFormIsMobile && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="edit-county" className="text-sm font-medium text-slate-700">County *</Label>
+                    <Input
+                      id="edit-county"
+                      value={editForm.county}
+                      onChange={(e) => setEditForm((prev) => ({ ...prev, county: e.target.value }))}
+                      className="bg-white border-slate-300"
+                      placeholder="Enter county"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="edit-subcounty" className="text-sm font-medium text-slate-700">Sub County *</Label>
+                    <Input
+                      id="edit-subcounty"
+                      value={editForm.subcounty}
+                      onChange={(e) => setEditForm((prev) => ({ ...prev, subcounty: e.target.value }))}
+                      className="bg-white border-slate-300"
+                      placeholder="Enter sub county"
+                    />
+                  </div>
+                </div>
+              )}
 
               <div className="space-y-3 border-t pt-4">
                 <Label className="text-sm font-bold text-slate-700">Allowed Programmes (Data Access)</Label>

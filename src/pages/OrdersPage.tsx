@@ -19,7 +19,18 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
-import { ChevronDown, Eye, Pencil, Plus, Save, ShoppingCart, Trash2, X } from "lucide-react";
+import {
+  ChevronDown,
+  Eye,
+  MapPin,
+  Pencil,
+  Plus,
+  Save,
+  ShoppingCart,
+  Trash2,
+  TrendingUp,
+  X,
+} from "lucide-react";
 
 interface OrderItem {
   id?: string;
@@ -172,7 +183,7 @@ const normalizeStatus = (value: string | undefined): string => {
 };
 
 const getStatusBadgeClass = (status: string): string => {
-  if (status === "completed") return "bg-green-100 text-green-700 border-green-200";
+  if (status === "completed") return "bg-emerald-100 text-emerald-700 border-emerald-200";
   if (status === "pending") return "bg-amber-100 text-amber-700 border-amber-200";
   if (status === "in-progress") return "bg-blue-100 text-blue-700 border-blue-200";
   return "bg-slate-100 text-slate-700 border-slate-200";
@@ -199,6 +210,12 @@ const getDefaultOrderForm = (programme: string): NewOrderForm => ({
   county: "",
   programme,
 });
+
+const formatCompactNumber = (value: number): string => {
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
+  return String(value);
+};
 
 const normalizeText = (value: unknown): string =>
   typeof value === "string"
@@ -415,26 +432,26 @@ const getNormalizedItems = (record: OrderRecord): NormalizedOrderItem[] => {
   const orderEntries = getOrderEntries(record.orders);
   if (orderEntries.length > 0) {
     return orderEntries.map((item, index) => {
-        const itemLocation = item.location || item.village || record.location || "N/A";
-        const officer =
-          item.fieldOfficer ||
-          item.fieldOfficerName ||
-          item.officer ||
-          item.officerName ||
-          item.createdBy ||
-          item.username ||
-          "N/A";
-        return {
-          id: item.id || `${record.id}-${index + 1}`,
-          date: item.date || record.completedAt || record.createdAt || record.timestamp || "",
-          goats: Number(item.goats || 0),
-          location: itemLocation,
-          village: item.village || itemLocation,
-          officer,
-          raw: item,
-        };
-      });
-    }
+      const itemLocation = item.location || item.village || record.location || "N/A";
+      const officer =
+        item.fieldOfficer ||
+        item.fieldOfficerName ||
+        item.officer ||
+        item.officerName ||
+        item.createdBy ||
+        item.username ||
+        "N/A";
+      return {
+        id: item.id || `${record.id}-${index + 1}`,
+        date: item.date || record.completedAt || record.createdAt || record.timestamp || "",
+        goats: Number(item.goats || 0),
+        location: itemLocation,
+        village: item.village || itemLocation,
+        officer,
+        raw: item,
+      };
+    });
+  }
 
   return [];
 };
@@ -456,14 +473,13 @@ const OrdersPage = () => {
   const [selectedFieldOfficerIds, setSelectedFieldOfficerIds] = useState<string[]>([]);
   const [smsMessage, setSmsMessage] = useState("");
 
-  const [editingBatchId, setEditingBatchId] = useState<string | null>(null);
-  const [goatsBoughtDraft, setGoatsBoughtDraft] = useState<string>("");
-
   const [editingOrderKey, setEditingOrderKey] = useState<string | null>(null);
   const [orderGoatsDraft, setOrderGoatsDraft] = useState<string>("");
   const [orderDateDraft, setOrderDateDraft] = useState<string>("");
   const [orderOfficerDraft, setOrderOfficerDraft] = useState<string>("");
   const [orderLocationDraft, setOrderLocationDraft] = useState<string>("");
+
+  const [dialogGoatsBoughtDraft, setDialogGoatsBoughtDraft] = useState<string>("");
 
   const monthDates = useMemo(getCurrentMonthDates, []);
   const [filters, setFilters] = useState<Filters>({
@@ -486,46 +502,30 @@ const OrdersPage = () => {
     [allowedProgrammes, userRole, userAttribute]
   );
   const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
-  const permissionPrincipal = useMemo(
-    () => resolvePermissionPrincipal(userRole, userAttribute),
-    [allowedProgrammes, userRole, userAttribute]
-  );
   const userCanCreateOrders = useMemo(
-    () => isChiefAdmin(permissionPrincipal) || isOfftakeOfficer(permissionPrincipal),
-    [permissionPrincipal]
+    () => isChiefAdmin(userRole) || isOfftakeOfficer(userRole) || isOfftakeOfficer(userAttribute),
+    [userRole, userAttribute]
   );
   const userCanEditOrders = useMemo(
-    () => isChiefAdmin(permissionPrincipal) || isOfftakeOfficer(permissionPrincipal),
-    [permissionPrincipal]
+    () => isChiefAdmin(userRole) || isOfftakeOfficer(userRole) || isOfftakeOfficer(userAttribute),
+    [userRole, userAttribute]
   );
 
   const ensureOrderCreateAccess = () => {
     if (userCanCreateOrders) return true;
-    toast({
-      title: "Unauthorized",
-      description: "Only offtake officer or chief admin can create orders.",
-      variant: "destructive",
-    });
+    toast({ title: "Unauthorized", description: "Only offtake officer or chief admin can create orders.", variant: "destructive" });
     return false;
   };
 
   const ensureOrderEditAccess = () => {
     if (userCanEditOrders) return true;
-    toast({
-      title: "Unauthorized",
-      description: "Only offtake officer or chief admin can edit orders.",
-      variant: "destructive",
-    });
+    toast({ title: "Unauthorized", description: "Only offtake officer or chief admin can edit orders.", variant: "destructive" });
     return false;
   };
 
   const ensureBatchDeleteAccess = () => {
     if (userIsChiefAdmin) return true;
-    toast({
-      title: "Unauthorized",
-      description: "Only chief admin can delete batches.",
-      variant: "destructive",
-    });
+    toast({ title: "Unauthorized", description: "Only chief admin can delete batches.", variant: "destructive" });
     return false;
   };
 
@@ -535,8 +535,7 @@ const OrdersPage = () => {
       setActiveProgram((prev) => prev || PROGRAMME_OPTIONS[0]);
       return;
     }
-
-    const assignedPrograms = Object.keys(allowedProgrammes || {}).filter((programme) => allowedProgrammes?.[programme]);
+    const assignedPrograms = Object.keys(allowedProgrammes || {}).filter((p) => allowedProgrammes?.[p]);
     setAvailablePrograms(assignedPrograms);
     setActiveProgram((prev) => {
       if (assignedPrograms.length === 0) return "";
@@ -551,96 +550,64 @@ const OrdersPage = () => {
       setLoading(false);
       return;
     }
-
     setLoading(true);
     const ordersRef = query(ref(db, "orders"), orderByChild("programme"), equalTo(activeProgram));
-
     const unsubscribe = onValue(
       ordersRef,
       (snapshot) => {
         const data = snapshot.val();
-        if (!data) {
-          setAllRecords([]);
-          setLoading(false);
-          return;
-        }
-
-        const records: OrderRecord[] = Object.keys(data).map((key) => {
-          const recordData = data[key] as Partial<OrderRecord> & { id?: string };
-          return {
-            ...recordData,
-            id: key,
-            recordId: recordData?.id || key,
-          };
-        });
-
+        if (!data) { setAllRecords([]); setLoading(false); return; }
+        const records: OrderRecord[] = Object.keys(data).map((key) => ({
+          ...(data[key] as Partial<OrderRecord> & { id?: string }),
+          id: key,
+          recordId: data[key]?.id || key,
+        }));
         records.sort((a, b) => {
           const aDate = parseDate(a.completedAt || a.createdAt || a.timestamp)?.getTime() || 0;
           const bDate = parseDate(b.completedAt || b.createdAt || b.timestamp)?.getTime() || 0;
           return bDate - aDate;
         });
-
         setAllRecords(records);
         setLoading(false);
       },
       () => setLoading(false)
     );
-
     return () => unsubscribe();
   }, [activeProgram]);
 
-  useEffect(() => {
-    setOrdersDialogBatchId(null);
-  }, [activeProgram]);
+  useEffect(() => { setOrdersDialogBatchId(null); }, [activeProgram]);
 
   useEffect(() => {
     let isActive = true;
-
     const loadFieldOfficers = async () => {
       setFieldOfficersLoading(true);
       try {
         const officers = (await fetchCollection<FieldOfficerRecord>("users"))
           .map((record) => {
             if (!isMobileUserRecord(record)) return null;
-
             return {
               id: record.id,
               name: getOfficerDisplayName(record),
               phone: getOfficerPhone(record),
-              aliases: [
-                record.name,
-                record.userName,
-                record.username,
-                record.displayName,
-                record.email,
-                id,
-              ].filter((value): value is string => typeof value === "string" && value.trim().length > 0),
+              aliases: [record.name, record.userName, record.username, record.displayName, record.email, record.id].filter(
+                (v): v is string => typeof v === "string" && v.trim().length > 0
+              ),
             };
           })
-          .filter((officer): officer is FieldOfficerOption => Boolean(officer))
+          .filter((o): o is FieldOfficerOption => Boolean(o))
           .sort((a, b) => a.name.localeCompare(b.name));
-
         if (isActive) setFieldOfficers(officers);
-      } catch (error) {
-        console.error("Failed to load field officers:", error);
+      } catch {
         if (isActive) {
           setFieldOfficers([]);
-          toast({
-            title: "Error",
-            description: "Failed to load mobile users.",
-            variant: "destructive",
-          });
+          toast({ title: "Error", description: "Failed to load mobile users.", variant: "destructive" });
         }
       } finally {
         if (isActive) setFieldOfficersLoading(false);
       }
     };
-
     loadFieldOfficers();
-
-    return () => {
-      isActive = false;
-    };
+    return () => { isActive = false; };
   }, [activeProgram, toast]);
 
   const batchRows = useMemo(() => {
@@ -650,8 +617,7 @@ const OrdersPage = () => {
     const mobileOfficerTokens = new Set<string>();
 
     fieldOfficers.forEach((officer) => {
-      const candidates = [officer.name, officer.id, officer.phone, ...(officer.aliases || [])];
-      candidates.forEach((value) => {
+      [officer.name, officer.id, officer.phone, ...(officer.aliases || [])].forEach((value) => {
         const token = normalizeText(value);
         if (token) mobileOfficerTokens.add(token);
       });
@@ -668,8 +634,7 @@ const OrdersPage = () => {
         if (typeof value === "number" && Number.isFinite(value)) return String(value);
         return normalizeText(value);
       };
-      const candidates = getRecordOfficerCandidates(record);
-      return candidates.some((value) => {
+      return getRecordOfficerCandidates(record).some((value) => {
         const token = toToken(value);
         return token.length > 0 && mobileOfficerTokens.has(token);
       });
@@ -678,13 +643,10 @@ const OrdersPage = () => {
     const attachRecordToBatch = (record: OrderRecord, batchId: string): boolean => {
       const parent = batchMap.get(batchId);
       if (!parent) return false;
-
       const submissionItems = getSubmissionItems(record);
       if (submissionItems.length === 0) return false;
-
       const filteredItems = submissionItems.filter((item) => !parent.itemIds.has(item.id));
       if (filteredItems.length === 0) return false;
-
       filteredItems.forEach((item) => parent.itemIds.add(item.id));
       parent.items = [...parent.items, ...filteredItems];
       return true;
@@ -703,51 +665,36 @@ const OrdersPage = () => {
 
       for (const [batchId, parent] of batchMap.entries()) {
         if (batchId === recordId) continue;
-
-        const parentRecord = parent.record;
-        const parentProgramme = normalizeText(parentRecord.programme);
-        const parentCounty = normalizeText(parentRecord.county);
-        const parentLocation = normalizeText(parentRecord.location || parentRecord.village || parentRecord.subcounty);
-        const parentDate = parseDate(
-          parentRecord.date || parentRecord.completedAt || parentRecord.createdAt || parentRecord.timestamp
-        );
-        const parentTotal = Number(parentRecord.totalGoats || parentRecord.goatsBought || parentRecord.goats || 0);
-
+        const pr = parent.record;
         let score = 0;
+        const pp = normalizeText(pr.programme);
+        const pc = normalizeText(pr.county);
+        const pl = normalizeText(pr.location || pr.village || pr.subcounty);
+        const pd = parseDate(pr.date || pr.completedAt || pr.createdAt || pr.timestamp);
+        const pt = Number(pr.totalGoats || pr.goatsBought || pr.goats || 0);
 
-        if (recordProgramme && parentProgramme && recordProgramme === parentProgramme) score += 3;
-        if (recordCounty && parentCounty && recordCounty === parentCounty) score += 2;
-        if (recordLocation && parentLocation && recordLocation === parentLocation) score += 4;
-
-        if (recordDate && parentDate) {
-          const dayDiff = Math.abs(recordDate.getTime() - parentDate.getTime()) / (1000 * 60 * 60 * 24);
+        if (recordProgramme && pp && recordProgramme === pp) score += 3;
+        if (recordCounty && pc && recordCounty === pc) score += 2;
+        if (recordLocation && pl && recordLocation === pl) score += 4;
+        if (recordDate && pd) {
+          const dayDiff = Math.abs(recordDate.getTime() - pd.getTime()) / (1000 * 60 * 60 * 24);
           if (dayDiff <= 1) score += 4;
           else if (dayDiff <= 7) score += 3;
           else if (dayDiff <= 30) score += 1;
         }
+        if (recordTotal > 0 && pt > 0 && recordTotal === pt) score += 2;
+        if (normalizeStatus(pr.status) !== "completed") score += 1;
 
-        if (recordTotal > 0 && parentTotal > 0 && recordTotal === parentTotal) score += 2;
-        if (normalizeStatus(parentRecord.status) !== "completed") score += 1;
-
-        if (score > bestScore) {
-          bestScore = score;
-          bestBatchId = batchId;
-        }
+        if (score > bestScore) { bestScore = score; bestBatchId = batchId; }
       }
-
       return bestScore >= 6 ? bestBatchId : null;
     };
 
     allRecords.forEach((record) => {
       if (!isBatchRecord(record)) return;
-      const batchId = record.id;
       const items = getNormalizedItems(record);
-      batchMap.set(batchId, {
-        record,
-        items,
-        itemIds: new Set(items.map((item) => item.id)),
-      });
-      getBatchIdentifiers(record).forEach((identifier) => registerAlias(identifier, batchId));
+      batchMap.set(record.id, { record, items, itemIds: new Set(items.map((i) => i.id)) });
+      getBatchIdentifiers(record).forEach((id) => registerAlias(id, record.id));
     });
 
     const resolveBatchId = (record: OrderRecord): string | null => {
@@ -757,7 +704,6 @@ const OrdersPage = () => {
         if (mapped) return mapped;
         if (batchMap.has(explicitRef)) return explicitRef;
       }
-
       for (const [key, value] of Object.entries(record)) {
         if (!looksLikeReferenceKey(key)) continue;
         const normalized = normalizeIdValue(value);
@@ -765,86 +711,53 @@ const OrdersPage = () => {
         const mapped = batchAliasMap.get(normalized);
         if (mapped) return mapped;
       }
-
-      if (isSubmissionRecord(record) || isMobileOfficerRecord(record)) {
-        return findBestBatchMatch(record);
-      }
-
+      if (isSubmissionRecord(record) || isMobileOfficerRecord(record)) return findBestBatchMatch(record);
       return null;
     };
 
     allRecords.forEach((record) => {
       if (isBatchRecord(record)) return;
-
       const recordId = normalizeIdValue(record.id);
       if (recordId && consumedRecordIds.has(recordId)) return;
-
       const batchId = resolveBatchId(record);
       if (!batchId || batchId === record.id) return;
-
-      const parent = batchMap.get(batchId);
-      if (!parent) return;
-
-      if (attachRecordToBatch(record, batchId) && recordId) {
-        consumedRecordIds.add(recordId);
-      }
+      if (attachRecordToBatch(record, batchId) && recordId) consumedRecordIds.add(recordId);
     });
 
     return Array.from(batchMap.values())
-      .filter(({ record }) => {
-        const recordId = normalizeIdValue(record.id);
-        return !recordId || !consumedRecordIds.has(recordId);
-      })
+      .filter(({ record }) => { const rid = normalizeIdValue(record.id); return !rid || !consumedRecordIds.has(rid); })
       .map(({ record, items }) => {
-      const itemsTotal = items.reduce((sum, item) => sum + Number(item.goats || 0), 0);
-      const totalGoats = getBatchTotalGoats(record, itemsTotal);
-      const goatsBought = clamp(Math.max(Number(record.goatsBought || 0), itemsTotal), 0, Math.max(totalGoats, 0));
-      const remainingGoats = Math.max(totalGoats - goatsBought, 0);
-      const createdAt = record.createdAt || record.timestamp || "";
-      const completedAt = record.completedAt || "";
-      const batchDate = record.date || completedAt || createdAt || items[0]?.date || "";
-      const storedStatus = normalizeStatus(record.status);
-      const isReadyForCompletion = totalGoats > 0 && remainingGoats <= 0 && storedStatus !== "completed";
-      const status = storedStatus === "completed"
-        ? "completed"
-        : goatsBought > 0 || items.length > 0
-          ? "in-progress"
-          : "pending";
-
-      return {
-        batchId: record.id,
-        batchDate,
-        createdAt,
-        completedAt,
-        totalGoats,
-        recordedGoats: itemsTotal,
-        goatsBought,
-        remainingGoats,
-        status,
-        county: record.county || "N/A",
-        subcounty: record.subcounty || "N/A",
-        location: record.location || items[0]?.location || items[0]?.village || "N/A",
-        programme: record.programme || activeProgram || "N/A",
-        username: record.username || record.createdBy || items[0]?.officer || "N/A",
-        sortTimestamp: parseDate(batchDate)?.getTime() || 0,
-        isReadyForCompletion,
-        items,
-      };
-    });
+        const itemsTotal = items.reduce((sum, i) => sum + Number(i.goats || 0), 0);
+        const totalGoats = getBatchTotalGoats(record, itemsTotal);
+        const goatsBought = clamp(Math.max(Number(record.goatsBought || 0), itemsTotal), 0, Math.max(totalGoats, 0));
+        const remainingGoats = Math.max(totalGoats - goatsBought, 0);
+        const createdAt = record.createdAt || record.timestamp || "";
+        const completedAt = record.completedAt || "";
+        const batchDate = record.date || completedAt || createdAt || items[0]?.date || "";
+        const storedStatus = normalizeStatus(record.status);
+        const isReadyForCompletion = totalGoats > 0 && remainingGoats <= 0 && storedStatus !== "completed";
+        const status = storedStatus === "completed"
+          ? "completed"
+          : goatsBought > 0 || items.length > 0 ? "in-progress" : "pending";
+        return {
+          batchId: record.id, batchDate, createdAt, completedAt, totalGoats, recordedGoats: itemsTotal,
+          goatsBought, remainingGoats, status,
+          county: record.county || "N/A", subcounty: record.subcounty || "N/A",
+          location: record.location || items[0]?.location || items[0]?.village || "N/A",
+          programme: record.programme || activeProgram || "N/A",
+          username: record.username || record.createdBy || items[0]?.officer || "N/A",
+          sortTimestamp: parseDate(batchDate)?.getTime() || 0, isReadyForCompletion, items,
+        };
+      });
   }, [allRecords, activeProgram, fieldOfficers]);
 
   const ordersDialogRow = useMemo(
-    () => batchRows.find((row) => row.batchId === ordersDialogBatchId) || null,
+    () => batchRows.find((r) => r.batchId === ordersDialogBatchId) || null,
     [batchRows, ordersDialogBatchId]
   );
 
   const ordersDialogHasOfficerColumn = useMemo(
-    () =>
-      Boolean(
-        ordersDialogRow?.items.some(
-          (item) => normalizeText(item.officer) && normalizeText(item.officer) !== "n/a"
-        )
-      ),
+    () => Boolean(ordersDialogRow?.items.some((i) => normalizeText(i.officer) && normalizeText(i.officer) !== "n/a")),
     [ordersDialogRow]
   );
 
@@ -859,10 +772,8 @@ const OrdersPage = () => {
 
   const filteredBatchRows = useMemo(() => {
     const searchTerm = filters.search.toLowerCase().trim();
-
     const rows = batchRows.filter((row) => {
       if (filters.status !== "all" && row.status !== filters.status) return false;
-
       const rowDate = parseDate(row.batchDate);
       if (filters.startDate || filters.endDate) {
         if (!rowDate) return false;
@@ -873,48 +784,50 @@ const OrdersPage = () => {
         if (start && rowDate < start) return false;
         if (end && rowDate > end) return false;
       }
-
       if (!searchTerm) return true;
-
-      return [
-        row.county,
-        row.location,
-        row.username,
-        row.status,
-        row.programme,
-        row.batchId,
-        row.totalGoats.toString(),
-      ]
-        .join(" ")
-        .toLowerCase()
-        .includes(searchTerm);
+      return [row.county, row.location, row.username, row.status, row.programme, row.batchId, row.totalGoats.toString()]
+        .join(" ").toLowerCase().includes(searchTerm);
     });
-
     rows.sort((a, b) => b.sortTimestamp - a.sortTimestamp);
     return rows;
   }, [batchRows, filters]);
 
-  const totalGoats = useMemo(
+  const totalTargetGoats = useMemo(
     () => filteredBatchRows.reduce((sum, row) => sum + row.totalGoats, 0),
     [filteredBatchRows]
   );
+
+  const totalGoatsPurchased = useMemo(
+    () => filteredBatchRows.reduce((sum, row) => sum + row.goatsBought, 0),
+    [filteredBatchRows]
+  );
+
+  const purchasePercentage = useMemo(() => {
+    if (totalTargetGoats === 0) return 0;
+    return Math.round((totalGoatsPurchased / totalTargetGoats) * 100);
+  }, [totalGoatsPurchased, totalTargetGoats]);
 
   const totalOrdersInBatches = useMemo(
     () => filteredBatchRows.reduce((sum, row) => sum + row.items.length, 0),
     [filteredBatchRows]
   );
 
+  const countiesMap = useMemo(() => {
+    const map = new Map<string, number>();
+    filteredBatchRows.forEach((row) => {
+      const county = row.county || "Unknown";
+      map.set(county, (map.get(county) || 0) + row.totalGoats);
+    });
+    return new Map([...map.entries()].sort((a, b) => b[1] - a[1]));
+  }, [filteredBatchRows]);
+
+  const uniqueCounties = countiesMap.size;
+
   useEffect(() => {
     setPagination((prev) => {
       const totalPages = Math.max(1, Math.ceil(filteredBatchRows.length / prev.limit));
       const page = Math.min(prev.page, totalPages);
-      return {
-        ...prev,
-        page,
-        totalPages,
-        hasNext: page < totalPages,
-        hasPrev: page > 1,
-      };
+      return { ...prev, page, totalPages, hasNext: page < totalPages, hasPrev: page > 1 };
     });
   }, [filteredBatchRows.length]);
 
@@ -925,25 +838,24 @@ const OrdersPage = () => {
 
   const availableStatuses = useMemo(() => {
     const set = new Set<string>();
-    batchRows.forEach((row) => set.add(row.status));
+    batchRows.forEach((r) => set.add(r.status));
     return Array.from(set).sort();
   }, [batchRows]);
 
   const selectedOfficerNames = useMemo(
-    () => fieldOfficers.filter((officer) => selectedFieldOfficerIds.includes(officer.id)).map((officer) => officer.name),
+    () => fieldOfficers.filter((o) => selectedFieldOfficerIds.includes(o.id)).map((o) => o.name),
     [fieldOfficers, selectedFieldOfficerIds]
   );
 
-  const selectedOfficersSummary = useMemo(() => {
-    if (selectedOfficerNames.length === 0) return "Select field officers";
-    return `${selectedOfficerNames.length} selected`;
-  }, [selectedOfficerNames.length]);
+  const selectedOfficersSummary = useMemo(
+    () => selectedOfficerNames.length === 0 ? "Select field officers" : `${selectedOfficerNames.length} selected`,
+    [selectedOfficerNames.length]
+  );
 
   const selectedOfficersPreview = useMemo(() => {
     if (selectedOfficerNames.length === 0) return "";
     const preview = selectedOfficerNames.slice(0, 3).join(", ");
-    if (selectedOfficerNames.length <= 3) return preview;
-    return `${preview} +${selectedOfficerNames.length - 3} more`;
+    return selectedOfficerNames.length <= 3 ? preview : `${preview} +${selectedOfficerNames.length - 3} more`;
   }, [selectedOfficerNames]);
 
   const handleFilterChange = (key: keyof Filters, value: string) => {
@@ -952,12 +864,7 @@ const OrdersPage = () => {
   };
 
   const clearFilters = () => {
-    setFilters({
-      search: "",
-      startDate: "",
-      endDate: "",
-      status: "all",
-    });
+    setFilters({ search: "", startDate: "", endDate: "", status: "all" });
     setPagination((prev) => ({ ...prev, page: 1 }));
   };
 
@@ -968,6 +875,7 @@ const OrdersPage = () => {
     setOrderDateDraft("");
     setOrderOfficerDraft("");
     setOrderLocationDraft("");
+    setDialogGoatsBoughtDraft("");
   };
 
   const resetNewOrderForm = (programme: string) => {
@@ -978,22 +886,15 @@ const OrdersPage = () => {
 
   const openCreateDialog = () => {
     if (!ensureOrderCreateAccess()) return;
-
     if (!activeProgram) {
-      toast({
-        title: "Select programme",
-        description: "Please select a programme before creating an order.",
-        variant: "destructive",
-      });
+      toast({ title: "Select programme", description: "Please select a programme before creating an order.", variant: "destructive" });
       return;
     }
     resetNewOrderForm(activeProgram);
     setIsCreateDialogOpen(true);
   };
 
-  const closeCreateDialog = () => {
-    setIsCreateDialogOpen(false);
-  };
+  const closeCreateDialog = () => { setIsCreateDialogOpen(false); };
 
   const toggleFieldOfficerSelection = (officerId: string) => {
     setSelectedFieldOfficerIds((prev) =>
@@ -1001,11 +902,7 @@ const OrdersPage = () => {
     );
   };
 
-  const updateBatchOrders = async (
-    row: BatchOrderRow,
-    nextItems: NormalizedOrderItem[],
-    nextGoatsBought?: number
-  ) => {
+  const updateBatchOrders = async (row: BatchOrderRow, nextItems: NormalizedOrderItem[], nextGoatsBought?: number) => {
     const sanitizedItems = nextItems.map((item, index) => {
       const orderLocation = item.location || item.village || row.location || "";
       const officerName = item.officer || "";
@@ -1020,95 +917,53 @@ const OrdersPage = () => {
         officer: officerName,
       };
     });
-
-    const itemsTotal = sanitizedItems.reduce((sum, item) => sum + item.goats, 0);
+    const itemsTotal = sanitizedItems.reduce((sum, i) => sum + i.goats, 0);
     const targetGoats = row.totalGoats > 0 ? row.totalGoats : itemsTotal;
     const goatsBought = clamp(
       Math.max(typeof nextGoatsBought === "number" ? nextGoatsBought : Number(row.goatsBought || 0), itemsTotal),
-      0,
-      Math.max(targetGoats, 0)
+      0, Math.max(targetGoats, 0)
     );
     const remainingGoats = Math.max(targetGoats - goatsBought, 0);
     const storedStatus = normalizeStatus(row.status);
-    const nextStatus =
-      storedStatus === "completed"
-        ? "completed"
-        : goatsBought > 0 || itemsTotal > 0
-          ? "in-progress"
-          : "pending";
+    const nextStatus = storedStatus === "completed" ? "completed" : goatsBought > 0 || itemsTotal > 0 ? "in-progress" : "pending";
     const nextCompletedAt = storedStatus === "completed" ? row.completedAt || new Date().toISOString() : "";
-
     await update(ref(db, `orders/${row.batchId}`), {
-      orders: sanitizedItems,
-      totalGoats: targetGoats,
-      goatsBought,
-      remainingGoats,
-      status: nextStatus,
-      completedAt: nextCompletedAt,
+      orders: sanitizedItems, totalGoats: targetGoats, goatsBought, remainingGoats, status: nextStatus, completedAt: nextCompletedAt,
     });
   };
 
-  const startGoatsBoughtEdit = (row: BatchOrderRow) => {
+  const saveDialogGoatsBought = async () => {
+    if (!ordersDialogRow) return;
     if (!ensureOrderEditAccess()) return;
-    setEditingBatchId(row.batchId);
-    setGoatsBoughtDraft(String(row.goatsBought || 0));
-  };
-
-  const cancelGoatsBoughtEdit = () => {
-    setEditingBatchId(null);
-    setGoatsBoughtDraft("");
-  };
-
-  const saveGoatsBoughtEdit = async (row: BatchOrderRow) => {
-    if (!ensureOrderEditAccess()) return;
-    const nextValue = Number(goatsBoughtDraft);
+    const nextValue = Number(dialogGoatsBoughtDraft);
     if (!Number.isFinite(nextValue) || nextValue < 0) {
-      toast({ title: "Invalid value", description: "Goats bought must be a number 0 or greater.", variant: "destructive" });
+      toast({ title: "Invalid value", description: "Goats bought must be 0 or greater.", variant: "destructive" });
       return;
     }
-    if (nextValue > row.totalGoats) {
-      toast({
-        title: "Invalid value",
-        description: "Goats bought cannot be greater than total goats in the batch.",
-        variant: "destructive",
-      });
+    if (nextValue > ordersDialogRow.totalGoats) {
+      toast({ title: "Invalid value", description: "Cannot exceed total goats.", variant: "destructive" });
       return;
     }
-
     try {
-      const remainingGoats = Math.max(row.totalGoats - nextValue, 0);
-      const storedStatus = normalizeStatus(row.status);
-      const nextStatus =
-        storedStatus === "completed"
-          ? "completed"
-          : nextValue > 0
-            ? "in-progress"
-            : "pending";
-      const nextCompletedAt = storedStatus === "completed" ? row.completedAt || new Date().toISOString() : "";
-
-      await update(ref(db, `orders/${row.batchId}`), {
-        goatsBought: nextValue,
-        remainingGoats,
-        status: nextStatus,
-        completedAt: nextCompletedAt,
-      });
-      toast({ title: "Updated", description: "Goats bought updated successfully." });
-      cancelGoatsBoughtEdit();
+      const remainingGoats = Math.max(ordersDialogRow.totalGoats - nextValue, 0);
+      const storedStatus = normalizeStatus(ordersDialogRow.status);
+      const nextStatus = storedStatus === "completed" ? "completed" : nextValue > 0 ? "in-progress" : "pending";
+      const nextCompletedAt = storedStatus === "completed" ? ordersDialogRow.completedAt || new Date().toISOString() : "";
+      await update(ref(db, `orders/${ordersDialogRow.batchId}`), { goatsBought: nextValue, remainingGoats, status: nextStatus, completedAt: nextCompletedAt });
+      toast({ title: "Updated", description: "Goats bought updated." });
+      setDialogGoatsBoughtDraft("");
     } catch {
-      toast({ title: "Error", description: "Failed to update goats bought.", variant: "destructive" });
+      toast({ title: "Error", description: "Failed to update.", variant: "destructive" });
     }
   };
 
   const markOrderComplete = async (row: BatchOrderRow) => {
     if (!ensureOrderEditAccess()) return;
-
-    const confirmMessage =
-      row.remainingGoats > 0
-        ? `This order still has ${row.remainingGoats.toLocaleString()} goats remaining. Mark it complete anyway?`
-        : "Mark this parent order as complete?";
-
-    if (!window.confirm(confirmMessage)) return;
-
+    if (row.remainingGoats > 0) {
+      toast({ title: "Order not complete", description: `Still ${row.remainingGoats.toLocaleString()} goats remaining.`, variant: "destructive" });
+      return;
+    }
+    if (!window.confirm("Mark this parent order as complete?")) return;
     try {
       await update(ref(db, `orders/${row.batchId}`), {
         status: "completed",
@@ -1118,7 +973,7 @@ const OrdersPage = () => {
       });
       toast({ title: "Completed", description: "Order marked as complete." });
     } catch {
-      toast({ title: "Error", description: "Failed to mark order complete.", variant: "destructive" });
+      toast({ title: "Error", description: "Failed to mark complete.", variant: "destructive" });
     }
   };
 
@@ -1143,127 +998,60 @@ const OrdersPage = () => {
     if (!ensureOrderEditAccess()) return;
     const nextGoats = Number(orderGoatsDraft);
     if (!Number.isFinite(nextGoats) || nextGoats < 0) {
-      toast({ title: "Invalid value", description: "Order goats must be a number 0 or greater.", variant: "destructive" });
+      toast({ title: "Invalid value", description: "Goats must be 0 or greater.", variant: "destructive" });
       return;
     }
-    if (!orderDateDraft) {
-      toast({ title: "Date required", description: "Please provide an order date.", variant: "destructive" });
-      return;
-    }
-    if (!orderOfficerDraft.trim()) {
-      toast({ title: "Field officer required", description: "Please provide the field officer name.", variant: "destructive" });
-      return;
-    }
-
-    const nextItems = row.items.map((item, itemIndex) =>
-      itemIndex === index
-        ? {
-            ...item,
-            goats: nextGoats,
-            date: orderDateDraft,
-            officer: orderOfficerDraft.trim(),
-            location: orderLocationDraft.trim() || item.location,
-          }
-        : item
+    if (!orderDateDraft) { toast({ title: "Date required", variant: "destructive" }); return; }
+    if (!orderOfficerDraft.trim()) { toast({ title: "Field officer required", variant: "destructive" }); return; }
+    const nextItems = row.items.map((item, i) =>
+      i === index ? { ...item, goats: nextGoats, date: orderDateDraft, officer: orderOfficerDraft.trim(), location: orderLocationDraft.trim() || item.location } : item
     );
-
     try {
       await updateBatchOrders(row, nextItems);
-      toast({ title: "Updated", description: "Order item updated successfully." });
+      toast({ title: "Updated", description: "Order item updated." });
       cancelOrderEdit();
     } catch {
-      toast({ title: "Error", description: "Failed to update order item.", variant: "destructive" });
+      toast({ title: "Error", description: "Failed to update.", variant: "destructive" });
     }
   };
 
   const deleteOrderItem = async (row: BatchOrderRow, index: number) => {
     if (!ensureOrderEditAccess()) return;
-    const confirmed = window.confirm("Delete this order item from the batch?");
-    if (!confirmed) return;
-
-    const nextItems = row.items.filter((_, itemIndex) => itemIndex !== index);
-
+    if (!window.confirm("Delete this order item?")) return;
     try {
-      await updateBatchOrders(row, nextItems);
-      toast({ title: "Deleted", description: "Order item deleted successfully." });
+      await updateBatchOrders(row, row.items.filter((_, i) => i !== index));
+      toast({ title: "Deleted", description: "Order item deleted." });
     } catch {
-      toast({ title: "Error", description: "Failed to delete order item.", variant: "destructive" });
+      toast({ title: "Error", description: "Failed to delete.", variant: "destructive" });
     }
   };
 
   const deleteBatch = async (row: BatchOrderRow) => {
     if (!ensureBatchDeleteAccess()) return;
-    const confirmed = window.confirm("Delete this batch and all its orders?");
-    if (!confirmed) return;
-
+    if (!window.confirm("Delete this batch and all its orders?")) return;
     try {
       await remove(ref(db, `orders/${row.batchId}`));
       if (ordersDialogBatchId === row.batchId) closeOrdersDialog();
-      if (editingBatchId === row.batchId) cancelGoatsBoughtEdit();
-      toast({ title: "Deleted", description: "Batch deleted successfully." });
+      toast({ title: "Deleted", description: "Batch deleted." });
     } catch {
-      toast({ title: "Error", description: "Failed to delete batch.", variant: "destructive" });
+      toast({ title: "Error", description: "Failed to delete.", variant: "destructive" });
     }
   };
 
   const handleCreateOrder = async () => {
     if (!ensureOrderCreateAccess()) return;
-
-    if (!activeProgram) {
-      toast({
-        title: "Select programme",
-        description: "Please select a programme before creating an order.",
-        variant: "destructive",
-      });
-      return;
-    }
-
+    if (!activeProgram) { toast({ title: "Select programme", variant: "destructive" }); return; }
     const trimmedCounty = newOrder.county.trim();
     const goatsValue = Number(newOrder.goats);
     const messageText = smsMessage.trim();
-    const selectedOfficers = fieldOfficers.filter((officer) => selectedFieldOfficerIds.includes(officer.id));
-    const recipients = Array.from(new Set(selectedOfficers.map((officer) => officer.phone).filter(Boolean)));
+    const selectedOfficers = fieldOfficers.filter((o) => selectedFieldOfficerIds.includes(o.id));
+    const recipients = Array.from(new Set(selectedOfficers.map((o) => o.phone).filter(Boolean)));
 
-    if (!newOrder.date) {
-      toast({ title: "Date required", description: "Please select the order date.", variant: "destructive" });
-      return;
-    }
-
-    if (!trimmedCounty) {
-      toast({
-        title: "Missing details",
-        description: "County is required.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    if (!Number.isFinite(goatsValue) || goatsValue <= 0) {
-      toast({
-        title: "Invalid goats",
-        description: "Goats must be a number greater than 0.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    if (!messageText) {
-      toast({
-        title: "Message required",
-        description: "Please type the SMS message to send.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    if (recipients.length === 0) {
-      toast({
-        title: "No recipients",
-        description: "Select at least one field officer with a phone number.",
-        variant: "destructive",
-      });
-      return;
-    }
+    if (!newOrder.date) { toast({ title: "Date required", variant: "destructive" }); return; }
+    if (!trimmedCounty) { toast({ title: "County required", variant: "destructive" }); return; }
+    if (!Number.isFinite(goatsValue) || goatsValue <= 0) { toast({ title: "Invalid goats", variant: "destructive" }); return; }
+    if (!messageText) { toast({ title: "Message required", variant: "destructive" }); return; }
+    if (recipients.length === 0) { toast({ title: "No recipients", variant: "destructive" }); return; }
 
     setCreatingOrder(true);
     try {
@@ -1271,43 +1059,22 @@ const OrdersPage = () => {
       const orderRef = push(ref(db, "orders"));
       const orderId = orderRef.key || null;
       await set(orderRef, {
-        id: orderId,
-        programme: newOrder.programme || activeProgram,
-        county: trimmedCounty,
-        username: userName || "Unknown",
-        status: "pending",
-        createdAt: now,
-        sourcePage: "orders",
-        orders: [],
-        totalGoats: goatsValue,
-        goatsBought: 0,
-        remainingGoats: goatsValue,
+        id: orderId, programme: newOrder.programme || activeProgram, county: trimmedCounty,
+        username: userName || "Unknown", status: "pending", createdAt: now, sourcePage: "orders",
+        orders: [], totalGoats: goatsValue, goatsBought: 0, remainingGoats: goatsValue,
       });
-
       const messageWithGoats = `${messageText} | Ref: ${orderId} | Goats: ${goatsValue.toLocaleString()}`;
       const smsRef = push(ref(db, "smsOutbox"));
       await set(smsRef, {
-        status: "pending",
-        sourcePage: "orders",
-        programme: newOrder.programme || activeProgram,
-        createdAt: Date.now(),
-        createdBy: userName || "unknown",
-        message: messageWithGoats,
-        recipients,
-        recipientCount: recipients.length,
-        orderId,
-        batchId: orderId,
-        targetOrderId: orderId,
-        totalGoats: goatsValue,
+        status: "pending", sourcePage: "orders", programme: newOrder.programme || activeProgram,
+        createdAt: Date.now(), createdBy: userName || "unknown", message: messageWithGoats,
+        recipients, recipientCount: recipients.length, orderId, batchId: orderId,
+        targetOrderId: orderId, totalGoats: goatsValue,
       });
-
-      toast({
-        title: "Order created",
-        description: `Order created and SMS queued for ${recipients.length} field officers.`,
-      });
+      toast({ title: "Order created", description: `SMS queued for ${recipients.length} officers.` });
       closeCreateDialog();
     } catch {
-      toast({ title: "Error", description: "Failed to create order or queue SMS.", variant: "destructive" });
+      toast({ title: "Error", description: "Failed to create order.", variant: "destructive" });
     } finally {
       setCreatingOrder(false);
     }
@@ -1315,249 +1082,273 @@ const OrdersPage = () => {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4">
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div className="flex items-center gap-3">
-            <div className="rounded-lg bg-blue-100 p-2 text-blue-700">
-              <ShoppingCart className="h-5 w-5" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold text-slate-900">Orders</h1>
-              <p className="text-sm text-slate-500">Grouped order batches with totals and per-order breakdown.</p>
-            </div>
+      {/* Header */}
+      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+        <div className="flex items-center gap-3">
+          <div className="rounded-xl bg-blue-600 p-2.5 text-white shadow-md shadow-blue-200">
+            <ShoppingCart className="h-5 w-5" />
           </div>
-          {userCanCreateOrders && (
-            <Button
-              onClick={openCreateDialog}
-              disabled={!activeProgram}
-              className="w-fit gap-2 bg-blue-600 text-white hover:bg-blue-700"
-            >
-              <Plus className="h-4 w-4" />
-              New Order
-            </Button>
-          )}
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight text-slate-900">Orders</h1>
+            <p className="text-sm text-slate-500">Grouped order batches with totals and per-order breakdown.</p>
+          </div>
         </div>
-
-        <div className="grid gap-4 md:grid-cols-3">
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm text-slate-500">Order Batches</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-2xl font-bold">{filteredBatchRows.length}</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm text-slate-500">Orders In Batches</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-2xl font-bold">{totalOrdersInBatches.toLocaleString()}</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm text-slate-500">Total Goats</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-2xl font-bold">{totalGoats.toLocaleString()}</p>
-            </CardContent>
-          </Card>
-        </div>
+        {userCanCreateOrders && (
+          <Button
+            onClick={openCreateDialog}
+            disabled={!activeProgram}
+            className="w-fit gap-2 bg-blue-600 text-white shadow-md shadow-blue-200 hover:bg-blue-700"
+          >
+            <Plus className="h-4 w-4" />
+            New Order
+          </Button>
+        )}
       </div>
 
-      <Card>
-        <CardContent className="space-y-4 pt-6">
-          <div className="flex flex-col md:flex-row lg:flex-row md:items-center gap-2 ">
-            <div className="space-y-2 lg:col-span-2">
-             
+      {/* Stat Cards */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {/* Orders Card */}
+        <Card className="border-slate-200 shadow-sm">
+          <CardContent className="flex items-center gap-4 p-5">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-blue-50 border border-blue-100">
+              <ShoppingCart className="h-6 w-6 text-blue-600" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-xs font-medium uppercase tracking-wider text-slate-500">Total Orders</p>
+              <p className="text-2xl font-bold text-slate-900">{filteredBatchRows.length}</p>
+              <p className="text-xs text-slate-400">{totalOrdersInBatches.toLocaleString()} submissions in batches</p>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Goats Purchased Card */}
+        <Card className="border-slate-200 shadow-sm">
+          <CardContent className="p-5">
+            <div className="flex items-center gap-4">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-emerald-50 border border-emerald-100">
+                <TrendingUp className="h-6 w-6 text-emerald-600" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-xs font-medium uppercase tracking-wider text-slate-500">Goats Purchased</p>
+                <p className="text-2xl font-bold text-slate-900">{totalGoatsPurchased.toLocaleString()}</p>
+              </div>
+            </div>
+            <div className="mt-3 space-y-1.5">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-slate-500">Target: {totalTargetGoats.toLocaleString()}</span>
+                <span className={`font-semibold ${purchasePercentage >= 100 ? "text-emerald-600" : purchasePercentage >= 50 ? "text-amber-600" : "text-red-500"}`}>
+                  {purchasePercentage}%
+                </span>
+              </div>
+              <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100 border border-slate-200">
+                <div
+                  className={`h-full rounded-full transition-all duration-500 ${purchasePercentage >= 100 ? "bg-emerald-500" : purchasePercentage >= 50 ? "bg-amber-400" : "bg-red-400"}`}
+                  style={{ width: `${Math.min(purchasePercentage, 100)}%` }}
+                />
+              </div>
+              <p className="text-[11px] text-slate-400">
+                {totalTargetGoats - totalGoatsPurchased > 0
+                  ? `${(totalTargetGoats - totalGoatsPurchased).toLocaleString()} goats remaining`
+                  : "Target fully achieved"}
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Counties Covered Card */}
+        <Card className="border-slate-200 shadow-sm">
+          <CardContent className="p-5">
+            <div className="flex items-center gap-4">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-violet-50 border border-violet-100">
+                <MapPin className="h-6 w-6 text-violet-600" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-xs font-medium uppercase tracking-wider text-slate-500">Counties Covered</p>
+                <p className="text-2xl font-bold text-slate-900">{uniqueCounties}</p>
+              </div>
+            </div>
+            <div className="mt-3 max-h-[88px] space-y-1 overflow-y-auto pr-1">
+              {uniqueCounties === 0 ? (
+                <p className="text-xs text-slate-400">No counties yet</p>
+              ) : (
+                Array.from(countiesMap.entries()).map(([county, goats]) => (
+                  <div key={county} className="flex items-center justify-between">
+                    <span className="text-xs text-slate-600 truncate mr-2">{county}</span>
+                    <span className="text-[11px] font-medium text-slate-400 tabular-nums shrink-0">
+                      {formatCompactNumber(goats)}
+                    </span>
+                  </div>
+                ))
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Filters */}
+      <Card className="border-slate-200 shadow-sm">
+        <CardContent className="space-y-4 pt-5">
+          <div className="flex flex-col gap-2 md:flex-row md:items-end lg:flex-row">
+            <div className="flex-1 space-y-1.5">
+              <Label className="text-xs font-medium text-slate-500">Search</Label>
               <Input
-                id="search"
-                placeholder="Search county, user..."
+                placeholder="County, user, status..."
                 value={filters.search}
                 onChange={(e) => handleFilterChange("search", e.target.value)}
-                className="border-gray-300 focus:border-blue-500 bg-white"
+                className="border-slate-200 bg-white focus:border-blue-400 focus:ring-blue-100"
               />
             </div>
-
-            <div className="space-y-2">
-             
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium text-slate-500">From</Label>
               <Input
                 type="date"
                 value={filters.startDate}
                 onChange={(e) => handleFilterChange("startDate", e.target.value)}
-                className="border-gray-300 focus:border-blue-500 bg-white"
+                className="border-slate-200 bg-white focus:border-blue-400 focus:ring-blue-100"
               />
             </div>
-
-            <div className="space-y-2">
-              
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium text-slate-500">To</Label>
               <Input
                 type="date"
                 value={filters.endDate}
                 onChange={(e) => handleFilterChange("endDate", e.target.value)}
-                className="border-gray-300 focus:border-blue-500 bg-white"
+                className="border-slate-200 bg-white focus:border-blue-400 focus:ring-blue-100"
               />
             </div>
-
-            <div className="space-y-2">
-             
-              <Select value={filters.status} onValueChange={(value) => handleFilterChange("status", value)}>
-                <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white">
-                  <SelectValue placeholder="All status" />
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium text-slate-500">Status</Label>
+              <Select value={filters.status} onValueChange={(v) => handleFilterChange("status", v)}>
+                <SelectTrigger className="border-slate-200 bg-white focus:border-blue-400 focus:ring-blue-100 w-[140px]">
+                  <SelectValue placeholder="All" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All status</SelectItem>
-                  {availableStatuses.map((status) => (
-                    <SelectItem key={status} value={status}>
-                      {status}
-                    </SelectItem>
+                  {availableStatuses.map((s) => (
+                    <SelectItem key={s} value={s}>{s}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
-
             {userIsChiefAdmin && (
-              <div className="space-y-2">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium text-slate-500">Programme</Label>
                 <Select value={activeProgram} onValueChange={setActiveProgram} disabled={availablePrograms.length === 0}>
-                  <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white">
-                    <SelectValue placeholder="Select programme" />
+                  <SelectTrigger className="border-slate-200 bg-white focus:border-blue-400 focus:ring-blue-100 w-[130px]">
+                    <SelectValue placeholder="Select" />
                   </SelectTrigger>
                   <SelectContent>
-                    {availablePrograms.map((programme) => (
-                      <SelectItem key={programme} value={programme}>
-                        {programme}
-                      </SelectItem>
+                    {availablePrograms.map((p) => (
+                      <SelectItem key={p} value={p}>{p}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
             )}
-             <div className="space-y-2">
-            <Button variant="outline" onClick={clearFilters}>
-              Clear Filters
+            <Button variant="outline" onClick={clearFilters} className="border-slate-200 hover:bg-slate-50 shrink-0">
+              Clear
             </Button>
           </div>
-          </div>
-
-         
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Orders Table</CardTitle>
+      {/* Table */}
+      <Card className="border-slate-200 shadow-sm overflow-hidden">
+        <CardHeader className="border-b border-slate-100 bg-slate-50/50 px-5 py-3">
+          <CardTitle className="text-sm font-semibold text-slate-700">Order Batches</CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="p-0">
           {loading ? (
-            <div className="py-8 text-center text-sm text-slate-500">Loading orders...</div>
+            <div className="py-12 text-center text-sm text-slate-400">Loading orders...</div>
           ) : pageRows.length === 0 ? (
-            <div className="py-8 text-center text-sm text-slate-500">
-              {activeProgram ? "No orders found for current filters." : "You do not have access to any programme data."}
+            <div className="py-12 text-center text-sm text-slate-400">
+              {activeProgram ? "No orders found for current filters." : "No programme access."}
             </div>
           ) : (
             <>
-              <Table className="min-w-[980px] [&_th]:h-8 [&_th]:px-3 [&_th]:py-1.5 [&_th]:align-middle [&_th]:whitespace-nowrap [&_td]:px-3 [&_td]:py-1.5 [&_td]:align-middle">
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-32 text-left whitespace-nowrap">Date</TableHead>
-                    <TableHead className="text-left">County</TableHead>
-                    <TableHead className="text-left">Programme</TableHead>
-                    <TableHead className="text-left">Offtake Officer</TableHead>
-                    <TableHead className="text-right">Target</TableHead>
-                    <TableHead className="text-right">Goats So Far</TableHead>
-                    <TableHead className="text-right">Goats Bought</TableHead>
-                    
-                    <TableHead className="text-left">Status</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {pageRows.map((row) => (
-                    <TableRow key={row.batchId} className="h-9">
-                      <TableCell className="text-left whitespace-nowrap font-medium">{formatDate(row.batchDate)}</TableCell>
-                      <TableCell className="text-[12px] text-left">{row.county}</TableCell>
-                      <TableCell className="text-[12px] text-left">{row.programme}</TableCell>
-                      <TableCell className="text-[12px] text-left">{row.username}</TableCell>
-                      <TableCell className="text-[12px] text-right font-semibold tabular-nums">{row.totalGoats.toLocaleString()}</TableCell>
-                      <TableCell className="text-[12px] text-right font-semibold tabular-nums">{row.recordedGoats.toLocaleString()}</TableCell>
-                      <TableCell className="text-[12px] text-right">
-                        {userCanEditOrders && editingBatchId === row.batchId ? (
-                          <div className="ml-auto flex w-44 items-center justify-end gap-2">
-                            <Input
-                              type="number"
-                              min={0}
-                              max={row.totalGoats}
-                              value={goatsBoughtDraft}
-                              onChange={(e) => setGoatsBoughtDraft(e.target.value)}
-                              className="h-7 text-right"
-                            />
-                            <Button size="icon" variant="outline" className="h-7 w-7" onClick={() => saveGoatsBoughtEdit(row)}>
-                              <Save className="h-4 w-4" />
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="border-b border-slate-200 bg-slate-50/70 hover:bg-slate-50/70">
+                      <TableHead className="h-9 px-4 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">Date</TableHead>
+                      <TableHead className="h-9 px-4 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">County</TableHead>
+                      <TableHead className="h-9 px-4 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">Programme</TableHead>
+                      <TableHead className="h-9 px-4 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">Officer</TableHead>
+                      <TableHead className="h-9 px-4 text-right text-xs font-semibold uppercase tracking-wider text-slate-500">Target</TableHead>
+                      <TableHead className="h-9 px-4 text-right text-xs font-semibold uppercase tracking-wider text-slate-500">Progress</TableHead>
+                      <TableHead className="h-9 px-4 text-right text-xs font-semibold uppercase tracking-wider text-slate-500">Purchased</TableHead>
+                      <TableHead className="h-9 px-4 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">Status</TableHead>
+                      <TableHead className="h-9 px-4 text-right text-xs font-semibold uppercase tracking-wider text-slate-500">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {pageRows.map((row, idx) => (
+                      <TableRow
+                        key={row.batchId}
+                        className={`border-b border-slate-100 transition-colors hover:bg-blue-50/40 ${idx % 2 === 0 ? "bg-white" : "bg-slate-50/30"}`}
+                      >
+                        <TableCell className="px-4 py-2.5 text-sm font-medium text-slate-800 whitespace-nowrap">
+                          {formatDate(row.batchDate)}
+                        </TableCell>
+                        <TableCell className="px-4 py-2.5 text-sm text-slate-600">{row.county}</TableCell>
+                        <TableCell className="px-4 py-2.5 text-sm text-slate-600">{row.programme}</TableCell>
+                        <TableCell className="px-4 py-2.5 text-sm text-slate-600 max-w-[140px] truncate">{row.username}</TableCell>
+                        <TableCell className="px-4 py-2.5 text-sm text-right font-semibold tabular-nums text-slate-800">
+                          {row.totalGoats.toLocaleString()}
+                        </TableCell>
+                        <TableCell className="px-4 py-2.5 text-sm text-right tabular-nums text-slate-500">
+                          {row.recordedGoats.toLocaleString()}
+                        </TableCell>
+                        <TableCell className="px-4 py-2.5 text-sm text-right font-semibold tabular-nums text-slate-800">
+                          {row.goatsBought.toLocaleString()}
+                        </TableCell>
+                        <TableCell className="px-4 py-2.5">
+                          <Badge variant="outline" className={getStatusBadgeClass(row.status)}>{row.status}</Badge>
+                        </TableCell>
+                        <TableCell className="px-4 py-2.5 text-right">
+                          <div className="flex items-center justify-end gap-0.5">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-slate-500 hover:text-blue-600 hover:bg-blue-50"
+                              onClick={() => setOrdersDialogBatchId(row.batchId)}
+                              title="View details"
+                            >
+                              <Eye className="h-4 w-4" />
                             </Button>
-                            <Button size="icon" variant="outline" className="h-7 w-7" onClick={cancelGoatsBoughtEdit}>
-                              <X className="h-4 w-4" />
-                            </Button>
-                          </div>
-                        ) : (
-                          <div className="ml-auto flex items-center justify-end gap-2">
-                            <span className="font-semibold tabular-nums">{row.goatsBought.toLocaleString()}</span>
                             {userCanEditOrders && (
-                              <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => startGoatsBoughtEdit(row)}>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 text-slate-500 hover:text-amber-600 hover:bg-amber-50"
+                                onClick={() => setOrdersDialogBatchId(row.batchId)}
+                                title="Edit"
+                              >
                                 <Pencil className="h-4 w-4" />
                               </Button>
                             )}
+                            {userIsChiefAdmin && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 text-slate-400 hover:text-red-600 hover:bg-red-50"
+                                onClick={() => deleteBatch(row)}
+                                title="Delete"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            )}
                           </div>
-                        )}
-                      </TableCell>
-                    
-                      <TableCell className="text-left">
-                        <Badge className={getStatusBadgeClass(row.status)}>{row.status}</Badge>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex items-center justify-end gap-2">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-7 gap-2"
-                            onClick={() => setOrdersDialogBatchId(row.batchId)}
-                          >
-                            <Eye className="h-4 w-4" />
-                            View
-                          </Button>
-                          {userCanEditOrders && (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="h-7 gap-2"
-                              onClick={() => setOrdersDialogBatchId(row.batchId)}
-                            >
-                              <Pencil className="h-4 w-4" />
-                              Update
-                            </Button>
-                          )}
-                          {userIsChiefAdmin && (
-                            <Button
-                              variant="destructive"
-                              size="sm"
-                              className="h-7"
-                              onClick={() => deleteBatch(row)}
-                            >
-                              <Trash2 className="mr-1 h-4 w-4" />
-                              Delete
-                            </Button>
-                          )}
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
 
-              <div className="mt-4 flex items-center justify-between text-sm text-slate-600">
-                <span>
-                  Showing {(pagination.page - 1) * pagination.limit + 1}-
-                  {Math.min(pagination.page * pagination.limit, filteredBatchRows.length)} of {filteredBatchRows.length}
+              <div className="flex items-center justify-between border-t border-slate-100 bg-slate-50/50 px-5 py-3">
+                <span className="text-xs text-slate-500">
+                  Showing {(pagination.page - 1) * pagination.limit + 1}–{Math.min(pagination.page * pagination.limit, filteredBatchRows.length)} of {filteredBatchRows.length} batches
                 </span>
                 <div className="flex gap-2">
                   <Button
@@ -1565,6 +1356,7 @@ const OrdersPage = () => {
                     size="sm"
                     disabled={!pagination.hasPrev}
                     onClick={() => setPagination((prev) => ({ ...prev, page: prev.page - 1 }))}
+                    className="border-slate-200 hover:bg-white text-xs"
                   >
                     Previous
                   </Button>
@@ -1573,6 +1365,7 @@ const OrdersPage = () => {
                     size="sm"
                     disabled={!pagination.hasNext}
                     onClick={() => setPagination((prev) => ({ ...prev, page: prev.page + 1 }))}
+                    className="border-slate-200 hover:bg-white text-xs"
                   >
                     Next
                   </Button>
@@ -1583,229 +1376,162 @@ const OrdersPage = () => {
         </CardContent>
       </Card>
 
-      <Dialog
-        open={isCreateDialogOpen}
-        onOpenChange={(open) => {
-          if (!open) closeCreateDialog();
-        }}
-      >
-        <DialogContent className="sm:max-w-lg bg-white rounded-2xl max-h-[90vh] overflow-y-auto">
+      {/* Create Order Dialog */}
+      <Dialog open={isCreateDialogOpen} onOpenChange={(open) => { if (!open) closeCreateDialog(); }}>
+        <DialogContent className="sm:max-w-lg bg-white rounded-2xl border-slate-200 shadow-xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="text-slate-900">Create Order</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="create-order-programme" className="text-sm font-medium text-slate-700">
-                Programme
-              </Label>
-              <Input
-                id="create-order-programme"
-                value={newOrder.programme || activeProgram || ""}
-                disabled
-                className="border-gray-300 bg-slate-50"
-              />
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium text-slate-500">Programme</Label>
+              <Input value={newOrder.programme || activeProgram || ""} disabled className="border-slate-200 bg-slate-50 text-sm" />
             </div>
-
             <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-2">
-                <Label htmlFor="create-order-date" className="text-sm font-medium text-slate-700">
-                  Order Date *
-                </Label>
-                <Input
-                  id="create-order-date"
-                  type="date"
-                  value={newOrder.date}
-                  onChange={(e) => setNewOrder((prev) => ({ ...prev, date: e.target.value }))}
-                  className="border-gray-300 focus:border-blue-500 bg-white"
-                />
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium text-slate-500">Order Date *</Label>
+                <Input type="date" value={newOrder.date} onChange={(e) => setNewOrder((p) => ({ ...p, date: e.target.value }))} className="border-slate-200 bg-white text-sm focus:border-blue-400" />
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="create-order-goats" className="text-sm font-medium text-slate-700">
-                  Goats *
-                </Label>
-                <Input
-                  id="create-order-goats"
-                  type="number"
-                  min={1}
-                  value={newOrder.goats}
-                  onChange={(e) => setNewOrder((prev) => ({ ...prev, goats: e.target.value }))}
-                  className="border-gray-300 focus:border-blue-500 bg-white"
-                />
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium text-slate-500">Goats *</Label>
+                <Input type="number" min={1} value={newOrder.goats} onChange={(e) => setNewOrder((p) => ({ ...p, goats: e.target.value }))} className="border-slate-200 bg-white text-sm focus:border-blue-400" />
               </div>
             </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="create-order-county" className="text-sm font-medium text-slate-700">
-                County *
-              </Label>
-              <Input
-                id="create-order-county"
-                value={newOrder.county}
-                onChange={(e) => setNewOrder((prev) => ({ ...prev, county: e.target.value }))}
-                placeholder="Enter county"
-                className="border-gray-300 focus:border-blue-500 bg-white"
-              />
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium text-slate-500">County *</Label>
+              <Input value={newOrder.county} onChange={(e) => setNewOrder((p) => ({ ...p, county: e.target.value }))} placeholder="Enter county" className="border-slate-200 bg-white text-sm focus:border-blue-400" />
             </div>
-
-            <div className="space-y-2">
-              <Label className="text-sm font-medium text-slate-700">Field Officers (Mobile Users) *</Label>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium text-slate-500">Field Officers *</Label>
               {fieldOfficersLoading ? (
-                <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-500">
-                  Loading mobile users...
-                </div>
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-400">Loading...</div>
               ) : fieldOfficers.length === 0 ? (
-                <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-500">
-                  No mobile users found.
-                </div>
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-400">No mobile users.</div>
               ) : (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="w-full justify-between border-gray-300 bg-white text-left"
-                    >
+                    <Button type="button" variant="outline" className="w-full justify-between border-slate-200 bg-white text-sm">
                       <span>{selectedOfficersSummary}</span>
-                      <ChevronDown className="h-4 w-4 opacity-60" />
+                      <ChevronDown className="h-4 w-4 opacity-50" />
                     </Button>
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent
-                    className="max-h-56 w-[--radix-dropdown-menu-trigger-width] overflow-y-auto"
-                    align="start"
-                  >
+                  <DropdownMenuContent className="max-h-56 w-[--radix-dropdown-menu-trigger-width] overflow-y-auto" align="start">
                     {fieldOfficers.map((officer) => (
                       <DropdownMenuCheckboxItem
                         key={officer.id}
                         disabled={!officer.phone}
                         checked={selectedFieldOfficerIds.includes(officer.id)}
                         onCheckedChange={() => toggleFieldOfficerSelection(officer.id)}
-                        onSelect={(event) => event.preventDefault()}
+                        onSelect={(e) => e.preventDefault()}
                       >
-                        {officer.name}{" "}
-                        <span className="ml-2 text-xs text-slate-500">{officer.phone || "No phone on record"}</span>
+                        {officer.name} <span className="ml-2 text-xs text-slate-400">{officer.phone || "No phone"}</span>
                       </DropdownMenuCheckboxItem>
                     ))}
                   </DropdownMenuContent>
                 </DropdownMenu>
               )}
-              {selectedOfficersPreview && (
-                <p className="text-xs text-slate-500">Selected: {selectedOfficersPreview}</p>
-              )}
+              {selectedOfficersPreview && <p className="text-[11px] text-slate-400">{selectedOfficersPreview}</p>}
             </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="order-sms-message" className="text-sm font-medium text-slate-700">
-                SMS Message *
-              </Label>
-              <Textarea
-                id="order-sms-message"
-                value={smsMessage}
-                onChange={(e) => setSmsMessage(e.target.value)}
-                placeholder="Write the SMS to send..."
-                className="min-h-[110px] border-gray-300 focus:border-blue-500 bg-white"
-              />
-              <p className="text-xs text-slate-500">
-                We will append: Goats: {Number(newOrder.goats || 0).toLocaleString()}
-              </p>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium text-slate-500">SMS Message *</Label>
+              <Textarea value={smsMessage} onChange={(e) => setSmsMessage(e.target.value)} placeholder="Write the SMS..." className="min-h-[100px] border-slate-200 bg-white text-sm focus:border-blue-400" />
+              <p className="text-[11px] text-slate-400">Append: Goats: {Number(newOrder.goats || 0).toLocaleString()}</p>
             </div>
-
-            <div className="space-y-2">
-              <Label className="text-sm font-medium text-slate-700">Submitted By</Label>
-              <Input value={userName || "Unknown"} disabled className="border-gray-300 bg-slate-50" />
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium text-slate-500">Submitted By</Label>
+              <Input value={userName || "Unknown"} disabled className="border-slate-200 bg-slate-50 text-sm" />
             </div>
           </div>
-
-          <div className="flex justify-end gap-2 pt-4">
-            <Button variant="outline" onClick={closeCreateDialog} disabled={creatingOrder}>
-              Cancel
-            </Button>
-            <Button
-              onClick={handleCreateOrder}
-              disabled={creatingOrder}
-              className="bg-blue-600 text-white hover:bg-blue-700"
-            >
+          <div className="flex justify-end gap-2 pt-4 border-t border-slate-100">
+            <Button variant="outline" onClick={closeCreateDialog} disabled={creatingOrder} className="border-slate-200 text-sm">Cancel</Button>
+            <Button onClick={handleCreateOrder} disabled={creatingOrder} className="bg-blue-600 text-white hover:bg-blue-700 text-sm shadow-sm">
               {creatingOrder ? "Creating..." : "Create Order"}
             </Button>
           </div>
         </DialogContent>
       </Dialog>
 
-      <Dialog
-        open={Boolean(ordersDialogBatchId && ordersDialogRow)}
-        onOpenChange={(open) => {
-          if (!open) closeOrdersDialog();
-        }}
-      >
-        <DialogContent className="sm:max-w-2xl bg-white rounded-2xl max-h-[90vh] overflow-hidden">
-          <DialogHeader>
+      {/* Order Details Dialog */}
+      <Dialog open={Boolean(ordersDialogBatchId && ordersDialogRow)} onOpenChange={(open) => { if (!open) closeOrdersDialog(); }}>
+        <DialogContent className="sm:max-w-2xl bg-white rounded-2xl border-slate-200 shadow-xl max-h-[90vh] overflow-hidden">
+          <DialogHeader className="border-b border-slate-100 pb-3">
             <DialogTitle className="text-slate-900">Parent Order Details</DialogTitle>
           </DialogHeader>
 
           {ordersDialogRow ? (
-            <div className="space-y-4 overflow-y-auto pr-1">
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                <div className="rounded-md border bg-slate-50 p-3 text-sm">
-                  <p className="text-slate-500">Date</p>
-                  <p className="font-semibold text-slate-900">{formatDate(ordersDialogRow.batchDate)}</p>
-                  <p className="text-xs text-slate-500">Ref: {ordersDialogRow.batchId}</p>
-                </div>
-                <div className="rounded-md border bg-slate-50 p-3 text-sm">
-                  <p className="text-slate-500">County</p>
-                  <p className="font-semibold text-slate-900">{ordersDialogRow.county}</p>
-                </div>
-                <div className="rounded-md border bg-slate-50 p-3 text-sm">
-                  <p className="text-slate-500">Location</p>
-                  <p className="font-semibold text-slate-900">{ordersDialogRow.location}</p>
-                </div>
-                <div className="rounded-md border bg-slate-50 p-3 text-sm">
-                  <p className="text-slate-500">Offtake Officer</p>
-                  <p className="font-semibold text-slate-900">{ordersDialogRow.username}</p>
-                </div>
-                <div className="rounded-md border bg-slate-50 p-3 text-sm">
-                  <p className="text-slate-500">Status</p>
-                  <Badge className={getStatusBadgeClass(ordersDialogRow.status)}>{ordersDialogRow.status}</Badge>
-                </div>
-                <div className="rounded-md border bg-slate-50 p-3 text-sm">
-                  <p className="text-slate-500">Progress</p>
-                  <p className="font-semibold text-slate-900">
-                    {ordersDialogRow.goatsBought.toLocaleString()} / {ordersDialogRow.totalGoats.toLocaleString()}
-                  </p>
-                  <p className="text-xs text-slate-500">
-                    Remaining {ordersDialogRow.remainingGoats.toLocaleString()}
-                  </p>
-                </div>
+            <div className="space-y-4 overflow-y-auto pr-1 py-4">
+              {/* Summary Grid */}
+              <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
+                {[
+                  { label: "Date", value: formatDate(ordersDialogRow.batchDate), sub: `Ref: ${ordersDialogRow.batchId}` },
+                  { label: "County", value: ordersDialogRow.county },
+                  { label: "Location", value: ordersDialogRow.location },
+                  { label: "Offtake Officer", value: ordersDialogRow.username },
+                  { label: "Programme", value: ordersDialogRow.programme },
+                  {
+                    label: "Status",
+                    value: null,
+                    badge: ordersDialogRow.status,
+                  },
+                ].map((item) => (
+                  <div key={item.label} className="rounded-lg border border-slate-150 bg-slate-50/60 p-3">
+                    <p className="text-[11px] font-medium uppercase tracking-wider text-slate-400">{item.label}</p>
+                    {item.badge ? (
+                      <Badge variant="outline" className={`mt-1 ${getStatusBadgeClass(item.badge)}`}>{item.badge}</Badge>
+                    ) : (
+                      <p className="mt-0.5 text-sm font-semibold text-slate-800">{item.value || "—"}</p>
+                    )}
+                    {item.sub && <p className="mt-0.5 text-[10px] text-slate-400 font-mono">{item.sub}</p>}
+                  </div>
+                ))}
               </div>
 
+              {/* Progress Section */}
+              <div className="rounded-lg border border-slate-150 bg-slate-50/60 p-3">
+                <p className="text-[11px] font-medium uppercase tracking-wider text-slate-400">Progress</p>
+                {userCanEditOrders && dialogGoatsBoughtDraft !== "" ? (
+                  <div className="mt-1.5 flex items-center gap-2">
+                    <Input type="number" min={0} max={ordersDialogRow.totalGoats} value={dialogGoatsBoughtDraft} onChange={(e) => setDialogGoatsBoughtDraft(e.target.value)} className="h-8 max-w-32 text-right text-sm border-slate-200" />
+                    <span className="text-xs text-slate-400">/ {ordersDialogRow.totalGoats.toLocaleString()}</span>
+                    <Button size="icon" variant="outline" className="h-8 w-8 border-slate-200" onClick={saveDialogGoatsBought}><Save className="h-3.5 w-3.5" /></Button>
+                    <Button size="icon" variant="outline" className="h-8 w-8 border-slate-200" onClick={() => setDialogGoatsBoughtDraft("")}><X className="h-3.5 w-3.5" /></Button>
+                  </div>
+                ) : (
+                  <div className="mt-1.5 flex items-center gap-2">
+                    <p className="text-sm font-semibold text-slate-800">
+                      {ordersDialogRow.goatsBought.toLocaleString()} / {ordersDialogRow.totalGoats.toLocaleString()}
+                    </p>
+                    {userCanEditOrders && (
+                      <Button size="icon" variant="ghost" className="h-6 w-6 text-slate-400 hover:text-blue-600" onClick={() => setDialogGoatsBoughtDraft(String(ordersDialogRow.goatsBought))} title="Edit">
+                        <Pencil className="h-3 w-3" />
+                      </Button>
+                    )}
+                  </div>
+                )}
+                <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+                  <div
+                    className={`h-full rounded-full transition-all duration-500 ${ordersDialogRow.status === "completed" ? "bg-emerald-500" : "bg-blue-400"}`}
+                    style={{ width: `${Math.min(ordersDialogRow.totalGoats > 0 ? (ordersDialogRow.goatsBought / ordersDialogRow.totalGoats) * 100 : 0, 100)}%` }}
+                  />
+                </div>
+                <p className="mt-1 text-[11px] text-slate-400">{ordersDialogRow.remainingGoats.toLocaleString()} remaining</p>
+              </div>
+
+              {/* Status Banner */}
               {ordersDialogRow.status === "completed" ? (
-                <div className="rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-800">
-                  Target achieved. This order is closed and the field-officer submissions are listed below.
+                <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">
+                  Target achieved. This order is closed.
                 </div>
               ) : (
-                <div
-                  className={`rounded-md border p-3 text-sm ${
-                    ordersDialogRow.isReadyForCompletion
-                      ? "border-amber-200 bg-amber-50 text-amber-800"
-                      : "border-slate-200 bg-slate-50 text-slate-700"
-                  }`}
-                >
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="space-y-1">
-                      <p className="font-medium">
-                        {ordersDialogRow.isReadyForCompletion
-                          ? "All field-officer submissions are attached. Review them, then mark this parent order complete."
-                          : `This parent order is still open with ${ordersDialogRow.remainingGoats.toLocaleString()} goats remaining.`}
-                      </p>
-                      <p className="text-xs opacity-80">
-                        The field-officer submissions stay under this view until the offtake officer closes the order.
-                      </p>
-                    </div>
+                <div className={`rounded-lg border p-3 text-sm ${ordersDialogRow.isReadyForCompletion ? "border-amber-200 bg-amber-50 text-amber-700" : "border-slate-200 bg-slate-50 text-slate-600"}`}>
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <p className="text-xs leading-relaxed">
+                      {ordersDialogRow.isReadyForCompletion
+                        ? "All submissions attached. Review and mark complete."
+                        : `${ordersDialogRow.remainingGoats.toLocaleString()} goats remaining.`}
+                    </p>
                     {userCanEditOrders && (
-                      <Button
-                        type="button"
-                        size="sm"
-                        className="bg-blue-600 text-white hover:bg-blue-700"
-                        onClick={() => markOrderComplete(ordersDialogRow)}
-                      >
+                      <Button size="sm" className="bg-blue-600 text-white hover:bg-blue-700 text-xs shadow-sm shrink-0" onClick={() => markOrderComplete(ordersDialogRow)}>
                         Mark Complete
                       </Button>
                     )}
@@ -1813,129 +1539,98 @@ const OrdersPage = () => {
                 </div>
               )}
 
-              <div className="rounded-md border overflow-x-auto">
-                <div className="border-b bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700">
-                  Field Officer Submissions
+              {/* Submissions Table */}
+              <div className="rounded-lg border border-slate-200 overflow-hidden">
+                <div className="border-b border-slate-100 bg-slate-50 px-4 py-2.5 text-xs font-semibold uppercase tracking-wider text-slate-500">
+                  Field Officer Submissions ({ordersDialogRow.items.length})
                 </div>
-                <Table className="[&_th]:h-8 [&_th]:px-3 [&_th]:py-1.5 [&_th]:align-middle [&_th]:whitespace-nowrap [&_td]:px-3 [&_td]:py-1.5 [&_td]:align-middle">
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="text-left">Date</TableHead>
-                      {ordersDialogHasOfficerColumn && (
-                        <TableHead className="text-left">Field Officer</TableHead>
-                      )}
-                      <TableHead className="text-left">Village</TableHead>
-                      <TableHead className="text-right">Goats</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {ordersDialogRow.items.map((item, index) => {
-                      const orderKey = `${ordersDialogRow.batchId}:${index}`;
-                      const isEditingOrder = userCanEditOrders && editingOrderKey === orderKey;
-
-                      return (
-                        <TableRow key={orderKey} className="h-9">
-                          <TableCell className="text-left">
-                            {isEditingOrder ? (
-                              <Input
-                                type="date"
-                                value={orderDateDraft}
-                                onChange={(e) => setOrderDateDraft(e.target.value)}
-                                className="h-7 max-w-40"
-                              />
-                            ) : (
-                              formatDate(item.date)
-                            )}
-                          </TableCell>
-                          {ordersDialogHasOfficerColumn && (
-                            <TableCell className="text-left">
-                              {isEditingOrder ? (
-                                <Input
-                                  value={orderOfficerDraft}
-                                  onChange={(e) => setOrderOfficerDraft(e.target.value)}
-                                  className="h-7"
-                                  placeholder="Field officer"
-                                />
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="border-b border-slate-100 bg-slate-50/50 hover:bg-slate-50/50">
+                        <TableHead className="h-8 px-3 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-400">Date</TableHead>
+                        {ordersDialogHasOfficerColumn && (
+                          <TableHead className="h-8 px-3 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-400">Officer</TableHead>
+                        )}
+                        <TableHead className="h-8 px-3 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-400">Village</TableHead>
+                        <TableHead className="h-8 px-3 text-right text-[11px] font-semibold uppercase tracking-wider text-slate-400">Goats</TableHead>
+                        <TableHead className="h-8 px-3 text-right text-[11px] font-semibold uppercase tracking-wider text-slate-400">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {ordersDialogRow.items.map((item, index) => {
+                        const orderKey = `${ordersDialogRow.batchId}:${index}`;
+                        const isEditing = userCanEditOrders && editingOrderKey === orderKey;
+                        return (
+                          <TableRow key={orderKey} className="border-b border-slate-50 hover:bg-blue-50/30">
+                            <TableCell className="px-3 py-2">
+                              {isEditing ? (
+                                <Input type="date" value={orderDateDraft} onChange={(e) => setOrderDateDraft(e.target.value)} className="h-7 max-w-36 text-xs border-slate-200" />
                               ) : (
-                                <span className="text-sm text-slate-700">{item.officer}</span>
+                                <span className="text-xs text-slate-700">{formatDate(item.date)}</span>
                               )}
                             </TableCell>
-                          )}
-                          <TableCell className="text-left">
-                            {isEditingOrder ? (
-                              <Input
-                                value={orderLocationDraft}
-                                onChange={(e) => setOrderLocationDraft(e.target.value)}
-                                className="h-7"
-                                placeholder="Village"
-                              />
-                            ) : (
-                              <span className="text-sm text-slate-700">{item.location}</span>
-                            )}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            {isEditingOrder ? (
-                              <Input
-                                type="number"
-                                min={0}
-                                value={orderGoatsDraft}
-                                onChange={(e) => setOrderGoatsDraft(e.target.value)}
-                                className="ml-auto h-7 max-w-28 text-right"
-                              />
-                            ) : (
-                              <span className="font-semibold tabular-nums">{item.goats.toLocaleString()}</span>
-                            )}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            {isEditingOrder ? (
-                              <div className="flex justify-end gap-2">
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  className="h-7"
-                                  onClick={() => saveOrderEdit(ordersDialogRow, index)}
-                                >
-                                  <Save className="mr-1 h-4 w-4" />
-                                  Save
-                                </Button>
-                                <Button size="sm" variant="outline" className="h-7" onClick={cancelOrderEdit}>
-                                  <X className="mr-1 h-4 w-4" />
-                                  Cancel
-                                </Button>
-                              </div>
-                            ) : (
-                              <div className="flex justify-end gap-2">
-                                {userCanEditOrders && (
-                                  <>
-                                    <Button
-                                      size="sm"
-                                      variant="outline"
-                                      className="h-7"
-                                      onClick={() => startOrderEdit(ordersDialogRow, item, index)}
-                                    >
-                                      <Pencil className="mr-1 h-4 w-4" />
-                                      Edit
-                                    </Button>
-                                    <Button
-                                      size="sm"
-                                      variant="destructive"
-                                      className="h-7"
-                                      onClick={() => deleteOrderItem(ordersDialogRow, index)}
-                                    >
-                                      <Trash2 className="mr-1 h-4 w-4" />
-                                      Delete
-                                    </Button>
-                                  </>
+                            {ordersDialogHasOfficerColumn && (
+                              <TableCell className="px-3 py-2">
+                                {isEditing ? (
+                                  <Input value={orderOfficerDraft} onChange={(e) => setOrderOfficerDraft(e.target.value)} className="h-7 text-xs border-slate-200" placeholder="Officer" />
+                                ) : (
+                                  <span className="text-xs text-slate-600 max-w-[120px] truncate block">{item.officer}</span>
                                 )}
-                              </div>
+                              </TableCell>
                             )}
+                            <TableCell className="px-3 py-2">
+                              {isEditing ? (
+                                <Input value={orderLocationDraft} onChange={(e) => setOrderLocationDraft(e.target.value)} className="h-7 text-xs border-slate-200" placeholder="Village" />
+                              ) : (
+                                <span className="text-xs text-slate-600">{item.location}</span>
+                              )}
+                            </TableCell>
+                            <TableCell className="px-3 py-2 text-right">
+                              {isEditing ? (
+                                <Input type="number" min={0} value={orderGoatsDraft} onChange={(e) => setOrderGoatsDraft(e.target.value)} className="ml-auto h-7 max-w-24 text-right text-xs border-slate-200" />
+                              ) : (
+                                <span className="text-xs font-semibold tabular-nums text-slate-800">{item.goats.toLocaleString()}</span>
+                              )}
+                            </TableCell>
+                            <TableCell className="px-3 py-2 text-right">
+                              {isEditing ? (
+                                <div className="flex justify-end gap-1">
+                                  <Button size="sm" variant="outline" className="h-7 text-[11px] border-slate-200" onClick={() => saveOrderEdit(ordersDialogRow, index)}>
+                                    <Save className="mr-1 h-3 w-3" />Save
+                                  </Button>
+                                  <Button size="sm" variant="outline" className="h-7 text-[11px] border-slate-200" onClick={cancelOrderEdit}>
+                                    <X className="mr-1 h-3 w-3" />Cancel
+                                  </Button>
+                                </div>
+                              ) : (
+                                <div className="flex justify-end gap-0.5">
+                                  {userCanEditOrders && (
+                                    <>
+                                      <Button size="icon" variant="ghost" className="h-7 w-7 text-slate-400 hover:text-amber-600 hover:bg-amber-50" onClick={() => startOrderEdit(ordersDialogRow, item, index)} title="Edit">
+                                        <Pencil className="h-3.5 w-3.5" />
+                                      </Button>
+                                      <Button size="icon" variant="ghost" className="h-7 w-7 text-slate-400 hover:text-red-600 hover:bg-red-50" onClick={() => deleteOrderItem(ordersDialogRow, index)} title="Delete">
+                                        <Trash2 className="h-3.5 w-3.5" />
+                                      </Button>
+                                    </>
+                                  )}
+                                </div>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                      {ordersDialogRow.items.length === 0 && (
+                        <TableRow>
+                          <TableCell colSpan={ordersDialogHasOfficerColumn ? 5 : 4} className="py-6 text-center text-xs text-slate-400">
+                            No submissions attached yet.
                           </TableCell>
                         </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
               </div>
             </div>
           ) : null}

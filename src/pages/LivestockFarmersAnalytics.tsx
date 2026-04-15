@@ -272,12 +272,84 @@ const countCoveredWeeks = (start: Date, end: Date): number => {
   return Math.max(1, total);
 };
 
+/**
+ * Count full months between two dates.
+ * A full month is counted when the day-of-month of end >= day-of-month of start.
+ */
+const countFullMonths = (start: Date, end: Date): number => {
+  if (end < start) return 0;
+  let months = 0;
+  let cursor = new Date(start);
+  cursor.setHours(0, 0, 0, 0);
+
+  while (true) {
+    const nextMonth = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
+    const monthEnd = new Date(nextMonth);
+    monthEnd.setDate(0); // Last day of current month
+
+    // If the range includes this full month
+    if (cursor <= end) {
+      // Check if we have a full month or just a partial month at the end
+      const monthStart = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
+      if (monthStart >= start && monthEnd <= end) {
+        months += 1;
+      }
+    }
+
+    // Move to next month
+    cursor = nextMonth;
+    if (cursor > end) break;
+  }
+
+  return months;
+};
+
+/**
+ * Calculate target based on exact duration of date range.
+ * - Full months: 117 per month
+ * - Remaining weeks: 30 per week
+ * - Uses a hybrid approach for ranges spanning months + partial weeks
+ */
+const calculateDurationBasedTarget = (start: Date, end: Date): number => {
+  if (end < start) return 0;
+
+  const totalDays = getInclusiveDayCount(start, end);
+  const fullMonths = countFullMonths(start, end);
+
+  // Calculate remaining days after full months
+  let remainingDays = totalDays;
+  if (fullMonths > 0) {
+    const monthsEnd = new Date(start.getFullYear(), start.getMonth() + fullMonths, 0);
+    const daysInFullMonths = getInclusiveDayCount(start, monthsEnd);
+    remainingDays = Math.max(0, totalDays - daysInFullMonths);
+  }
+
+  // Calculate weeks from remaining days
+  const coveredWeeks = remainingDays > 0 ? Math.ceil(remainingDays / 7) : 0;
+
+  // Apply targets
+  const monthTarget = fullMonths * TARGETS.monthly;
+  const weekTarget = coveredWeeks * TARGETS.weekly;
+
+  return Math.max(1, monthTarget + weekTarget);
+};
+
 const resolveTargetMode = (
   dateRange: { startDate?: string; endDate?: string },
   filterMode: FilterMode,
 ): Exclude<FilterMode, "custom"> => {
   if (filterMode !== "custom") return filterMode;
   if (!dateRange.startDate && !dateRange.endDate) return "yearly";
+  // If both dates are set and represent a single month, use monthly target
+  if (dateRange.startDate && dateRange.endDate) {
+    const start = parseDate(dateRange.startDate);
+    const end = parseDate(dateRange.endDate);
+    if (start && end &&
+        start.getFullYear() === end.getFullYear() &&
+        start.getMonth() === end.getMonth()) {
+      return "monthly";
+    }
+  }
   return "weekly";
 };
 
@@ -287,9 +359,29 @@ const calculateActiveTarget = (
 ): number => {
   if (!dateRange.startDate && !dateRange.endDate) return TARGETS.yearly;
   const { start, end } = normalizeDateRange(dateRange);
-  if (targetMode === "weekly") return countCoveredWeeks(start, end) * TARGETS.weekly;
-  if (targetMode === "monthly") return TARGETS.monthly;
-  return TARGETS.yearly;
+
+  // For explicit filter modes (weekly/monthly buttons), use the simple calculation
+  if (targetMode === "monthly") {
+    // Check if it's a single month or multiple months
+    const fullMonths = countFullMonths(start, end);
+    if (fullMonths >= 1) {
+      // Calculate remaining days for partial month
+      const monthsEnd = new Date(start.getFullYear(), start.getMonth() + fullMonths, 0);
+      const remainingDays = getInclusiveDayCount(monthsEnd, end);
+      const monthPortion = fullMonths * TARGETS.monthly;
+      const weekPortion = remainingDays > 0 ? Math.ceil(remainingDays / 7) * TARGETS.weekly : 0;
+      return monthPortion + weekPortion;
+    }
+    return TARGETS.monthly;
+  }
+
+  if (targetMode === "weekly") {
+    // For weekly mode, calculate based on covered weeks
+    return countCoveredWeeks(start, end) * TARGETS.weekly;
+  }
+
+  // For yearly or custom ranges, use duration-based calculation
+  return calculateDurationBasedTarget(start, end);
 };
 
 const normalizeProgramme = (value: unknown): string =>
@@ -944,6 +1036,25 @@ const LivestockFarmersAnalytics = () => {
       setSelectedYear(getSelectedYearFromDateRange(nextRange));
       return nextRange;
     });
+    // Detect the appropriate filter mode based on the selected date range
+    const updatedRange = key === "startDate" ? { ...dateRange, startDate: value } : { ...dateRange, endDate: value };
+    if (updatedRange.startDate && updatedRange.endDate) {
+      const start = parseDate(updatedRange.startDate);
+      const end = parseDate(updatedRange.endDate);
+      if (start && end) {
+        // Same month = monthly mode
+        if (start.getFullYear() === end.getFullYear() && start.getMonth() === end.getMonth()) {
+          setFilterMode("monthly");
+          return;
+        }
+        // Check if the range spans multiple months - use custom mode for duration-based calculation
+        const monthDiff = (end.getFullYear() - start.getFullYear()) * 12 + (end.getMonth() - start.getMonth());
+        if (monthDiff >= 1) {
+          setFilterMode("custom"); // Will use duration-based calculation
+          return;
+        }
+      }
+    }
     setFilterMode("custom");
   };
 
@@ -981,7 +1092,7 @@ const LivestockFarmersAnalytics = () => {
   const clearFilters = () => {
     setDateRange({ startDate: "", endDate: "" });
     setSelectedYear("");
-    setFilterMode("custom");
+    setFilterMode("yearly"); // Reset to yearly as default after clearing
     setSelectedOfficer(null);
     setIsOfficerTargetsOpen(false);
   };
