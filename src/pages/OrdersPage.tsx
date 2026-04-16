@@ -1536,7 +1536,7 @@ const OrdersPage = () => {
                         onCheckedChange={() => toggleFieldOfficerSelection(officer.id)}
                         onSelect={(e) => e.preventDefault()}
                       >
-                        {officer.name} <span className="ml-2 text-xs text-slate-500">{officer.phone || "No phone"}</span>
+                        {officer.name}
                       </DropdownMenuCheckboxItem>
                     ))}
                   </DropdownMenuContent>
