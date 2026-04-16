@@ -18,7 +18,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Textarea } from "@/components/ui/textarea";
 import {
   ChevronDown,
   Eye,
@@ -132,6 +131,7 @@ interface NewOrderForm {
 }
 
 interface FieldOfficerRecord {
+  id?: string;
   name?: string;
   userName?: string;
   username?: string;
@@ -142,6 +142,8 @@ interface FieldOfficerRecord {
   mobile?: string;
   telephone?: string;
   contact?: string;
+  county?: string;
+  subcounty?: string;
   role?: string;
   allowedProgrammes?: Record<string, boolean>;
   accessControl?: {
@@ -154,6 +156,7 @@ interface FieldOfficerOption {
   id: string;
   name: string;
   phone: string;
+  counties: string[];
   aliases: string[];
 }
 
@@ -221,6 +224,22 @@ const normalizeText = (value: unknown): string =>
   typeof value === "string"
     ? value.trim().toLowerCase().replace(/[-_]+/g, " ").replace(/\s+/g, " ")
     : "";
+
+const parseAssignedCounties = (value: unknown): string[] => {
+  if (typeof value !== "string") return [];
+
+  const countyMap = new Map<string, string>();
+  value
+    .split(/[,\n;|]+/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .forEach((county) => {
+      const token = normalizeText(county);
+      if (token && !countyMap.has(token)) countyMap.set(token, county);
+    });
+
+  return Array.from(countyMap.values());
+};
 
 const normalizeIdValue = (value: unknown): string => {
   if (typeof value === "string") return value.trim();
@@ -471,7 +490,6 @@ const OrdersPage = () => {
   const [fieldOfficers, setFieldOfficers] = useState<FieldOfficerOption[]>([]);
   const [fieldOfficersLoading, setFieldOfficersLoading] = useState(false);
   const [selectedFieldOfficerIds, setSelectedFieldOfficerIds] = useState<string[]>([]);
-  const [smsMessage, setSmsMessage] = useState("");
 
   const [editingOrderKey, setEditingOrderKey] = useState<string | null>(null);
   const [orderGoatsDraft, setOrderGoatsDraft] = useState<string>("");
@@ -586,9 +604,10 @@ const OrdersPage = () => {
           .map((record) => {
             if (!isMobileUserRecord(record)) return null;
             return {
-              id: record.id,
+              id: record.id || getOfficerDisplayName(record),
               name: getOfficerDisplayName(record),
               phone: getOfficerPhone(record),
+              counties: parseAssignedCounties(record.county),
               aliases: [record.name, record.userName, record.username, record.displayName, record.email, record.id].filter(
                 (v): v is string => typeof v === "string" && v.trim().length > 0
               ),
@@ -842,21 +861,68 @@ const OrdersPage = () => {
     return Array.from(set).sort();
   }, [batchRows]);
 
+  const countyOptions = useMemo(() => {
+    const countyMap = new Map<string, string>();
+    fieldOfficers.forEach((officer) => {
+      officer.counties.forEach((county) => {
+        const token = normalizeText(county);
+        if (token && !countyMap.has(token)) countyMap.set(token, county);
+      });
+    });
+    return Array.from(countyMap.values()).sort((a, b) => a.localeCompare(b));
+  }, [fieldOfficers]);
+
+  const countyFieldOfficers = useMemo(() => {
+    const selectedCounty = normalizeText(newOrder.county);
+    if (!selectedCounty) return [];
+    return fieldOfficers.filter((officer) =>
+      officer.counties.some((county) => normalizeText(county) === selectedCounty)
+    );
+  }, [fieldOfficers, newOrder.county]);
+
+  const canChooseOrderProgramme = PROGRAMME_OPTIONS.every((programme) => availablePrograms.includes(programme));
+  const resolvedOrderProgramme = newOrder.programme || activeProgram || availablePrograms[0] || "";
+
   const selectedOfficerNames = useMemo(
     () => fieldOfficers.filter((o) => selectedFieldOfficerIds.includes(o.id)).map((o) => o.name),
     [fieldOfficers, selectedFieldOfficerIds]
   );
 
-  const selectedOfficersSummary = useMemo(
-    () => selectedOfficerNames.length === 0 ? "Select field officers" : `${selectedOfficerNames.length} selected`,
-    [selectedOfficerNames.length]
-  );
+  const selectedOfficersSummary = useMemo(() => {
+    if (!newOrder.county) return "Select county first";
+    if (countyFieldOfficers.length === 0) return "No field officers assigned";
+    return selectedOfficerNames.length === 0 ? "Select field officers" : `${selectedOfficerNames.length} selected`;
+  }, [countyFieldOfficers.length, newOrder.county, selectedOfficerNames.length]);
 
   const selectedOfficersPreview = useMemo(() => {
-    if (selectedOfficerNames.length === 0) return "";
+    if (!newOrder.county) return "Choose a county to load its assigned field officers.";
+    if (countyFieldOfficers.length === 0) return `No field officers are assigned to ${newOrder.county}.`;
+    if (selectedOfficerNames.length === 0) {
+      return `${countyFieldOfficers.length} field officer${countyFieldOfficers.length === 1 ? "" : "s"} available in ${newOrder.county}.`;
+    }
     const preview = selectedOfficerNames.slice(0, 3).join(", ");
     return selectedOfficerNames.length <= 3 ? preview : `${preview} +${selectedOfficerNames.length - 3} more`;
-  }, [selectedOfficerNames]);
+  }, [countyFieldOfficers.length, newOrder.county, selectedOfficerNames]);
+
+  const generatedSmsPreview = useMemo(() => {
+    const programmeLabel = resolvedOrderProgramme || "Selected programme";
+    const countyLabel = newOrder.county || "selected county";
+    const goatsLabel = Number.isFinite(Number(newOrder.goats)) && Number(newOrder.goats) > 0
+      ? Number(newOrder.goats).toLocaleString()
+      : "0";
+    const dateLabel = newOrder.date ? formatDate(newOrder.date) : "selected date";
+
+    return `Dear Field Officer, a ${programmeLabel} order has been created for ${countyLabel} on ${dateLabel}. Target goats: ${goatsLabel}. Order reference will be attached automatically.`;
+  }, [newOrder.county, newOrder.date, newOrder.goats, resolvedOrderProgramme]);
+
+  useEffect(() => {
+    const allowedOfficerIds = new Set(countyFieldOfficers.map((officer) => officer.id));
+    setSelectedFieldOfficerIds((prev) => {
+      if (prev.length === 0) return prev;
+      const next = prev.filter((id) => allowedOfficerIds.has(id));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [countyFieldOfficers]);
 
   const handleFilterChange = (key: keyof Filters, value: string) => {
     setFilters((prev) => ({ ...prev, [key]: value }));
@@ -881,7 +947,6 @@ const OrdersPage = () => {
   const resetNewOrderForm = (programme: string) => {
     setNewOrder(getDefaultOrderForm(programme));
     setSelectedFieldOfficerIds([]);
-    setSmsMessage("");
   };
 
   const openCreateDialog = () => {
@@ -1040,17 +1105,16 @@ const OrdersPage = () => {
 
   const handleCreateOrder = async () => {
     if (!ensureOrderCreateAccess()) return;
-    if (!activeProgram) { toast({ title: "Select programme", variant: "destructive" }); return; }
+    const selectedProgramme = resolvedOrderProgramme.trim();
+    if (!selectedProgramme) { toast({ title: "Select programme", variant: "destructive" }); return; }
     const trimmedCounty = newOrder.county.trim();
     const goatsValue = Number(newOrder.goats);
-    const messageText = smsMessage.trim();
-    const selectedOfficers = fieldOfficers.filter((o) => selectedFieldOfficerIds.includes(o.id));
+    const selectedOfficers = countyFieldOfficers.filter((o) => selectedFieldOfficerIds.includes(o.id));
     const recipients = Array.from(new Set(selectedOfficers.map((o) => o.phone).filter(Boolean)));
 
     if (!newOrder.date) { toast({ title: "Date required", variant: "destructive" }); return; }
     if (!trimmedCounty) { toast({ title: "County required", variant: "destructive" }); return; }
     if (!Number.isFinite(goatsValue) || goatsValue <= 0) { toast({ title: "Invalid goats", variant: "destructive" }); return; }
-    if (!messageText) { toast({ title: "Message required", variant: "destructive" }); return; }
     if (recipients.length === 0) { toast({ title: "No recipients", variant: "destructive" }); return; }
 
     setCreatingOrder(true);
@@ -1059,18 +1123,19 @@ const OrdersPage = () => {
       const orderRef = push(ref(db, "orders"));
       const orderId = orderRef.key || null;
       await set(orderRef, {
-        id: orderId, programme: newOrder.programme || activeProgram, county: trimmedCounty,
+        id: orderId, programme: selectedProgramme, county: trimmedCounty,
         username: userName || "Unknown", status: "pending", createdAt: now, sourcePage: "orders",
         orders: [], totalGoats: goatsValue, goatsBought: 0, remainingGoats: goatsValue,
       });
-      const messageWithGoats = `${messageText} | Ref: ${orderId} | Goats: ${goatsValue.toLocaleString()}`;
+      const messageWithGoats = `${generatedSmsPreview} Ref: ${orderId}.`;
       const smsRef = push(ref(db, "smsOutbox"));
       await set(smsRef, {
-        status: "pending", sourcePage: "orders", programme: newOrder.programme || activeProgram,
+        status: "pending", sourcePage: "orders", programme: selectedProgramme,
         createdAt: Date.now(), createdBy: userName || "unknown", message: messageWithGoats,
         recipients, recipientCount: recipients.length, orderId, batchId: orderId,
         targetOrderId: orderId, totalGoats: goatsValue,
       });
+      if (selectedProgramme !== activeProgram) setActiveProgram(selectedProgramme);
       toast({ title: "Order created", description: `SMS queued for ${recipients.length} officers.` });
       closeCreateDialog();
     } catch {
@@ -1090,7 +1155,7 @@ const OrdersPage = () => {
           </div>
           <div>
             <h1 className="text-2xl font-bold tracking-tight text-slate-900">Orders</h1>
-            <p className="text-sm text-slate-500">Grouped order batches with totals and per-order breakdown.</p>
+            <p className="text-sm text-slate-600">Grouped order batches with totals and per-order breakdown.</p>
           </div>
         </div>
         {userCanCreateOrders && (
@@ -1108,34 +1173,34 @@ const OrdersPage = () => {
       {/* Stat Cards */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {/* Orders Card */}
-        <Card className="border-slate-200 shadow-sm">
+        <Card className="border-slate-200 border-l-4 border-l-[#0B1F5F] shadow-sm">
           <CardContent className="flex items-center gap-4 p-5">
             <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-blue-50 border border-blue-100">
               <ShoppingCart className="h-6 w-6 text-blue-600" />
             </div>
             <div className="min-w-0">
-              <p className="text-xs font-medium uppercase tracking-wider text-slate-500">Total Orders</p>
+              <p className="text-xs font-medium uppercase tracking-wider text-slate-600">Total Orders</p>
               <p className="text-2xl font-bold text-slate-900">{filteredBatchRows.length}</p>
-              <p className="text-xs text-slate-400">{totalOrdersInBatches.toLocaleString()} submissions in batches</p>
+              <p className="text-xs text-slate-500">{totalOrdersInBatches.toLocaleString()} submissions in batches</p>
             </div>
           </CardContent>
         </Card>
 
         {/* Goats Purchased Card */}
-        <Card className="border-slate-200 shadow-sm">
+        <Card className="border-slate-200 border-l-4 border-l-orange-500 shadow-sm">
           <CardContent className="p-5">
             <div className="flex items-center gap-4">
               <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-emerald-50 border border-emerald-100">
                 <TrendingUp className="h-6 w-6 text-emerald-600" />
               </div>
               <div className="min-w-0">
-                <p className="text-xs font-medium uppercase tracking-wider text-slate-500">Goats Purchased</p>
+                <p className="text-xs font-medium uppercase tracking-wider text-slate-600">Goats Purchased</p>
                 <p className="text-2xl font-bold text-slate-900">{totalGoatsPurchased.toLocaleString()}</p>
               </div>
             </div>
             <div className="mt-3 space-y-1.5">
               <div className="flex items-center justify-between text-xs">
-                <span className="text-slate-500">Target: {totalTargetGoats.toLocaleString()}</span>
+                <span className="text-slate-600">Target: {totalTargetGoats.toLocaleString()}</span>
                 <span className={`font-semibold ${purchasePercentage >= 100 ? "text-emerald-600" : purchasePercentage >= 50 ? "text-amber-600" : "text-red-500"}`}>
                   {purchasePercentage}%
                 </span>
@@ -1146,7 +1211,7 @@ const OrdersPage = () => {
                   style={{ width: `${Math.min(purchasePercentage, 100)}%` }}
                 />
               </div>
-              <p className="text-[11px] text-slate-400">
+              <p className="text-[11px] text-slate-500">
                 {totalTargetGoats - totalGoatsPurchased > 0
                   ? `${(totalTargetGoats - totalGoatsPurchased).toLocaleString()} goats remaining`
                   : "Target fully achieved"}
@@ -1156,25 +1221,25 @@ const OrdersPage = () => {
         </Card>
 
         {/* Counties Covered Card */}
-        <Card className="border-slate-200 shadow-sm">
+        <Card className="border-slate-200 border-l-4 border-l-[#7B1E3A] shadow-sm">
           <CardContent className="p-5">
             <div className="flex items-center gap-4">
               <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-violet-50 border border-violet-100">
                 <MapPin className="h-6 w-6 text-violet-600" />
               </div>
               <div className="min-w-0">
-                <p className="text-xs font-medium uppercase tracking-wider text-slate-500">Counties Covered</p>
+                <p className="text-xs font-medium uppercase tracking-wider text-slate-600">Counties Covered</p>
                 <p className="text-2xl font-bold text-slate-900">{uniqueCounties}</p>
               </div>
             </div>
             <div className="mt-3 max-h-[88px] space-y-1 overflow-y-auto pr-1">
               {uniqueCounties === 0 ? (
-                <p className="text-xs text-slate-400">No counties yet</p>
+                <p className="text-xs text-slate-500">No counties yet</p>
               ) : (
                 Array.from(countiesMap.entries()).map(([county, goats]) => (
                   <div key={county} className="flex items-center justify-between">
-                    <span className="text-xs text-slate-600 truncate mr-2">{county}</span>
-                    <span className="text-[11px] font-medium text-slate-400 tabular-nums shrink-0">
+                    <span className="text-xs text-slate-700 truncate mr-2">{county}</span>
+                    <span className="text-[11px] font-medium text-slate-500 tabular-nums shrink-0">
                       {formatCompactNumber(goats)}
                     </span>
                   </div>
@@ -1190,7 +1255,7 @@ const OrdersPage = () => {
         <CardContent className="space-y-4 pt-5">
           <div className="flex flex-col gap-2 md:flex-row md:items-end lg:flex-row">
             <div className="flex-1 space-y-1.5">
-              <Label className="text-xs font-medium text-slate-500">Search</Label>
+              <Label className="text-xs font-medium text-slate-600">Search</Label>
               <Input
                 placeholder="County, user, status..."
                 value={filters.search}
@@ -1199,7 +1264,7 @@ const OrdersPage = () => {
               />
             </div>
             <div className="space-y-1.5">
-              <Label className="text-xs font-medium text-slate-500">From</Label>
+              <Label className="text-xs font-medium text-slate-600">From</Label>
               <Input
                 type="date"
                 value={filters.startDate}
@@ -1208,7 +1273,7 @@ const OrdersPage = () => {
               />
             </div>
             <div className="space-y-1.5">
-              <Label className="text-xs font-medium text-slate-500">To</Label>
+              <Label className="text-xs font-medium text-slate-600">To</Label>
               <Input
                 type="date"
                 value={filters.endDate}
@@ -1217,7 +1282,7 @@ const OrdersPage = () => {
               />
             </div>
             <div className="space-y-1.5">
-              <Label className="text-xs font-medium text-slate-500">Status</Label>
+              <Label className="text-xs font-medium text-slate-600">Status</Label>
               <Select value={filters.status} onValueChange={(v) => handleFilterChange("status", v)}>
                 <SelectTrigger className="border-slate-200 bg-white focus:border-blue-400 focus:ring-blue-100 w-[140px]">
                   <SelectValue placeholder="All" />
@@ -1232,7 +1297,7 @@ const OrdersPage = () => {
             </div>
             {userIsChiefAdmin && (
               <div className="space-y-1.5">
-                <Label className="text-xs font-medium text-slate-500">Programme</Label>
+                <Label className="text-xs font-medium text-slate-600">Programme</Label>
                 <Select value={activeProgram} onValueChange={setActiveProgram} disabled={availablePrograms.length === 0}>
                   <SelectTrigger className="border-slate-200 bg-white focus:border-blue-400 focus:ring-blue-100 w-[130px]">
                     <SelectValue placeholder="Select" />
@@ -1259,9 +1324,9 @@ const OrdersPage = () => {
         </CardHeader>
         <CardContent className="p-0">
           {loading ? (
-            <div className="py-12 text-center text-sm text-slate-400">Loading orders...</div>
+            <div className="py-12 text-center text-sm text-slate-500">Loading orders...</div>
           ) : pageRows.length === 0 ? (
-            <div className="py-12 text-center text-sm text-slate-400">
+            <div className="py-12 text-center text-sm text-slate-500">
               {activeProgram ? "No orders found for current filters." : "No programme access."}
             </div>
           ) : (
@@ -1270,15 +1335,15 @@ const OrdersPage = () => {
                 <Table>
                   <TableHeader>
                     <TableRow className="border-b border-slate-200 bg-slate-50/70 hover:bg-slate-50/70">
-                      <TableHead className="h-9 px-4 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">Date</TableHead>
-                      <TableHead className="h-9 px-4 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">County</TableHead>
-                      <TableHead className="h-9 px-4 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">Programme</TableHead>
-                      <TableHead className="h-9 px-4 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">Officer</TableHead>
-                      <TableHead className="h-9 px-4 text-right text-xs font-semibold uppercase tracking-wider text-slate-500">Target</TableHead>
-                      <TableHead className="h-9 px-4 text-right text-xs font-semibold uppercase tracking-wider text-slate-500">Progress</TableHead>
-                      <TableHead className="h-9 px-4 text-right text-xs font-semibold uppercase tracking-wider text-slate-500">Purchased</TableHead>
-                      <TableHead className="h-9 px-4 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">Status</TableHead>
-                      <TableHead className="h-9 px-4 text-right text-xs font-semibold uppercase tracking-wider text-slate-500">Actions</TableHead>
+                      <TableHead className="h-9 px-4 text-left text-xs font-semibold uppercase tracking-wider text-slate-600">Date</TableHead>
+                      <TableHead className="h-9 px-4 text-left text-xs font-semibold uppercase tracking-wider text-slate-600">County</TableHead>
+                      <TableHead className="h-9 px-4 text-left text-xs font-semibold uppercase tracking-wider text-slate-600">Programme</TableHead>
+                      <TableHead className="h-9 px-4 text-left text-xs font-semibold uppercase tracking-wider text-slate-600">Officer</TableHead>
+                      <TableHead className="h-9 px-4 text-right text-xs font-semibold uppercase tracking-wider text-slate-600">Target</TableHead>
+                      <TableHead className="h-9 px-4 text-right text-xs font-semibold uppercase tracking-wider text-slate-600">Progress</TableHead>
+                      <TableHead className="h-9 px-4 text-right text-xs font-semibold uppercase tracking-wider text-slate-600">Purchased</TableHead>
+                      <TableHead className="h-9 px-4 text-left text-xs font-semibold uppercase tracking-wider text-slate-600">Status</TableHead>
+                      <TableHead className="h-9 px-4 text-right text-xs font-semibold uppercase tracking-wider text-slate-600">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -1290,13 +1355,13 @@ const OrdersPage = () => {
                         <TableCell className="px-4 py-2.5 text-sm font-medium text-slate-800 whitespace-nowrap">
                           {formatDate(row.batchDate)}
                         </TableCell>
-                        <TableCell className="px-4 py-2.5 text-sm text-slate-600">{row.county}</TableCell>
-                        <TableCell className="px-4 py-2.5 text-sm text-slate-600">{row.programme}</TableCell>
-                        <TableCell className="px-4 py-2.5 text-sm text-slate-600 max-w-[140px] truncate">{row.username}</TableCell>
+                        <TableCell className="px-4 py-2.5 text-sm text-slate-700">{row.county}</TableCell>
+                        <TableCell className="px-4 py-2.5 text-sm text-slate-700">{row.programme}</TableCell>
+                        <TableCell className="px-4 py-2.5 text-sm text-slate-700 max-w-[140px] truncate">{row.username}</TableCell>
                         <TableCell className="px-4 py-2.5 text-sm text-right font-semibold tabular-nums text-slate-800">
                           {row.totalGoats.toLocaleString()}
                         </TableCell>
-                        <TableCell className="px-4 py-2.5 text-sm text-right tabular-nums text-slate-500">
+                        <TableCell className="px-4 py-2.5 text-sm text-right tabular-nums text-slate-600">
                           {row.recordedGoats.toLocaleString()}
                         </TableCell>
                         <TableCell className="px-4 py-2.5 text-sm text-right font-semibold tabular-nums text-slate-800">
@@ -1347,7 +1412,7 @@ const OrdersPage = () => {
               </div>
 
               <div className="flex items-center justify-between border-t border-slate-100 bg-slate-50/50 px-5 py-3">
-                <span className="text-xs text-slate-500">
+                <span className="text-xs text-slate-600">
                   Showing {(pagination.page - 1) * pagination.limit + 1}–{Math.min(pagination.page * pagination.limit, filteredBatchRows.length)} of {filteredBatchRows.length} batches
                 </span>
                 <div className="flex gap-2">
@@ -1383,30 +1448,77 @@ const OrdersPage = () => {
             <DialogTitle className="text-slate-900">Create Order</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
-            <div className="space-y-1.5">
-              <Label className="text-xs font-medium text-slate-500">Programme</Label>
-              <Input value={newOrder.programme || activeProgram || ""} disabled className="border-slate-200 bg-slate-50 text-sm" />
-            </div>
+            {canChooseOrderProgramme && (
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium text-slate-600">Programme</Label>
+                <Select
+                  value={resolvedOrderProgramme}
+                  onValueChange={(value) => setNewOrder((prev) => ({ ...prev, programme: value }))}
+                >
+                  <SelectTrigger className="border-slate-200 bg-white text-sm focus:border-blue-400">
+                    <SelectValue placeholder="Select programme" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {availablePrograms.map((programme) => (
+                      <SelectItem key={programme} value={programme}>
+                        {programme}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
-                <Label className="text-xs font-medium text-slate-500">Order Date *</Label>
+                <Label className="text-xs font-medium text-slate-600">Order Date *</Label>
                 <Input type="date" value={newOrder.date} onChange={(e) => setNewOrder((p) => ({ ...p, date: e.target.value }))} className="border-slate-200 bg-white text-sm focus:border-blue-400" />
               </div>
               <div className="space-y-1.5">
-                <Label className="text-xs font-medium text-slate-500">Goats *</Label>
+                <Label className="text-xs font-medium text-slate-600">Goats *</Label>
                 <Input type="number" min={1} value={newOrder.goats} onChange={(e) => setNewOrder((p) => ({ ...p, goats: e.target.value }))} className="border-slate-200 bg-white text-sm focus:border-blue-400" />
               </div>
             </div>
             <div className="space-y-1.5">
-              <Label className="text-xs font-medium text-slate-500">County *</Label>
-              <Input value={newOrder.county} onChange={(e) => setNewOrder((p) => ({ ...p, county: e.target.value }))} placeholder="Enter county" className="border-slate-200 bg-white text-sm focus:border-blue-400" />
+              <Label className="text-xs font-medium text-slate-600">County *</Label>
+              <Select
+                value={newOrder.county}
+                onValueChange={(value) => {
+                  setNewOrder((prev) => ({ ...prev, county: value }));
+                  setSelectedFieldOfficerIds([]);
+                }}
+                disabled={fieldOfficersLoading || countyOptions.length === 0}
+              >
+                <SelectTrigger className="border-slate-200 bg-white text-sm focus:border-blue-400">
+                  <SelectValue
+                    placeholder={
+                      fieldOfficersLoading
+                        ? "Loading counties..."
+                        : countyOptions.length === 0
+                          ? "No assigned counties"
+                          : "Select county"
+                    }
+                  />
+                </SelectTrigger>
+                <SelectContent>
+                  {countyOptions.map((county) => (
+                    <SelectItem key={county} value={county}>
+                      {county}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {!fieldOfficersLoading && countyOptions.length === 0 && (
+                <p className="text-[11px] text-slate-500">No counties found on mobile users in site management.</p>
+              )}
             </div>
             <div className="space-y-1.5">
-              <Label className="text-xs font-medium text-slate-500">Field Officers *</Label>
+              <Label className="text-xs font-medium text-slate-600">Field Officers *</Label>
               {fieldOfficersLoading ? (
-                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-400">Loading...</div>
-              ) : fieldOfficers.length === 0 ? (
-                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-400">No mobile users.</div>
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-500">Loading...</div>
+              ) : !newOrder.county ? (
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-500">Select a county to load field officers.</div>
+              ) : countyFieldOfficers.length === 0 ? (
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-500">No field officers assigned to this county.</div>
               ) : (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
@@ -1416,7 +1528,7 @@ const OrdersPage = () => {
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent className="max-h-56 w-[--radix-dropdown-menu-trigger-width] overflow-y-auto" align="start">
-                    {fieldOfficers.map((officer) => (
+                    {countyFieldOfficers.map((officer) => (
                       <DropdownMenuCheckboxItem
                         key={officer.id}
                         disabled={!officer.phone}
@@ -1424,22 +1536,13 @@ const OrdersPage = () => {
                         onCheckedChange={() => toggleFieldOfficerSelection(officer.id)}
                         onSelect={(e) => e.preventDefault()}
                       >
-                        {officer.name} <span className="ml-2 text-xs text-slate-400">{officer.phone || "No phone"}</span>
+                        {officer.name} <span className="ml-2 text-xs text-slate-500">{officer.phone || "No phone"}</span>
                       </DropdownMenuCheckboxItem>
                     ))}
                   </DropdownMenuContent>
                 </DropdownMenu>
               )}
-              {selectedOfficersPreview && <p className="text-[11px] text-slate-400">{selectedOfficersPreview}</p>}
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs font-medium text-slate-500">SMS Message *</Label>
-              <Textarea value={smsMessage} onChange={(e) => setSmsMessage(e.target.value)} placeholder="Write the SMS..." className="min-h-[100px] border-slate-200 bg-white text-sm focus:border-blue-400" />
-              <p className="text-[11px] text-slate-400">Append: Goats: {Number(newOrder.goats || 0).toLocaleString()}</p>
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs font-medium text-slate-500">Submitted By</Label>
-              <Input value={userName || "Unknown"} disabled className="border-slate-200 bg-slate-50 text-sm" />
+              {selectedOfficersPreview && <p className="text-[11px] text-slate-500">{selectedOfficersPreview}</p>}
             </div>
           </div>
           <div className="flex justify-end gap-2 pt-4 border-t border-slate-100">
@@ -1475,24 +1578,24 @@ const OrdersPage = () => {
                   },
                 ].map((item) => (
                   <div key={item.label} className="rounded-lg border border-slate-150 bg-slate-50/60 p-3">
-                    <p className="text-[11px] font-medium uppercase tracking-wider text-slate-400">{item.label}</p>
+                    <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500">{item.label}</p>
                     {item.badge ? (
                       <Badge variant="outline" className={`mt-1 ${getStatusBadgeClass(item.badge)}`}>{item.badge}</Badge>
                     ) : (
                       <p className="mt-0.5 text-sm font-semibold text-slate-800">{item.value || "—"}</p>
                     )}
-                    {item.sub && <p className="mt-0.5 text-[10px] text-slate-400 font-mono">{item.sub}</p>}
+                    {item.sub && <p className="mt-0.5 text-[10px] text-slate-500 font-mono">{item.sub}</p>}
                   </div>
                 ))}
               </div>
 
               {/* Progress Section */}
               <div className="rounded-lg border border-slate-150 bg-slate-50/60 p-3">
-                <p className="text-[11px] font-medium uppercase tracking-wider text-slate-400">Progress</p>
+                <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500">Progress</p>
                 {userCanEditOrders && dialogGoatsBoughtDraft !== "" ? (
                   <div className="mt-1.5 flex items-center gap-2">
                     <Input type="number" min={0} max={ordersDialogRow.totalGoats} value={dialogGoatsBoughtDraft} onChange={(e) => setDialogGoatsBoughtDraft(e.target.value)} className="h-8 max-w-32 text-right text-sm border-slate-200" />
-                    <span className="text-xs text-slate-400">/ {ordersDialogRow.totalGoats.toLocaleString()}</span>
+                    <span className="text-xs text-slate-500">/ {ordersDialogRow.totalGoats.toLocaleString()}</span>
                     <Button size="icon" variant="outline" className="h-8 w-8 border-slate-200" onClick={saveDialogGoatsBought}><Save className="h-3.5 w-3.5" /></Button>
                     <Button size="icon" variant="outline" className="h-8 w-8 border-slate-200" onClick={() => setDialogGoatsBoughtDraft("")}><X className="h-3.5 w-3.5" /></Button>
                   </div>
@@ -1514,7 +1617,7 @@ const OrdersPage = () => {
                     style={{ width: `${Math.min(ordersDialogRow.totalGoats > 0 ? (ordersDialogRow.goatsBought / ordersDialogRow.totalGoats) * 100 : 0, 100)}%` }}
                   />
                 </div>
-                <p className="mt-1 text-[11px] text-slate-400">{ordersDialogRow.remainingGoats.toLocaleString()} remaining</p>
+                <p className="mt-1 text-[11px] text-slate-500">{ordersDialogRow.remainingGoats.toLocaleString()} remaining</p>
               </div>
 
               {/* Status Banner */}
@@ -1541,20 +1644,20 @@ const OrdersPage = () => {
 
               {/* Submissions Table */}
               <div className="rounded-lg border border-slate-200 overflow-hidden">
-                <div className="border-b border-slate-100 bg-slate-50 px-4 py-2.5 text-xs font-semibold uppercase tracking-wider text-slate-500">
+                <div className="border-b border-slate-100 bg-slate-50 px-4 py-2.5 text-xs font-semibold uppercase tracking-wider text-slate-600">
                   Field Officer Submissions ({ordersDialogRow.items.length})
                 </div>
                 <div className="overflow-x-auto">
                   <Table>
                     <TableHeader>
                       <TableRow className="border-b border-slate-100 bg-slate-50/50 hover:bg-slate-50/50">
-                        <TableHead className="h-8 px-3 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-400">Date</TableHead>
+                        <TableHead className="h-8 px-3 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500">Date</TableHead>
                         {ordersDialogHasOfficerColumn && (
-                          <TableHead className="h-8 px-3 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-400">Officer</TableHead>
+                          <TableHead className="h-8 px-3 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500">Officer</TableHead>
                         )}
-                        <TableHead className="h-8 px-3 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-400">Village</TableHead>
-                        <TableHead className="h-8 px-3 text-right text-[11px] font-semibold uppercase tracking-wider text-slate-400">Goats</TableHead>
-                        <TableHead className="h-8 px-3 text-right text-[11px] font-semibold uppercase tracking-wider text-slate-400">Actions</TableHead>
+                        <TableHead className="h-8 px-3 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500">Village</TableHead>
+                        <TableHead className="h-8 px-3 text-right text-[11px] font-semibold uppercase tracking-wider text-slate-500">Goats</TableHead>
+                        <TableHead className="h-8 px-3 text-right text-[11px] font-semibold uppercase tracking-wider text-slate-500">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -1575,7 +1678,7 @@ const OrdersPage = () => {
                                 {isEditing ? (
                                   <Input value={orderOfficerDraft} onChange={(e) => setOrderOfficerDraft(e.target.value)} className="h-7 text-xs border-slate-200" placeholder="Officer" />
                                 ) : (
-                                  <span className="text-xs text-slate-600 max-w-[120px] truncate block">{item.officer}</span>
+                                  <span className="text-xs text-slate-700 max-w-[120px] truncate block">{item.officer}</span>
                                 )}
                               </TableCell>
                             )}
@@ -1583,7 +1686,7 @@ const OrdersPage = () => {
                               {isEditing ? (
                                 <Input value={orderLocationDraft} onChange={(e) => setOrderLocationDraft(e.target.value)} className="h-7 text-xs border-slate-200" placeholder="Village" />
                               ) : (
-                                <span className="text-xs text-slate-600">{item.location}</span>
+                                <span className="text-xs text-slate-700">{item.location}</span>
                               )}
                             </TableCell>
                             <TableCell className="px-3 py-2 text-right">
@@ -1623,7 +1726,7 @@ const OrdersPage = () => {
                       })}
                       {ordersDialogRow.items.length === 0 && (
                         <TableRow>
-                          <TableCell colSpan={ordersDialogHasOfficerColumn ? 5 : 4} className="py-6 text-center text-xs text-slate-400">
+                          <TableCell colSpan={ordersDialogHasOfficerColumn ? 5 : 4} className="py-6 text-center text-xs text-slate-500">
                             No submissions attached yet.
                           </TableCell>
                         </TableRow>
