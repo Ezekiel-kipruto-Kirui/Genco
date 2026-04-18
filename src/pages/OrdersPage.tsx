@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, startTransition, useDeferredValue } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { onValue, orderByChild, equalTo, query, ref, remove, update, push, set } from "firebase/database";
 import { db, fetchCollection } from "@/lib/firebase";
@@ -36,6 +36,7 @@ interface OrderItem {
   date?: string | number;
   goats?: number;
   location?: string;
+  subcounty?: string;
   village?: string;
   fieldOfficer?: string;
   fieldOfficerName?: string;
@@ -43,6 +44,13 @@ interface OrderItem {
   officerName?: string;
   createdBy?: string;
   username?: string;
+}
+
+interface MobileAppDataItem {
+  date?: string;
+  goats?: number;
+  location?: string;
+  subcounty?: string;
 }
 
 interface OrderRecord {
@@ -59,6 +67,7 @@ interface OrderRecord {
   goats?: number;
   goatsBought?: number;
   location?: string;
+  mobileAppdata?: MobileAppDataItem[] | Record<string, MobileAppDataItem>;
   orderId?: string;
   officer?: string;
   officerName?: string;
@@ -68,9 +77,9 @@ interface OrderRecord {
   programme?: string;
   requestId?: string;
   remainingGoats?: number;
-  sourcePage?: string;
   status?: string;
   subcounty?: string;
+  targetGoats?: number;
   timestamp?: number;
   totalGoats?: number;
   targetOrderId?: string;
@@ -84,6 +93,7 @@ interface NormalizedOrderItem {
   goats: number;
   location: string;
   village: string;
+  subcounty: string;
   officer: string;
   raw?: OrderItem;
 }
@@ -93,6 +103,7 @@ interface BatchOrderRow {
   batchDate: string | number;
   createdAt: string | number;
   completedAt: string | number;
+  targetGoats: number;
   totalGoats: number;
   recordedGoats: number;
   goatsBought: number;
@@ -106,6 +117,7 @@ interface BatchOrderRow {
   sortTimestamp: number;
   isReadyForCompletion: boolean;
   items: NormalizedOrderItem[];
+  searchableText: string;
 }
 
 interface Filters {
@@ -298,6 +310,8 @@ const getOfficerPhone = (record: FieldOfficerRecord): string => {
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
 
 const getBatchTotalGoats = (record: OrderRecord, itemsTotal: number): number => {
+  const target = Number(record.targetGoats || 0);
+  if (target > 0) return target;
   const storedTotal = Number(record.totalGoats || 0);
   const bought = Number(record.goatsBought || 0);
   const remaining = Number(record.remainingGoats || 0);
@@ -313,7 +327,14 @@ const getRecordOfficerCandidates = (record: OrderRecord): unknown[] => [
   record.officerName,
 ];
 
-const getOrderEntries = (orders: OrderRecord["orders"]): OrderItem[] => {
+const getOrderEntries = (record: OrderRecord): OrderItem[] => {
+  /* Prefer mobileAppdata (new format) over orders (legacy format) */
+  const mobileData = record.mobileAppdata;
+  if (mobileData) {
+    if (Array.isArray(mobileData)) return mobileData.filter(Boolean) as OrderItem[];
+    if (mobileData && typeof mobileData === "object") return Object.values(mobileData).filter(Boolean) as OrderItem[];
+  }
+  const orders = record.orders;
   if (Array.isArray(orders)) return orders.filter(Boolean);
   if (orders && typeof orders === "object") return Object.values(orders).filter(Boolean);
   return [];
@@ -358,8 +379,8 @@ const getBatchReferenceId = (record: OrderRecord): string | null => {
 
 const hasDirectGoatsOnly = (record: OrderRecord): boolean => {
   const hasGoats = Number.isFinite(Number(record.goats)) && Number(record.goats) > 0;
-  const hasOrders = getOrderEntries(record.orders).length > 0;
-  const hasTarget = Number.isFinite(Number(record.totalGoats)) && Number(record.totalGoats) > 0;
+  const hasOrders = getOrderEntries(record).length > 0;
+  const hasTarget = Number.isFinite(Number(record.targetGoats)) && Number(record.targetGoats) > 0;
   if (!hasGoats) return false;
   if (!hasOrders) return true;
   return !hasTarget;
@@ -374,26 +395,20 @@ const isSubmissionRecord = (record: OrderRecord): boolean => {
   if (getBatchReferenceId(record)) return true;
   if (hasDirectGoatsOnly(record)) return true;
 
-  const ordersCount = getOrderEntries(record.orders).length;
-  const hasTarget = Number.isFinite(Number(record.totalGoats)) && Number(record.totalGoats) > 0;
-  const hasProgress =
+  const ordersCount = getOrderEntries(record).length;
+  const hasTarget = Number.isFinite(Number(record.targetGoats)) && Number(record.targetGoats) > 0;  const hasProgress =
     Number.isFinite(Number(record.remainingGoats)) || Number.isFinite(Number(record.goatsBought));
   const hasStatus = typeof record.status === "string" && record.status.trim().length > 0;
-  const sourcePage = normalizeText(record.sourcePage);
-
-  if (sourcePage && sourcePage !== "orders") return true;
-  if (hasTopLevelGoats(record) && ordersCount === 0) return true;
-  if (ordersCount > 0 && !hasProgress && !hasStatus && sourcePage !== "orders") return true;
-
+  
   return false;
 };
 
 const isBatchRecord = (record: OrderRecord): boolean => {
   if (isSubmissionRecord(record)) return false;
 
-  const hasOrders = getOrderEntries(record.orders).length > 0;
-  const total = Number(record.totalGoats);
-  const hasTarget = Number.isFinite(total) && total > 0;
+  const hasOrders = getOrderEntries(record).length > 0;
+  const target = Number(record.targetGoats) || Number(record.totalGoats);
+  const hasTarget = Number.isFinite(target) && target > 0;
   const hasProgress =
     Number.isFinite(Number(record.remainingGoats)) || Number.isFinite(Number(record.goatsBought));
   const hasStatus = typeof record.status === "string" && record.status.trim().length > 0;
@@ -404,10 +419,11 @@ const isBatchRecord = (record: OrderRecord): boolean => {
 };
 
 const getSubmissionItems = (record: OrderRecord): NormalizedOrderItem[] => {
-  const orderEntries = getOrderEntries(record.orders);
+  const orderEntries = getOrderEntries(record);
   if (orderEntries.length > 0) {
     return orderEntries.map((item, index) => {
       const itemLocation = item.location || item.village || record.location || record.village || "N/A";
+      const itemSubcounty = item.subcounty || record.subcounty || "";
       const officer =
         item.fieldOfficer ||
         item.fieldOfficerName ||
@@ -424,6 +440,7 @@ const getSubmissionItems = (record: OrderRecord): NormalizedOrderItem[] => {
         goats: Number(item.goats || record.goats || 0),
         location: itemLocation,
         village: item.village || itemLocation,
+        subcounty: itemSubcounty,
         officer,
         raw: item,
       };
@@ -434,6 +451,7 @@ const getSubmissionItems = (record: OrderRecord): NormalizedOrderItem[] => {
   if (!Number.isFinite(goatsValue) || goatsValue <= 0) return [];
   const dateValue = record.date || record.completedAt || record.createdAt || record.timestamp || "";
   const location = record.location || record.village || "N/A";
+  const subcounty = record.subcounty || "";
   const officer = record.username || record.createdBy || "N/A";
   return [
     {
@@ -442,16 +460,18 @@ const getSubmissionItems = (record: OrderRecord): NormalizedOrderItem[] => {
       goats: goatsValue,
       location,
       village: location,
+      subcounty,
       officer,
     },
   ];
 };
 
 const getNormalizedItems = (record: OrderRecord): NormalizedOrderItem[] => {
-  const orderEntries = getOrderEntries(record.orders);
+  const orderEntries = getOrderEntries(record);
   if (orderEntries.length > 0) {
     return orderEntries.map((item, index) => {
       const itemLocation = item.location || item.village || record.location || "N/A";
+      const itemSubcounty = item.subcounty || record.subcounty || "";
       const officer =
         item.fieldOfficer ||
         item.fieldOfficerName ||
@@ -466,6 +486,7 @@ const getNormalizedItems = (record: OrderRecord): NormalizedOrderItem[] => {
         goats: Number(item.goats || 0),
         location: itemLocation,
         village: item.village || itemLocation,
+        subcounty: itemSubcounty,
         officer,
         raw: item,
       };
@@ -474,6 +495,160 @@ const getNormalizedItems = (record: OrderRecord): NormalizedOrderItem[] => {
 
   return [];
 };
+
+/* ------------------------------------------------------------------
+ * Lightweight pre-computation helpers (pure, outside component)
+ * ------------------------------------------------------------------ */
+
+interface PrecomputedRecord {
+  id: string;
+  record: OrderRecord;
+  isBatch: boolean;
+  isSubmission: boolean;
+  refId: string | null;
+  identifiers: string[];
+  normalizedItems: NormalizedOrderItem[];
+  normProgramme: string;
+  normCounty: string;
+  normLocation: string;
+  dateMs: number;
+  goatsTotal: number;
+  officerTokens: string[];
+  sortDate: string | number;
+}
+
+/**
+ * JSON-stringify a record's key fields for cheap deep equality.
+ * Used to skip re-precomputation when a record hasn't changed.
+ */
+const getRecordFingerprint = (r: OrderRecord): string =>
+  `${r.programme}:${r.county}:${r.subcounty}:${r.location}:${r.status}:${r.targetGoats}:${r.totalGoats}:${r.goatsBought}:${r.remainingGoats}:${r.date}:${r.completedAt}:${r.parentOrderId}:${r.orderId}:${r.batchId}:${r.requestId}:${r.targetOrderId}:${r.offtakeOrderId}:${r.goats}:${r.sourcePage}:${JSON.stringify(r.orders)}:${JSON.stringify(r.mobileAppdata)}`;
+
+/**
+ * Incremental precompute: reuses cached precomputed records when unchanged.
+ * Returns a Map<id, PrecomputedRecord> for O(1) lookup.
+ */
+const buildPrecomputedMap = (
+  records: OrderRecord[],
+  prevCache: Map<string, { pc: PrecomputedRecord; fp: string }>
+): PrecomputedRecord[] => {
+  const result: PrecomputedRecord[] = new Array(records.length);
+  const nextCache = new Map<string, { pc: PrecomputedRecord; fp: string }>();
+  for (let i = 0; i < records.length; i++) {
+    const record = records[i];
+    const fp = getRecordFingerprint(record);
+    const cached = prevCache.get(record.id);
+    const pc = cached && cached.fp === fp ? cached.pc : precomputeRecord(record);
+    result[i] = pc;
+    nextCache.set(record.id, { pc, fp });
+  }
+  // Update the cache ref in-place so the caller's ref stays current
+  prevCache.clear();
+  for (const [k, v] of nextCache) prevCache.set(k, v);
+  return result;
+}
+
+const precomputeRecord = (record: OrderRecord): PrecomputedRecord => {
+  const id = record.id;
+  const isBatch = isBatchRecord(record);
+  const isSubmission = !isBatch && isSubmissionRecord(record);
+  const refId = getBatchReferenceId(record);
+  const identifiers = isBatch ? getBatchIdentifiers(record) : [];
+  const normalizedItems = isBatch ? getNormalizedItems(record) : [];
+  const normProgramme = normalizeText(record.programme);
+  const normCounty = normalizeText(record.county);
+  const normLocation = normalizeText(record.location || record.village || record.subcounty);
+  const dateMs = parseDate(record.date || record.completedAt || record.createdAt || record.timestamp)?.getTime() || 0;
+  const goatsTotal = Number(record.targetGoats || record.totalGoats || record.goatsBought || record.goats || 0);
+  const officerTokens = getRecordOfficerCandidates(record)
+    .map((v) => (typeof v === "number" && Number.isFinite(v) ? String(v) : normalizeText(v)))
+    .filter((t) => t.length > 0);
+  const sortDate = record.date || record.completedAt || record.createdAt || record.timestamp || "";
+  return { id, record, isBatch, isSubmission, refId, identifiers, normalizedItems, normProgramme, normCounty, normLocation, dateMs, goatsTotal, officerTokens, sortDate };
+};
+
+const BATCH_REFERENCE_KEYS = new Set(Object.keys({
+  parentOrderId: 1, orderId: 1, batchId: 1, requestId: 1,
+  targetOrderId: 1, offtakeOrderId: 1,
+}));
+
+/* ------------------------------------------------------------------
+ * Memoized table row component to prevent unnecessary re-renders
+ * when sibling rows change (React renders all children on parent update)
+ * ------------------------------------------------------------------ */
+interface OrderTableRowProps {
+  row: BatchOrderRow;
+  idx: number;
+  userCanEditOrders: boolean;
+  userIsChiefAdmin: boolean;
+  onView: (batchId: string) => void;
+  onEdit: (batchId: string) => void;
+  onDelete: (row: BatchOrderRow) => void;
+}
+
+const OrderTableRow = memo(function OrderTableRow({
+  row, idx, userCanEditOrders, userIsChiefAdmin, onView, onEdit, onDelete,
+}: OrderTableRowProps) {
+  return (
+    <TableRow
+      className={`border-b border-slate-100 transition-colors hover:bg-blue-50/40 ${idx % 2 === 0 ? "bg-white" : "bg-slate-50/30"}`}
+    >
+      <TableCell className="px-4 py-2.5 text-sm font-medium text-slate-800 whitespace-nowrap">
+        {formatDate(row.batchDate)}
+      </TableCell>
+      <TableCell className="px-4 py-2.5 text-sm text-slate-700">{row.county}</TableCell>
+      <TableCell className="px-4 py-2.5 text-sm text-slate-700">{row.subcounty}</TableCell>
+      <TableCell className="px-4 py-2.5 text-sm text-slate-700 max-w-[140px] truncate">{row.username}</TableCell>
+      <TableCell className="px-4 py-2.5 text-sm text-right font-semibold tabular-nums text-slate-800">
+        {row.targetGoats.toLocaleString()}
+      </TableCell>
+      <TableCell className="px-4 py-2.5 text-sm text-right tabular-nums text-slate-600">
+        {row.recordedGoats.toLocaleString()}
+      </TableCell>
+      <TableCell className="px-4 py-2.5 text-sm text-right font-semibold tabular-nums text-slate-800">
+        {row.goatsBought.toLocaleString()}
+      </TableCell>
+      <TableCell className="px-4 py-2.5">
+        <Badge variant="outline" className={getStatusBadgeClass(row.status)}>{row.status}</Badge>
+      </TableCell>
+      <TableCell className="px-4 py-2.5 text-right">
+        <div className="flex items-center justify-end gap-0.5">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 text-slate-500 hover:text-blue-600 hover:bg-blue-50"
+            onClick={() => onView(row.batchId)}
+            title="View details"
+          >
+            <Eye className="h-4 w-4" />
+          </Button>
+          {userCanEditOrders && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 text-slate-500 hover:text-amber-600 hover:bg-amber-50"
+              onClick={() => onEdit(row.batchId)}
+              title="Edit"
+            >
+              <Pencil className="h-4 w-4" />
+            </Button>
+          )}
+          {userIsChiefAdmin && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 text-slate-400 hover:text-red-600 hover:bg-red-50"
+              onClick={() => onDelete(row)}
+              title="Delete"
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          )}
+        </div>
+      </TableCell>
+    </TableRow>
+  );
+});
 
 const OrdersPage = () => {
   const { userRole, userAttribute, allowedProgrammes, userName } = useAuth();
@@ -489,6 +664,7 @@ const OrdersPage = () => {
   const [newOrder, setNewOrder] = useState<NewOrderForm>(() => getDefaultOrderForm(""));
   const [fieldOfficers, setFieldOfficers] = useState<FieldOfficerOption[]>([]);
   const [fieldOfficersLoading, setFieldOfficersLoading] = useState(false);
+  const fieldOfficersLoadedRef = useRef(false);
   const [selectedFieldOfficerIds, setSelectedFieldOfficerIds] = useState<string[]>([]);
 
   const [editingOrderKey, setEditingOrderKey] = useState<string | null>(null);
@@ -496,6 +672,7 @@ const OrdersPage = () => {
   const [orderDateDraft, setOrderDateDraft] = useState<string>("");
   const [orderOfficerDraft, setOrderOfficerDraft] = useState<string>("");
   const [orderLocationDraft, setOrderLocationDraft] = useState<string>("");
+  const [orderSubcountyDraft, setOrderSubcountyDraft] = useState<string>("");
 
   const [dialogGoatsBoughtDraft, setDialogGoatsBoughtDraft] = useState<string>("");
 
@@ -506,6 +683,24 @@ const OrdersPage = () => {
     endDate: monthDates.endDate,
     status: "all",
   });
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const deferredSearch = useDeferredValue(debouncedSearch);
+
+  const handleSearchChange = useCallback((value: string) => {
+    setFilters((prev) => ({ ...prev, search: value }));
+    setPagination((prev) => ({ ...prev, page: 1 }));
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    searchDebounceRef.current = setTimeout(() => {
+      startTransition(() => setDebouncedSearch(value));
+    }, 200);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    };
+  }, []);
 
   const [pagination, setPagination] = useState<Pagination>({
     page: 1,
@@ -529,23 +724,23 @@ const OrdersPage = () => {
     [userRole, userAttribute]
   );
 
-  const ensureOrderCreateAccess = () => {
+  const ensureOrderCreateAccess = useCallback(() => {
     if (userCanCreateOrders) return true;
     toast({ title: "Unauthorized", description: "Only offtake officer or chief admin can create orders.", variant: "destructive" });
     return false;
-  };
+  }, [userCanCreateOrders]);
 
-  const ensureOrderEditAccess = () => {
+  const ensureOrderEditAccess = useCallback(() => {
     if (userCanEditOrders) return true;
     toast({ title: "Unauthorized", description: "Only offtake officer or chief admin can edit orders.", variant: "destructive" });
     return false;
-  };
+  }, [userCanEditOrders]);
 
-  const ensureBatchDeleteAccess = () => {
+  const ensureBatchDeleteAccess = useCallback(() => {
     if (userIsChiefAdmin) return true;
     toast({ title: "Unauthorized", description: "Only chief admin can delete batches.", variant: "destructive" });
     return false;
-  };
+  }, [userIsChiefAdmin]);
 
   useEffect(() => {
     if (userCanViewAllProgrammeData) {
@@ -562,10 +757,14 @@ const OrdersPage = () => {
     });
   }, [allowedProgrammes, userCanViewAllProgrammeData]);
 
+  /* Delta-aware Firebase listener: compares new snapshot with previous to
+     minimize state churn. Only creates new array when records actually change. */
+  const prevRecordsRef = useRef<Map<string, string>>(new Map());
   useEffect(() => {
     if (!activeProgram) {
       setAllRecords([]);
       setLoading(false);
+      prevRecordsRef.current.clear();
       return;
     }
     setLoading(true);
@@ -574,18 +773,42 @@ const OrdersPage = () => {
       ordersRef,
       (snapshot) => {
         const data = snapshot.val();
-        if (!data) { setAllRecords([]); setLoading(false); return; }
-        const records: OrderRecord[] = Object.keys(data).map((key) => ({
-          ...(data[key] as Partial<OrderRecord> & { id?: string }),
+        if (!data) {
+          if (prevRecordsRef.current.size > 0) {
+            prevRecordsRef.current.clear();
+            startTransition(() => setAllRecords([]));
+          }
+          setLoading(false);
+          return;
+        }
+        const entries = Object.entries(data as Record<string, Partial<OrderRecord>>);
+        const newFingerprints = new Map<string, string>();
+        let hasChanges = false;
+
+        for (const [key, val] of entries) {
+          const fp = JSON.stringify(val);
+          newFingerprints.set(key, fp);
+          if (prevRecordsRef.current.get(key) !== fp) hasChanges = true;
+        }
+        if (prevRecordsRef.current.size !== newFingerprints.size) hasChanges = true;
+
+        if (!hasChanges) {
+          setLoading(false);
+          return;
+        }
+
+        const records: OrderRecord[] = entries.map(([key, val]) => ({
+          ...(val as Partial<OrderRecord> & { id?: string }),
           id: key,
-          recordId: data[key]?.id || key,
+          recordId: val?.id || key,
         }));
         records.sort((a, b) => {
           const aDate = parseDate(a.completedAt || a.createdAt || a.timestamp)?.getTime() || 0;
           const bDate = parseDate(b.completedAt || b.createdAt || b.timestamp)?.getTime() || 0;
           return bDate - aDate;
         });
-        setAllRecords(records);
+        prevRecordsRef.current = newFingerprints;
+        startTransition(() => setAllRecords(records));
         setLoading(false);
       },
       () => setLoading(false)
@@ -595,180 +818,196 @@ const OrdersPage = () => {
 
   useEffect(() => { setOrdersDialogBatchId(null); }, [activeProgram]);
 
+  /* Load field officers lazily — only once per session, in parallel with orders */
   useEffect(() => {
-    let isActive = true;
-    const loadFieldOfficers = async () => {
+    if (!activeProgram) {
+      setFieldOfficers([]);
+      fieldOfficersLoadedRef.current = false;
+      return;
+    }
+    if (fieldOfficersLoadedRef.current) return;
+    let cancelled = false;
+    const load = async () => {
       setFieldOfficersLoading(true);
       try {
-        const officers = (await fetchCollection<FieldOfficerRecord>("users"))
-          .map((record) => {
-            if (!isMobileUserRecord(record)) return null;
-            return {
-              id: record.id || getOfficerDisplayName(record),
-              name: getOfficerDisplayName(record),
-              phone: getOfficerPhone(record),
-              counties: parseAssignedCounties(record.county),
-              aliases: [record.name, record.userName, record.username, record.displayName, record.email, record.id].filter(
-                (v): v is string => typeof v === "string" && v.trim().length > 0
-              ),
-            };
-          })
-          .filter((o): o is FieldOfficerOption => Boolean(o))
+        const allUsers = await fetchCollection<FieldOfficerRecord>("users");
+        if (cancelled) return;
+        /* Use requestAnimationFrame to avoid blocking the main thread during filtering */
+        const officers = allUsers
+          .filter(isMobileUserRecord)
+          .map((record) => ({
+            id: record.id || getOfficerDisplayName(record),
+            name: getOfficerDisplayName(record),
+            phone: getOfficerPhone(record),
+            counties: parseAssignedCounties(record.county),
+            aliases: [record.name, record.userName, record.username, record.displayName, record.email, record.id].filter(
+              (v): v is string => typeof v === "string" && v.trim().length > 0,
+            ),
+          }))
           .sort((a, b) => a.name.localeCompare(b.name));
-        if (isActive) setFieldOfficers(officers);
+        if (!cancelled) {
+          setFieldOfficers(officers);
+          fieldOfficersLoadedRef.current = true;
+        }
       } catch {
-        if (isActive) {
+        if (!cancelled) {
           setFieldOfficers([]);
           toast({ title: "Error", description: "Failed to load mobile users.", variant: "destructive" });
         }
       } finally {
-        if (isActive) setFieldOfficersLoading(false);
+        if (!cancelled) setFieldOfficersLoading(false);
       }
     };
-    loadFieldOfficers();
-    return () => { isActive = false; };
+    load();
+    return () => { cancelled = true; };
   }, [activeProgram, toast]);
 
+  /* Memoize the officer token set so batchRows doesn't re-run when fieldOfficers ref changes identity
+     but the actual tokens haven't changed. */
+  const mobileOfficerTokenSet = useMemo(() => {
+    const tokens = new Set<string>();
+    for (const officer of fieldOfficers) {
+      for (const value of [officer.name, officer.id, officer.phone, ...(officer.aliases || [])]) {
+        const t = normalizeText(value);
+        if (t) tokens.add(t);
+      }
+    }
+    return tokens;
+  }, [fieldOfficers]);
+
+  /* Incremental pre-computation: reuse cached records when unchanged,
+     only recompute records whose fingerprint has changed. */
+  const precomputedCacheRef = useRef<Map<string, { pc: PrecomputedRecord; fp: string }>>(new Map());
+  const precomputed = useMemo(
+    () => buildPrecomputedMap(allRecords, precomputedCacheRef.current),
+    [allRecords],
+  );
+
+  /* Core batch grouping – county-indexed fuzzy matching for O(n) instead of O(n²) */
   const batchRows = useMemo(() => {
-    const batchMap = new Map<string, { record: OrderRecord; items: NormalizedOrderItem[]; itemIds: Set<string> }>();
+    const batchMap = new Map<string, { pr: PrecomputedRecord; items: NormalizedOrderItem[]; itemIds: Set<string> }>();
     const batchAliasMap = new Map<string, string>();
     const consumedRecordIds = new Set<string>();
-    const mobileOfficerTokens = new Set<string>();
+    /* County index: Map<normCounty, batchIds[]> for O(1) fuzzy lookup */
+    const countyBatchIndex = new Map<string, string[]>();
 
-    fieldOfficers.forEach((officer) => {
-      [officer.name, officer.id, officer.phone, ...(officer.aliases || [])].forEach((value) => {
-        const token = normalizeText(value);
-        if (token) mobileOfficerTokens.add(token);
-      });
-    });
+    /* 1. Register batch parents */
+    for (const pc of precomputed) {
+      if (!pc.isBatch) continue;
+      const itemIds = new Set(pc.normalizedItems.map((i) => i.id));
+      batchMap.set(pc.id, { pr: pc, items: [...pc.normalizedItems], itemIds });
+      for (const id of pc.identifiers) {
+        if (!batchAliasMap.has(id)) batchAliasMap.set(id, pc.id);
+      }
+      /* Build county index */
+      if (pc.normCounty) {
+        let list = countyBatchIndex.get(pc.normCounty);
+        if (!list) { list = []; countyBatchIndex.set(pc.normCounty, list); }
+        list.push(pc.id);
+      }
+    }
 
-    const registerAlias = (value: unknown, batchId: string) => {
-      const normalized = normalizeIdValue(value);
-      if (!normalized) return;
-      if (!batchAliasMap.has(normalized)) batchAliasMap.set(normalized, batchId);
-    };
+    /* 2. Fast resolve for submission records */
+    for (const pc of precomputed) {
+      if (pc.isBatch) continue;
+      if (consumedRecordIds.has(pc.id)) continue;
 
-    const isMobileOfficerRecord = (record: OrderRecord): boolean => {
-      const toToken = (value: unknown) => {
-        if (typeof value === "number" && Number.isFinite(value)) return String(value);
-        return normalizeText(value);
-      };
-      return getRecordOfficerCandidates(record).some((value) => {
-        const token = toToken(value);
-        return token.length > 0 && mobileOfficerTokens.has(token);
-      });
-    };
+      let batchId: string | null = null;
 
-    const attachRecordToBatch = (record: OrderRecord, batchId: string): boolean => {
-      const parent = batchMap.get(batchId);
-      if (!parent) return false;
-      const submissionItems = getSubmissionItems(record);
-      if (submissionItems.length === 0) return false;
-      const filteredItems = submissionItems.filter((item) => !parent.itemIds.has(item.id));
-      if (filteredItems.length === 0) return false;
-      filteredItems.forEach((item) => parent.itemIds.add(item.id));
-      parent.items = [...parent.items, ...filteredItems];
-      return true;
-    };
+      // Explicit reference
+      if (pc.refId) {
+        batchId = batchAliasMap.get(pc.refId) || (batchMap.has(pc.refId) ? pc.refId : null);
+      }
 
-    const findBestBatchMatch = (record: OrderRecord): string | null => {
-      const recordId = normalizeIdValue(record.id);
-      const recordProgramme = normalizeText(record.programme);
-      const recordCounty = normalizeText(record.county);
-      const recordLocation = normalizeText(record.location || record.village || record.subcounty);
-      const recordDate = parseDate(record.date || record.completedAt || record.createdAt || record.timestamp);
-      const recordTotal = Number(record.totalGoats || record.goatsBought || record.goats || 0);
-
-      let bestBatchId: string | null = null;
-      let bestScore = 0;
-
-      for (const [batchId, parent] of batchMap.entries()) {
-        if (batchId === recordId) continue;
-        const pr = parent.record;
-        let score = 0;
-        const pp = normalizeText(pr.programme);
-        const pc = normalizeText(pr.county);
-        const pl = normalizeText(pr.location || pr.village || pr.subcounty);
-        const pd = parseDate(pr.date || pr.completedAt || pr.createdAt || pr.timestamp);
-        const pt = Number(pr.totalGoats || pr.goatsBought || pr.goats || 0);
-
-        if (recordProgramme && pp && recordProgramme === pp) score += 3;
-        if (recordCounty && pc && recordCounty === pc) score += 2;
-        if (recordLocation && pl && recordLocation === pl) score += 4;
-        if (recordDate && pd) {
-          const dayDiff = Math.abs(recordDate.getTime() - pd.getTime()) / (1000 * 60 * 60 * 24);
-          if (dayDiff <= 1) score += 4;
-          else if (dayDiff <= 7) score += 3;
-          else if (dayDiff <= 30) score += 1;
+      // Scan known reference keys only (not all Object.entries)
+      if (!batchId) {
+        const rec = pc.record;
+        for (const key of BATCH_REFERENCE_KEYS) {
+          const val = (rec as Record<string, unknown>)[key];
+          if (val == null) continue;
+          const norm = normalizeIdValue(val);
+          if (!norm) continue;
+          batchId = batchAliasMap.get(norm);
+          if (batchId) break;
         }
-        if (recordTotal > 0 && pt > 0 && recordTotal === pt) score += 2;
-        if (normalizeStatus(pr.status) !== "completed") score += 1;
-
-        if (score > bestScore) { bestScore = score; bestBatchId = batchId; }
       }
-      return bestScore >= 6 ? bestBatchId : null;
-    };
 
-    allRecords.forEach((record) => {
-      if (!isBatchRecord(record)) return;
-      const items = getNormalizedItems(record);
-      batchMap.set(record.id, { record, items, itemIds: new Set(items.map((i) => i.id)) });
-      getBatchIdentifiers(record).forEach((id) => registerAlias(id, record.id));
-    });
-
-    const resolveBatchId = (record: OrderRecord): string | null => {
-      const explicitRef = getBatchReferenceId(record);
-      if (explicitRef) {
-        const mapped = batchAliasMap.get(explicitRef);
-        if (mapped) return mapped;
-        if (batchMap.has(explicitRef)) return explicitRef;
+      // Fuzzy match (submission / mobile officer) — county-indexed for O(k) where k = batches in same county
+      if (!batchId && (pc.isSubmission || pc.officerTokens.some((t) => mobileOfficerTokenSet.has(t)))) {
+        let bestScore = 0;
+        const candidateBatchIds = pc.normCounty ? countyBatchIndex.get(pc.normCounty) : null;
+        const batchesToScan = candidateBatchIds || Array.from(batchMap.keys());
+        for (const bid of batchesToScan) {
+          if (bid === pc.id) continue;
+          const entry = batchMap.get(bid);
+          if (!entry) continue;
+          const bp = entry.pr;
+          let score = 0;
+          if (pc.normProgramme && bp.normProgramme && pc.normProgramme === bp.normProgramme) score += 3;
+          if (pc.normCounty && bp.normCounty && pc.normCounty === bp.normCounty) score += 2;
+          if (pc.normLocation && bp.normLocation && pc.normLocation === bp.normLocation) score += 4;
+          if (pc.dateMs && bp.dateMs) {
+            const dayDiff = Math.abs(pc.dateMs - bp.dateMs) / 86400000;
+            if (dayDiff <= 1) score += 4;
+            else if (dayDiff <= 7) score += 3;
+            else if (dayDiff <= 30) score += 1;
+          }
+          if (pc.goatsTotal > 0 && bp.goatsTotal > 0 && pc.goatsTotal === bp.goatsTotal) score += 2;
+          if (normalizeStatus(bp.record.status) !== "completed") score += 1;
+          if (score > bestScore) { bestScore = score; batchId = bid; }
+        }
+        if (bestScore < 6) batchId = null;
       }
-      for (const [key, value] of Object.entries(record)) {
-        if (!looksLikeReferenceKey(key)) continue;
-        const normalized = normalizeIdValue(value);
-        if (!normalized) continue;
-        const mapped = batchAliasMap.get(normalized);
-        if (mapped) return mapped;
-      }
-      if (isSubmissionRecord(record) || isMobileOfficerRecord(record)) return findBestBatchMatch(record);
-      return null;
-    };
 
-    allRecords.forEach((record) => {
-      if (isBatchRecord(record)) return;
-      const recordId = normalizeIdValue(record.id);
-      if (recordId && consumedRecordIds.has(recordId)) return;
-      const batchId = resolveBatchId(record);
-      if (!batchId || batchId === record.id) return;
-      if (attachRecordToBatch(record, batchId) && recordId) consumedRecordIds.add(recordId);
-    });
+      if (!batchId || batchId === pc.id) continue;
 
-    return Array.from(batchMap.values())
-      .filter(({ record }) => { const rid = normalizeIdValue(record.id); return !rid || !consumedRecordIds.has(rid); })
-      .map(({ record, items }) => {
-        const itemsTotal = items.reduce((sum, i) => sum + Number(i.goats || 0), 0);
-        const totalGoats = getBatchTotalGoats(record, itemsTotal);
-        const goatsBought = clamp(Math.max(Number(record.goatsBought || 0), itemsTotal), 0, Math.max(totalGoats, 0));
-        const remainingGoats = Math.max(totalGoats - goatsBought, 0);
-        const createdAt = record.createdAt || record.timestamp || "";
-        const completedAt = record.completedAt || "";
-        const batchDate = record.date || completedAt || createdAt || items[0]?.date || "";
-        const storedStatus = normalizeStatus(record.status);
-        const isReadyForCompletion = totalGoats > 0 && remainingGoats <= 0 && storedStatus !== "completed";
-        const status = storedStatus === "completed"
-          ? "completed"
-          : goatsBought > 0 || items.length > 0 ? "in-progress" : "pending";
-        return {
-          batchId: record.id, batchDate, createdAt, completedAt, totalGoats, recordedGoats: itemsTotal,
-          goatsBought, remainingGoats, status,
-          county: record.county || "N/A", subcounty: record.subcounty || "N/A",
-          location: record.location || items[0]?.location || items[0]?.village || "N/A",
-          programme: record.programme || activeProgram || "N/A",
-          username: record.username || record.createdBy || items[0]?.officer || "N/A",
-          sortTimestamp: parseDate(batchDate)?.getTime() || 0, isReadyForCompletion, items,
-        };
+      // Attach submission items
+      const parent = batchMap.get(batchId);
+      if (!parent) continue;
+      const subItems = getSubmissionItems(pc.record);
+      if (subItems.length === 0) continue;
+      const filtered = subItems.filter((item) => !parent.itemIds.has(item.id));
+      if (filtered.length === 0) continue;
+      for (const item of filtered) parent.itemIds.add(item.id);
+      parent.items.push(...filtered);
+      consumedRecordIds.add(pc.id);
+    }
+
+    /* 3. Build output rows with pre-computed searchable text */
+    const result: BatchOrderRow[] = [];
+    for (const [_, entry] of batchMap.entries()) {
+      if (consumedRecordIds.has(entry.pr.id)) continue;
+      const rec = entry.pr.record;
+      const items = entry.items;
+      const itemsTotal = items.reduce((s, i) => s + i.goats, 0);
+      const totalGoats = getBatchTotalGoats(rec, itemsTotal);
+      const goatsBought = clamp(Math.max(Number(rec.goatsBought || 0), itemsTotal), 0, Math.max(totalGoats, 0));
+      const remainingGoats = Math.max(totalGoats - goatsBought, 0);
+      const createdAt = rec.createdAt || rec.timestamp || "";
+      const completedAt = rec.completedAt || "";
+      const batchDate = rec.date || completedAt || createdAt || items[0]?.date || "";
+      const storedStatus = normalizeStatus(rec.status);
+      const isReadyForCompletion = totalGoats > 0 && remainingGoats <= 0 && storedStatus !== "completed";
+      const status = storedStatus === "completed"
+        ? "completed"
+        : goatsBought > 0 || items.length > 0 ? "in-progress" : "pending";
+      const county = rec.county || "N/A";
+      const subcounty = rec.subcounty || "N/A";
+      const location = rec.location || items[0]?.location || items[0]?.village || "N/A";
+      const programme = rec.programme || activeProgram || "N/A";
+      const username = rec.username || rec.createdBy || items[0]?.officer || "N/A";
+      const targetGoats = Number(rec.targetGoats || 0) || totalGoats;
+      result.push({
+        batchId: rec.id, batchDate, createdAt, completedAt, targetGoats, totalGoats, recordedGoats: itemsTotal,
+        goatsBought, remainingGoats, status,
+        county, subcounty, location, programme, username,
+        sortTimestamp: parseDate(batchDate)?.getTime() || 0, isReadyForCompletion, items,
+        searchableText: `${county} ${subcounty} ${location} ${username} ${status} ${programme} ${rec.id} ${totalGoats}`.toLowerCase(),
       });
-  }, [allRecords, activeProgram, fieldOfficers]);
+    }
+    result.sort((a, b) => b.sortTimestamp - a.sortTimestamp);
+    return result;
+  }, [precomputed, activeProgram, mobileOfficerTokenSet]);
 
   const ordersDialogRow = useMemo(
     () => batchRows.find((r) => r.batchId === ordersDialogBatchId) || null,
@@ -789,30 +1028,40 @@ const OrdersPage = () => {
     }
   }, [ordersDialogBatchId, ordersDialogRow]);
 
+  /* Pre-parse filter dates once */
+  const filterStartDateMs = useMemo(
+    () => filters.startDate ? new Date(filters.startDate).setHours(0, 0, 0, 0) : null,
+    [filters.startDate],
+  );
+  const filterEndDateMs = useMemo(
+    () => filters.endDate ? new Date(filters.endDate).setHours(23, 59, 59, 999) : null,
+    [filters.endDate],
+  );
+
   const filteredBatchRows = useMemo(() => {
-    const searchTerm = filters.search.toLowerCase().trim();
+    const searchTerm = deferredSearch.toLowerCase().trim();
+    const statusFilter = filters.status;
+    const hasDateFilter = filterStartDateMs != null || filterEndDateMs != null;
+    const needsSearch = searchTerm.length > 0;
+    const needsDate = hasDateFilter;
     const rows = batchRows.filter((row) => {
-      if (filters.status !== "all" && row.status !== filters.status) return false;
-      const rowDate = parseDate(row.batchDate);
-      if (filters.startDate || filters.endDate) {
-        if (!rowDate) return false;
-        const start = filters.startDate ? new Date(filters.startDate) : null;
-        const end = filters.endDate ? new Date(filters.endDate) : null;
-        if (start) start.setHours(0, 0, 0, 0);
-        if (end) end.setHours(23, 59, 59, 999);
-        if (start && rowDate < start) return false;
-        if (end && rowDate > end) return false;
+      if (statusFilter !== "all" && row.status !== statusFilter) return false;
+      if (!needsSearch && !needsDate) return true;
+      if (needsDate) {
+        const rowMs = row.sortTimestamp;
+        if (!rowMs) return false;
+        if (filterStartDateMs != null && rowMs < filterStartDateMs) return false;
+        if (filterEndDateMs != null && rowMs > filterEndDateMs) return false;
       }
-      if (!searchTerm) return true;
-      return [row.county, row.location, row.username, row.status, row.programme, row.batchId, row.totalGoats.toString()]
-        .join(" ").toLowerCase().includes(searchTerm);
+      if (!needsSearch) return true;
+      return row.searchableText.includes(searchTerm);
     });
-    rows.sort((a, b) => b.sortTimestamp - a.sortTimestamp);
+    // Already sorted from batchRows, no need to re-sort
     return rows;
-  }, [batchRows, filters]);
+  }, [batchRows, filters.status, filterStartDateMs, filterEndDateMs, deferredSearch]);
 
   const totalTargetGoats = useMemo(
-    () => filteredBatchRows.reduce((sum, row) => sum + row.totalGoats, 0),
+    () => filteredBatchRows.reduce((sum, row) => sum + (row.targetGoats || row.totalGoats), 0),
     [filteredBatchRows]
   );
 
@@ -907,8 +1156,9 @@ const OrdersPage = () => {
   const generatedSmsPreview = useMemo(() => {
     const programmeLabel = resolvedOrderProgramme || "Selected programme";
     const countyLabel = newOrder.county || "selected county";
-    const goatsLabel = Number.isFinite(Number(newOrder.goats)) && Number(newOrder.goats) > 0
-      ? Number(newOrder.goats).toLocaleString()
+    const targetGoats = Number(newOrder.goats) || 0;
+    const goatsLabel = targetGoats > 0
+      ? targetGoats.toLocaleString()
       : "0";
     const dateLabel = newOrder.date ? formatDate(newOrder.date) : "selected date";
 
@@ -924,32 +1174,38 @@ const OrdersPage = () => {
     });
   }, [countyFieldOfficers]);
 
-  const handleFilterChange = (key: keyof Filters, value: string) => {
-    setFilters((prev) => ({ ...prev, [key]: value }));
+  const handleFilterChange = useCallback((key: keyof Filters, value: string) => {
     setPagination((prev) => ({ ...prev, page: 1 }));
-  };
+    if (key === "search") {
+      handleSearchChange(value);
+    } else {
+      setFilters((prev) => ({ ...prev, [key]: value }));
+    }
+  }, [handleSearchChange]);
 
-  const clearFilters = () => {
+  const clearFilters = useCallback(() => {
     setFilters({ search: "", startDate: "", endDate: "", status: "all" });
     setPagination((prev) => ({ ...prev, page: 1 }));
-  };
+    startTransition(() => setDebouncedSearch(""));
+  }, []);
 
-  const closeOrdersDialog = () => {
+  const closeOrdersDialog = useCallback(() => {
     setOrdersDialogBatchId(null);
     setEditingOrderKey(null);
     setOrderGoatsDraft("");
     setOrderDateDraft("");
     setOrderOfficerDraft("");
     setOrderLocationDraft("");
+    setOrderSubcountyDraft("");
     setDialogGoatsBoughtDraft("");
-  };
+  }, []);
 
-  const resetNewOrderForm = (programme: string) => {
+  const resetNewOrderForm = useCallback((programme: string) => {
     setNewOrder(getDefaultOrderForm(programme));
     setSelectedFieldOfficerIds([]);
-  };
+  }, []);
 
-  const openCreateDialog = () => {
+  const openCreateDialog = useCallback(() => {
     if (!ensureOrderCreateAccess()) return;
     if (!activeProgram) {
       toast({ title: "Select programme", description: "Please select a programme before creating an order.", variant: "destructive" });
@@ -957,33 +1213,30 @@ const OrdersPage = () => {
     }
     resetNewOrderForm(activeProgram);
     setIsCreateDialogOpen(true);
-  };
+  }, [activeProgram, userCanCreateOrders]);
 
-  const closeCreateDialog = () => { setIsCreateDialogOpen(false); };
+  const closeCreateDialog = useCallback(() => { setIsCreateDialogOpen(false); }, []);
 
-  const toggleFieldOfficerSelection = (officerId: string) => {
+  const toggleFieldOfficerSelection = useCallback((officerId: string) => {
     setSelectedFieldOfficerIds((prev) =>
       prev.includes(officerId) ? prev.filter((id) => id !== officerId) : [...prev, officerId]
     );
-  };
+  }, []);
 
   const updateBatchOrders = async (row: BatchOrderRow, nextItems: NormalizedOrderItem[], nextGoatsBought?: number) => {
     const sanitizedItems = nextItems.map((item, index) => {
       const orderLocation = item.location || item.village || row.location || "";
-      const officerName = item.officer || "";
       return {
         ...(item.raw ?? {}),
         id: item.id || `${row.batchId}-${index + 1}`,
         goats: Math.max(0, Number(item.goats || 0)),
         date: item.date || row.batchDate || "",
         location: orderLocation,
-        village: item.village || orderLocation,
-        fieldOfficer: officerName,
-        officer: officerName,
+        subcounty: item.subcounty || row.subcounty || "",
       };
     });
     const itemsTotal = sanitizedItems.reduce((sum, i) => sum + i.goats, 0);
-    const targetGoats = row.totalGoats > 0 ? row.totalGoats : itemsTotal;
+    const targetGoats = row.targetGoats > 0 ? row.targetGoats : row.totalGoats;
     const goatsBought = clamp(
       Math.max(typeof nextGoatsBought === "number" ? nextGoatsBought : Number(row.goatsBought || 0), itemsTotal),
       0, Math.max(targetGoats, 0)
@@ -993,7 +1246,7 @@ const OrdersPage = () => {
     const nextStatus = storedStatus === "completed" ? "completed" : goatsBought > 0 || itemsTotal > 0 ? "in-progress" : "pending";
     const nextCompletedAt = storedStatus === "completed" ? row.completedAt || new Date().toISOString() : "";
     await update(ref(db, `orders/${row.batchId}`), {
-      orders: sanitizedItems, totalGoats: targetGoats, goatsBought, remainingGoats, status: nextStatus, completedAt: nextCompletedAt,
+      mobileAppdata: sanitizedItems, totalGoats: itemsTotal, goatsBought, remainingGoats, status: nextStatus, completedAt: nextCompletedAt,
     });
   };
 
@@ -1005,12 +1258,13 @@ const OrdersPage = () => {
       toast({ title: "Invalid value", description: "Goats bought must be 0 or greater.", variant: "destructive" });
       return;
     }
-    if (nextValue > ordersDialogRow.totalGoats) {
-      toast({ title: "Invalid value", description: "Cannot exceed total goats.", variant: "destructive" });
+    if (nextValue > (ordersDialogRow.targetGoats || ordersDialogRow.totalGoats)) {
+      toast({ title: "Invalid value", description: "Cannot exceed target goats.", variant: "destructive" });
       return;
     }
     try {
-      const remainingGoats = Math.max(ordersDialogRow.totalGoats - nextValue, 0);
+      const target = ordersDialogRow.targetGoats || ordersDialogRow.totalGoats;
+      const remainingGoats = Math.max(target - nextValue, 0);
       const storedStatus = normalizeStatus(ordersDialogRow.status);
       const nextStatus = storedStatus === "completed" ? "completed" : nextValue > 0 ? "in-progress" : "pending";
       const nextCompletedAt = storedStatus === "completed" ? ordersDialogRow.completedAt || new Date().toISOString() : "";
@@ -1028,12 +1282,12 @@ const OrdersPage = () => {
       toast({ title: "Order not complete", description: `Still ${row.remainingGoats.toLocaleString()} goats remaining.`, variant: "destructive" });
       return;
     }
-    if (!window.confirm("Mark this parent order as complete?")) return;
+    if (!window.confirm("Mark this order as complete?")) return;
     try {
       await update(ref(db, `orders/${row.batchId}`), {
         status: "completed",
         completedAt: row.completedAt || new Date().toISOString(),
-        goatsBought: Math.max(row.totalGoats, row.goatsBought, row.recordedGoats),
+        goatsBought: Math.max(row.targetGoats, row.totalGoats, row.goatsBought, row.recordedGoats),
         remainingGoats: 0,
       });
       toast({ title: "Completed", description: "Order marked as complete." });
@@ -1049,6 +1303,7 @@ const OrdersPage = () => {
     setOrderDateDraft(toInputDate(item.date));
     setOrderOfficerDraft(item.officer === "N/A" ? "" : item.officer || "");
     setOrderLocationDraft(item.location === "N/A" ? "" : item.location || "");
+    setOrderSubcountyDraft(item.subcounty === "N/A" ? "" : item.subcounty || "");
   };
 
   const cancelOrderEdit = () => {
@@ -1057,6 +1312,7 @@ const OrdersPage = () => {
     setOrderDateDraft("");
     setOrderOfficerDraft("");
     setOrderLocationDraft("");
+    setOrderSubcountyDraft("");
   };
 
   const saveOrderEdit = async (row: BatchOrderRow, index: number) => {
@@ -1067,9 +1323,16 @@ const OrdersPage = () => {
       return;
     }
     if (!orderDateDraft) { toast({ title: "Date required", variant: "destructive" }); return; }
-    if (!orderOfficerDraft.trim()) { toast({ title: "Field officer required", variant: "destructive" }); return; }
     const nextItems = row.items.map((item, i) =>
-      i === index ? { ...item, goats: nextGoats, date: orderDateDraft, officer: orderOfficerDraft.trim(), location: orderLocationDraft.trim() || item.location } : item
+      i === index
+        ? {
+            ...item,
+            goats: nextGoats,
+            date: orderDateDraft,
+            location: orderLocationDraft.trim() || item.location,
+            subcounty: orderSubcountyDraft.trim() || item.subcounty,
+          }
+        : item
     );
     try {
       await updateBatchOrders(row, nextItems);
@@ -1109,12 +1372,13 @@ const OrdersPage = () => {
     if (!selectedProgramme) { toast({ title: "Select programme", variant: "destructive" }); return; }
     const trimmedCounty = newOrder.county.trim();
     const goatsValue = Number(newOrder.goats);
-    const selectedOfficers = countyFieldOfficers.filter((o) => selectedFieldOfficerIds.includes(o.id));
-    const recipients = Array.from(new Set(selectedOfficers.map((o) => o.phone).filter(Boolean)));
 
     if (!newOrder.date) { toast({ title: "Date required", variant: "destructive" }); return; }
     if (!trimmedCounty) { toast({ title: "County required", variant: "destructive" }); return; }
-    if (!Number.isFinite(goatsValue) || goatsValue <= 0) { toast({ title: "Invalid goats", variant: "destructive" }); return; }
+    if (!Number.isFinite(goatsValue) || goatsValue <= 0) { toast({ title: "Invalid goats", description: "Enter the total number of goats to be collected.", variant: "destructive" }); return; }
+
+    const selectedOfficers = countyFieldOfficers.filter((o) => selectedFieldOfficerIds.includes(o.id));
+    const recipients = Array.from(new Set(selectedOfficers.map((o) => o.phone).filter(Boolean)));
     if (recipients.length === 0) { toast({ title: "No recipients", variant: "destructive" }); return; }
 
     setCreatingOrder(true);
@@ -1122,21 +1386,45 @@ const OrdersPage = () => {
       const now = new Date().toISOString();
       const orderRef = push(ref(db, "orders"));
       const orderId = orderRef.key || null;
+
       await set(orderRef, {
-        id: orderId, programme: selectedProgramme, county: trimmedCounty,
-        username: userName || "Unknown", status: "pending", createdAt: now, sourcePage: "orders",
-        orders: [], totalGoats: goatsValue, goatsBought: 0, remainingGoats: goatsValue,
+        id: orderId,
+        programme: selectedProgramme,
+        county: trimmedCounty,
+        username: userName || "Unknown",
+        status: "pending",
+        createdAt: now,
+       
+        mobileAppdata: [
+          {
+            date: "",
+            goats: 0,
+            location: "",
+            subcounty: "",
+          },
+        ],
+        targetGoats: goatsValue,
+        totalGoats: 0,
+        goatsBought: 0,
+        remainingGoats: goatsValue,
       });
       const messageWithGoats = `${generatedSmsPreview} Ref: ${orderId}.`;
       const smsRef = push(ref(db, "smsOutbox"));
       await set(smsRef, {
-        status: "pending", sourcePage: "orders", programme: selectedProgramme,
-        createdAt: Date.now(), createdBy: userName || "unknown", message: messageWithGoats,
-        recipients, recipientCount: recipients.length, orderId, batchId: orderId,
-        targetOrderId: orderId, totalGoats: goatsValue,
+        status: "pending",
+        programme: selectedProgramme,
+        createdAt: Date.now(),
+        createdBy: userName || "unknown",
+        message: messageWithGoats,
+        recipients,
+        recipientCount: recipients.length,
+        orderId,
+        batchId: orderId,
+        targetOrderId: orderId,
+        totalGoats: goatsValue,
       });
       if (selectedProgramme !== activeProgram) setActiveProgram(selectedProgramme);
-      toast({ title: "Order created", description: `SMS queued for ${recipients.length} officers.` });
+      toast({ title: "Order created", description: `SMS queued for ${recipients.length} officers. Target: ${goatsValue.toLocaleString()} goats.` });
       closeCreateDialog();
     } catch {
       toast({ title: "Error", description: "Failed to create order.", variant: "destructive" });
@@ -1257,7 +1545,7 @@ const OrdersPage = () => {
             <div className="flex-1 space-y-1.5">
               <Label className="text-xs font-medium text-slate-600">Search</Label>
               <Input
-                placeholder="County, user, status..."
+                placeholder="County, subcounty, user, status..."
                 value={filters.search}
                 onChange={(e) => handleFilterChange("search", e.target.value)}
                 className="border-slate-200 bg-white focus:border-blue-400 focus:ring-blue-100"
@@ -1337,10 +1625,10 @@ const OrdersPage = () => {
                     <TableRow className="border-b border-slate-200 bg-slate-50/70 hover:bg-slate-50/70">
                       <TableHead className="h-9 px-4 text-left text-xs font-semibold uppercase tracking-wider text-slate-600">Date</TableHead>
                       <TableHead className="h-9 px-4 text-left text-xs font-semibold uppercase tracking-wider text-slate-600">County</TableHead>
-                      <TableHead className="h-9 px-4 text-left text-xs font-semibold uppercase tracking-wider text-slate-600">Programme</TableHead>
-                      <TableHead className="h-9 px-4 text-left text-xs font-semibold uppercase tracking-wider text-slate-600">Officer</TableHead>
-                      <TableHead className="h-9 px-4 text-right text-xs font-semibold uppercase tracking-wider text-slate-600">Target</TableHead>
-                      <TableHead className="h-9 px-4 text-right text-xs font-semibold uppercase tracking-wider text-slate-600">Progress</TableHead>
+                      <TableHead className="h-9 px-4 text-left text-xs font-semibold uppercase tracking-wider text-slate-600">Sub-county</TableHead>
+                      <TableHead className="h-9 px-4 text-left text-xs font-semibold uppercase tracking-wider text-slate-600">Ordered By</TableHead>
+                      <TableHead className="h-9 px-4 text-right text-xs font-semibold uppercase tracking-wider text-slate-600">Target Goats</TableHead>
+                      <TableHead className="h-9 px-4 text-right text-xs font-semibold uppercase tracking-wider text-slate-600">Available Goats</TableHead>
                       <TableHead className="h-9 px-4 text-right text-xs font-semibold uppercase tracking-wider text-slate-600">Purchased</TableHead>
                       <TableHead className="h-9 px-4 text-left text-xs font-semibold uppercase tracking-wider text-slate-600">Status</TableHead>
                       <TableHead className="h-9 px-4 text-right text-xs font-semibold uppercase tracking-wider text-slate-600">Actions</TableHead>
@@ -1348,64 +1636,16 @@ const OrdersPage = () => {
                   </TableHeader>
                   <TableBody>
                     {pageRows.map((row, idx) => (
-                      <TableRow
+                      <OrderTableRow
                         key={row.batchId}
-                        className={`border-b border-slate-100 transition-colors hover:bg-blue-50/40 ${idx % 2 === 0 ? "bg-white" : "bg-slate-50/30"}`}
-                      >
-                        <TableCell className="px-4 py-2.5 text-sm font-medium text-slate-800 whitespace-nowrap">
-                          {formatDate(row.batchDate)}
-                        </TableCell>
-                        <TableCell className="px-4 py-2.5 text-sm text-slate-700">{row.county}</TableCell>
-                        <TableCell className="px-4 py-2.5 text-sm text-slate-700">{row.programme}</TableCell>
-                        <TableCell className="px-4 py-2.5 text-sm text-slate-700 max-w-[140px] truncate">{row.username}</TableCell>
-                        <TableCell className="px-4 py-2.5 text-sm text-right font-semibold tabular-nums text-slate-800">
-                          {row.totalGoats.toLocaleString()}
-                        </TableCell>
-                        <TableCell className="px-4 py-2.5 text-sm text-right tabular-nums text-slate-600">
-                          {row.recordedGoats.toLocaleString()}
-                        </TableCell>
-                        <TableCell className="px-4 py-2.5 text-sm text-right font-semibold tabular-nums text-slate-800">
-                          {row.goatsBought.toLocaleString()}
-                        </TableCell>
-                        <TableCell className="px-4 py-2.5">
-                          <Badge variant="outline" className={getStatusBadgeClass(row.status)}>{row.status}</Badge>
-                        </TableCell>
-                        <TableCell className="px-4 py-2.5 text-right">
-                          <div className="flex items-center justify-end gap-0.5">
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8 text-slate-500 hover:text-blue-600 hover:bg-blue-50"
-                              onClick={() => setOrdersDialogBatchId(row.batchId)}
-                              title="View details"
-                            >
-                              <Eye className="h-4 w-4" />
-                            </Button>
-                            {userCanEditOrders && (
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8 text-slate-500 hover:text-amber-600 hover:bg-amber-50"
-                                onClick={() => setOrdersDialogBatchId(row.batchId)}
-                                title="Edit"
-                              >
-                                <Pencil className="h-4 w-4" />
-                              </Button>
-                            )}
-                            {userIsChiefAdmin && (
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8 text-slate-400 hover:text-red-600 hover:bg-red-50"
-                                onClick={() => deleteBatch(row)}
-                                title="Delete"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            )}
-                          </div>
-                        </TableCell>
-                      </TableRow>
+                        row={row}
+                        idx={idx}
+                        userCanEditOrders={userCanEditOrders}
+                        userIsChiefAdmin={userIsChiefAdmin}
+                        onView={setOrdersDialogBatchId}
+                        onEdit={setOrdersDialogBatchId}
+                        onDelete={deleteBatch}
+                      />
                     ))}
                   </TableBody>
                 </Table>
@@ -1413,7 +1653,7 @@ const OrdersPage = () => {
 
               <div className="flex items-center justify-between border-t border-slate-100 bg-slate-50/50 px-5 py-3">
                 <span className="text-xs text-slate-600">
-                  Showing {(pagination.page - 1) * pagination.limit + 1}–{Math.min(pagination.page * pagination.limit, filteredBatchRows.length)} of {filteredBatchRows.length} batches
+                  Showing {(pagination.page - 1) * pagination.limit + 1}-{Math.min(pagination.page * pagination.limit, filteredBatchRows.length)} of {filteredBatchRows.length} batches
                 </span>
                 <div className="flex gap-2">
                   <Button
@@ -1474,8 +1714,8 @@ const OrdersPage = () => {
                 <Input type="date" value={newOrder.date} onChange={(e) => setNewOrder((p) => ({ ...p, date: e.target.value }))} className="border-slate-200 bg-white text-sm focus:border-blue-400" />
               </div>
               <div className="space-y-1.5">
-                <Label className="text-xs font-medium text-slate-600">Goats *</Label>
-                <Input type="number" min={1} value={newOrder.goats} onChange={(e) => setNewOrder((p) => ({ ...p, goats: e.target.value }))} className="border-slate-200 bg-white text-sm focus:border-blue-400" />
+                <Label className="text-xs font-medium text-slate-600">Target Goats *</Label>
+                <Input type="number" min={1} value={newOrder.goats} onChange={(e) => setNewOrder((p) => ({ ...p, goats: e.target.value }))} placeholder="Total goats to collect" className="border-slate-200 bg-white text-sm focus:border-blue-400" />
               </div>
             </div>
             <div className="space-y-1.5">
@@ -1511,6 +1751,8 @@ const OrdersPage = () => {
                 <p className="text-[11px] text-slate-500">No counties found on mobile users in site management.</p>
               )}
             </div>
+
+            {/* Field Officers */}
             <div className="space-y-1.5">
               <Label className="text-xs font-medium text-slate-600">Field Officers *</Label>
               {fieldOfficersLoading ? (
@@ -1558,7 +1800,7 @@ const OrdersPage = () => {
       <Dialog open={Boolean(ordersDialogBatchId && ordersDialogRow)} onOpenChange={(open) => { if (!open) closeOrdersDialog(); }}>
         <DialogContent className="sm:max-w-2xl bg-white rounded-2xl border-slate-200 shadow-xl max-h-[90vh] overflow-hidden">
           <DialogHeader className="border-b border-slate-100 pb-3">
-            <DialogTitle className="text-slate-900">Parent Order Details</DialogTitle>
+            <DialogTitle className="text-slate-900">Order Details</DialogTitle>
           </DialogHeader>
 
           {ordersDialogRow ? (
@@ -1566,16 +1808,10 @@ const OrdersPage = () => {
               {/* Summary Grid */}
               <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
                 {[
-                  { label: "Date", value: formatDate(ordersDialogRow.batchDate), sub: `Ref: ${ordersDialogRow.batchId}` },
+                  { label: "Date", value: formatDate(ordersDialogRow.batchDate)},
                   { label: "County", value: ordersDialogRow.county },
-                  { label: "Location", value: ordersDialogRow.location },
-                  { label: "Offtake Officer", value: ordersDialogRow.username },
-                  { label: "Programme", value: ordersDialogRow.programme },
-                  {
-                    label: "Status",
-                    value: null,
-                    badge: ordersDialogRow.status,
-                  },
+                  { label: "Sub-county", value: ordersDialogRow.subcounty },
+                  { label: "Status", badge: ordersDialogRow.status },
                 ].map((item) => (
                   <div key={item.label} className="rounded-lg border border-slate-150 bg-slate-50/60 p-3">
                     <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500">{item.label}</p>
@@ -1594,15 +1830,15 @@ const OrdersPage = () => {
                 <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500">Progress</p>
                 {userCanEditOrders && dialogGoatsBoughtDraft !== "" ? (
                   <div className="mt-1.5 flex items-center gap-2">
-                    <Input type="number" min={0} max={ordersDialogRow.totalGoats} value={dialogGoatsBoughtDraft} onChange={(e) => setDialogGoatsBoughtDraft(e.target.value)} className="h-8 max-w-32 text-right text-sm border-slate-200" />
-                    <span className="text-xs text-slate-500">/ {ordersDialogRow.totalGoats.toLocaleString()}</span>
+                    <Input type="number" min={0} max={ordersDialogRow.targetGoats || ordersDialogRow.totalGoats} value={dialogGoatsBoughtDraft} onChange={(e) => setDialogGoatsBoughtDraft(e.target.value)} className="h-8 max-w-32 text-right text-sm border-slate-200" />
+                    <span className="text-xs text-slate-500">/ {(ordersDialogRow.targetGoats || ordersDialogRow.totalGoats).toLocaleString()}</span>
                     <Button size="icon" variant="outline" className="h-8 w-8 border-slate-200" onClick={saveDialogGoatsBought}><Save className="h-3.5 w-3.5" /></Button>
                     <Button size="icon" variant="outline" className="h-8 w-8 border-slate-200" onClick={() => setDialogGoatsBoughtDraft("")}><X className="h-3.5 w-3.5" /></Button>
                   </div>
                 ) : (
                   <div className="mt-1.5 flex items-center gap-2">
                     <p className="text-sm font-semibold text-slate-800">
-                      {ordersDialogRow.goatsBought.toLocaleString()} / {ordersDialogRow.totalGoats.toLocaleString()}
+                      {ordersDialogRow.goatsBought.toLocaleString()} / {(ordersDialogRow.targetGoats || ordersDialogRow.totalGoats).toLocaleString()}
                     </p>
                     {userCanEditOrders && (
                       <Button size="icon" variant="ghost" className="h-6 w-6 text-slate-400 hover:text-blue-600" onClick={() => setDialogGoatsBoughtDraft(String(ordersDialogRow.goatsBought))} title="Edit">
@@ -1614,7 +1850,7 @@ const OrdersPage = () => {
                 <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
                   <div
                     className={`h-full rounded-full transition-all duration-500 ${ordersDialogRow.status === "completed" ? "bg-emerald-500" : "bg-blue-400"}`}
-                    style={{ width: `${Math.min(ordersDialogRow.totalGoats > 0 ? (ordersDialogRow.goatsBought / ordersDialogRow.totalGoats) * 100 : 0, 100)}%` }}
+                    style={{ width: `${Math.min((ordersDialogRow.targetGoats || ordersDialogRow.totalGoats) > 0 ? (ordersDialogRow.goatsBought / (ordersDialogRow.targetGoats || ordersDialogRow.totalGoats)) * 100 : 0, 100)}%` }}
                   />
                 </div>
                 <p className="mt-1 text-[11px] text-slate-500">{ordersDialogRow.remainingGoats.toLocaleString()} remaining</p>
@@ -1645,7 +1881,7 @@ const OrdersPage = () => {
               {/* Submissions Table */}
               <div className="rounded-lg border border-slate-200 overflow-hidden">
                 <div className="border-b border-slate-100 bg-slate-50 px-4 py-2.5 text-xs font-semibold uppercase tracking-wider text-slate-600">
-                  Field Officer Submissions ({ordersDialogRow.items.length})
+                  Field Officer Submissions ({ordersDialogRow.items.filter((item) => item.goats > 0 || item.date).length})
                 </div>
                 <div className="overflow-x-auto">
                   <Table>
@@ -1653,15 +1889,17 @@ const OrdersPage = () => {
                       <TableRow className="border-b border-slate-100 bg-slate-50/50 hover:bg-slate-50/50">
                         <TableHead className="h-8 px-3 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500">Date</TableHead>
                         {ordersDialogHasOfficerColumn && (
-                          <TableHead className="h-8 px-3 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500">Officer</TableHead>
+                          <TableHead className="h-8 px-3 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500">Field Officer</TableHead>
                         )}
-                        <TableHead className="h-8 px-3 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500">Village</TableHead>
+                        <TableHead className="h-8 px-3 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500">Sub-county</TableHead>
+                        <TableHead className="h-8 px-3 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500">Location</TableHead>
                         <TableHead className="h-8 px-3 text-right text-[11px] font-semibold uppercase tracking-wider text-slate-500">Goats</TableHead>
                         <TableHead className="h-8 px-3 text-right text-[11px] font-semibold uppercase tracking-wider text-slate-500">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {ordersDialogRow.items.map((item, index) => {
+                      {ordersDialogRow.items.filter((item) => item.goats > 0 || item.date).map((item, filteredIndex) => {
+                        const index = ordersDialogRow.items.indexOf(item);
                         const orderKey = `${ordersDialogRow.batchId}:${index}`;
                         const isEditing = userCanEditOrders && editingOrderKey === orderKey;
                         return (
@@ -1684,7 +1922,14 @@ const OrdersPage = () => {
                             )}
                             <TableCell className="px-3 py-2">
                               {isEditing ? (
-                                <Input value={orderLocationDraft} onChange={(e) => setOrderLocationDraft(e.target.value)} className="h-7 text-xs border-slate-200" placeholder="Village" />
+                                <Input value={orderSubcountyDraft} onChange={(e) => setOrderSubcountyDraft(e.target.value)} className="h-7 text-xs border-slate-200" placeholder="Sub-county" />
+                              ) : (
+                                <span className="text-xs text-slate-700">{item.subcounty || "—"}</span>
+                              )}
+                            </TableCell>
+                            <TableCell className="px-3 py-2">
+                              {isEditing ? (
+                                <Input value={orderLocationDraft} onChange={(e) => setOrderLocationDraft(e.target.value)} className="h-7 text-xs border-slate-200" placeholder="Location" />
                               ) : (
                                 <span className="text-xs text-slate-700">{item.location}</span>
                               )}
@@ -1724,9 +1969,9 @@ const OrdersPage = () => {
                           </TableRow>
                         );
                       })}
-                      {ordersDialogRow.items.length === 0 && (
+                      {ordersDialogRow.items.filter((item) => item.goats > 0 || item.date).length === 0 && (
                         <TableRow>
-                          <TableCell colSpan={ordersDialogHasOfficerColumn ? 5 : 4} className="py-6 text-center text-xs text-slate-500">
+                          <TableCell colSpan={ordersDialogHasOfficerColumn ? 6 : 5} className="py-6 text-center text-xs text-slate-500">
                             No submissions attached yet.
                           </TableCell>
                         </TableRow>
