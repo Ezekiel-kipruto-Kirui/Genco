@@ -19,7 +19,7 @@ export default defineConfig(({ mode }) => ({
         manualChunks: (id) => {
           // Only process node_modules to avoid conflicts with your own source code
           if (id.includes('node_modules')) {
-            
+
             // 1. Separate Firebase
             if (id.includes('firebase')) {
               return 'vendor-firebase';
@@ -36,7 +36,7 @@ export default defineConfig(({ mode }) => ({
             }
 
             // 4. COMBINED CHUNK: React + UI Libraries
-            // We combine these to fix the 'createContext' error. 
+            // We combine these to fix the 'createContext' error.
             // Libraries like @radix-ui need direct, synchronous access to React.
             const reactEcosystem = [
               'react',
@@ -53,12 +53,16 @@ export default defineConfig(({ mode }) => ({
               return 'vendor-react'; // All UI and React go into this single file
             }
           }
-          
+
           // Return undefined for everything else (src files, other small utilities)
           return undefined;
-        }
-      },
-    },
+        },
+        // Ensure consistent hashed filenames for cache busting
+        entryFileNames: 'assets/[name]-[hash].js',
+        chunkFileNames: 'assets/[name]-[hash].js',
+        assetFileNames: 'assets/[name]-[hash][extname]'
+      }
+    }
   },
   plugins: [react(), mode === "development" && componentTagger()].filter(Boolean),
   resolve: {
