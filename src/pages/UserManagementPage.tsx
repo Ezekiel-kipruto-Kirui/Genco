@@ -13,7 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { Download, Users, User, Edit, Trash2, Mail, Shield, Calendar, Eye, Phone, Plus, AlertTriangle, Briefcase } from "lucide-react"; // Added Briefcase
+import { Download, Users, User, Edit, Trash2, Mail, Shield, Calendar, Eye, Phone, Plus, AlertTriangle, Briefcase, ChevronLeft, ChevronRight } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
 import {
@@ -307,20 +307,20 @@ interface StatsCardProps {
 }
 
 const StatsCard = ({ title, value, icon: Icon, description, children }: StatsCardProps) => (
-  <Card className="bg-white text-slate-900 shadow-lg border border-gray-200 relative overflow-hidden">
-    <div className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-blue-500 to-purple-600"></div>
-    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 pt-4 pl-6">
-      <CardTitle className="text-sm font-medium text-slate-700">{title}</CardTitle>
+  <Card className="bg-white text-slate-900 shadow-md border-0 rounded-xl relative overflow-hidden hover:shadow-lg transition-shadow duration-200">
+    <div className="absolute left-0 top-0 bottom-0 w-1.5 bg-gradient-to-b from-blue-500 to-blue-600"></div>
+    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 pt-5 pl-7">
+      <CardTitle className="text-xs font-semibold text-slate-600 uppercase tracking-wide">{title}</CardTitle>
     </CardHeader>
-    <CardContent className="pl-6 pb-4 flex flex-row">
-      <div className="mr-2 rounded-full">
-        <Icon className="h-8 w-8 text-blue-600" />
+    <CardContent className="pl-7 pb-5 flex flex-row items-center">
+      <div className="mr-3 rounded-lg bg-blue-50 p-2">
+        <Icon className="h-7 w-7 text-blue-600" />
       </div>
       <div>
-        <div className="text-2xl font-bold text-slate-900 mb-2">{value}</div>
+        <div className="text-3xl font-bold text-slate-900">{value}</div>
         {children}
         {description && (
-          <p className="text-xs text-slate-600 mt-2 bg-slate-50 px-2 py-1 rounded-md border border-slate-100">
+          <p className="text-xs text-slate-500 mt-1.5">
             {description}
           </p>
         )}
@@ -339,22 +339,22 @@ interface FilterSectionProps {
 }
 
 const FilterSection = ({ searchValue, filters, uniqueRoles, uniqueStatuses, onSearch, onFilterChange }: FilterSectionProps) => (
-  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
-    <div className="space-y-2">
-      <Label htmlFor="search" className="font-semibold text-gray-700">Search</Label>
+  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+    <div className="space-y-1.5">
+      <Label htmlFor="search" className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Search</Label>
       <Input
         id="search"
-        placeholder="Search users..."
+        placeholder="Search by name..."
         value={searchValue}
         onChange={(e) => onSearch(e.target.value)}
-        className="border-gray-300 focus:border-blue-500 focus:ring-blue-500 bg-white"
+        className="border-gray-200 focus:border-blue-500 focus:ring-blue-500 bg-white text-sm h-9"
       />
     </div>
 
-    <div className="space-y-2">
-      <Label htmlFor="role" className="font-semibold text-gray-700">System Role</Label>
+    <div className="space-y-1.5">
+      <Label htmlFor="role" className="text-xs font-semibold text-gray-600 uppercase tracking-wide">System Role</Label>
       <Select value={filters.role} onValueChange={(value) => onFilterChange("role", value)}>
-        <SelectTrigger className="border-gray-300 focus:border-blue-500 focus:ring-blue-500 bg-white">
+        <SelectTrigger className="border-gray-200 focus:border-blue-500 focus:ring-blue-500 bg-white text-sm h-9">
           <SelectValue placeholder="Select role" />
         </SelectTrigger>
         <SelectContent>
@@ -368,10 +368,10 @@ const FilterSection = ({ searchValue, filters, uniqueRoles, uniqueStatuses, onSe
       </Select>
     </div>
 
-    <div className="space-y-2">
-      <Label htmlFor="status" className="font-semibold text-gray-700">Status</Label>
+    <div className="space-y-1.5">
+      <Label htmlFor="status" className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Status</Label>
       <Select value={filters.status} onValueChange={(value) => onFilterChange("status", value)}>
-        <SelectTrigger className="border-gray-300 focus:border-blue-500 focus:ring-blue-500 bg-white">
+        <SelectTrigger className="border-gray-200 focus:border-blue-500 focus:ring-blue-500 bg-white text-sm h-9">
           <SelectValue placeholder="Select status" />
         </SelectTrigger>
         <SelectContent>
@@ -385,12 +385,11 @@ const FilterSection = ({ searchValue, filters, uniqueRoles, uniqueStatuses, onSe
       </Select>
     </div>
 
-    {/* Programme Filter */}
-    <div className="space-y-2">
-      <Label htmlFor="programme" className="font-semibold text-gray-700">Programme</Label>
+    <div className="space-y-1.5">
+      <Label htmlFor="programme" className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Programme</Label>
       <Select value={filters.programme} onValueChange={(value) => onFilterChange("programme", value)}>
-        <SelectTrigger className="border-gray-300 focus:border-blue-500 focus:ring-blue-500 bg-white">
-          <SelectValue placeholder="Access Rights" />
+        <SelectTrigger className="border-gray-200 focus:border-blue-500 focus:ring-blue-500 bg-white text-sm h-9">
+          <SelectValue placeholder="All Programmes" />
         </SelectTrigger>
         <SelectContent>
           <SelectItem value="all">All Programmes</SelectItem>
@@ -403,25 +402,25 @@ const FilterSection = ({ searchValue, filters, uniqueRoles, uniqueStatuses, onSe
       </Select>
     </div>
 
-    <div className="space-y-2">
-      <Label htmlFor="startDate" className="font-semibold text-gray-700">From Date</Label>
+    <div className="space-y-1.5">
+      <Label htmlFor="startDate" className="text-xs font-semibold text-gray-600 uppercase tracking-wide">From Date</Label>
       <Input
         id="startDate"
         type="date"
         value={filters.startDate}
         onChange={(e) => onFilterChange("startDate", e.target.value)}
-        className="border-gray-300 focus:border-blue-500 focus:ring-blue-500 bg-white"
+        className="border-gray-200 focus:border-blue-500 focus:ring-blue-500 bg-white text-sm h-9"
       />
     </div>
 
-    <div className="space-y-2">
-      <Label htmlFor="endDate" className="font-semibold text-gray-700">To Date</Label>
+    <div className="space-y-1.5">
+      <Label htmlFor="endDate" className="text-xs font-semibold text-gray-600 uppercase tracking-wide">To Date</Label>
       <Input
         id="endDate"
         type="date"
         value={filters.endDate}
         onChange={(e) => onFilterChange("endDate", e.target.value)}
-        className="border-gray-300 focus:border-blue-500 focus:ring-blue-500 bg-white"
+        className="border-gray-200 focus:border-blue-500 focus:ring-blue-500 bg-white text-sm h-9"
       />
     </div>
   </div>
@@ -443,17 +442,16 @@ const TableRow = ({ record, selectedRecords, onSelectRecord, onView, onEdit, onD
   const principal = getRecordPermissionPrincipal(record);
 
   return (
-    <tr className="border-b hover:bg-blue-50 transition-all duration-200 group text-sm">
-      <td className="py-2 px-4 ml-2">
+    <tr className="border-b border-gray-100 hover:bg-blue-50/60 transition-all duration-200 group text-sm">
+      <td className="py-3 px-4 ml-2">
         <Checkbox
           checked={selectedRecords.includes(record.id)}
           onCheckedChange={() => onSelectRecord(record.id)}
+          className="data-[state=checked]:bg-blue-600"
         />
       </td>
-      <td className="py-2 px-4 text-sm">{record.name || "N/A"}</td>
-      <td className="py-2 px-4 text-sm">{record.email || "N/A"}</td>
-      <td className="py-2 px-4 text-sm">{record.phoneNumber || record.phone || "N/A"}</td>
-      <td className="py-2 px-4 text-sm">
+      <td className="py-3 px-4 text-sm font-medium text-gray-900">{record.name || "N/A"}</td>
+      <td className="py-3 px-4 text-sm">
         <Badge
           variant="secondary"
           className={
@@ -466,7 +464,7 @@ const TableRow = ({ record, selectedRecords, onSelectRecord, onView, onEdit, onD
           {formatRoleLabel(effectiveRole)}
         </Badge>
       </td>
-      <td className="py-2 px-4 text-sm">
+      <td className="py-3 px-4 text-sm">
         <Badge
           variant={record.status === "active" ? "default" : "secondary"}
           className={record.status === "active" ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"}
@@ -474,7 +472,7 @@ const TableRow = ({ record, selectedRecords, onSelectRecord, onView, onEdit, onD
           {record.status ? record.status.charAt(0).toUpperCase() + record.status.slice(1) : "N/A"}
         </Badge>
       </td>
-      <td className="py-2 px-4 text-sm">
+      <td className="py-3 px-4 text-sm">
         {attribute ? (
           <Badge
             variant="secondary"
@@ -488,37 +486,41 @@ const TableRow = ({ record, selectedRecords, onSelectRecord, onView, onEdit, onD
           >
             {attribute}
           </Badge>
-        ) : "N/A"}
+        ) : (
+          <span className="text-gray-400 text-xs">—</span>
+        )}
       </td>
-      <td className="py-2 px-4 text-sm">{formatDate(record.createdAt)}</td>
-      <td className="py-2 px-4 text-sm">{formatDateTime(record.lastLogin)}</td>
-      <td className="py-2 px-4 text-sm">
-        <div className="flex gap-2">
+      <td className="py-3 px-4 text-sm text-gray-600">{formatDate(record.createdAt)}</td>
+      <td className="py-3 px-4 text-sm">
+        <div className="flex gap-1.5">
           <Button
-            variant="outline"
+            variant="ghost"
             size="sm"
             onClick={() => onView(record)}
-            className="h-6 w-6 p-0 hover:bg-green-50 hover:text-green-600 border-green-200"
+            className="h-7 w-7 p-0 hover:bg-blue-50 hover:text-blue-600"
+            title="View details"
           >
-            <Eye className="h-3 w-3 text-green-500" />
+            <Eye className="h-3.5 w-3.5" />
           </Button>
           {userRole === "chief-admin" && (
             <>
               <Button
-                variant="outline"
+                variant="ghost"
                 size="sm"
                 onClick={() => onEdit(record)}
-                className="h-6 w-6 p-0 hover:bg-orange-50 hover:text-blue-600 border-gray-200"
+                className="h-7 w-7 p-0 hover:bg-orange-50 hover:text-orange-600"
+                title="Edit user"
               >
-                <Edit className="h-3 w-3 text-orange-400" />
+                <Edit className="h-3.5 w-3.5" />
               </Button>
               <Button
-                variant="outline"
+                variant="ghost"
                 size="sm"
                 onClick={() => onDeleteClick(record)}
-                className="h-6 w-6 p-0 hover:bg-red-50 hover:text-red-600 border-red-200"
+                className="h-7 w-7 p-0 hover:bg-red-50 hover:text-red-600"
+                title="Delete user"
               >
-                <Trash2 className="h-3 w-3 text-red-500" />
+                <Trash2 className="h-3.5 w-3.5" />
               </Button>
             </>
           )}
@@ -1175,37 +1177,38 @@ const UserManagementPage = () => {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 bg-slate-50/50 min-h-screen p-4 md:p-6 lg:p-8">
       {/* Header */}
-      <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4">
+      <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4 bg-white rounded-xl shadow-sm p-5 border border-gray-100">
         <div>
-          <h2 className="text-md font-bold mb-2 bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+          <h1 className="text-2xl font-bold text-slate-900 mb-1">
             User Management
-          </h2>
+          </h1>
+          <p className="text-sm text-slate-500">Manage system users, roles, and permissions</p>
         </div>
 
         <div className="flex flex-wrap gap-2 w-full xl:w-auto">
-          <Button variant="outline" size="sm" onClick={clearAllFilters} className="text-xs border-gray-300 hover:bg-gray-50">
-            Clear All Filters
+          <Button variant="outline" size="sm" onClick={clearAllFilters} className="text-sm border-gray-200 hover:bg-gray-50 hover:text-gray-900">
+            Clear Filters
           </Button>
-          <Button variant="outline" size="sm" onClick={resetToCurrentMonth} className="text-xs border-gray-300 hover:bg-gray-50">
+          <Button variant="outline" size="sm" onClick={resetToCurrentMonth} className="text-sm border-gray-200 hover:bg-gray-50 hover:text-gray-900">
             This Month
           </Button>
-          {userRole === "chief-admin" && ( 
+          {userRole === "chief-admin" && (
             <>
-              <Button onClick={openAddDialog} className="bg-gradient-to-r from-green-600 to-blue-600 hover:from-green-700 hover:to-blue-700 text-white shadow-md text-xs">
+              <Button onClick={openAddDialog} className="bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white shadow-sm text-sm">
                 <Plus className="h-4 w-4 mr-2" />
                 Add User
               </Button>
               {selectedRecords.length > 0 && (
-                <Button onClick={openBulkDeleteDialog} variant="destructive" className="text-xs">
+                <Button onClick={openBulkDeleteDialog} variant="destructive" className="text-sm">
                   <Trash2 className="h-4 w-4 mr-2" />
-                  Delete Selected ({selectedRecords.length})
+                  Delete ({selectedRecords.length})
                 </Button>
               )}
             </>
-           )} 
-          <Button onClick={handleExport} disabled={exportLoading || filteredRecords.length === 0} className="bg-gradient-to-r from-blue-800 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white shadow-md text-xs">
+           )}
+          <Button onClick={handleExport} disabled={exportLoading || filteredRecords.length === 0} className="bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-700 hover:to-emerald-800 text-white shadow-sm text-sm">
             <Download className="h-4 w-4 mr-2" />
             {exportLoading ? "Exporting..." : `Export (${filteredRecords.length})`}
           </Button>
@@ -1213,24 +1216,27 @@ const UserManagementPage = () => {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatsCard title="Total Users" value={stats.totalUsers} icon={Users}>
-          <div className="flex gap-4 justify-between text-xs text-slate-600 mt-2">
-            <span>Active: {stats.activeUsers}</span>
-            <span>Inactive: {stats.totalUsers - stats.activeUsers}</span>
+          <div className="flex gap-3 text-xs">
+            <span className="text-green-600 font-medium">● Active: {stats.activeUsers}</span>
+            <span className="text-red-500 font-medium">● Inactive: {stats.totalUsers - stats.activeUsers}</span>
           </div>
         </StatsCard>
 
         <StatsCard title="Admin Users" value={stats.adminUsers} icon={Shield} description="Administrative users" />
         <StatsCard title="Chief Admins" value={stats.chiefAdminUsers} icon={User} description="Chief administrators" />
-        <StatsCard title="Others" value={stats.mobileUsers+stats.hrUsers} icon={Phone} description="Other users" />
-        
+        <StatsCard title="Other Users" value={stats.mobileUsers+stats.hrUsers} icon={Users} description="Mobile, HR & others" />
+
       </div>
 
       {/* Filters */}
-      <Card className="shadow-lg border-0 bg-white">
+      <Card className="shadow-md border-0 bg-white rounded-xl">
+        <CardHeader className="border-b border-gray-100 bg-gray-50/50 rounded-t-xl">
+          <CardTitle className="text-base font-semibold text-slate-700">Filters</CardTitle>
+        </CardHeader>
         <CardContent className="space-y-4 pt-6">
-          <FilterSection 
+          <FilterSection
             searchValue={searchValue}
             filters={filters}
             uniqueRoles={uniqueRoles}
@@ -1242,44 +1248,48 @@ const UserManagementPage = () => {
       </Card>
 
       {/* Table */}
-      <Card className="shadow-lg border-0 bg-white">
+      <Card className="shadow-md border-0 bg-white rounded-xl overflow-hidden">
         <CardContent className="p-0">
           {loading ? (
-            <div className="text-center py-12">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
-              <p className="text-muted-foreground mt-2">Loading users...</p>
+            <div className="text-center py-16">
+              <div className="animate-spin rounded-full h-10 w-10 border-4 border-blue-200 border-t-blue-600 mx-auto"></div>
+              <p className="text-slate-500 mt-4 font-medium">Loading users...</p>
             </div>
           ) : currentPageRecords.length === 0 ? (
-            <div className="text-center py-12 text-muted-foreground">
-              {allRecords.length === 0 ? "No users found" : "No users found matching your criteria"}
+            <div className="text-center py-16">
+              <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-slate-100 mb-4">
+                <Users className="h-8 w-8 text-slate-400" />
+              </div>
+              <p className="text-slate-600 font-medium">
+                {allRecords.length === 0 ? "No users found" : "No users matching your filters"}
+              </p>
+              <p className="text-slate-400 text-sm mt-1">Try adjusting your search or filter criteria</p>
             </div>
           ) : (
             <>
-              <div className="w-full overflow-x-auto rounded-md">
-                <table className="w-full border-collapse border border-gray-300 text-sm text-left whitespace-nowrap">
-                  <thead className="rounded">
-                    <tr className="bg-blue-100 p-1 px-3">
-                      <th className="py-2 px-4 ml-2">
+              <div className="w-full overflow-x-auto">
+                <table className="w-full text-sm text-left">
+                  <thead>
+                    <tr className="bg-gradient-to-r from-blue-600 to-blue-700 text-white">
+                      <th className="py-3.5 px-4 ml-2">
                         <Checkbox
                           checked={selectedRecords.length === currentPageRecords.length && currentPageRecords.length > 0}
                           onCheckedChange={handleSelectAll}
+                          className="data-[state=checked]:bg-white/20 data-[state=checked]:border-white"
                         />
                       </th>
-                      <th className="text-left py-2 px-4 font-medium text-gray-600">Name</th>
-                      <th className="text-left py-2 px-4 font-medium text-gray-600">Email</th>
-                      <th className="text-left py-2 px-4 font-medium text-gray-600">Phone</th>
-                      <th className="text-left py-2 px-4 font-medium text-gray-600">System Role</th>
-                      <th className="text-left py-2 px-4 font-medium text-gray-600">Status</th>
-                      <th className="text-left py-2 px-4 font-medium text-gray-600">Attribute</th>
-                      <th className="text-left py-2 px-4 font-medium text-gray-600">Created</th>
-                      <th className="text-left py-2 px-4 font-medium text-gray-600">Last Login</th>
-                      <th className="text-left py-2 px-4 font-medium text-gray-600">Actions</th>
+                      <th className="text-left py-3.5 px-4 font-semibold text-white/95">Name</th>
+                      <th className="text-left py-3.5 px-4 font-semibold text-white/95">System Role</th>
+                      <th className="text-left py-3.5 px-4 font-semibold text-white/95">Status</th>
+                      <th className="text-left py-3.5 px-4 font-semibold text-white/95">Attribute</th>
+                      <th className="text-left py-3.5 px-4 font-semibold text-white/95">Created</th>
+                      <th className="text-left py-3.5 px-4 font-semibold text-white/95">Actions</th>
                     </tr>
                   </thead>
-                  <tbody>
+                  <tbody className="divide-y divide-gray-100">
                     {currentPageRecords.map((record) => (
-                      <TableRow 
-                        key={record.id} 
+                      <TableRow
+                        key={record.id}
                         record={record}
                         selectedRecords={selectedRecords}
                         onSelectRecord={handleSelectRecord}
@@ -1293,16 +1303,31 @@ const UserManagementPage = () => {
                 </table>
               </div>
 
-              <div className="flex items-center justify-between p-4 border-t bg-gray-50">
-                <div className="text-sm text-muted-foreground">
-                  {filteredRecords.length} total users • {currentPageRecords.length} on this page
+              <div className="flex items-center justify-between p-5 border-t border-gray-100 bg-gradient-to-r from-slate-50 to-white">
+                <div className="text-sm text-slate-600 font-medium">
+                  Showing <span className="text-blue-600 font-semibold">{currentPageRecords.length}</span> of{" "}
+                  <span className="text-blue-600 font-semibold">{filteredRecords.length}</span> users
                 </div>
                 <div className="flex gap-2">
-                  <Button variant="outline" size="sm" disabled={!pagination.hasPrev} onClick={() => handlePageChange(pagination.page - 1)} className="border-gray-300 hover:bg-gray-100">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={!pagination.hasPrev}
+                    onClick={() => handlePageChange(pagination.page - 1)}
+                    className="border-gray-200 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200"
+                  >
+                    <ChevronLeft className="h-4 w-4 mr-1" />
                     Previous
                   </Button>
-                  <Button variant="outline" size="sm" disabled={!pagination.hasNext} onClick={() => handlePageChange(pagination.page + 1)} className="border-gray-300 hover:bg-gray-100">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={!pagination.hasNext}
+                    onClick={() => handlePageChange(pagination.page + 1)}
+                    className="border-gray-200 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200"
+                  >
                     Next
+                    <ChevronRight className="h-4 w-4 ml-1" />
                   </Button>
                 </div>
               </div>
@@ -1313,35 +1338,43 @@ const UserManagementPage = () => {
 
       {/* View User Dialog */}
       <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
-        <DialogContent className="sm:max-w-2xl bg-white rounded-2xl">
+        <DialogContent className="sm:max-w-[32rem] bg-white rounded-2xl shadow-2xl">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-slate-900">
-              <Eye className="h-5 w-5 text-green-600" />
+            <DialogTitle className="flex items-center gap-2.5 text-lg font-semibold text-slate-900">
+              <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-blue-50">
+                <Eye className="h-4 w-4 text-blue-600" />
+              </div>
               User Details
             </DialogTitle>
-            <DialogDescription>Complete information for this user</DialogDescription>
+            <DialogDescription className="text-sm text-slate-500">
+              View complete information for this user
+            </DialogDescription>
           </DialogHeader>
           {viewingRecord && (
-            <div className="space-y-6 py-4 max-h-[70vh] overflow-y-auto">
-              <div className="bg-slate-50 rounded-xl p-4">
-                <h3 className="font-semibold text-slate-800 mb-3 flex items-center gap-2">
-                  <User className="h-4 w-4" /> Personal Information
-                </h3>
+            <div className="space-y-5 py-3 max-h-[65vh] overflow-y-auto pr-1">
+              {/* User Header */}
+              <div className="flex items-center gap-4 pb-4 border-b border-gray-100">
+                <div className="flex items-center justify-center w-14 h-14 rounded-full bg-gradient-to-br from-blue-500 to-blue-600 text-white text-xl font-bold shadow-sm">
+                  {viewingRecord.name?.charAt(0)?.toUpperCase() || 'U'}
+                </div>
+                <div>
+                  <h4 className="font-semibold text-slate-900 text-base">{viewingRecord.name || 'Unknown User'}</h4>
+                  <p className="text-sm text-slate-500">{viewingRecord.email || 'No email'}</p>
+                </div>
+              </div>
+
+              {/* Personal Information */}
+              <div className="bg-gradient-to-br from-slate-50 to-slate-100/50 rounded-xl p-4 border border-slate-200">
+                <h5 className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-3 flex items-center gap-2">
+                  <User className="h-3.5 w-3.5" /> Personal Information
+                </h5>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
-                    <Label className="text-sm font-medium text-slate-600">Name</Label>
-                    <p className="text-slate-900 font-medium">{viewingRecord.name || 'N/A'}</p>
+                    <Label className="text-xs font-medium text-slate-500 uppercase tracking-wide">Phone Number</Label>
+                    <p className="text-slate-900 font-medium mt-1">{viewingRecord.phoneNumber || viewingRecord.phone || 'N/A'}</p>
                   </div>
                   <div>
-                    <Label className="text-sm font-medium text-slate-600">Email</Label>
-                    <p className="text-slate-900 font-medium">{viewingRecord.email || 'N/A'}</p>
-                  </div>
-                  <div>
-                    <Label className="text-sm font-medium text-slate-600">Phone Number</Label>
-                    <p className="text-slate-900 font-medium">{viewingRecord.phoneNumber || viewingRecord.phone || 'N/A'}</p>
-                  </div>
-                  <div>
-                    <Label className="text-sm font-medium text-slate-600">System Role</Label>
+                    <Label className="text-xs font-medium text-slate-500 uppercase tracking-wide">System Role</Label>
                     <Badge variant="secondary" className={
                       getEffectiveRole(viewingRecord) === 'chief-admin' ? 'bg-purple-100 text-purple-800' :
                       getEffectiveRole(viewingRecord) === 'admin' ? 'bg-blue-100 text-blue-800' :
@@ -1352,7 +1385,7 @@ const UserManagementPage = () => {
                     </Badge>
                   </div>
                   <div>
-                    <Label className="text-sm font-medium text-slate-600">Status</Label>
+                    <Label className="text-xs font-medium text-slate-500 uppercase tracking-wide">Status</Label>
                     <Badge variant={viewingRecord.status === 'active' ? 'default' : 'secondary'} className={viewingRecord.status === 'active' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}>
                       {viewingRecord.status ? viewingRecord.status.charAt(0).toUpperCase() + viewingRecord.status.slice(1) : 'N/A'}
                     </Badge>
@@ -1360,16 +1393,17 @@ const UserManagementPage = () => {
                 </div>
               </div>
 
-              <div className="bg-slate-50 rounded-xl p-4">
-                <h3 className="font-semibold text-slate-800 mb-3 flex items-center gap-2">
-                  <Shield className="h-4 w-4" /> Allowed Programmes
-                </h3>
+              {/* Allowed Programmes */}
+              <div className="bg-gradient-to-br from-slate-50 to-slate-100/50 rounded-xl p-4 border border-slate-200">
+                <h5 className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-3 flex items-center gap-2">
+                  <Shield className="h-3.5 w-3.5" /> Allowed Programmes
+                </h5>
                 <div className="flex flex-wrap gap-2">
                   {Object.keys(viewingRecord.allowedProgrammes || {}).length > 0 ? (
                     Object.entries(viewingRecord.allowedProgrammes || {})
                       .filter(([_, allowed]) => allowed)
                       .map(([prog, _]) => (
-                        <Badge key={prog} variant="outline" className="bg-white border-blue-200 text-blue-700">
+                        <Badge key={prog} variant="outline" className="bg-white border-blue-200 text-blue-700 font-medium">
                           {prog}
                         </Badge>
                       ))
@@ -1379,46 +1413,51 @@ const UserManagementPage = () => {
                 </div>
               </div>
 
-              <div className="bg-slate-50 rounded-xl p-4">
-                <h3 className="font-semibold text-slate-800 mb-3 flex items-center gap-2"><Briefcase className="h-4 w-4" /> Attribute</h3>
+              {/* Attribute */}
+              <div className="bg-gradient-to-br from-slate-50 to-slate-100/50 rounded-xl p-4 border border-slate-200">
+                <h5 className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-2 flex items-center gap-2">
+                  <Briefcase className="h-3.5 w-3.5" /> Attribute
+                </h5>
                 <p className="text-sm text-slate-900 font-medium">{getEffectiveAttribute(viewingRecord) || "N/A"}</p>
               </div>
 
+              {/* Coverage Area */}
               {(viewingRecord.county || viewingRecord.subcounty) && (
-                <div className="bg-slate-50 rounded-xl p-4">
-                  <h3 className="font-semibold text-slate-800 mb-3">Coverage Area</h3>
+                <div className="bg-gradient-to-br from-slate-50 to-slate-100/50 rounded-xl p-4 border border-slate-200">
+                  <h5 className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-3">Coverage Area</h5>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
-                      <Label className="text-sm font-medium text-slate-600">County</Label>
-                      <p className="text-slate-900 font-medium">{viewingRecord.county || "N/A"}</p>
+                      <Label className="text-xs font-medium text-slate-500 uppercase tracking-wide">County</Label>
+                      <p className="text-slate-900 font-medium mt-1">{viewingRecord.county || "N/A"}</p>
                     </div>
                     <div>
-                      <Label className="text-sm font-medium text-slate-600">Sub County</Label>
-                      <p className="text-slate-900 font-medium">{viewingRecord.subcounty || "N/A"}</p>
+                      <Label className="text-xs font-medium text-slate-500 uppercase tracking-wide">Sub County</Label>
+                      <p className="text-slate-900 font-medium mt-1">{viewingRecord.subcounty || "N/A"}</p>
                     </div>
                   </div>
                 </div>
               )}
 
-              <div className="bg-slate-50 rounded-xl p-4">
-                <h3 className="font-semibold text-slate-800 mb-3 flex items-center gap-2">
-                  <Calendar className="h-4 w-4" /> Account Information
-                </h3>
+              {/* Account Information */}
+              <div className="bg-gradient-to-br from-slate-50 to-slate-100/50 rounded-xl p-4 border border-slate-200">
+                <h5 className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-3 flex items-center gap-2">
+                  <Calendar className="h-3.5 w-3.5" /> Account Information
+                </h5>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
-                    <Label className="text-sm font-medium text-slate-600">Created At</Label>
-                    <p className="text-slate-900 font-medium">{formatDateTime(viewingRecord.createdAt)}</p>
+                    <Label className="text-xs font-medium text-slate-500 uppercase tracking-wide">Created At</Label>
+                    <p className="text-slate-900 font-medium mt-1">{formatDateTime(viewingRecord.createdAt)}</p>
                   </div>
                   <div>
-                    <Label className="text-sm font-medium text-slate-600">Last Login</Label>
-                    <p className="text-slate-900 font-medium">{formatDateTime(viewingRecord.lastLogin)}</p>
+                    <Label className="text-xs font-medium text-slate-500 uppercase tracking-wide">Last Login</Label>
+                    <p className="text-slate-900 font-medium mt-1">{formatDateTime(viewingRecord.lastLogin)}</p>
                   </div>
                 </div>
               </div>
             </div>
           )}
-          <DialogFooter>
-            <Button onClick={() => setIsViewDialogOpen(false)} className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white">
+          <DialogFooter className="border-t border-gray-100 pt-4">
+            <Button onClick={() => setIsViewDialogOpen(false)} className="bg-gradient-to-r from-slate-600 to-slate-700 hover:from-slate-700 hover:to-slate-800 text-white shadow-sm">
               Close
             </Button>
           </DialogFooter>
