@@ -58,114 +58,138 @@ const DashboardLayout = () => {
                       )}
                     </Button>
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-80 p-1">
-                    <DropdownMenuLabel className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                      New Notifications
-                    </DropdownMenuLabel>
-                    <DropdownMenuSeparator />
-
-                    {notifications.activities.count > 0 && (
-                      <DropdownMenuItem
-                        onSelect={() => goToNotification("/dashboard/activities", () => notifications.markSeen("activities"))}
-                        className="flex items-center justify-between gap-3"
-                      >
-                        <span className="truncate">Field Activities</span>
-                        <Badge className="shrink-0 rounded-full bg-amber-100 px-2 py-0 text-[10px] font-semibold text-amber-800 hover:bg-amber-100">
-                          {notifications.activities.count}
-                        </Badge>
-                      </DropdownMenuItem>
-                    )}
-
-                    {notifications.farmers.count > 0 && (
-                      <DropdownMenuItem
-                        onSelect={() => goToNotification("/dashboard/livestock", () => notifications.markSeen("farmers"))}
-                        className="flex items-center justify-between gap-3"
-                      >
-                        <span className="truncate">Livestock Farmers</span>
-                        <Badge className="shrink-0 rounded-full bg-blue-100 px-2 py-0 text-[10px] font-semibold text-blue-800 hover:bg-blue-100">
-                          {notifications.farmers.count}
-                        </Badge>
-                      </DropdownMenuItem>
-                    )}
-
-                    {notifications.fodder.count > 0 && (
-                      <DropdownMenuItem
-                        onSelect={() => goToNotification("/dashboard/fodder", () => notifications.markSeen("fodder"))}
-                        className="flex items-center justify-between gap-3"
-                      >
-                        <span className="truncate">Fodder Farmers</span>
-                        <Badge className="shrink-0 rounded-full bg-emerald-100 px-2 py-0 text-[10px] font-semibold text-emerald-800 hover:bg-emerald-100">
-                          {notifications.fodder.count}
-                        </Badge>
-                      </DropdownMenuItem>
-                    )}
-
-                    {notifications.capacity.count > 0 && (
-                      <DropdownMenuItem
-                        onSelect={() => goToNotification("/dashboard/capacity", () => notifications.markSeen("capacity"))}
-                        className="flex items-center justify-between gap-3"
-                      >
-                        <span className="truncate">Capacity Building</span>
-                        <Badge className="shrink-0 rounded-full bg-violet-100 px-2 py-0 text-[10px] font-semibold text-violet-800 hover:bg-violet-100">
-                          {notifications.capacity.count}
-                        </Badge>
-                      </DropdownMenuItem>
-                    )}
-
-                    {(notifications.hayStorage.count > 0 || notifications.borehole.count > 0) && (
-                      <>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuLabel className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                          Infrastructure
-                        </DropdownMenuLabel>
-                        {notifications.hayStorage.count > 0 && (
-                          <DropdownMenuItem
-                            onSelect={() => goToNotification("/dashboard/hay-storage", () => notifications.markSeen("hayStorage"))}
-                            className="flex items-center justify-between gap-3"
-                          >
-                            <span className="truncate">Hay Storage</span>
-                            <Badge className="shrink-0 rounded-full bg-sky-100 px-2 py-0 text-[10px] font-semibold text-sky-800 hover:bg-sky-100">
-                              {notifications.hayStorage.count}
-                            </Badge>
-                          </DropdownMenuItem>
-                        )}
-                        {notifications.borehole.count > 0 && (
-                          <DropdownMenuItem
-                            onSelect={() => goToNotification("/dashboard/borehole", () => notifications.markSeen("borehole"))}
-                            className="flex items-center justify-between gap-3"
-                          >
-                            <span className="truncate">Borehole</span>
-                            <Badge className="shrink-0 rounded-full bg-cyan-100 px-2 py-0 text-[10px] font-semibold text-cyan-800 hover:bg-cyan-100">
-                              {notifications.borehole.count}
-                            </Badge>
-                          </DropdownMenuItem>
-                        )}
-                      </>
-                    )}
-
-                    {notifications.requisitions.count > 0 && (
-                      <>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem
-                          onSelect={() => goToNotification(notifications.requisitions.href)}
-                          className="flex items-center justify-between gap-3"
+                  <DropdownMenuContent align="end" className="w-80 p-0">
+                    <div className="flex items-center justify-between border-b border-slate-100 px-3 py-2">
+                      <DropdownMenuLabel className="text-xs font-semibold uppercase tracking-wide text-slate-500 m-0">
+                        New Notifications
+                      </DropdownMenuLabel>
+                      {totalNotifications > 0 && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            notifications.markSeen("activities");
+                            notifications.markSeen("farmers");
+                            notifications.markSeen("fodder");
+                            notifications.markSeen("capacity");
+                            notifications.markSeen("hayStorage");
+                            notifications.markSeen("borehole");
+                          }}
+                          className="h-6 text-[10px] text-slate-500 hover:text-slate-700"
                         >
-                          <div className="min-w-0">
-                            <span className="block truncate">{notifications.requisitions.label}</span>
-                            <span className="block text-[11px] text-slate-500">
-                              {notifications.requisitions.description}
-                            </span>
-                          </div>
-                          <Badge className="shrink-0 rounded-full bg-rose-100 px-2 py-0 text-[10px] font-semibold text-rose-800 hover:bg-rose-100">
-                            {notifications.requisitions.count}
+                          Clear all
+                        </Button>
+                      )}
+                    </div>
+
+                    <div className="max-h-[400px] overflow-y-auto divide-y divide-slate-50">
+                      {notifications.activities.count > 0 && (
+                        <DropdownMenuItem
+                          onSelect={() => goToNotification("/dashboard/activities", () => notifications.markSeen("activities"))}
+                          className="flex items-center justify-between gap-3 rounded-none"
+                        >
+                          <span className="truncate text-sm">Field Activities</span>
+                          <Badge className="shrink-0 rounded-full bg-amber-100 px-2 py-0 text-[10px] font-semibold text-amber-800 hover:bg-amber-100">
+                            {notifications.activities.count}
                           </Badge>
                         </DropdownMenuItem>
-                      </>
-                    )}
+                      )}
 
-                    {totalNotifications === 0 && (
-                      <div className="px-2 py-3 text-sm text-slate-500">No new notifications</div>
-                    )}
+                      {notifications.farmers.count > 0 && (
+                        <DropdownMenuItem
+                          onSelect={() => goToNotification("/dashboard/livestock", () => notifications.markSeen("farmers"))}
+                          className="flex items-center justify-between gap-3 rounded-none"
+                        >
+                          <span className="truncate text-sm">Livestock Farmers</span>
+                          <Badge className="shrink-0 rounded-full bg-blue-100 px-2 py-0 text-[10px] font-semibold text-blue-800 hover:bg-blue-100">
+                            {notifications.farmers.count}
+                          </Badge>
+                        </DropdownMenuItem>
+                      )}
+
+                      {notifications.fodder.count > 0 && (
+                        <DropdownMenuItem
+                          onSelect={() => goToNotification("/dashboard/fodder", () => notifications.markSeen("fodder"))}
+                          className="flex items-center justify-between gap-3 rounded-none"
+                        >
+                          <span className="truncate text-sm">Fodder Farmers</span>
+                          <Badge className="shrink-0 rounded-full bg-emerald-100 px-2 py-0 text-[10px] font-semibold text-emerald-800 hover:bg-emerald-100">
+                            {notifications.fodder.count}
+                          </Badge>
+                        </DropdownMenuItem>
+                      )}
+
+                      {notifications.capacity.count > 0 && (
+                        <DropdownMenuItem
+                          onSelect={() => goToNotification("/dashboard/capacity", () => notifications.markSeen("capacity"))}
+                          className="flex items-center justify-between gap-3 rounded-none"
+                        >
+                          <span className="truncate text-sm">Capacity Building</span>
+                          <Badge className="shrink-0 rounded-full bg-violet-100 px-2 py-0 text-[10px] font-semibold text-violet-800 hover:bg-violet-100">
+                            {notifications.capacity.count}
+                          </Badge>
+                        </DropdownMenuItem>
+                      )}
+
+                      {(notifications.hayStorage.count > 0 || notifications.borehole.count > 0) && (
+                        <>
+                          <div className="px-3 py-1.5 bg-slate-50">
+                            <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Infrastructure</span>
+                          </div>
+                          {notifications.hayStorage.count > 0 && (
+                            <DropdownMenuItem
+                              onSelect={() => goToNotification("/dashboard/hay-storage", () => notifications.markSeen("hayStorage"))}
+                              className="flex items-center justify-between gap-3 rounded-none"
+                            >
+                              <span className="truncate text-sm">Hay Storage</span>
+                              <Badge className="shrink-0 rounded-full bg-sky-100 px-2 py-0 text-[10px] font-semibold text-sky-800 hover:bg-sky-100">
+                                {notifications.hayStorage.count}
+                              </Badge>
+                            </DropdownMenuItem>
+                          )}
+                          {notifications.borehole.count > 0 && (
+                            <DropdownMenuItem
+                              onSelect={() => goToNotification("/dashboard/borehole", () => notifications.markSeen("borehole"))}
+                              className="flex items-center justify-between gap-3 rounded-none"
+                            >
+                              <span className="truncate text-sm">Borehole</span>
+                              <Badge className="shrink-0 rounded-full bg-cyan-100 px-2 py-0 text-[10px] font-semibold text-cyan-800 hover:bg-cyan-100">
+                                {notifications.borehole.count}
+                              </Badge>
+                            </DropdownMenuItem>
+                          )}
+                        </>
+                      )}
+
+                      {notifications.requisitions.count > 0 && (
+                        <>
+                          <div className="px-3 py-1.5 bg-slate-50">
+                            <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Requisitions</span>
+                          </div>
+                          <DropdownMenuItem
+                            onSelect={() => goToNotification(notifications.requisitions.href)}
+                            className="flex items-center justify-between gap-3 rounded-none"
+                          >
+                            <div className="min-w-0">
+                              <span className="block truncate text-sm">{notifications.requisitions.label}</span>
+                              <span className="block text-[11px] text-slate-500">
+                                {notifications.requisitions.description}
+                              </span>
+                            </div>
+                            <Badge className="shrink-0 rounded-full bg-rose-100 px-2 py-0 text-[10px] font-semibold text-rose-800 hover:bg-rose-100">
+                              {notifications.requisitions.count}
+                            </Badge>
+                          </DropdownMenuItem>
+                        </>
+                      )}
+
+                      {totalNotifications === 0 && (
+                        <div className="px-4 py-8 text-center">
+                          <Bell className="mx-auto h-8 w-8 text-slate-300" />
+                          <p className="mt-2 text-sm text-slate-500">No new notifications</p>
+                        </div>
+                      )}
+                    </div>
                   </DropdownMenuContent>
                 </DropdownMenu>
 

@@ -136,6 +136,12 @@ const activityDateFormatter = new Intl.DateTimeFormat("en", {
   day: "numeric",
   year: "numeric",
 });
+const overviewHeroDateFormatter = new Intl.DateTimeFormat("en", {
+  weekday: "long",
+  day: "numeric",
+  month: "long",
+  year: "numeric",
+});
 const createEmptyYearlyTrend = (): YearlyTrend => ({
   years: [],
   data: MONTH_LABELS.map((name) => ({ name })),
@@ -176,6 +182,13 @@ const buildOverviewCacheKey = (
   userId: string | null | undefined,
   programme: string | null | undefined,
 ) => cacheKey("overview-summary-v3", userId || "anon", programme || "none");
+
+const getGreetingLabel = (date: Date): string => {
+  const hour = date.getHours();
+  if (hour >= 5 && hour < 12) return "Good morning";
+  if (hour >= 12 && hour < 17) return "Good afternoon";
+  return "Good evening";
+};
 
 const parseDate = (value: unknown): Date | null => {
   if (!value) return null;
@@ -1422,7 +1435,7 @@ const OverviewLoading = () => (
 );
 
 const DashboardOverview = () => {
-  const { user, userRole, userAttribute, allowedProgrammes, loading } = useAuth();
+  const { user, userRole, userAttribute, userName, allowedProgrammes, loading } = useAuth();
   const userCanViewAllProgrammeData = useMemo(
     () => canViewAllProgrammes(userRole, userAttribute, allowedProgrammes),
     [userAttribute, userRole],
@@ -1632,6 +1645,23 @@ const DashboardOverview = () => {
     !overviewQuery.isError &&
     overviewQuery.isLoading;
   const isLoadingData = !hasOverviewData && (isLoadingRemoteOverview || localOverviewLoading || shouldFetchLocalOverview);
+  const overviewHeroDate = useMemo(() => new Date(), []);
+  const overviewGreeting = useMemo(() => {
+    const greetingName =
+      userName ||
+      user?.displayName ||
+      user?.email?.split("@")[0] ||
+      "System";
+    return `${getGreetingLabel(overviewHeroDate)}, ${greetingName}!`;
+  }, [overviewHeroDate, user?.displayName, user?.email, userName]);
+  const overviewHeroProgrammeLabel = useMemo(() => {
+    if (!selectedProgramme || selectedProgramme === "All") return "All Programmes";
+    return selectedProgramme;
+  }, [selectedProgramme]);
+  const overviewHeroSubtitle = useMemo(
+    () => `${overviewHeroProgrammeLabel} Dashboard - ${overviewHeroDateFormatter.format(overviewHeroDate)}`,
+    [overviewHeroDate, overviewHeroProgrammeLabel],
+  );
 
   if (loading) {
     return (
@@ -1653,6 +1683,29 @@ const DashboardOverview = () => {
   return (
     <div className="min-h-screen bg-[#f5f6f7] px-3 py-4 sm:px-5 sm:py-5">
       <div className="mx-auto max-w-[1120px] space-y-6">
+        <div className="relative overflow-hidden rounded-[28px] bg-gradient-to-r from-[#042d14] via-[#0a5d29] to-[#249654] px-6 py-7 text-white shadow-[0_24px_60px_rgba(4,45,20,0.22)] sm:px-8">
+          <div className="absolute inset-y-0 right-0 w-1/3 bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.18),transparent_58%)]" />
+          <div className="absolute right-7 top-8 h-20 w-20 rounded-[24px] bg-white/10 blur-sm" />
+          <div className="absolute right-20 top-12 h-14 w-14 rounded-[22px] bg-white/8" />
+          <div className="absolute right-32 top-6 h-12 w-12 rounded-[20px] bg-white/6" />
+
+          <div className="relative flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+            <div className="space-y-3">
+              <h1 className="text-3xl font-bold tracking-[-0.03em] text-white sm:text-4xl">
+                {overviewGreeting}
+              </h1>
+              <p className="max-w-2xl text-sm text-emerald-50/90 sm:text-lg">
+                {overviewHeroSubtitle}
+              </p>
+            </div>
+
+            <div className="inline-flex w-fit min-w-[170px] flex-col rounded-[24px] bg-white/12 px-5 py-4 text-white shadow-[0_14px_32px_rgba(4,45,20,0.18)] backdrop-blur-sm">
+              <span className="text-2xl font-semibold tracking-[-0.02em]">{overviewHeroProgrammeLabel}</span>
+              <span className="mt-1 text-sm text-emerald-50/80">Dashboard Overview</span>
+            </div>
+          </div>
+        </div>
+
         <div className="flex flex-wrap items-end justify-end gap-4">
           {canSwitchProgrammes ? (
             <div className="w-full max-w-[170px] space-y-2">

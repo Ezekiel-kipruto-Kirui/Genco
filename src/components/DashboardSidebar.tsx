@@ -196,9 +196,9 @@ export function DashboardSidebar() {
           : [];
   const showStandaloneDashboard = roleMenuItems.length === 0 && canAccessDashboard(userRole, userAttribute);
   const showBottomRequisition = canAccessRequisition(userRole, userAttribute);
-  const sidebarItemClassName = "h-8 gap-2 px-1 py-0.5";
-  const sidebarSubItemClassName = "h-6 gap-1 px-0.5";
-  const footerItemClassName = `${sidebarItemClassName} border-l-2 border-l-yellow-500/80`;
+  const sidebarItemClassName = "h-7 gap-1 px-1 py-0 text-base";
+  const sidebarSubItemClassName = "h-6 gap-1 px-1 py-0 text-base";
+  const footerItemClassName = "h-10 gap-1 px-1 py-1 text-base border-l-2 border-l-yellow-500/80";
 
   return (
     <Sidebar className={`${collapsed ? "w-14" : "w-64"} bg-green-700 text-white`} collapsible="icon">
@@ -347,7 +347,7 @@ export function DashboardSidebar() {
         )}
       </SidebarContent>
 
-      <SidebarFooter className="border-t border-yellow-500 bg-green-700 pt-2">
+      <SidebarFooter className="border-t border-yellow-500 bg-green-700 py-4 px-2">
         <SidebarMenu>
           {canAccessUserManagement(userRole, userAttribute) && (
             <SidebarMenuItem>

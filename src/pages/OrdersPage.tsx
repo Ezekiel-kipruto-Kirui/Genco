@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, startTransition, useDeferredValue } from "react";
+import { memo, type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState, startTransition, useDeferredValue } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { onValue, orderByChild, equalTo, query, ref, remove, update, push, set } from "firebase/database";
 import { db, fetchCollection } from "@/lib/firebase";
@@ -12,6 +12,8 @@ import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
@@ -21,6 +23,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import {
   ChevronDown,
   Eye,
+  Loader2,
   MapPin,
   Pencil,
   Plus,
@@ -28,6 +31,8 @@ import {
   ShoppingCart,
   Trash2,
   TrendingUp,
+  Upload,
+  Users,
   X,
 } from "lucide-react";
 
@@ -46,12 +51,7 @@ interface OrderItem {
   username?: string;
 }
 
-interface MobileAppDataItem {
-  date?: string;
-  goats?: number;
-  location?: string;
-  subcounty?: string;
-}
+interface MobileAppDataItem extends OrderItem {}
 
 interface OrderRecord {
   id: string;
@@ -68,6 +68,8 @@ interface OrderRecord {
   goatsBought?: number;
   location?: string;
   mobileAppdata?: MobileAppDataItem[] | Record<string, MobileAppDataItem>;
+  offtakeTeamIds?: string[] | Record<string, string | boolean>;
+  offtakeTeamMembers?: Partial<OfftakeTeamMember>[] | Record<string, Partial<OfftakeTeamMember>>;
   orderId?: string;
   officer?: string;
   officerName?: string;
@@ -119,6 +121,38 @@ interface BatchOrderRow {
   items: NormalizedOrderItem[];
   searchableText: string;
 }
+
+interface OrderSummaryItem {
+  label: string;
+  value?: string;
+  badge?: string;
+  sub?: string;
+}
+
+interface ParsedOrderCsvResult {
+  items: NormalizedOrderItem[];
+  skippedRows: number;
+}
+
+interface OfftakeTeamMember {
+  id: string;
+  name: string;
+  phone: string;
+  email: string;
+  counties: string[];
+  purchaseDate: string;
+  subcounty: string;
+}
+
+interface LocationGoatRow {
+  key: string;
+  location: string;
+  subcounty: string;
+  goats: number;
+  submissionCount: number;
+}
+
+type OrdersDialogMode = "view" | "edit";
 
 interface Filters {
   search: string;
@@ -237,6 +271,205 @@ const normalizeText = (value: unknown): string =>
     ? value.trim().toLowerCase().replace(/[-_]+/g, " ").replace(/\s+/g, " ")
     : "";
 
+const parseCSVLine = (line: string): string[] => {
+  const result: string[] = [];
+  let current = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    if (char === "\"") {
+      if (inQuotes && line[i + 1] === "\"") {
+        current += "\"";
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (char === "," && !inQuotes) {
+      result.push(current);
+      current = "";
+    } else {
+      current += char;
+    }
+  }
+
+  result.push(current);
+  return result;
+};
+
+const normalizeCsvHeader = (value: string): string =>
+  normalizeText(value).replace(/[./]+/g, " ").replace(/\s+/g, " ").trim();
+
+const findCsvHeaderIndex = (headers: string[], aliases: readonly string[]): number => {
+  const aliasSet = new Set(aliases.map(normalizeCsvHeader));
+  return headers.findIndex((header) => aliasSet.has(normalizeCsvHeader(header)));
+};
+
+const getCsvCell = (values: string[], index: number): string =>
+  index >= 0 && index < values.length ? values[index].trim() : "";
+
+const parseNumericCell = (value: string): number => {
+  const parsed = Number(value.replace(/,/g, "").trim());
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const isValidDateParts = (year: number, month: number, day: number): boolean => {
+  const date = new Date(year, month - 1, day);
+  return (
+    !Number.isNaN(date.getTime()) &&
+    date.getFullYear() === year &&
+    date.getMonth() === month - 1 &&
+    date.getDate() === day
+  );
+};
+
+const parseAmbiguousDate = (value: string): Date | null => {
+  const match = value.trim().match(/^(\d{1,4})[\/.-](\d{1,2})[\/.-](\d{1,4})$/);
+  if (!match) return null;
+
+  let [, first, second, third] = match;
+  let year = 0;
+  let month = 0;
+  let day = 0;
+
+  if (first.length === 4) {
+    year = Number(first);
+    month = Number(second);
+    day = Number(third);
+  } else {
+    day = Number(first);
+    month = Number(second);
+    year = Number(third);
+    if (year < 100) year += 2000;
+
+    if (day <= 12 && month > 12) {
+      [day, month] = [month, day];
+    }
+  }
+
+  return isValidDateParts(year, month, day) ? new Date(year, month - 1, day) : null;
+};
+
+const excelSerialToDate = (serial: number): Date | null => {
+  if (!Number.isFinite(serial)) return null;
+  const utcTime = Date.UTC(1899, 11, 30) + Math.round(serial) * 24 * 60 * 60 * 1000;
+  const date = new Date(utcTime);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const normalizeImportedDateValue = (value: string): string => {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+
+  if (/^\d+(\.\d+)?$/.test(trimmed)) {
+    const numeric = Number(trimmed);
+    if (numeric > 20_000 && numeric < 70_000) {
+      const excelDate = excelSerialToDate(numeric);
+      if (excelDate) return toInputDate(excelDate);
+    }
+    if (numeric > 1_000_000_000_000) return toInputDate(new Date(numeric));
+    if (numeric > 1_000_000_000) return toInputDate(new Date(numeric * 1000));
+  }
+
+  const manualDate = parseAmbiguousDate(trimmed);
+  if (manualDate) return toInputDate(manualDate);
+
+  const parsed = parseDate(trimmed);
+  return parsed ? toInputDate(parsed) : trimmed;
+};
+
+const getImportedSubmissionSignature = (
+  item: Pick<NormalizedOrderItem, "date" | "goats" | "location" | "subcounty" | "officer">
+): string => {
+  const normalizedDate = normalizeImportedDateValue(String(item.date || ""));
+  const goats = Math.max(0, Number(item.goats || 0));
+  const location = normalizeText(item.location);
+  const subcounty = normalizeText(item.subcounty);
+  const officer = normalizeText(item.officer);
+  return `${normalizedDate}|${goats}|${location}|${subcounty}|${officer}`;
+};
+
+const ORDER_CSV_ID_HEADERS = ["id", "record id", "submission id", "reference", "reference id", "entry id"] as const;
+const ORDER_CSV_DATE_HEADERS = ["date", "order date", "submission date", "recorded date", "created at", "completed at"] as const;
+const ORDER_CSV_GOATS_HEADERS = ["goats", "goat", "quantity", "qty", "goats bought", "number of goats", "total goats", "goat count"] as const;
+const ORDER_CSV_LOCATION_HEADERS = ["location", "village", "market", "trading center", "trading centre", "ward"] as const;
+const ORDER_CSV_SUBCOUNTY_HEADERS = ["subcounty", "sub county", "sub-county", "subcounty name", "sub county name"] as const;
+const ORDER_CSV_OFFICER_HEADERS = ["field officer", "field officer name", "officer", "officer name", "username", "created by"] as const;
+
+const parseOrderCsvText = (
+  text: string,
+  row: Pick<BatchOrderRow, "batchId" | "batchDate" | "location" | "subcounty">
+): ParsedOrderCsvResult => {
+  const lines = text
+    .replace(/\r/g, "")
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .filter((line) => line.trim().length > 0);
+
+  if (lines.length < 2) {
+    throw new Error("The CSV needs a header row and at least one data row.");
+  }
+
+  const headers = parseCSVLine(lines[0].replace(/^\uFEFF/, ""));
+  const goatsIndex = findCsvHeaderIndex(headers, ORDER_CSV_GOATS_HEADERS);
+  if (goatsIndex === -1) {
+    throw new Error("The CSV must include a goats column. Supported headers: goats, qty, quantity, total goats.");
+  }
+
+  const idIndex = findCsvHeaderIndex(headers, ORDER_CSV_ID_HEADERS);
+  const dateIndex = findCsvHeaderIndex(headers, ORDER_CSV_DATE_HEADERS);
+  const locationIndex = findCsvHeaderIndex(headers, ORDER_CSV_LOCATION_HEADERS);
+  const subcountyIndex = findCsvHeaderIndex(headers, ORDER_CSV_SUBCOUNTY_HEADERS);
+  const officerIndex = findCsvHeaderIndex(headers, ORDER_CSV_OFFICER_HEADERS);
+
+  const items: NormalizedOrderItem[] = [];
+  let skippedRows = 0;
+
+  for (let lineIndex = 1; lineIndex < lines.length; lineIndex++) {
+    const values = parseCSVLine(lines[lineIndex]);
+    if (!values.some((value) => value.trim().length > 0)) continue;
+
+    const goats = parseNumericCell(getCsvCell(values, goatsIndex));
+    if (!Number.isFinite(goats) || goats <= 0) {
+      skippedRows++;
+      continue;
+    }
+
+    const explicitId = getCsvCell(values, idIndex);
+    const date = normalizeImportedDateValue(getCsvCell(values, dateIndex)) || toInputDate(row.batchDate);
+    const location = getCsvCell(values, locationIndex) || row.location || "N/A";
+    const subcounty = getCsvCell(values, subcountyIndex) || row.subcounty || "";
+    const officer = getCsvCell(values, officerIndex) || "N/A";
+    const generatedId = explicitId || `csv-${row.batchId}-${lineIndex}`;
+
+    items.push({
+      id: generatedId,
+      date,
+      goats,
+      location,
+      village: location,
+      subcounty,
+      officer,
+      raw: {
+        id: generatedId,
+        date,
+        goats,
+        location,
+        village: location,
+        subcounty,
+        fieldOfficerName: officer !== "N/A" ? officer : undefined,
+        officer,
+      },
+    });
+  }
+
+  if (items.length === 0) {
+    throw new Error("No valid submissions were found. Make sure the goats column has values greater than zero.");
+  }
+
+  return { items, skippedRows };
+};
+
 const parseAssignedCounties = (value: unknown): string[] => {
   if (typeof value !== "string") return [];
 
@@ -251,6 +484,163 @@ const parseAssignedCounties = (value: unknown): string[] => {
     });
 
   return Array.from(countyMap.values());
+};
+
+const isObjectRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const normalizeOfftakeTeamMember = (value: unknown): OfftakeTeamMember | null => {
+  if (!isObjectRecord(value)) return null;
+
+  const name = typeof value.name === "string" ? value.name.trim() : "";
+  const id = typeof value.id === "string" ? value.id.trim() : "";
+  const phone = typeof value.phone === "string" ? value.phone.trim() : "";
+  const email = typeof value.email === "string" ? value.email.trim() : "";
+  const subcounty = typeof value.subcounty === "string" ? value.subcounty.trim() : "";
+  const purchaseDate = toInputDate(value.purchaseDate);
+  const countiesSource = value.counties;
+
+  const countyMap = new Map<string, string>();
+  if (Array.isArray(countiesSource)) {
+    countiesSource
+      .filter((county): county is string => typeof county === "string" && county.trim().length > 0)
+      .map((county) => county.trim())
+      .forEach((county) => {
+        const token = normalizeText(county);
+        if (token && !countyMap.has(token)) countyMap.set(token, county);
+      });
+  } else {
+    parseAssignedCounties(countiesSource).forEach((county) => {
+      const token = normalizeText(county);
+      if (token && !countyMap.has(token)) countyMap.set(token, county);
+    });
+  }
+
+  const memberId = id || name || email || phone;
+  if (!memberId) return null;
+
+  return {
+    id: memberId,
+    name: name || id || email || phone || "Offtake Team Member",
+    phone,
+    email,
+    counties: Array.from(countyMap.values()),
+    purchaseDate,
+    subcounty,
+  };
+};
+
+const getStoredOfftakeTeamMembers = (value: OrderRecord["offtakeTeamMembers"]): OfftakeTeamMember[] => {
+  const entries = Array.isArray(value)
+    ? value
+    : isObjectRecord(value)
+      ? Object.values(value)
+      : [];
+  const members = new Map<string, OfftakeTeamMember>();
+
+  entries.forEach((entry) => {
+    const member = normalizeOfftakeTeamMember(entry);
+    if (member) members.set(member.id, member);
+  });
+
+  return Array.from(members.values()).sort((a, b) => a.name.localeCompare(b.name));
+};
+
+const getStoredOfftakeTeamIds = (record: OrderRecord | null | undefined): string[] => {
+  if (!record) return [];
+
+  const ids = new Set<string>();
+  const rawIds = record.offtakeTeamIds;
+
+  if (Array.isArray(rawIds)) {
+    rawIds
+      .filter((id): id is string => typeof id === "string" && id.trim().length > 0)
+      .map((id) => id.trim())
+      .forEach((id) => ids.add(id));
+  } else if (isObjectRecord(rawIds)) {
+    Object.entries(rawIds).forEach(([key, value]) => {
+      const normalizedValue = typeof value === "string" ? value.trim() : "";
+      const nextId = normalizedValue || (value ? key.trim() : "");
+      if (nextId) ids.add(nextId);
+    });
+  }
+
+  getStoredOfftakeTeamMembers(record.offtakeTeamMembers).forEach((member) => ids.add(member.id));
+
+  return Array.from(ids.values());
+};
+
+const resolveAssignedOfftakeTeam = (
+  record: OrderRecord | null | undefined,
+  pool: OfftakeTeamMember[],
+): OfftakeTeamMember[] => {
+  if (!record) return [];
+
+  const storedMembers = getStoredOfftakeTeamMembers(record.offtakeTeamMembers);
+  const storedIds = getStoredOfftakeTeamIds(record);
+  const poolMap = new Map(pool.map((member) => [member.id, member]));
+  const resolved = new Map(storedMembers.map((member) => [member.id, member]));
+
+  storedIds.forEach((id) => {
+    resolved.set(
+      id,
+      poolMap.get(id) ||
+        resolved.get(id) || {
+          id,
+          name: id,
+          phone: "",
+          email: "",
+          counties: [],
+          purchaseDate: "",
+          subcounty: "",
+        },
+    );
+  });
+
+  return Array.from(resolved.values()).sort((a, b) => a.name.localeCompare(b.name));
+};
+
+const getAvailableOfftakeTeamMembers = (
+  row: Pick<BatchOrderRow, "county"> | null,
+  pool: OfftakeTeamMember[],
+): OfftakeTeamMember[] => {
+  if (!row) return pool;
+
+  const countyToken = normalizeText(row.county);
+  if (!countyToken) return pool;
+
+  const countyMatches = pool.filter((member) =>
+    member.counties.some((county) => normalizeText(county) === countyToken),
+  );
+
+  return countyMatches.length > 0 ? countyMatches : pool;
+};
+
+const createManualOfftakeTeamMember = (
+  name: string,
+  purchaseDate: string,
+  usedIds: Iterable<string>,
+): OfftakeTeamMember => {
+  const trimmedName = name.trim();
+  const baseSlug = normalizeText(trimmedName).replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "member";
+  const usedIdSet = new Set(usedIds);
+  let nextId = `manual:${baseSlug}`;
+  let suffix = 2;
+
+  while (usedIdSet.has(nextId)) {
+    nextId = `manual:${baseSlug}-${suffix}`;
+    suffix += 1;
+  }
+
+  return {
+    id: nextId,
+    name: trimmedName,
+    phone: "",
+    email: "",
+    counties: [],
+    purchaseDate,
+    subcounty: "",
+  };
 };
 
 const normalizeIdValue = (value: unknown): string => {
@@ -286,6 +676,9 @@ const isMobileUserRecord = (record: FieldOfficerRecord): boolean =>
       token === "field officer" ||
       token === "fieldofficer"
   );
+
+const isOfftakeUserRecord = (record: FieldOfficerRecord): boolean =>
+  getRoleTokens(record).some((token) => isOfftakeOfficer(token));
 
 const getOfficerDisplayName = (record: FieldOfficerRecord): string => {
   const candidates = [record.name, record.userName, record.username, record.displayName, record.email];
@@ -396,11 +789,12 @@ const isSubmissionRecord = (record: OrderRecord): boolean => {
   if (hasDirectGoatsOnly(record)) return true;
 
   const ordersCount = getOrderEntries(record).length;
-  const hasTarget = Number.isFinite(Number(record.targetGoats)) && Number(record.targetGoats) > 0;  const hasProgress =
+  const hasTarget = Number.isFinite(Number(record.targetGoats)) && Number(record.targetGoats) > 0;
+  const hasProgress =
     Number.isFinite(Number(record.remainingGoats)) || Number.isFinite(Number(record.goatsBought));
   const hasStatus = typeof record.status === "string" && record.status.trim().length > 0;
-  
-  return false;
+
+  return ordersCount > 0 && (hasTarget || hasProgress || hasStatus);
 };
 
 const isBatchRecord = (record: OrderRecord): boolean => {
@@ -522,7 +916,7 @@ interface PrecomputedRecord {
  * Used to skip re-precomputation when a record hasn't changed.
  */
 const getRecordFingerprint = (r: OrderRecord): string =>
-  `${r.programme}:${r.county}:${r.subcounty}:${r.location}:${r.status}:${r.targetGoats}:${r.totalGoats}:${r.goatsBought}:${r.remainingGoats}:${r.date}:${r.completedAt}:${r.parentOrderId}:${r.orderId}:${r.batchId}:${r.requestId}:${r.targetOrderId}:${r.offtakeOrderId}:${r.goats}:${r.sourcePage}:${JSON.stringify(r.orders)}:${JSON.stringify(r.mobileAppdata)}`;
+  `${r.programme}:${r.county}:${r.subcounty}:${r.location}:${r.status}:${r.targetGoats}:${r.totalGoats}:${r.goatsBought}:${r.remainingGoats}:${r.date}:${r.completedAt}:${r.parentOrderId}:${r.orderId}:${r.batchId}:${r.requestId}:${r.targetOrderId}:${r.offtakeOrderId}:${r.goats}:${JSON.stringify(r.orders)}:${JSON.stringify(r.mobileAppdata)}:${JSON.stringify(r.offtakeTeamIds)}:${JSON.stringify(r.offtakeTeamMembers)}`;
 
 /**
  * Incremental precompute: reuses cached precomputed records when unchanged.
@@ -567,10 +961,14 @@ const precomputeRecord = (record: OrderRecord): PrecomputedRecord => {
   return { id, record, isBatch, isSubmission, refId, identifiers, normalizedItems, normProgramme, normCounty, normLocation, dateMs, goatsTotal, officerTokens, sortDate };
 };
 
-const BATCH_REFERENCE_KEYS = new Set(Object.keys({
-  parentOrderId: 1, orderId: 1, batchId: 1, requestId: 1,
-  targetOrderId: 1, offtakeOrderId: 1,
-}));
+const BATCH_REFERENCE_KEYS: readonly (keyof OrderRecord)[] = [
+  "parentOrderId",
+  "orderId",
+  "batchId",
+  "requestId",
+  "targetOrderId",
+  "offtakeOrderId",
+];
 
 /* ------------------------------------------------------------------
  * Memoized table row component to prevent unnecessary re-renders
@@ -583,11 +981,13 @@ interface OrderTableRowProps {
   userIsChiefAdmin: boolean;
   onView: (batchId: string) => void;
   onEdit: (batchId: string) => void;
+  onOpenTeam: (batchId: string) => void;
+  onMarkComplete: (row: BatchOrderRow) => void;
   onDelete: (row: BatchOrderRow) => void;
 }
 
 const OrderTableRow = memo(function OrderTableRow({
-  row, idx, userCanEditOrders, userIsChiefAdmin, onView, onEdit, onDelete,
+  row, idx, userCanEditOrders, userIsChiefAdmin, onView, onEdit, onOpenTeam, onMarkComplete, onDelete,
 }: OrderTableRowProps) {
   return (
     <TableRow
@@ -612,39 +1012,61 @@ const OrderTableRow = memo(function OrderTableRow({
         <Badge variant="outline" className={getStatusBadgeClass(row.status)}>{row.status}</Badge>
       </TableCell>
       <TableCell className="px-4 py-2.5 text-right">
-        <div className="flex items-center justify-end gap-0.5">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8 text-slate-500 hover:text-blue-600 hover:bg-blue-50"
-            onClick={() => onView(row.batchId)}
-            title="View details"
-          >
-            <Eye className="h-4 w-4" />
-          </Button>
-          {userCanEditOrders && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
             <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8 text-slate-500 hover:text-amber-600 hover:bg-amber-50"
-              onClick={() => onEdit(row.batchId)}
-              title="Edit"
+              variant="outline"
+              size="sm"
+              className="h-8 gap-1 border-slate-200 bg-white px-2 text-xs text-slate-600 hover:bg-slate-50"
             >
-              <Pencil className="h-4 w-4" />
+              Actions
+              <ChevronDown className="h-3.5 w-3.5 opacity-60" />
             </Button>
-          )}
-          {userIsChiefAdmin && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8 text-slate-400 hover:text-red-600 hover:bg-red-50"
-              onClick={() => onDelete(row)}
-              title="Delete"
-            >
-              <Trash2 className="h-4 w-4" />
-            </Button>
-          )}
-        </div>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-40">
+            <DropdownMenuItem onSelect={() => onView(row.batchId)}>
+              <Eye className="mr-2 h-4 w-4 text-slate-500" />
+              View
+            </DropdownMenuItem>
+            {userCanEditOrders && (
+              <>
+                <DropdownMenuItem onSelect={() => onEdit(row.batchId)}>
+                  <Pencil className="mr-2 h-4 w-4 text-slate-500" />
+                  Edit
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => onOpenTeam(row.batchId)}>
+                  <Users className="mr-2 h-4 w-4 text-slate-500" />
+                  Offtake Team
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  disabled={row.status === "completed"}
+                  onSelect={() => onMarkComplete(row)}
+                >
+                  <Save className="mr-2 h-4 w-4 text-slate-500" />
+                  Mark Complete
+                </DropdownMenuItem>
+              </>
+            )}
+            {!userCanEditOrders && (
+              <DropdownMenuItem onSelect={() => onOpenTeam(row.batchId)}>
+                <Users className="mr-2 h-4 w-4 text-slate-500" />
+                Offtake Team
+              </DropdownMenuItem>
+            )}
+            {userIsChiefAdmin && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  className="text-red-600 focus:bg-red-50 focus:text-red-700"
+                  onSelect={() => onDelete(row)}
+                >
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  Delete
+                </DropdownMenuItem>
+              </>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
       </TableCell>
     </TableRow>
   );
@@ -663,18 +1085,30 @@ const OrdersPage = () => {
   const [creatingOrder, setCreatingOrder] = useState(false);
   const [newOrder, setNewOrder] = useState<NewOrderForm>(() => getDefaultOrderForm(""));
   const [fieldOfficers, setFieldOfficers] = useState<FieldOfficerOption[]>([]);
+  const [offtakeTeam, setOfftakeTeam] = useState<OfftakeTeamMember[]>([]);
   const [fieldOfficersLoading, setFieldOfficersLoading] = useState(false);
   const fieldOfficersLoadedRef = useRef(false);
   const [selectedFieldOfficerIds, setSelectedFieldOfficerIds] = useState<string[]>([]);
+  const [ordersDialogMode, setOrdersDialogMode] = useState<OrdersDialogMode>("view");
+  const [offtakeTeamDialogBatchId, setOfftakeTeamDialogBatchId] = useState<string | null>(null);
+  const [offtakeTeamDraftMembers, setOfftakeTeamDraftMembers] = useState<OfftakeTeamMember[]>([]);
+  const [offtakeTeamFormName, setOfftakeTeamFormName] = useState<string>("");
+  const [offtakeTeamFormPurchaseDate, setOfftakeTeamFormPurchaseDate] = useState<string>("");
+  const [dialogPurchaseDateDraft, setDialogPurchaseDateDraft] = useState<string>("");
+  const [offtakeTeamSaving, setOfftakeTeamSaving] = useState(false);
 
   const [editingOrderKey, setEditingOrderKey] = useState<string | null>(null);
   const [orderGoatsDraft, setOrderGoatsDraft] = useState<string>("");
   const [orderDateDraft, setOrderDateDraft] = useState<string>("");
   const [orderOfficerDraft, setOrderOfficerDraft] = useState<string>("");
   const [orderLocationDraft, setOrderLocationDraft] = useState<string>("");
-  const [orderSubcountyDraft, setOrderSubcountyDraft] = useState<string>("");
 
   const [dialogGoatsBoughtDraft, setDialogGoatsBoughtDraft] = useState<string>("");
+  const orderCsvInputRef = useRef<HTMLInputElement | null>(null);
+  const [orderCsvFile, setOrderCsvFile] = useState<File | null>(null);
+  const [orderCsvPreviewItems, setOrderCsvPreviewItems] = useState<NormalizedOrderItem[]>([]);
+  const [orderCsvSkippedRows, setOrderCsvSkippedRows] = useState(0);
+  const [orderCsvUploading, setOrderCsvUploading] = useState(false);
 
   const monthDates = useMemo(getCurrentMonthDates, []);
   const [filters, setFilters] = useState<Filters>({
@@ -816,12 +1250,21 @@ const OrdersPage = () => {
     return () => unsubscribe();
   }, [activeProgram]);
 
-  useEffect(() => { setOrdersDialogBatchId(null); }, [activeProgram]);
+  useEffect(() => {
+    setOrdersDialogBatchId(null);
+    setOrdersDialogMode("view");
+    setOfftakeTeamDialogBatchId(null);
+    setOfftakeTeamDraftMembers([]);
+    setOfftakeTeamFormName("");
+    setOfftakeTeamFormPurchaseDate("");
+    setOfftakeTeamSaving(false);
+  }, [activeProgram]);
 
   /* Load field officers lazily — only once per session, in parallel with orders */
   useEffect(() => {
     if (!activeProgram) {
       setFieldOfficers([]);
+      setOfftakeTeam([]);
       fieldOfficersLoadedRef.current = false;
       return;
     }
@@ -845,13 +1288,27 @@ const OrdersPage = () => {
             ),
           }))
           .sort((a, b) => a.name.localeCompare(b.name));
+        const team = allUsers
+          .filter(isOfftakeUserRecord)
+          .map((record) => ({
+            id: record.id || getOfficerDisplayName(record),
+            name: getOfficerDisplayName(record),
+            phone: getOfficerPhone(record),
+            email: typeof record.email === "string" ? record.email.trim() : "",
+            counties: parseAssignedCounties(record.county),
+            purchaseDate: "",
+            subcounty: typeof record.subcounty === "string" ? record.subcounty.trim() : "",
+          }))
+          .sort((a, b) => a.name.localeCompare(b.name));
         if (!cancelled) {
           setFieldOfficers(officers);
+          setOfftakeTeam(team);
           fieldOfficersLoadedRef.current = true;
         }
       } catch {
         if (!cancelled) {
           setFieldOfficers([]);
+          setOfftakeTeam([]);
           toast({ title: "Error", description: "Failed to load mobile users.", variant: "destructive" });
         }
       } finally {
@@ -923,7 +1380,7 @@ const OrdersPage = () => {
       if (!batchId) {
         const rec = pc.record;
         for (const key of BATCH_REFERENCE_KEYS) {
-          const val = (rec as Record<string, unknown>)[key];
+          const val = rec[key];
           if (val == null) continue;
           const norm = normalizeIdValue(val);
           if (!norm) continue;
@@ -1014,19 +1471,126 @@ const OrdersPage = () => {
     [batchRows, ordersDialogBatchId]
   );
 
+  const ordersDialogRecord = useMemo(
+    () => allRecords.find((record) => record.id === ordersDialogBatchId) || null,
+    [allRecords, ordersDialogBatchId]
+  );
+
   const ordersDialogHasOfficerColumn = useMemo(
     () => Boolean(ordersDialogRow?.items.some((i) => normalizeText(i.officer) && normalizeText(i.officer) !== "n/a")),
     [ordersDialogRow]
   );
 
+  const ordersDialogIsEditing = ordersDialogMode === "edit" && userCanEditOrders;
+
+  const ordersDialogItems = useMemo(
+    () => ordersDialogRow?.items.filter((item) => item.goats > 0 || item.date) || [],
+    [ordersDialogRow]
+  );
+
+  const ordersDialogLocationRows = useMemo<LocationGoatRow[]>(() => {
+    if (!ordersDialogRow) return [];
+    const locationMap = new Map<string, LocationGoatRow>();
+
+    for (const item of ordersDialogItems) {
+      const location = item.location || item.village || "Unknown location";
+      const subcounty = item.subcounty || "";
+      const key = `${normalizeText(subcounty)}|${normalizeText(location)}`;
+      const current = locationMap.get(key);
+      if (current) {
+        current.goats += Number(item.goats || 0);
+        current.submissionCount += 1;
+        continue;
+      }
+      locationMap.set(key, {
+        key,
+        location,
+        subcounty,
+        goats: Number(item.goats || 0),
+        submissionCount: 1,
+      });
+    }
+
+    return Array.from(locationMap.values()).sort((a, b) => b.goats - a.goats || a.location.localeCompare(b.location));
+  }, [ordersDialogItems, ordersDialogRow]);
+
+  const ordersDialogAssignedOfftakeTeam = useMemo(
+    () => resolveAssignedOfftakeTeam(ordersDialogRecord, offtakeTeam),
+    [offtakeTeam, ordersDialogRecord]
+  );
+
+  const offtakeTeamDialogRow = useMemo(
+    () => batchRows.find((r) => r.batchId === offtakeTeamDialogBatchId) || null,
+    [batchRows, offtakeTeamDialogBatchId]
+  );
+
+  const offtakeTeamDialogRecord = useMemo(
+    () => allRecords.find((record) => record.id === offtakeTeamDialogBatchId) || null,
+    [allRecords, offtakeTeamDialogBatchId]
+  );
+
+  const offtakeTeamDialogAssignedMembers = useMemo(
+    () => resolveAssignedOfftakeTeam(offtakeTeamDialogRecord, offtakeTeam),
+    [offtakeTeam, offtakeTeamDialogRecord]
+  );
+
+  const offtakeTeamDialogSystemMembers = useMemo(() => {
+    const members = new Map<string, OfftakeTeamMember>();
+    getAvailableOfftakeTeamMembers(offtakeTeamDialogRow, offtakeTeam).forEach((member) => members.set(member.id, member));
+    offtakeTeamDialogAssignedMembers.forEach((member) => members.set(member.id, member));
+    return Array.from(members.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [offtakeTeam, offtakeTeamDialogAssignedMembers, offtakeTeamDialogRow]);
+
+  const offtakeTeamSystemNameMatch = useMemo(() => {
+    const target = normalizeText(offtakeTeamFormName);
+    if (!target) return null;
+    return offtakeTeam.find((member) => normalizeText(member.name) === target) || null;
+  }, [offtakeTeam, offtakeTeamFormName]);
+
   useEffect(() => {
     if (ordersDialogBatchId && !ordersDialogRow) {
       setOrdersDialogBatchId(null);
+      setOrdersDialogMode("view");
       setEditingOrderKey(null);
       setOrderGoatsDraft("");
       setOrderDateDraft("");
     }
   }, [ordersDialogBatchId, ordersDialogRow]);
+
+  useEffect(() => {
+    if (!ordersDialogRow) return;
+    if (ordersDialogMode === "edit") {
+      setDialogGoatsBoughtDraft(String(ordersDialogRow.goatsBought));
+      setDialogPurchaseDateDraft(toInputDate(ordersDialogRow.batchDate));
+      return;
+    }
+    setDialogGoatsBoughtDraft("");
+    setDialogPurchaseDateDraft("");
+  }, [ordersDialogMode, ordersDialogRow]);
+
+  useEffect(() => {
+    if (offtakeTeamDialogBatchId && !offtakeTeamDialogRow) {
+      setOfftakeTeamDialogBatchId(null);
+      setOfftakeTeamDraftMembers([]);
+      setOfftakeTeamFormName("");
+      setOfftakeTeamFormPurchaseDate("");
+      setOfftakeTeamSaving(false);
+    }
+  }, [offtakeTeamDialogBatchId, offtakeTeamDialogRow]);
+
+  useEffect(() => {
+    if (!offtakeTeamDialogBatchId || !offtakeTeamDialogRecord) {
+      setOfftakeTeamDraftMembers([]);
+      setOfftakeTeamFormName("");
+      setOfftakeTeamFormPurchaseDate("");
+      setOfftakeTeamSaving(false);
+      return;
+    }
+    setOfftakeTeamDraftMembers(resolveAssignedOfftakeTeam(offtakeTeamDialogRecord, offtakeTeam));
+    setOfftakeTeamFormName("");
+    setOfftakeTeamFormPurchaseDate(toInputDate(offtakeTeamDialogRecord.date || offtakeTeamDialogRow?.batchDate || new Date()));
+    setOfftakeTeamSaving(false);
+  }, [offtakeTeam, offtakeTeamDialogBatchId, offtakeTeamDialogRecord, offtakeTeamDialogRow]);
 
   /* Pre-parse filter dates once */
   const filterStartDateMs = useMemo(
@@ -1189,16 +1753,116 @@ const OrdersPage = () => {
     startTransition(() => setDebouncedSearch(""));
   }, []);
 
+  const openOrdersDialog = useCallback((batchId: string, mode: OrdersDialogMode) => {
+    setOrdersDialogMode(mode);
+    setOrdersDialogBatchId(batchId);
+  }, []);
+
+  const openOrdersViewDialog = useCallback((batchId: string) => {
+    openOrdersDialog(batchId, "view");
+  }, [openOrdersDialog]);
+
+  const openOrdersEditDialog = useCallback((batchId: string) => {
+    if (!ensureOrderEditAccess()) return;
+    openOrdersDialog(batchId, "edit");
+  }, [ensureOrderEditAccess, openOrdersDialog]);
+
+  const openOrdersOfftakeTeamDialog = useCallback((batchId: string) => {
+    setOfftakeTeamDialogBatchId(batchId);
+  }, []);
+
+  const clearOrderCsvImport = useCallback(() => {
+    setOrderCsvFile(null);
+    setOrderCsvPreviewItems([]);
+    setOrderCsvSkippedRows(0);
+    if (orderCsvInputRef.current) orderCsvInputRef.current.value = "";
+  }, []);
+
   const closeOrdersDialog = useCallback(() => {
     setOrdersDialogBatchId(null);
+    setOrdersDialogMode("view");
     setEditingOrderKey(null);
     setOrderGoatsDraft("");
     setOrderDateDraft("");
     setOrderOfficerDraft("");
     setOrderLocationDraft("");
-    setOrderSubcountyDraft("");
     setDialogGoatsBoughtDraft("");
+    setDialogPurchaseDateDraft("");
+    clearOrderCsvImport();
+  }, [clearOrderCsvImport]);
+
+  const closeOfftakeTeamDialog = useCallback(() => {
+    setOfftakeTeamDialogBatchId(null);
+    setOfftakeTeamDraftMembers([]);
+    setOfftakeTeamFormName("");
+    setOfftakeTeamFormPurchaseDate("");
+    setOfftakeTeamSaving(false);
   }, []);
+
+  const addOfftakeTeamMember = useCallback(() => {
+    if (!ensureOrderEditAccess()) return;
+    const trimmedName = offtakeTeamFormName.trim();
+    if (!trimmedName) {
+      toast({ title: "Team member name required", description: "Enter the offtake team member name.", variant: "destructive" });
+      return;
+    }
+
+    const normalizedName = normalizeText(trimmedName);
+    const existingSystemMember = offtakeTeam.find((member) => normalizeText(member.name) === normalizedName) || null;
+    const duplicateExists = offtakeTeamDraftMembers.some((member) =>
+      member.id === existingSystemMember?.id || normalizeText(member.name) === normalizedName,
+    );
+
+    if (duplicateExists) {
+      toast({ title: "Already added", description: "This offtake team member is already on the list." });
+      return;
+    }
+
+    setOfftakeTeamDraftMembers((prev) => {
+      const nextMember = existingSystemMember || createManualOfftakeTeamMember(trimmedName, "", prev.map((member) => member.id));
+      return [...prev, nextMember].sort((a, b) => a.name.localeCompare(b.name));
+    });
+    setOfftakeTeamFormName("");
+  }, [ensureOrderEditAccess, offtakeTeam, offtakeTeamDraftMembers, offtakeTeamFormName, toast]);
+
+  const removeOfftakeTeamMember = useCallback((memberId: string) => {
+    if (!ensureOrderEditAccess()) return;
+    setOfftakeTeamDraftMembers((prev) => prev.filter((member) => member.id !== memberId));
+  }, [ensureOrderEditAccess]);
+
+  const saveOfftakeTeamAssignments = useCallback(async () => {
+    if (!offtakeTeamDialogRecord) return;
+    if (!ensureOrderEditAccess()) return;
+
+    setOfftakeTeamSaving(true);
+    try {
+      const selectedMembers = [...offtakeTeamDraftMembers].sort((a, b) => a.name.localeCompare(b.name));
+      const selectedIds = selectedMembers.map((member) => member.id);
+
+      await update(ref(db, `orders/${offtakeTeamDialogRecord.id}`), {
+        offtakeTeamIds: selectedIds,
+        offtakeTeamMembers: selectedMembers,
+      });
+
+      toast({
+        title: "Offtake team updated",
+        description: selectedIds.length === 0
+          ? "The order has no assigned offtake team members now."
+          : `${selectedIds.length} team member${selectedIds.length === 1 ? "" : "s"} assigned to this order.`,
+      });
+      closeOfftakeTeamDialog();
+    } catch {
+      toast({ title: "Error", description: "Failed to update the offtake team.", variant: "destructive" });
+    } finally {
+      setOfftakeTeamSaving(false);
+    }
+  }, [
+    closeOfftakeTeamDialog,
+    ensureOrderEditAccess,
+    offtakeTeamDraftMembers,
+    offtakeTeamDialogRecord,
+    toast,
+  ]);
 
   const resetNewOrderForm = useCallback((programme: string) => {
     setNewOrder(getDefaultOrderForm(programme));
@@ -1224,17 +1888,22 @@ const OrdersPage = () => {
   }, []);
 
   const updateBatchOrders = async (row: BatchOrderRow, nextItems: NormalizedOrderItem[], nextGoatsBought?: number) => {
-    const sanitizedItems = nextItems.map((item, index) => {
-      const orderLocation = item.location || item.village || row.location || "";
-      return {
-        ...(item.raw ?? {}),
-        id: item.id || `${row.batchId}-${index + 1}`,
-        goats: Math.max(0, Number(item.goats || 0)),
-        date: item.date || row.batchDate || "",
-        location: orderLocation,
-        subcounty: item.subcounty || row.subcounty || "",
-      };
-    });
+    const sanitizedItems = nextItems
+      .filter((item) => Number(item.goats || 0) > 0 || Boolean(String(item.date || "").trim()))
+      .map((item, index) => {
+        const orderLocation = item.location || item.village || row.location || "";
+        const orderOfficer = typeof item.officer === "string" && item.officer !== "N/A" ? item.officer.trim() : "";
+        return {
+          ...(item.raw ?? {}),
+          id: item.id || `${row.batchId}-${index + 1}`,
+          goats: Math.max(0, Number(item.goats || 0)),
+          date: item.date || row.batchDate || "",
+          location: orderLocation,
+          village: item.village || orderLocation,
+          subcounty: item.subcounty || row.subcounty || "",
+          ...(orderOfficer ? { fieldOfficerName: orderOfficer, officer: orderOfficer } : {}),
+        };
+      });
     const itemsTotal = sanitizedItems.reduce((sum, i) => sum + i.goats, 0);
     const targetGoats = row.targetGoats > 0 ? row.targetGoats : row.totalGoats;
     const goatsBought = clamp(
@@ -1262,15 +1931,25 @@ const OrdersPage = () => {
       toast({ title: "Invalid value", description: "Cannot exceed target goats.", variant: "destructive" });
       return;
     }
+    if (!dialogPurchaseDateDraft) {
+      toast({ title: "Date required", description: "Purchase date is required.", variant: "destructive" });
+      return;
+    }
     try {
       const target = ordersDialogRow.targetGoats || ordersDialogRow.totalGoats;
       const remainingGoats = Math.max(target - nextValue, 0);
       const storedStatus = normalizeStatus(ordersDialogRow.status);
       const nextStatus = storedStatus === "completed" ? "completed" : nextValue > 0 ? "in-progress" : "pending";
       const nextCompletedAt = storedStatus === "completed" ? ordersDialogRow.completedAt || new Date().toISOString() : "";
-      await update(ref(db, `orders/${ordersDialogRow.batchId}`), { goatsBought: nextValue, remainingGoats, status: nextStatus, completedAt: nextCompletedAt });
-      toast({ title: "Updated", description: "Goats bought updated." });
-      setDialogGoatsBoughtDraft("");
+      await update(ref(db, `orders/${ordersDialogRow.batchId}`), {
+        goatsBought: nextValue,
+        remainingGoats,
+        status: nextStatus,
+        completedAt: nextCompletedAt,
+        batchDate: dialogPurchaseDateDraft,
+      });
+      toast({ title: "Updated", description: "Purchase details updated." });
+      setDialogGoatsBoughtDraft(ordersDialogMode === "edit" ? String(nextValue) : "");
     } catch {
       toast({ title: "Error", description: "Failed to update.", variant: "destructive" });
     }
@@ -1278,10 +1957,6 @@ const OrdersPage = () => {
 
   const markOrderComplete = async (row: BatchOrderRow) => {
     if (!ensureOrderEditAccess()) return;
-    if (row.remainingGoats > 0) {
-      toast({ title: "Order not complete", description: `Still ${row.remainingGoats.toLocaleString()} goats remaining.`, variant: "destructive" });
-      return;
-    }
     if (!window.confirm("Mark this order as complete?")) return;
     try {
       await update(ref(db, `orders/${row.batchId}`), {
@@ -1303,7 +1978,6 @@ const OrdersPage = () => {
     setOrderDateDraft(toInputDate(item.date));
     setOrderOfficerDraft(item.officer === "N/A" ? "" : item.officer || "");
     setOrderLocationDraft(item.location === "N/A" ? "" : item.location || "");
-    setOrderSubcountyDraft(item.subcounty === "N/A" ? "" : item.subcounty || "");
   };
 
   const cancelOrderEdit = () => {
@@ -1312,7 +1986,6 @@ const OrdersPage = () => {
     setOrderDateDraft("");
     setOrderOfficerDraft("");
     setOrderLocationDraft("");
-    setOrderSubcountyDraft("");
   };
 
   const saveOrderEdit = async (row: BatchOrderRow, index: number) => {
@@ -1329,8 +2002,8 @@ const OrdersPage = () => {
             ...item,
             goats: nextGoats,
             date: orderDateDraft,
+            officer: orderOfficerDraft.trim() || item.officer,
             location: orderLocationDraft.trim() || item.location,
-            subcounty: orderSubcountyDraft.trim() || item.subcounty,
           }
         : item
     );
@@ -1365,6 +2038,108 @@ const OrdersPage = () => {
       toast({ title: "Error", description: "Failed to delete.", variant: "destructive" });
     }
   };
+
+  const handleOrderCsvFileSelect = useCallback(
+    async (event: ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0] || null;
+      if (!file) {
+        clearOrderCsvImport();
+        return;
+      }
+      if (!ordersDialogRow) {
+        clearOrderCsvImport();
+        toast({ title: "Select order", description: "Open an order before uploading CSV data.", variant: "destructive" });
+        return;
+      }
+      if (!file.name.toLowerCase().endsWith(".csv")) {
+        clearOrderCsvImport();
+        toast({ title: "Invalid file", description: "Please select a CSV file exported from Excel.", variant: "destructive" });
+        return;
+      }
+
+      setOrderCsvUploading(true);
+      try {
+        const text = await file.text();
+        const parsed = parseOrderCsvText(text, ordersDialogRow);
+        setOrderCsvFile(file);
+        setOrderCsvPreviewItems(parsed.items);
+        setOrderCsvSkippedRows(parsed.skippedRows);
+        toast({
+          title: "CSV ready",
+          description: `${parsed.items.length} submission${parsed.items.length === 1 ? "" : "s"} parsed${parsed.skippedRows > 0 ? `, ${parsed.skippedRows} row${parsed.skippedRows === 1 ? "" : "s"} skipped` : ""}.`,
+        });
+      } catch (error) {
+        clearOrderCsvImport();
+        toast({
+          title: "Import failed",
+          description: error instanceof Error ? error.message : "The CSV could not be parsed.",
+          variant: "destructive",
+        });
+      } finally {
+        setOrderCsvUploading(false);
+      }
+    },
+    [clearOrderCsvImport, ordersDialogRow, toast]
+  );
+
+  const importOrderCsvData = useCallback(async () => {
+    if (!ordersDialogRow) return;
+    if (!ensureOrderEditAccess()) return;
+    if (orderCsvPreviewItems.length === 0) {
+      toast({ title: "No data ready", description: "Choose a CSV file first.", variant: "destructive" });
+      return;
+    }
+
+    setOrderCsvUploading(true);
+    try {
+      const existingIds = new Set(
+        ordersDialogRow.items.map((item) => normalizeIdValue(item.id)).filter((value) => value.length > 0)
+      );
+      const existingSignatures = new Set(
+        ordersDialogRow.items
+          .filter((item) => Number(item.goats || 0) > 0 || Boolean(String(item.date || "").trim()))
+          .map(getImportedSubmissionSignature)
+      );
+
+      const mergedItems = [...ordersDialogRow.items];
+      let importedCount = 0;
+      let duplicateCount = 0;
+
+      for (const item of orderCsvPreviewItems) {
+        const itemId = normalizeIdValue(item.id);
+        const signature = getImportedSubmissionSignature(item);
+
+        if ((itemId && existingIds.has(itemId)) || existingSignatures.has(signature)) {
+          duplicateCount++;
+          continue;
+        }
+
+        if (itemId) existingIds.add(itemId);
+        existingSignatures.add(signature);
+        mergedItems.push(item);
+        importedCount++;
+      }
+
+      if (importedCount === 0) {
+        toast({
+          title: "Nothing imported",
+          description: duplicateCount > 0 ? "All parsed rows already exist in this batch." : "No new submissions were found in the file.",
+        });
+        return;
+      }
+
+      await updateBatchOrders(ordersDialogRow, mergedItems);
+      toast({
+        title: "CSV imported",
+        description: `${importedCount} submission${importedCount === 1 ? "" : "s"} added${duplicateCount > 0 ? `, ${duplicateCount} duplicate${duplicateCount === 1 ? "" : "s"} skipped` : ""}.`,
+      });
+      clearOrderCsvImport();
+    } catch {
+      toast({ title: "Error", description: "Failed to import CSV data.", variant: "destructive" });
+    } finally {
+      setOrderCsvUploading(false);
+    }
+  }, [clearOrderCsvImport, ensureOrderEditAccess, orderCsvPreviewItems, ordersDialogRow, toast]);
 
   const handleCreateOrder = async () => {
     if (!ensureOrderCreateAccess()) return;
@@ -1403,6 +2178,8 @@ const OrdersPage = () => {
             subcounty: "",
           },
         ],
+        offtakeTeamIds: [],
+        offtakeTeamMembers: [],
         targetGoats: goatsValue,
         totalGoats: 0,
         goatsBought: 0,
@@ -1642,8 +2419,10 @@ const OrdersPage = () => {
                         idx={idx}
                         userCanEditOrders={userCanEditOrders}
                         userIsChiefAdmin={userIsChiefAdmin}
-                        onView={setOrdersDialogBatchId}
-                        onEdit={setOrdersDialogBatchId}
+                        onView={openOrdersViewDialog}
+                        onEdit={openOrdersEditDialog}
+                        onOpenTeam={openOrdersOfftakeTeamDialog}
+                        onMarkComplete={markOrderComplete}
                         onDelete={deleteBatch}
                       />
                     ))}
@@ -1798,63 +2577,31 @@ const OrdersPage = () => {
 
       {/* Order Details Dialog */}
       <Dialog open={Boolean(ordersDialogBatchId && ordersDialogRow)} onOpenChange={(open) => { if (!open) closeOrdersDialog(); }}>
-        <DialogContent className="sm:max-w-2xl bg-white rounded-2xl border-slate-200 shadow-xl max-h-[90vh] overflow-hidden">
+        <DialogContent className="sm:max-w-2xl bg-white rounded-2xl border-slate-200 shadow-xl max-h-[90vh] overflow-y-auto">
           <DialogHeader className="border-b border-slate-100 pb-3">
-            <DialogTitle className="text-slate-900">Order Details</DialogTitle>
+            <DialogTitle className="text-slate-900">{ordersDialogIsEditing ? "Edit Order" : "Order Details"}</DialogTitle>
           </DialogHeader>
-
           {ordersDialogRow ? (
-            <div className="space-y-4 overflow-y-auto pr-1 py-4">
-              {/* Summary Grid */}
-              <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
-                {[
+            <div className="space-y-4 px-6 pb-6 pt-4">
+                {/* Summary Grid */}
+                <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
+                {([
                   { label: "Date", value: formatDate(ordersDialogRow.batchDate)},
                   { label: "County", value: ordersDialogRow.county },
-                  { label: "Sub-county", value: ordersDialogRow.subcounty },
                   { label: "Status", badge: ordersDialogRow.status },
-                ].map((item) => (
+                ] as OrderSummaryItem[]).map((item) => (
                   <div key={item.label} className="rounded-lg border border-slate-150 bg-slate-50/60 p-3">
                     <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500">{item.label}</p>
                     {item.badge ? (
                       <Badge variant="outline" className={`mt-1 ${getStatusBadgeClass(item.badge)}`}>{item.badge}</Badge>
                     ) : (
-                      <p className="mt-0.5 text-sm font-semibold text-slate-800">{item.value || "—"}</p>
+                      <p className="mt-0.5 text-sm font-semibold text-slate-800">{item.value || "N/A"}</p>
                     )}
                     {item.sub && <p className="mt-0.5 text-[10px] text-slate-500 font-mono">{item.sub}</p>}
                   </div>
                 ))}
-              </div>
-
-              {/* Progress Section */}
-              <div className="rounded-lg border border-slate-150 bg-slate-50/60 p-3">
-                <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500">Progress</p>
-                {userCanEditOrders && dialogGoatsBoughtDraft !== "" ? (
-                  <div className="mt-1.5 flex items-center gap-2">
-                    <Input type="number" min={0} max={ordersDialogRow.targetGoats || ordersDialogRow.totalGoats} value={dialogGoatsBoughtDraft} onChange={(e) => setDialogGoatsBoughtDraft(e.target.value)} className="h-8 max-w-32 text-right text-sm border-slate-200" />
-                    <span className="text-xs text-slate-500">/ {(ordersDialogRow.targetGoats || ordersDialogRow.totalGoats).toLocaleString()}</span>
-                    <Button size="icon" variant="outline" className="h-8 w-8 border-slate-200" onClick={saveDialogGoatsBought}><Save className="h-3.5 w-3.5" /></Button>
-                    <Button size="icon" variant="outline" className="h-8 w-8 border-slate-200" onClick={() => setDialogGoatsBoughtDraft("")}><X className="h-3.5 w-3.5" /></Button>
-                  </div>
-                ) : (
-                  <div className="mt-1.5 flex items-center gap-2">
-                    <p className="text-sm font-semibold text-slate-800">
-                      {ordersDialogRow.goatsBought.toLocaleString()} / {(ordersDialogRow.targetGoats || ordersDialogRow.totalGoats).toLocaleString()}
-                    </p>
-                    {userCanEditOrders && (
-                      <Button size="icon" variant="ghost" className="h-6 w-6 text-slate-400 hover:text-blue-600" onClick={() => setDialogGoatsBoughtDraft(String(ordersDialogRow.goatsBought))} title="Edit">
-                        <Pencil className="h-3 w-3" />
-                      </Button>
-                    )}
-                  </div>
-                )}
-                <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
-                  <div
-                    className={`h-full rounded-full transition-all duration-500 ${ordersDialogRow.status === "completed" ? "bg-emerald-500" : "bg-blue-400"}`}
-                    style={{ width: `${Math.min((ordersDialogRow.targetGoats || ordersDialogRow.totalGoats) > 0 ? (ordersDialogRow.goatsBought / (ordersDialogRow.targetGoats || ordersDialogRow.totalGoats)) * 100 : 0, 100)}%` }}
-                  />
                 </div>
-                <p className="mt-1 text-[11px] text-slate-500">{ordersDialogRow.remainingGoats.toLocaleString()} remaining</p>
-              </div>
+
 
               {/* Status Banner */}
               {ordersDialogRow.status === "completed" ? (
@@ -1863,25 +2610,85 @@ const OrdersPage = () => {
                 </div>
               ) : (
                 <div className={`rounded-lg border p-3 text-sm ${ordersDialogRow.isReadyForCompletion ? "border-amber-200 bg-amber-50 text-amber-700" : "border-slate-200 bg-slate-50 text-slate-600"}`}>
-                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                    <p className="text-xs leading-relaxed">
-                      {ordersDialogRow.isReadyForCompletion
-                        ? "All submissions attached. Review and mark complete."
-                        : `${ordersDialogRow.remainingGoats.toLocaleString()} goats remaining.`}
-                    </p>
-                    {userCanEditOrders && (
-                      <Button size="sm" className="bg-blue-600 text-white hover:bg-blue-700 text-xs shadow-sm shrink-0" onClick={() => markOrderComplete(ordersDialogRow)}>
-                        Mark Complete
-                      </Button>
-                    )}
+                  <p className="text-xs leading-relaxed">
+                    {ordersDialogRow.isReadyForCompletion
+                      ? "All submissions attached. Use the table Actions menu to mark this order complete."
+                      : `${ordersDialogRow.remainingGoats.toLocaleString()} goats remaining.`}
+                  </p>
+                </div>
+              )}
+
+              {ordersDialogIsEditing && (
+                <div className="rounded-lg border border-blue-100 bg-blue-50/40 p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-blue-700">Purchase Details</p>
+                    <Button size="sm" className="h-8 bg-blue-600 text-white hover:bg-blue-700 text-xs" onClick={saveDialogGoatsBought}>
+                      <Save className="mr-1.5 h-3.5 w-3.5" />
+                      Save Changes
+                    </Button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-medium text-slate-600">Goats Purchased</Label>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={ordersDialogRow.targetGoats || ordersDialogRow.totalGoats}
+                        value={dialogGoatsBoughtDraft}
+                        onChange={(e) => setDialogGoatsBoughtDraft(e.target.value)}
+                        className="h-9 text-sm border-slate-200"
+                      />
+                      
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-medium text-slate-600">Purchase Date</Label>
+                      <Input
+                        type="date"
+                        value={dialogPurchaseDateDraft}
+                        onChange={(e) => setDialogPurchaseDateDraft(e.target.value)}
+                        className="h-9 text-sm border-slate-200"
+                      />
+                     
+                    </div>
                   </div>
                 </div>
               )}
 
+              <div className="rounded-lg border border-slate-200 overflow-hidden">
+                <div className="border-b border-slate-100 bg-slate-50 px-4 py-2.5">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-slate-600">Goats per Location</p>
+                  <p className="text-[11px] text-slate-500">{ordersDialogLocationRows.length} location{ordersDialogLocationRows.length === 1 ? "" : "s"}</p>
+                </div>
+                <div className="grid grid-cols-2 divide-x divide-slate-200">
+                  {ordersDialogLocationRows.length === 0 ? (
+                    <div className="col-span-2 px-4 py-5 text-center text-xs text-slate-500">No location data available yet.</div>
+                  ) : (
+                    <>
+                      <div className="divide-y divide-slate-100">
+                        {ordersDialogLocationRows.slice(0, Math.ceil(ordersDialogLocationRows.length / 2)).map((locationRow) => (
+                          <div key={locationRow.key} className="flex items-center justify-between px-4 py-2.5 hover:bg-blue-50/30">
+                            <p className="text-sm font-medium text-slate-800 truncate pr-2">{locationRow.location}</p>
+                            <p className="text-sm font-semibold tabular-nums text-slate-900">{locationRow.goats.toLocaleString()}</p>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="divide-y divide-slate-100">
+                        {ordersDialogLocationRows.slice(Math.ceil(ordersDialogLocationRows.length / 2)).map((locationRow) => (
+                          <div key={locationRow.key} className="flex items-center justify-between px-4 py-2.5 hover:bg-blue-50/30">
+                            <p className="text-sm font-medium text-slate-800 truncate pr-2">{locationRow.location}</p>
+                            <p className="text-sm font-semibold tabular-nums text-slate-900">{locationRow.goats.toLocaleString()}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+
               {/* Submissions Table */}
               <div className="rounded-lg border border-slate-200 overflow-hidden">
                 <div className="border-b border-slate-100 bg-slate-50 px-4 py-2.5 text-xs font-semibold uppercase tracking-wider text-slate-600">
-                  Field Officer Submissions ({ordersDialogRow.items.filter((item) => item.goats > 0 || item.date).length})
+                  Field Officer Submissions ({ordersDialogItems.length})
                 </div>
                 <div className="overflow-x-auto">
                   <Table>
@@ -1891,17 +2698,18 @@ const OrdersPage = () => {
                         {ordersDialogHasOfficerColumn && (
                           <TableHead className="h-8 px-3 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500">Field Officer</TableHead>
                         )}
-                        <TableHead className="h-8 px-3 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500">Sub-county</TableHead>
                         <TableHead className="h-8 px-3 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500">Location</TableHead>
                         <TableHead className="h-8 px-3 text-right text-[11px] font-semibold uppercase tracking-wider text-slate-500">Goats</TableHead>
-                        <TableHead className="h-8 px-3 text-right text-[11px] font-semibold uppercase tracking-wider text-slate-500">Actions</TableHead>
+                        {ordersDialogIsEditing && (
+                          <TableHead className="h-8 px-3 text-right text-[11px] font-semibold uppercase tracking-wider text-slate-500">Actions</TableHead>
+                        )}
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {ordersDialogRow.items.filter((item) => item.goats > 0 || item.date).map((item, filteredIndex) => {
+                      {ordersDialogItems.map((item) => {
                         const index = ordersDialogRow.items.indexOf(item);
                         const orderKey = `${ordersDialogRow.batchId}:${index}`;
-                        const isEditing = userCanEditOrders && editingOrderKey === orderKey;
+                        const isEditing = ordersDialogIsEditing && editingOrderKey === orderKey;
                         return (
                           <TableRow key={orderKey} className="border-b border-slate-50 hover:bg-blue-50/30">
                             <TableCell className="px-3 py-2">
@@ -1922,13 +2730,6 @@ const OrdersPage = () => {
                             )}
                             <TableCell className="px-3 py-2">
                               {isEditing ? (
-                                <Input value={orderSubcountyDraft} onChange={(e) => setOrderSubcountyDraft(e.target.value)} className="h-7 text-xs border-slate-200" placeholder="Sub-county" />
-                              ) : (
-                                <span className="text-xs text-slate-700">{item.subcounty || "—"}</span>
-                              )}
-                            </TableCell>
-                            <TableCell className="px-3 py-2">
-                              {isEditing ? (
                                 <Input value={orderLocationDraft} onChange={(e) => setOrderLocationDraft(e.target.value)} className="h-7 text-xs border-slate-200" placeholder="Location" />
                               ) : (
                                 <span className="text-xs text-slate-700">{item.location}</span>
@@ -1941,37 +2742,35 @@ const OrdersPage = () => {
                                 <span className="text-xs font-semibold tabular-nums text-slate-800">{item.goats.toLocaleString()}</span>
                               )}
                             </TableCell>
-                            <TableCell className="px-3 py-2 text-right">
-                              {isEditing ? (
-                                <div className="flex justify-end gap-1">
-                                  <Button size="sm" variant="outline" className="h-7 text-[11px] border-slate-200" onClick={() => saveOrderEdit(ordersDialogRow, index)}>
-                                    <Save className="mr-1 h-3 w-3" />Save
-                                  </Button>
-                                  <Button size="sm" variant="outline" className="h-7 text-[11px] border-slate-200" onClick={cancelOrderEdit}>
-                                    <X className="mr-1 h-3 w-3" />Cancel
-                                  </Button>
-                                </div>
-                              ) : (
-                                <div className="flex justify-end gap-0.5">
-                                  {userCanEditOrders && (
-                                    <>
-                                      <Button size="icon" variant="ghost" className="h-7 w-7 text-slate-400 hover:text-amber-600 hover:bg-amber-50" onClick={() => startOrderEdit(ordersDialogRow, item, index)} title="Edit">
-                                        <Pencil className="h-3.5 w-3.5" />
-                                      </Button>
-                                      <Button size="icon" variant="ghost" className="h-7 w-7 text-slate-400 hover:text-red-600 hover:bg-red-50" onClick={() => deleteOrderItem(ordersDialogRow, index)} title="Delete">
-                                        <Trash2 className="h-3.5 w-3.5" />
-                                      </Button>
-                                    </>
-                                  )}
-                                </div>
-                              )}
-                            </TableCell>
+                            {ordersDialogIsEditing && (
+                              <TableCell className="px-3 py-2 text-right">
+                                {isEditing ? (
+                                  <div className="flex justify-end gap-1">
+                                    <Button size="sm" variant="outline" className="h-7 text-[11px] border-slate-200" onClick={() => saveOrderEdit(ordersDialogRow, index)}>
+                                      <Save className="mr-1 h-3 w-3" />Save
+                                    </Button>
+                                    <Button size="sm" variant="outline" className="h-7 text-[11px] border-slate-200" onClick={cancelOrderEdit}>
+                                      <X className="mr-1 h-3 w-3" />Cancel
+                                    </Button>
+                                  </div>
+                                ) : (
+                                  <div className="flex justify-end gap-0.5">
+                                    <Button size="icon" variant="ghost" className="h-7 w-7 text-slate-400 hover:text-amber-600 hover:bg-amber-50" onClick={() => startOrderEdit(ordersDialogRow, item, index)} title="Edit">
+                                      <Pencil className="h-3.5 w-3.5" />
+                                    </Button>
+                                    <Button size="icon" variant="ghost" className="h-7 w-7 text-slate-400 hover:text-red-600 hover:bg-red-50" onClick={() => deleteOrderItem(ordersDialogRow, index)} title="Delete">
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                    </Button>
+                                  </div>
+                                )}
+                              </TableCell>
+                            )}
                           </TableRow>
                         );
                       })}
-                      {ordersDialogRow.items.filter((item) => item.goats > 0 || item.date).length === 0 && (
+                      {ordersDialogItems.length === 0 && (
                         <TableRow>
-                          <TableCell colSpan={ordersDialogHasOfficerColumn ? 6 : 5} className="py-6 text-center text-xs text-slate-500">
+                          <TableCell colSpan={ordersDialogHasOfficerColumn ? (ordersDialogIsEditing ? 5 : 4) : (ordersDialogIsEditing ? 4 : 3)} className="py-6 text-center text-xs text-slate-500">
                             No submissions attached yet.
                           </TableCell>
                         </TableRow>
@@ -1979,6 +2778,131 @@ const OrdersPage = () => {
                     </TableBody>
                   </Table>
                 </div>
+              </div>
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(offtakeTeamDialogBatchId && offtakeTeamDialogRow)} onOpenChange={(open) => { if (!open) closeOfftakeTeamDialog(); }}>
+        <DialogContent className="sm:max-w-xl bg-white rounded-2xl border-slate-200 shadow-xl max-h-[90vh] overflow-hidden">
+          <DialogHeader className="border-b border-slate-100 pb-3">
+            <DialogTitle className="text-slate-900">Add Offtake Team</DialogTitle>
+          </DialogHeader>
+
+          {offtakeTeamDialogRow ? (
+            <div className="space-y-4 py-4">
+              <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-3">
+                <p className="text-xs font-semibold uppercase tracking-wider text-slate-600">
+                  {offtakeTeamDialogRow.county}
+                </p>
+                <p className="mt-1 text-sm font-medium text-slate-800">
+                  Order date {formatDate(offtakeTeamDialogRow.batchDate)}
+                </p>
+                
+              </div>
+
+              <div className="rounded-lg border border-slate-200 overflow-hidden">
+                <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50 px-4 py-2.5">
+                  
+                </div>
+
+                <div className="space-y-4 bg-white p-4">
+                  {userCanEditOrders ? (
+                    <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
+                      <div className="space-y-1.5">
+                        <Label htmlFor="offtakeTeamName" className="text-xs font-medium text-slate-600">Team Member Name</Label>
+                        <Input
+                          id="offtakeTeamName"
+                          list="offtake-team-name-options"
+                          value={offtakeTeamFormName}
+                          onChange={(e) => setOfftakeTeamFormName(e.target.value)}
+                          disabled={offtakeTeamSaving}
+                          placeholder="Enter team member name"
+                          className="border-slate-200 bg-white text-sm focus:border-blue-400"
+                        />
+                        <datalist id="offtake-team-name-options">
+                          {offtakeTeamDialogSystemMembers.map((member) => (
+                            <option key={member.id} value={member.name} />
+                          ))}
+                        </datalist>
+                      </div>
+                      <Button
+                        type="button"
+                        onClick={addOfftakeTeamMember}
+                        disabled={offtakeTeamSaving || !offtakeTeamFormName.trim()}
+                        className="bg-blue-600 text-white hover:bg-blue-700 text-sm shadow-sm"
+                      >
+                        <Plus className="mr-1.5 h-4 w-4" />
+                        Add Member
+                      </Button>
+                    </div>
+                  ) : null}
+
+                  {offtakeTeamSystemNameMatch && (
+                    <div className="rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-2 text-xs text-slate-600">
+                      <p className="font-medium text-slate-700">{offtakeTeamSystemNameMatch.name}</p>
+                      <p>This name already exists in the system and will use the saved staff record.</p>
+                    </div>
+                  )}
+
+                  <div className="rounded-lg border border-slate-200 overflow-hidden">
+                    <div className="border-b border-slate-100 bg-slate-50 px-4 py-2.5">
+                      <p className="text-xs font-semibold uppercase tracking-wider text-slate-600">Added Team Members</p>
+                      
+                    </div>
+                    <div className="max-h-[320px] divide-y divide-slate-100 overflow-y-auto bg-white">
+                      {offtakeTeamDraftMembers.length === 0 ? (
+                        <div className="px-4 py-6 text-sm text-slate-500">No offtake team members added yet.</div>
+                      ) : (
+                        offtakeTeamDraftMembers.map((member) => (
+                          <div key={member.id} className="flex items-start justify-between gap-3 px-4 py-3">
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium text-slate-800">{member.name}</p>
+                              {member.counties.length > 0 && (
+                                <p className="mt-0.5 text-[11px] text-slate-500">
+                                  {member.counties.join(", ")}
+                                </p>
+                              )}
+                              {(member.phone || member.email) && (
+                                <p className="mt-1 text-[11px] text-slate-500">
+                                  {member.phone && member.email
+                                    ? `${member.phone} - ${member.email}`
+                                    : member.phone || member.email}
+                                </p>
+                              )}
+                            </div>
+                            {userCanEditOrders && (
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                className="h-8 shrink-0 border-slate-200 text-xs"
+                                disabled={offtakeTeamSaving}
+                                onClick={() => removeOfftakeTeamMember(member.id)}
+                              >
+                                <X className="mr-1 h-3.5 w-3.5" />
+                                Remove
+                              </Button>
+                            )}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 border-t border-slate-100 pt-4">
+                <Button variant="outline" onClick={closeOfftakeTeamDialog} disabled={offtakeTeamSaving} className="border-slate-200 text-sm">
+                  {userCanEditOrders ? "Cancel" : "Close"}
+                </Button>
+                {userCanEditOrders && (
+                  <Button onClick={saveOfftakeTeamAssignments} disabled={offtakeTeamSaving} className="bg-blue-600 text-white hover:bg-blue-700 text-sm shadow-sm">
+                    {offtakeTeamSaving ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Save className="mr-1.5 h-4 w-4" />}
+                    Save Team
+                  </Button>
+                )}
               </div>
             </div>
           ) : null}
