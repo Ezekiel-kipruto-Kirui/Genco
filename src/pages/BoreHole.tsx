@@ -156,7 +156,7 @@ const deleteData = async (collectionName: string, docIds: string[]): Promise<Fir
 // Constants
 const PAGE_LIMIT = 15;
 const SEARCH_DEBOUNCE_DELAY = 300;
-const PROGRAMME_OPTIONS = ["KPMD", "RANGE"] as const;
+const PROGRAMME_OPTIONS = ["KPMD", "RANGE", "MTLDK"] as const;
 type ProgrammeOption = (typeof PROGRAMME_OPTIONS)[number];
 
 const normalizeProgramme = (
@@ -165,7 +165,7 @@ const normalizeProgramme = (
 ): ProgrammeOption => {
   if (typeof value !== "string") return fallback;
   const normalized = value.trim().toUpperCase();
-  if (normalized === "KPMD" || normalized === "RANGE") return normalized;
+  if (normalized === "KPMD" || normalized === "RANGE" || normalized === "MTLDK") return normalized;
   return fallback;
 };
 

@@ -98,7 +98,7 @@ interface TableRowProps {
 // --- Constants ---
 const PAGE_LIMIT = 15;
 const SEARCH_DEBOUNCE_DELAY = 300;
-const PROGRAMME_OPTIONS = ["KPMD", "RANGE"] as const;
+const PROGRAMME_OPTIONS = ["KPMD", "RANGE", "MTLDK"] as const;
 const UNASSIGNED_PROGRAMME = "UNASSIGNED" as const;
 type ProgrammeOption = (typeof PROGRAMME_OPTIONS)[number];
 type ProgrammeSelectValue = ProgrammeOption | typeof UNASSIGNED_PROGRAMME;
@@ -109,14 +109,14 @@ const normalizeProgramme = (
 ): ProgrammeOption => {
   if (typeof value !== "string") return fallback;
   const normalized = value.trim().toUpperCase();
-  if (normalized === "KPMD" || normalized === "RANGE") return normalized;
+  if (normalized === "KPMD" || normalized === "RANGE" || normalized === "MTLDK") return normalized;
   return fallback;
 };
 
 const getProgrammeValue = (value: unknown): ProgrammeOption | "" => {
   if (typeof value !== "string") return "";
   const normalized = value.trim().toUpperCase();
-  if (normalized === "KPMD" || normalized === "RANGE") return normalized;
+  if (normalized === "KPMD" || normalized === "RANGE" || normalized === "MTLDK") return normalized;
   return "";
 };
 

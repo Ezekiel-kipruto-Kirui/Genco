@@ -1438,7 +1438,7 @@ const DashboardOverview = () => {
   const { user, userRole, userAttribute, userName, allowedProgrammes, loading } = useAuth();
   const userCanViewAllProgrammeData = useMemo(
     () => canViewAllProgrammes(userRole, userAttribute, allowedProgrammes),
-    [userAttribute, userRole],
+    [allowedProgrammes, userAttribute, userRole],
   );
 
   const accessibleProgrammes = useMemo(
@@ -1681,27 +1681,27 @@ const DashboardOverview = () => {
   }
 
   return (
-    <div className="min-h-screen bg-[#f5f6f7] px-3 py-4 sm:px-5 sm:py-5">
-      <div className="mx-auto max-w-[1120px] space-y-6">
-        <div className="relative overflow-hidden rounded-[28px] bg-gradient-to-r from-[#042d14] via-[#0a5d29] to-[#249654] px-6 py-7 text-white shadow-[0_24px_60px_rgba(4,45,20,0.22)] sm:px-8">
-          <div className="absolute inset-y-0 right-0 w-1/3 bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.18),transparent_58%)]" />
-          <div className="absolute right-7 top-8 h-20 w-20 rounded-[24px] bg-white/10 blur-sm" />
-          <div className="absolute right-20 top-12 h-14 w-14 rounded-[22px] bg-white/8" />
-          <div className="absolute right-32 top-6 h-12 w-12 rounded-[20px] bg-white/6" />
+    <div className="min-h-screen bg-[#f5f6f7] px-3 py-3 sm:px-5 sm:py-5">
+      <div className="mx-auto max-w-[1120px] space-y-4 sm:space-y-6">
+        <div className="relative overflow-hidden rounded-[22px] bg-gradient-to-r from-[#042d14] via-[#0a5d29] to-[#249654] px-4 py-2 text-white shadow-[0_24px_60px_rgba(4,45,20,0.22)] sm:rounded-[28px] sm:px-8 sm:py-7">
+          <div className="absolute inset-y-0 right-0 hidden w-1/3 bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.18),transparent_58%)] sm:block" />
+          <div className="absolute right-7 top-8 hidden h-20 w-20 rounded-[24px] bg-white/10 blur-sm sm:block" />
+          <div className="absolute right-20 top-12 hidden h-14 w-14 rounded-[22px] bg-white/8 sm:block" />
+          <div className="absolute right-32 top-6 hidden h-12 w-12 rounded-[20px] bg-white/6 sm:block" />
 
-          <div className="relative flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
-            <div className="space-y-3">
-              <h1 className="text-3xl font-bold tracking-[-0.03em] text-white sm:text-4xl">
+          <div className="relative flex flex-col gap-3 sm:gap-6 lg:flex-row lg:items-start lg:justify-between">
+            <div className="space-y-1.5 sm:space-y-3">
+              <h1 className="text-xl font-bold tracking-[-0.03em] text-white sm:text-4xl">
                 {overviewGreeting}
               </h1>
-              <p className="max-w-2xl text-sm text-emerald-50/90 sm:text-lg">
+              <p className="max-w-2xl text-xs text-emerald-50/90 sm:text-lg">
                 {overviewHeroSubtitle}
               </p>
             </div>
 
-            <div className="inline-flex w-fit min-w-[170px] flex-col rounded-[24px] bg-white/12 px-5 py-4 text-white shadow-[0_14px_32px_rgba(4,45,20,0.18)] backdrop-blur-sm">
-              <span className="text-2xl font-semibold tracking-[-0.02em]">{overviewHeroProgrammeLabel}</span>
-              <span className="mt-1 text-sm text-emerald-50/80">Dashboard Overview</span>
+            <div className="inline-flex w-fit min-w-[138px] flex-col rounded-[18px] bg-white/12 px-3 py-2 text-white shadow-[0_14px_32px_rgba(4,45,20,0.18)] backdrop-blur-sm sm:min-w-[170px] sm:rounded-[24px] sm:px-5 sm:py-4">
+              <span className="text-lg font-semibold tracking-[-0.02em] sm:text-2xl">{overviewHeroProgrammeLabel}</span>
+              <span className="mt-0.5 text-xs text-emerald-50/80 sm:mt-1 sm:text-sm">Dashboard Overview</span>
             </div>
           </div>
         </div>

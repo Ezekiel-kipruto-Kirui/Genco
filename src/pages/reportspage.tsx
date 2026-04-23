@@ -49,7 +49,7 @@ import {
 } from "@/components/ui/table";
 import { toast } from "@/hooks/use-toast";
 import { fetchAnalysisSummary } from "@/lib/analysis";
-import { resolveAccessibleProgrammes, resolveActiveProgramme } from "@/lib/programme-access";
+import { PROGRAMME_OPTIONS, resolveAccessibleProgrammes, resolveActiveProgramme } from "@/lib/programme-access";
 
 // --- Constants ---
 const COLORS = {
@@ -794,7 +794,7 @@ function computeLocalPerformanceReportData(
 
   return {
     scope: "performance-report",
-    resolvedProgrammes: includeAllProgrammes ? ["KPMD", "RANGE"] : [requestedProgramme],
+    resolvedProgrammes: includeAllProgrammes ? [...PROGRAMME_OPTIONS] : [requestedProgramme],
     totalFarmers: filteredFarmers.length,
     maleFarmers,
     femaleFarmers,
@@ -1626,8 +1626,10 @@ const PerformanceReport = () => {
   }, [fetchStaffMarks]);
 
   useEffect(() => {
+    const isDirectProgrammeSelection =
+      activeProgram === ALL_PROGRAMMES_VALUE || accessibleProgrammes.includes(activeProgram);
     const nextProgramme = canViewAllReportProgrammes ?
-      (activeProgram === ALL_PROGRAMMES_VALUE || activeProgram === "KPMD" || activeProgram === "RANGE" ?
+      (isDirectProgrammeSelection ?
         activeProgram :
         ALL_PROGRAMMES_VALUE) :
       resolveActiveProgramme(activeProgram, accessibleProgrammes);
@@ -1848,8 +1850,9 @@ const PerformanceReport = () => {
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value={ALL_PROGRAMMES_VALUE}>Programme</SelectItem>
-                          <SelectItem value="RANGE">RANGE</SelectItem>
-                          <SelectItem value="KPMD">KPMD</SelectItem>
+                          {accessibleProgrammes.map((programme) => (
+                            <SelectItem key={programme} value={programme}>{programme}</SelectItem>
+                          ))}
                         </SelectContent>
                       </Select>
                     )}

@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { canViewAllProgrammes, isChiefAdmin } from "@/contexts/authhelper";
+import { PROGRAMME_OPTIONS, normalizeProgramme, resolveAccessibleProgrammes } from "@/lib/programme-access";
 
 import { 
   Users, 
@@ -61,15 +62,7 @@ interface ActivityForm {
   location: string;
 }
 
-const PROGRAMME_OPTIONS = ["KPMD", "RANGE"] as const;
 const UNASSIGNED_PROGRAMME_LABEL = "Unassigned";
-
-const normalizeProgramme = (programme: string | null | undefined): string => {
-  if (!programme) return "";
-  const normalized = programme.trim().toUpperCase();
-  if (normalized === "KPMD" || normalized === "RANGE") return normalized;
-  return programme.trim();
-};
 
 const getProgrammeLabel = (programme: string | null | undefined): string =>
   normalizeProgramme(programme) || UNASSIGNED_PROGRAMME_LABEL;
@@ -85,9 +78,6 @@ const getActivityTimestamp = (activity: Partial<Activity> | null | undefined): n
 const sortActivitiesByLatest = (records: Activity[]): Activity[] =>
   [...records].sort((a, b) => getActivityTimestamp(b) - getActivityTimestamp(a));
 
-const getAssignedProgrammes = (
-  allowedProgrammes: Record<string, boolean> | null | undefined
-): string[] => PROGRAMME_OPTIONS.filter((programme) => allowedProgrammes?.[programme] === true);
 
 const filterActivitiesByProgrammeAccess = (
   records: Activity[],
@@ -130,7 +120,7 @@ const ActivitiesPage = () => {
     [allowedProgrammes, userRole, userAttribute]
   );
   const accessibleProgrammes = useMemo(
-    () => userCanViewAllProgrammeData ? [...PROGRAMME_OPTIONS] : getAssignedProgrammes(allowedProgrammes),
+    () => resolveAccessibleProgrammes(userCanViewAllProgrammeData, allowedProgrammes),
     [allowedProgrammes, userCanViewAllProgrammeData]
   );
   const hasProgrammeAccess = userCanViewAllProgrammeData || accessibleProgrammes.length > 0;

@@ -826,8 +826,8 @@ const SalesReport = () => {
 
   useEffect(() => {
     if (userCanViewAllProgrammeData) {
-      setActiveProgram((prev) => (prev === "KPMD" || prev === "RANGE" ? prev : "KPMD"));
-      setSelectedProgramme((prev) => (prev === "KPMD" || prev === "RANGE" ? prev : "KPMD"));
+      setActiveProgram((prev) => (prev && accessibleProgrammes.includes(prev) ? prev : accessibleProgrammes[0] || ""));
+      setSelectedProgramme((prev) => (prev && accessibleProgrammes.includes(prev) ? prev : accessibleProgrammes[0] || ""));
       return;
     }
 
@@ -1153,8 +1153,9 @@ const formatNumber = (val?: number | null) =>
                             <SelectValue placeholder="Select" />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="KPMD">KPMD</SelectItem>
-                            <SelectItem value="RANGE">RANGE</SelectItem>
+                            {accessibleProgrammes.map((programme) => (
+                              <SelectItem key={programme} value={programme}>{programme}</SelectItem>
+                            ))}
                           </SelectContent>
                         </Select>
                       )}

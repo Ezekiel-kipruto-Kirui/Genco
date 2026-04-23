@@ -119,10 +119,11 @@ const EXPORT_HEADERS = [
   "Updated At",
 ];
 
-// UPDATED: Now only contains KPMD and RANGE
+// Available programmes assignable to users
 const AVAILABLE_PROGRAMMES = [
   "KPMD", 
-  "RANGE"
+  "RANGE",
+  "MTLDK",
 ];
 const USER_ATTRIBUTE_OPTIONS = [
   "Chief Executive Officer",

@@ -1,11 +1,11 @@
-export const PROGRAMME_OPTIONS = ["KPMD", "RANGE"] as const;
+export const PROGRAMME_OPTIONS = ["KPMD", "RANGE", "MTLDK"] as const;
 
 export type ProgrammeOption = (typeof PROGRAMME_OPTIONS)[number];
 
 export const normalizeProgramme = (value: unknown): ProgrammeOption | "" => {
   if (typeof value !== "string") return "";
   const normalized = value.trim().toUpperCase();
-  if (normalized === "KPMD" || normalized === "RANGE") return normalized;
+  if (normalized === "KPMD" || normalized === "RANGE" || normalized === "MTLDK") return normalized;
   return "";
 };
 
@@ -18,9 +18,8 @@ export const resolveAccessibleProgrammes = (
   canViewAllProgrammeData: boolean,
   allowedProgrammes: Record<string, boolean> | null | undefined
 ): ProgrammeOption[] => {
-  const assignedProgrammes = getAssignedProgrammes(allowedProgrammes);
-  if (assignedProgrammes.length > 0) return assignedProgrammes;
-  return canViewAllProgrammeData ? [...PROGRAMME_OPTIONS] : [];
+  if (canViewAllProgrammeData) return [...PROGRAMME_OPTIONS];
+  return getAssignedProgrammes(allowedProgrammes);
 };
 
 export const resolveActiveProgramme = (

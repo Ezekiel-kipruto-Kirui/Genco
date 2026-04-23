@@ -14,6 +14,7 @@ import {
   canViewAllProgrammes,
   isChiefAdmin,
 } from "@/contexts/authhelper";
+import { PROGRAMME_OPTIONS, normalizeProgramme as normalizeProg, resolveAccessibleProgrammes } from "@/lib/programme-access";
 import { 
   Users, 
   MapPin, 
@@ -113,20 +114,10 @@ const VACCINE_OPTIONS = [
   "Rift Valley Fever", "Brucellosis", "Foot and Mouth Disease"
 ];
 
-const PROGRAMME_OPTIONS = ["KPMD", "RANGE"];
-type ProgrammeView = "ALL" | "KPMD" | "RANGE";
+type ProgrammeView = "ALL" | "KPMD" | "RANGE" | "MTLDK";
 const FARMERS_PER_PAGE = 20;
 
-const normalizeProgramme = (programme: string | null | undefined): string => {
-  if (!programme) return "";
-  const normalized = programme.trim().toUpperCase();
-  if (normalized === "KPMD" || normalized === "RANGE") return normalized;
-  return programme.trim();
-};
-
-const getAssignedProgrammes = (
-  allowedProgrammes: Record<string, boolean> | null | undefined
-): string[] => PROGRAMME_OPTIONS.filter((programme) => allowedProgrammes?.[programme] === true);
+const normalizeProgramme = (programme: string | null | undefined): string => normalizeProg(programme);
 
 const filterActivitiesByProgrammeAccess = (
   records: AnimalHealthActivity[],
@@ -253,14 +244,14 @@ const AnimalHealthPage = () => {
     [userCanViewAllProgrammeData]
   );
   const accessibleProgrammes = useMemo(
-    () => userCanReadAllAnimalHealthProgrammes ? [...PROGRAMME_OPTIONS] : getAssignedProgrammes(allowedProgrammes),
+    () => resolveAccessibleProgrammes(userCanReadAllAnimalHealthProgrammes, allowedProgrammes),
     [allowedProgrammes, userCanReadAllAnimalHealthProgrammes]
   );
   const hasProgrammeAccess = userCanReadAllAnimalHealthProgrammes || accessibleProgrammes.length > 0;
-  const defaultProgrammeView = useMemo<ProgrammeView>(() => {
-    if (userCanReadAllAnimalHealthProgrammes) return "KPMD";
-    return (accessibleProgrammes[0] || "KPMD") as Exclude<ProgrammeView, "ALL">;
-  }, [accessibleProgrammes, userCanReadAllAnimalHealthProgrammes]);
+  const defaultProgrammeView = useMemo<ProgrammeView>(
+    () => (accessibleProgrammes[0] || "KPMD") as Exclude<ProgrammeView, "ALL">,
+    [accessibleProgrammes]
+  );
   const animalHealthCacheKey = useMemo(
     () =>
       cacheKey(
@@ -658,6 +649,7 @@ const AnimalHealthPage = () => {
   const activitiesByProgramme = useMemo(() => ({
     KPMD: filteredActivities.filter((activity) => activity.programme === "KPMD"),
     RANGE: filteredActivities.filter((activity) => activity.programme === "RANGE"),
+    MTLDK: filteredActivities.filter((activity) => activity.programme === "MTLDK"),
   }), [filteredActivities]);
 
   const displayedActivities = useMemo(() => {

@@ -17,7 +17,7 @@ import { Download, Users, MapPin, Eye, Calendar, Scale, Phone, CreditCard, Edit,
 import { toast, useToast } from "@/hooks/use-toast";
 import { canViewAllProgrammes, isChiefAdmin } from "@/contexts/authhelper";
 import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
-import { resolveAccessibleProgrammes, resolveActiveProgramme } from "@/lib/programme-access";
+import { PROGRAMME_OPTIONS, resolveAccessibleProgrammes, resolveActiveProgramme } from "@/lib/programme-access";
 
 // Types
 interface OfftakeData {
@@ -88,7 +88,6 @@ interface WeightEditForm {
 
 // Constants
 const PAGE_LIMIT = 15;
-const AVAILABLE_PROGRAMS = ["KPMD", "RANGE"];
 
 // --- HELPER: Clean Number for Currency/Weight ---
 const cleanNumber = (val: string): number => {
@@ -1605,10 +1604,10 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
     };
   }, []);
 
-  const availableProgramsForSelect = useMemo(() => {
-    if (userCanViewAllProgrammeData) return AVAILABLE_PROGRAMS;
-    return accessibleProgrammes;
-  }, [accessibleProgrammes, userCanViewAllProgrammeData]);
+  const availableProgramsForSelect = useMemo(
+    () => resolveAccessibleProgrammes(userCanViewAllProgrammeData, allowedProgrammes),
+    [allowedProgrammes, userCanViewAllProgrammeData]
+  );
 
   const StatsCard = useMemo(() => ({ title, value, icon: Icon, description, subValue }: any) => (
     <Card className="bg-white text-slate-900 shadow-lg border border-gray-200 relative overflow-hidden">

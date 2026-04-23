@@ -1,3 +1,5 @@
+import { PROGRAMME_OPTIONS } from "@/lib/programme-access";
+
 const normalizeText = (value: string) => {
   const normalized = value
     .toLowerCase()
@@ -44,7 +46,6 @@ const FULL_ACCESS_ATTRIBUTE_IDENTIFIERS = new Set([
   "monitoring and evaluation officer",
   "monitoring & evaluation officer",
 ]);
-const PROGRAMME_OPTIONS = ["KPMD", "RANGE"] as const;
 const DISPLAY_NAME_MAP = new Map<string, string>([
   ["admin", "Admin"],
   ["chief-admin", "Chief Admin"],
@@ -178,13 +179,13 @@ export const canViewAllProgrammes = (
     isFullAccessAttribute(principal) ||
     isOfftakeOfficer(principal)
   );
-  if (!hasRoleBasedFullAccess) return false;
+  // Role-based full access grants all programmes regardless of explicit assignments
+  if (hasRoleBasedFullAccess) return true;
 
+  // For other roles, require all programmes to be explicitly granted
   const assignedProgrammes = PROGRAMME_OPTIONS.filter(
     (programme) => allowedProgrammes?.[programme] === true
   );
-
-  if (assignedProgrammes.length === 0) return true;
   return assignedProgrammes.length >= PROGRAMME_OPTIONS.length;
 };
 

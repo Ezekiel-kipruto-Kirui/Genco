@@ -36,6 +36,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import * as XLSX from 'xlsx';
 import { canViewAllProgrammes, isChiefAdmin } from "@/contexts/authhelper";
 import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
+import { resolveAccessibleProgrammes, resolveActiveProgramme } from "@/lib/programme-access";
 
 // --- Constants ---
 const COLLECTION_NAME = "Onboarding";
@@ -64,7 +65,7 @@ interface OnboardingData {
   comment: string;
   staff: StaffData[];
   farmers: FarmerData[];
-  programme: 'KPMD' | 'RANGE'; 
+  programme: 'KPMD' | 'RANGE' | 'MTLDK'; 
   createdAt?: Date;
   status: 'pending' | 'completed';
 }
@@ -92,7 +93,7 @@ const normalizeOnboardingRecord = (record: Partial<OnboardingData>): OnboardingD
   comment: record.comment || "",
   staff: Array.isArray(record.staff) ? record.staff : [],
   farmers: Array.isArray(record.farmers) ? record.farmers : [],
-  programme: record.programme === "RANGE" ? "RANGE" : "KPMD",
+  programme: record.programme === "RANGE" || record.programme === "MTLDK" ? record.programme : "KPMD",
   createdAt: record.createdAt ? new Date(record.createdAt) : undefined,
   status: record.status === "completed" ? "completed" : "pending",
 });
@@ -369,7 +370,7 @@ const OnboardingPage = () => {
     comment: "",
     date: "",
     status: 'pending' as 'pending' | 'completed',
-    programme: 'KPMD' as 'KPMD' | 'RANGE'
+    programme: 'KPMD' as 'KPMD' | 'RANGE' | 'MTLDK'
   });
   const [staff, setStaff] = useState<StaffData[]>([{ name: "", role: "" }]);
   const [farmers, setFarmers] = useState<FarmerData[]>([
@@ -455,31 +456,11 @@ const OnboardingPage = () => {
     });
   };
 
-  // --- Permission Logic (Mimicking Reference) ---
   useEffect(() => {
-    if (!userRole) {
-      setAvailablePrograms([]);
-      setActiveProgram("");
-      return;
-    }
-
-    if (userCanViewAllProgrammeData) {
-      setAvailablePrograms(["RANGE", "KPMD"]);
-      if (!activeProgram) setActiveProgram("KPMD"); // Default for admin
-      return;
-    }
-
-    const programs = Object.keys(allowedProgrammes || {}).filter(
-      (key) => allowedProgrammes?.[key] === true
-    );
-    setAvailablePrograms(programs);
-
-    if (programs.length > 0 && !programs.includes(activeProgram)) {
-      setActiveProgram(programs[0]);
-    } else if (programs.length === 0) {
-      setActiveProgram("");
-    }
-  }, [userRole, allowedProgrammes, activeProgram, userCanViewAllProgrammeData]);
+    const accessible = resolveAccessibleProgrammes(userCanViewAllProgrammeData, allowedProgrammes);
+    setAvailablePrograms(accessible);
+    setActiveProgram((prev) => resolveActiveProgramme(prev, accessible));
+  }, [allowedProgrammes, userCanViewAllProgrammeData]);
 
   const fetchOnboardingData = async () => {
     try {
@@ -731,7 +712,7 @@ const OnboardingPage = () => {
 
   const resetForm = () => {
     // Default to active program when opening new form
-    const defaultProg = activeProgram as 'KPMD' | 'RANGE' || 'KPMD';
+    const defaultProg = activeProgram as 'KPMD' | 'RANGE' | 'MTLDK' || 'KPMD';
     
     setOnboardingForm({ id: "", topic: "", comment: "", date: "", status: 'pending', programme: defaultProg });
     setStaff([{ name: "", role: "" }]);
@@ -1040,7 +1021,7 @@ const OnboardingPage = () => {
                         <Label>PROJECT *</Label>
                         <Select 
                           value={onboardingForm.programme} 
-                          onValueChange={(val: 'KPMD' | 'RANGE') => setOnboardingForm(p => ({ ...p, programme: val }))}
+                          onValueChange={(val: 'KPMD' | 'RANGE' | 'MTLDK') => setOnboardingForm(p => ({ ...p, programme: val }))}
                           disabled={!!onboardingForm.id} // Lock programme on edit usually
                         >
                           <SelectTrigger className="w-full">
@@ -1049,6 +1030,7 @@ const OnboardingPage = () => {
                           <SelectContent>
                             <SelectItem value="KPMD">KPMD</SelectItem>
                             <SelectItem value="RANGE">RANGE</SelectItem>
+                            <SelectItem value="MTLDK">MTLDK</SelectItem>
                           </SelectContent>
                         </Select>
                       </div>

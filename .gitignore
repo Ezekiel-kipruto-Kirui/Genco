@@ -30,3 +30,5 @@ functions/.env
 functions/.env.*
 !.env.example
 !functions/.env.example
+src/pages/cloude.txt
+test-claude.mjs
