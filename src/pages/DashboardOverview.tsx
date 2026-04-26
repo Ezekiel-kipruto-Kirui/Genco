@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+﻿import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Activity,
@@ -86,6 +86,15 @@ type RecentActivity = {
   participants: number;
 };
 
+type RecentFarmer = {
+  id: string;
+  name: string;
+  county: string;
+  registeredAt: string;
+  gender: string;
+  goats: number;
+};
+
 interface OverviewSummaryData {
   stats: {
     totalFarmers: number;
@@ -106,6 +115,7 @@ interface OverviewSummaryData {
   countyCoverage: CountyCoverage[];
   recentLocations: RecentLocation[];
   recentActivities: RecentActivity[];
+  recentFarmers: RecentFarmer[];
   pendingActivitiesCount: number;
 }
 
@@ -142,16 +152,25 @@ const overviewHeroDateFormatter = new Intl.DateTimeFormat("en", {
   month: "long",
   year: "numeric",
 });
+const farmerRegisteredDateFormatter = new Intl.DateTimeFormat("en", {
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+});
+
 const createEmptyYearlyTrend = (): YearlyTrend => ({
   years: [],
   data: MONTH_LABELS.map((name) => ({ name })),
 });
+
 const EMPTY_DONUT_SEGMENTS: DonutSegment[] = [];
+
 const EMPTY_COUNTY_COVERAGE: CountyCoverage[] = COUNTY_BAR_COLORS.map((color, index) => ({
   name: `County ${index + 1}`,
   value: 0,
   color,
 }));
+
 const EMPTY_OVERVIEW_DATA: OverviewSummaryData = {
   stats: {
     totalFarmers: 0,
@@ -175,9 +194,12 @@ const EMPTY_OVERVIEW_DATA: OverviewSummaryData = {
   countyCoverage: EMPTY_COUNTY_COVERAGE,
   recentLocations: [],
   recentActivities: [],
+  recentFarmers: [],
   pendingActivitiesCount: 0,
 };
+
 const OVERVIEW_CACHE_TTL_MS = 10 * 60 * 1000;
+
 const buildOverviewCacheKey = (
   userId: string | null | undefined,
   programme: string | null | undefined,
@@ -363,6 +385,34 @@ const getFarmerVaccinationDate = (record: Record<string, unknown>) =>
     record.updated_at,
   );
 
+const getFarmerRegistrationDate = (record: Record<string, unknown>) =>
+  parseDate(
+    record.createdAt ??
+    record.created_at ??
+    record.registrationDate ??
+    record.registration_date ??
+    record.registeredAt ??
+    record.timestamp ??
+    record.date,
+  );
+
+const getFarmerDisplayName = (record: Record<string, unknown>): string => {
+  const directName =
+    typeof record.fullName === "string" && record.fullName.trim() ? record.fullName.trim() :
+    typeof record.name === "string" && record.name.trim() ? record.name.trim() :
+    typeof record.farmerName === "string" && record.farmerName.trim() ? record.farmerName.trim() :
+    "";
+
+  if (directName) return directName;
+
+  const firstName = typeof record.firstName === "string" ? record.firstName.trim() : "";
+  const lastName = typeof record.lastName === "string" ? record.lastName.trim() : "";
+  const combinedName = `${firstName} ${lastName}`.trim();
+  if (combinedName) return combinedName;
+
+  return "Unknown farmer";
+};
+
 const getFarmerVisitDate = (record: Record<string, unknown>) =>
   parseDate(
     record.lastVisitedAt ??
@@ -373,7 +423,9 @@ const getFarmerVisitDate = (record: Record<string, unknown>) =>
     record.vaccinationDate ??
     record.vaccination_date ??
     record.createdAt ??
-    record.registrationDate,
+    record.created_at ??
+    record.registrationDate ??
+    record.registration_date,
   );
 
 const getSeriesColor = (index: number): string => SERIES_COLORS[index % SERIES_COLORS.length];
@@ -459,7 +511,7 @@ const buildAnnualComparison = (
   const goatsPurchasedByYear = new Map<number, number>();
 
   for (const farmer of farmers) {
-    const date = parseDate(farmer.createdAt || farmer.registrationDate);
+    const date = getFarmerRegistrationDate(farmer);
     if (!date) continue;
 
     const year = date.getFullYear();
@@ -537,6 +589,27 @@ const buildRecentLocations = (farmers: OverviewRecord[]): RecentLocation[] => {
     .slice(0, 4)
     .map(({ timestamp, ...entry }) => entry);
 };
+
+const buildRecentFarmers = (farmers: OverviewRecord[]): RecentFarmer[] =>
+  [...farmers]
+    .map((record, index) => {
+      const registeredAt = getFarmerRegistrationDate(record);
+      return {
+        id: String(record.id || record.farmerId || `farmer-${index + 1}`),
+        name: getFarmerDisplayName(record),
+        county: String(record.county || record.region || "").trim() || "Unknown county",
+        registeredAt: registeredAt ? registeredAt.toISOString() : "",
+        gender: String(record.gender || "").trim(),
+        goats: getFarmerGoatTotal(record),
+      };
+    })
+    .filter((record) => parseDate(record.registeredAt))
+    .sort(
+      (left, right) =>
+        (parseDate(right.registeredAt)?.getTime() || 0) -
+        (parseDate(left.registeredAt)?.getTime() || 0),
+    )
+    .slice(0, 5);
 
 const buildRecentActivities = (activities: OverviewRecord[]): RecentActivity[] =>
   [...activities]
@@ -629,11 +702,14 @@ const buildOverviewSummaryFromRecords = ({
     countyCoverage: countyCoverage.length > 0 ? countyCoverage : EMPTY_COUNTY_COVERAGE,
     recentLocations: buildRecentLocations(farmers),
     recentActivities: buildRecentActivities(activities),
+    recentFarmers: buildRecentFarmers(farmers),
     pendingActivitiesCount: activities.filter(
       (record) => String(record.status || "").trim().toLowerCase() === "pending",
     ).length,
   };
 };
+
+// ── Formatting helpers ──────────────────────────────────────────────────
 
 const toPercentage = (value: number, total: number): number => {
   if (total <= 0) return 0;
@@ -791,6 +867,22 @@ const sanitizeRecentLocations = (value: unknown): RecentLocation[] => {
   });
 };
 
+const sanitizeRecentFarmers = (value: unknown): RecentFarmer[] => {
+  if (!Array.isArray(value)) return [];
+
+  return value.map((item, index) => {
+    const farmer = item && typeof item === "object" ? item as Partial<RecentFarmer> : {};
+    return {
+      id: typeof farmer.id === "string" && farmer.id.trim() ? farmer.id : `farmer-${index + 1}`,
+      name: typeof farmer.name === "string" && farmer.name.trim() ? farmer.name : "Unknown farmer",
+      county: typeof farmer.county === "string" && farmer.county.trim() ? farmer.county : "Unknown county",
+      registeredAt: typeof farmer.registeredAt === "string" ? farmer.registeredAt : "",
+      gender: typeof farmer.gender === "string" && farmer.gender.trim() ? farmer.gender : "",
+      goats: getSafeNumber(farmer.goats),
+    };
+  });
+};
+
 const sanitizeRecentActivities = (value: unknown): RecentActivity[] => {
   if (!Array.isArray(value)) return [];
 
@@ -851,6 +943,7 @@ const sanitizeOverviewSummary = (value: unknown): OverviewSummaryData => {
     countyCoverage: sanitizeCountyCoverage(data.countyCoverage),
     recentLocations: sanitizeRecentLocations(data.recentLocations),
     recentActivities: sanitizeRecentActivities(data.recentActivities),
+    recentFarmers: sanitizeRecentFarmers((data as Partial<OverviewSummaryData> & { recentFarmers?: unknown }).recentFarmers),
     pendingActivitiesCount: getSafeNumber(data.pendingActivitiesCount),
   };
 };
@@ -873,23 +966,60 @@ const hasMeaningfulOverviewData = (value: unknown): boolean => {
     (data.vaccinationTrend.years.length > 0 && data.vaccinationTrend.data.some((point) => data.vaccinationTrend.years.some((year) => getSafeNumber(point[String(year)]) > 0))) ||
     data.countyCoverage.some((item) => item.value > 0) ||
     data.recentLocations.length > 0 ||
-    data.recentActivities.length > 0
+    data.recentActivities.length > 0 ||
+    data.recentFarmers.length > 0
   );
 };
 
+const mergeOverviewSummary = (
+  primary: unknown,
+  ...fallbacks: unknown[]
+): OverviewSummaryData => {
+  const base = sanitizeOverviewSummary(primary);
+  const normalizedFallbacks = fallbacks.map((fallback) => sanitizeOverviewSummary(fallback));
+
+  const firstNonEmptyRecentFarmers = normalizedFallbacks.find((fallback) => fallback.recentFarmers.length > 0)?.recentFarmers;
+  const firstNonEmptyRecentLocations = normalizedFallbacks.find((fallback) => fallback.recentLocations.length > 0)?.recentLocations;
+  const firstNonEmptyRecentActivities = normalizedFallbacks.find((fallback) => fallback.recentActivities.length > 0)?.recentActivities;
+
+  return {
+    ...base,
+    recentFarmers: base.recentFarmers.length > 0 ? base.recentFarmers : (firstNonEmptyRecentFarmers ?? []),
+    recentLocations: base.recentLocations.length > 0 ? base.recentLocations : (firstNonEmptyRecentLocations ?? []),
+    recentActivities: base.recentActivities.length > 0 ? base.recentActivities : (firstNonEmptyRecentActivities ?? []),
+  };
+};
+
 const formatWholeNumber = (value: unknown) => getSafeNumber(value).toLocaleString();
+
+const formatCompactNumber = (value: unknown): string => {
+  const num = getSafeNumber(value);
+  if (num >= 1_000_000) return `${(num / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
+  if (num >= 1_000) return `${(num / 1_000).toFixed(1).replace(/\.0$/, "")}K`;
+  return formatWholeNumber(num);
+};
+
 const formatProgressLabel = (value: unknown, description: string) =>
   description ? `${getSafeNumber(value).toFixed(1)}% ${description}` : `${getSafeNumber(value).toFixed(1)}%`;
+
 const formatActivityDate = (value: string): string => {
   const date = parseDate(value);
   if (!date) return "Unknown date";
   return activityDateFormatter.format(date);
 };
+
+const formatFarmerRegisteredDate = (value: string): string => {
+  const date = parseDate(value);
+  if (!date) return "Unknown date";
+  return farmerRegisteredDateFormatter.format(date);
+};
+
 const formatActivityStatus = (value: string): string => {
   const normalized = value.trim().toLowerCase();
   if (!normalized) return "Pending";
   return normalized.charAt(0).toUpperCase() + normalized.slice(1);
 };
+
 const formatRelativeTime = (value: string): string => {
   const date = parseDate(value);
   if (!date) return "Unknown";
@@ -909,6 +1039,8 @@ const formatRelativeTime = (value: string): string => {
 
   return "just now";
 };
+
+// ── Shared UI primitives ────────────────────────────────────────────────
 
 const TopMetricCard = ({
   title,
@@ -935,7 +1067,7 @@ const TopMetricCard = ({
       <div className="min-w-0 space-y-1.5">
         <p className={`text-sm font-medium tracking-[-0.02em] ${SECONDARY_TEXT_CLASS}`}>{title}</p>
         <p className="text-[21px] font-semibold leading-none tracking-[-0.04em] text-slate-950 sm:text-[30px]">
-          {formatWholeNumber(value)}
+          {formatCompactNumber(value)}
         </p>
       </div>
       <div className="mt-0.5 shrink-0">{icon}</div>
@@ -974,6 +1106,8 @@ const OverviewPanel = ({
     {children}
   </div>
 );
+
+// ── Chart panels ────────────────────────────────────────────────────────
 
 const YearTrendPanel = ({
   title,
@@ -1242,6 +1376,156 @@ const DonutPanel = ({
   );
 };
 
+const CountiesCoveredPanel = ({ data }: { data: CountyCoverage[] }) => {
+  const maxValue = Math.max(...data.map((item) => item.value), 1);
+
+  return (
+    <OverviewPanel title="COUNTIES COVERED" className="h-full min-h-[360px]">
+      <div className="mt-10 space-y-5">
+        {data.map((item, index) => (
+          <div key={`${item.name}-${index}`} className="space-y-2">
+            <div className="flex items-center justify-between gap-3 text-xs uppercase tracking-[0.12em] text-gray-400">
+              <span className="truncate">{item.name}</span>
+              <span>{formatWholeNumber(item.value)}</span>
+            </div>
+            <div className="h-4 rounded-full bg-slate-100">
+              <div
+                className="h-full rounded-full"
+                style={{
+                  width: `${(item.value / maxValue) * 100}%`,
+                  backgroundColor: item.color,
+                }}
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+    </OverviewPanel>
+  );
+};
+
+// ── NEW: Recently Registered Farmers panel ──────────────────────────────
+
+const RecentFarmersPanel = ({ farmers }: { farmers: RecentFarmer[] }) => (
+  <div className="flex h-full min-h-[360px] flex-col rounded-[24px] border border-slate-200 bg-white p-6 shadow-[0_10px_35px_rgba(15,23,42,0.04)]">
+    <div className="flex items-start justify-between gap-4">
+      <div>
+        <h2 className="text-[17px] font-semibold tracking-[-0.02em] text-slate-900">
+          Recently Registered Farmers
+        </h2>
+        <p className={`mt-0.5 text-xs ${SECONDARY_TEXT_CLASS}`}>Latest 5 registrations</p>
+      </div>
+      <Link
+        to="/dashboard/farmers"
+        className={`inline-flex items-center gap-1 text-xs font-medium ${SECONDARY_TEXT_CLASS} transition-colors hover:text-gray-600`}
+      >
+        <span>View All</span>
+        <ArrowRight className="h-3 w-3" />
+      </Link>
+    </div>
+
+    {farmers.length > 0 ? (
+      <div className="mt-5 flex-1 overflow-hidden">
+        {/* Desktop table */}
+        <div className="hidden sm:block overflow-hidden rounded-2xl border border-slate-100">
+          <div className={`grid grid-cols-[1.4fr_1fr_0.8fr_0.8fr] gap-4 bg-slate-50 px-5 py-3 text-xs font-semibold uppercase tracking-[0.06em] ${SECONDARY_TEXT_CLASS}`}>
+            <span>Farmer Name</span>
+            <span>County</span>
+            <span>Goats</span>
+            <span>Registered</span>
+          </div>
+
+          {farmers.map((farmer, index) => {
+            const genderInitial = farmer.gender.trim().toLowerCase();
+            const avatarBg =
+              genderInitial === "female"
+                ? "bg-pink-100 text-pink-600"
+                : genderInitial === "male"
+                  ? "bg-blue-100 text-blue-600"
+                  : "bg-slate-100 text-slate-500";
+
+            return (
+              <div
+                key={`${farmer.id}-${farmer.registeredAt}-${index}`}
+                className={`grid grid-cols-[1.4fr_1fr_0.8fr_0.8fr] gap-4 border-t border-slate-100 px-5 py-3.5 text-sm ${SECONDARY_TEXT_CLASS}`}
+              >
+                <div className="flex items-center gap-3">
+                  <span
+                    className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold ${avatarBg}`}
+                  >
+                    {farmer.name.charAt(0).toUpperCase()}
+                  </span>
+                  <span className="truncate font-medium text-slate-800">
+                    {farmer.name}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <MapPin className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                  <span className="truncate">{farmer.county}</span>
+                </div>
+                <div className="flex items-center font-semibold text-slate-700">
+                  {formatWholeNumber(farmer.goats)}
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <Clock3 className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                  <span className="text-xs">{formatFarmerRegisteredDate(farmer.registeredAt)}</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Mobile card list */}
+        <div className="space-y-3 sm:hidden">
+          {farmers.map((farmer, index) => {
+            const genderInitial = farmer.gender.trim().toLowerCase();
+            const avatarBg =
+              genderInitial === "female"
+                ? "bg-pink-100 text-pink-600"
+                : genderInitial === "male"
+                  ? "bg-blue-100 text-blue-600"
+                  : "bg-slate-100 text-slate-500";
+
+            return (
+              <div
+                key={`${farmer.id}-${farmer.registeredAt}-${index}`}
+                className="flex items-center gap-3 rounded-xl border border-slate-100 bg-slate-50/50 px-4 py-3"
+              >
+                <span
+                  className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold ${avatarBg}`}
+                >
+                  {farmer.name.charAt(0).toUpperCase()}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-semibold text-slate-800">{farmer.name}</p>
+                  <div className={`mt-0.5 flex items-center gap-3 text-xs ${SECONDARY_TEXT_CLASS}`}>
+                    <span className="flex items-center gap-1">
+                      <MapPin className="h-3 w-3" />
+                      {farmer.county}
+                    </span>
+                    <span className="font-medium text-slate-600">
+                      {formatWholeNumber(farmer.goats)} goats
+                    </span>
+                  </div>
+                </div>
+                <span className={`shrink-0 text-[11px] ${SECONDARY_TEXT_CLASS}`}>
+                  {formatRelativeTime(farmer.registeredAt)}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    ) : (
+      <div className={`flex flex-1 items-center justify-center text-sm ${SECONDARY_TEXT_CLASS}`}>
+        No recent registrations available yet.
+      </div>
+    )}
+  </div>
+);
+
+// ── Existing side-panels ────────────────────────────────────────────────
+
 const RecentLocationsPanel = ({ locations }: { locations: RecentLocation[] }) => (
   <div className="flex h-full min-h-[360px] flex-col rounded-[24px] border border-slate-200 bg-white p-6 shadow-[0_10px_35px_rgba(15,23,42,0.04)]">
     <h2 className="text-[17px] font-semibold tracking-[-0.02em] text-slate-900">Recently Visited Locations</h2>
@@ -1376,33 +1660,7 @@ const RecentActivitiesPanel = ({ activities }: { activities: RecentActivity[] })
   </div>
 );
 
-const CountiesCoveredPanel = ({ data }: { data: CountyCoverage[] }) => {
-  const maxValue = Math.max(...data.map((item) => item.value), 1);
-
-  return (
-    <OverviewPanel title="COUNTIES COVERED" className="h-full min-h-[360px]">
-      <div className="mt-10 space-y-5">
-        {data.map((item, index) => (
-          <div key={`${item.name}-${index}`} className="space-y-2">
-            <div className="flex items-center justify-between gap-3 text-xs uppercase tracking-[0.12em] text-gray-400">
-              <span className="truncate">{item.name}</span>
-              <span>{formatWholeNumber(item.value)}</span>
-            </div>
-            <div className="h-4 rounded-full bg-slate-100">
-              <div
-                className="h-full rounded-full"
-                style={{
-                  width: `${(item.value / maxValue) * 100}%`,
-                  backgroundColor: item.color,
-                }}
-              />
-            </div>
-          </div>
-        ))}
-      </div>
-    </OverviewPanel>
-  );
-};
+// ── Loading skeleton ────────────────────────────────────────────────────
 
 const OverviewLoading = () => (
   <div className="space-y-6">
@@ -1434,6 +1692,8 @@ const OverviewLoading = () => (
   </div>
 );
 
+// ── Main component ──────────────────────────────────────────────────────
+
 const DashboardOverview = () => {
   const { user, userRole, userAttribute, userName, allowedProgrammes, loading } = useAuth();
   const userCanViewAllProgrammeData = useMemo(
@@ -1450,7 +1710,10 @@ const DashboardOverview = () => {
     () => (userCanViewAllProgrammeData ? ["All", ...accessibleProgrammes] : accessibleProgrammes),
     [accessibleProgrammes, userCanViewAllProgrammeData],
   );
+
   const [selectedProgramme, setSelectedProgramme] = useState("");
+
+  // ── Local overview state ───────────────────────────────────────────────
   const [localOverviewState, setLocalOverviewState] = useState<{
     key: string;
     data: OverviewSummaryData | null;
@@ -1459,10 +1722,12 @@ const DashboardOverview = () => {
     data: null,
   });
   const [localOverviewLoading, setLocalOverviewLoading] = useState(false);
+
   const overviewCacheStorageKey = useMemo(
     () => buildOverviewCacheKey(user?.uid, selectedProgramme || null),
     [selectedProgramme, user?.uid],
   );
+
   const cachedOverviewData = useMemo(
     () => {
       if (!selectedProgramme) return null;
@@ -1471,9 +1736,11 @@ const DashboardOverview = () => {
     },
     [overviewCacheStorageKey, selectedProgramme],
   );
+
   const localOverviewData = localOverviewState.key === overviewCacheStorageKey ? localOverviewState.data : null;
   const hasImmediateOverviewData = Boolean(cachedOverviewData || localOverviewData);
 
+  // ── Programme initialisation effect ───────────────────────────────────
   useEffect(() => {
     if (!userRole && !userAttribute) {
       setSelectedProgramme("");
@@ -1492,6 +1759,7 @@ const DashboardOverview = () => {
     setSelectedProgramme((current) => resolveActiveProgramme(current, accessibleProgrammes));
   }, [accessibleProgrammes, userAttribute, userCanViewAllProgrammeData, userRole]);
 
+  // ── Sync local state when cache key or cached data changes ────────────
   useEffect(() => {
     if (!selectedProgramme) {
       setLocalOverviewState({ key: "", data: null });
@@ -1510,6 +1778,7 @@ const DashboardOverview = () => {
     });
   }, [cachedOverviewData, overviewCacheStorageKey, selectedProgramme]);
 
+  // ── Remote analytics query ────────────────────────────────────────────
   const remoteOverviewEnabled = USE_REMOTE_ANALYTICS && Boolean(selectedProgramme) && !loading;
 
   const overviewQuery = useQuery({
@@ -1529,9 +1798,16 @@ const DashboardOverview = () => {
   });
 
   const remoteOverviewData = overviewQuery.data as OverviewSummaryData | undefined;
-  const remoteOverviewHasData = hasMeaningfulOverviewData(remoteOverviewData);
+  const remoteOverviewSummary = sanitizeOverviewSummary(remoteOverviewData);
+  const remoteOverviewHasData = hasMeaningfulOverviewData(remoteOverviewSummary);
   const remoteOverviewHasUsableData = remoteOverviewHasData;
+  const remoteOverviewNeedsRecentFarmers =
+    remoteOverviewEnabled &&
+    !overviewQuery.isLoading &&
+    remoteOverviewHasUsableData &&
+    remoteOverviewSummary.recentFarmers.length === 0;
 
+  // ── Cache remote results ──────────────────────────────────────────────
   useEffect(() => {
     const remoteData = overviewQuery.data as OverviewSummaryData | undefined;
     if (!selectedProgramme || !remoteData) return;
@@ -1543,12 +1819,14 @@ const DashboardOverview = () => {
     });
   }, [overviewCacheStorageKey, overviewQuery.data, selectedProgramme]);
 
+  // ── Local fallback fetch ──────────────────────────────────────────────
   const shouldFetchLocalOverview =
     Boolean(selectedProgramme) &&
     (
       !remoteOverviewEnabled ||
       overviewQuery.isError ||
-      (remoteOverviewEnabled && !overviewQuery.isLoading && !remoteOverviewHasUsableData)
+      (remoteOverviewEnabled && !overviewQuery.isLoading && !remoteOverviewHasUsableData) ||
+      remoteOverviewNeedsRecentFarmers
     );
 
   useEffect(() => {
@@ -1622,13 +1900,20 @@ const DashboardOverview = () => {
     return () => {
       cancelled = true;
     };
-  }, [cachedOverviewData, hasImmediateOverviewData, overviewCacheStorageKey, selectedProgramme, shouldFetchLocalOverview]);
+  }, [
+    cachedOverviewData,
+    hasImmediateOverviewData,
+    overviewCacheStorageKey,
+    selectedProgramme,
+    shouldFetchLocalOverview,
+  ]);
 
-  const overviewData = sanitizeOverviewSummary(
-    (remoteOverviewHasUsableData ? remoteOverviewData : undefined) ??
-    localOverviewData ??
-    cachedOverviewData ??
-    EMPTY_OVERVIEW_DATA
+  // ── Resolved overview data ────────────────────────────────────────────
+  const overviewData = mergeOverviewSummary(
+    remoteOverviewHasUsableData ? remoteOverviewSummary : localOverviewData ?? cachedOverviewData ?? EMPTY_OVERVIEW_DATA,
+    localOverviewData,
+    cachedOverviewData,
+    EMPTY_OVERVIEW_DATA,
   );
 
   const stats = overviewData.stats ?? EMPTY_OVERVIEW_DATA.stats;
@@ -1639,12 +1924,14 @@ const DashboardOverview = () => {
   const registrationPercentage = toPercentage(registrationComparisonValue, stats.totalFarmers);
   const trainingPercentage = toPercentage(stats.trainedFarmers, stats.totalFarmers);
   const censusPercentage = toPercentage(stats.totalGoatsPurchased, stats.totalGoats);
+
   const hasOverviewData = Boolean(remoteOverviewHasUsableData || localOverviewData || cachedOverviewData);
   const isLoadingRemoteOverview =
     remoteOverviewEnabled &&
     !overviewQuery.isError &&
     overviewQuery.isLoading;
   const isLoadingData = !hasOverviewData && (isLoadingRemoteOverview || localOverviewLoading || shouldFetchLocalOverview);
+
   const overviewHeroDate = useMemo(() => new Date(), []);
   const overviewGreeting = useMemo(() => {
     const greetingName =
@@ -1654,14 +1941,13 @@ const DashboardOverview = () => {
       "System";
     return `${getGreetingLabel(overviewHeroDate)}, ${greetingName}!`;
   }, [overviewHeroDate, user?.displayName, user?.email, userName]);
+
   const overviewHeroProgrammeLabel = useMemo(() => {
     if (!selectedProgramme || selectedProgramme === "All") return "All Programmes";
     return selectedProgramme;
   }, [selectedProgramme]);
-  const overviewHeroSubtitle = useMemo(
-    () => `${overviewHeroProgrammeLabel} Dashboard - ${overviewHeroDateFormatter.format(overviewHeroDate)}`,
-    [overviewHeroDate, overviewHeroProgrammeLabel],
-  );
+
+  // ── Auth / loading guards ─────────────────────────────────────────────
 
   if (loading) {
     return (
@@ -1680,65 +1966,69 @@ const DashboardOverview = () => {
     );
   }
 
+  // ── Render ────────────────────────────────────────────────────────────
+
   return (
     <div className="min-h-screen bg-[#f5f6f7] px-3 py-3 sm:px-5 sm:py-5">
       <div className="mx-auto max-w-[1120px] space-y-4 sm:space-y-6">
-        <div className="relative overflow-hidden rounded-[22px] bg-gradient-to-r from-[#042d14] via-[#0a5d29] to-[#249654] px-4 py-2 text-white shadow-[0_24px_60px_rgba(4,45,20,0.22)] sm:rounded-[28px] sm:px-8 sm:py-7">
-          <div className="absolute inset-y-0 right-0 hidden w-1/3 bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.18),transparent_58%)] sm:block" />
-          <div className="absolute right-7 top-8 hidden h-20 w-20 rounded-[24px] bg-white/10 blur-sm sm:block" />
-          <div className="absolute right-20 top-12 hidden h-14 w-14 rounded-[22px] bg-white/8 sm:block" />
-          <div className="absolute right-32 top-6 hidden h-12 w-12 rounded-[20px] bg-white/6 sm:block" />
+        {/* ── Compact hero banner with inline programme selector ─── */}
+        <div className="relative overflow-hidden rounded-[16px] bg-gradient-to-r from-[#042d14] via-[#0a5d29] to-[#249654] px-4 py-3 text-white shadow-[0_12px_30px_rgba(4,45,20,0.18)] sm:rounded-[20px] sm:px-6 sm:py-4">
+          <div className="absolute inset-y-0 right-0 hidden w-1/3 bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.15),transparent_58%)] sm:block" />
 
-          <div className="relative flex flex-col gap-3 sm:gap-6 lg:flex-row lg:items-start lg:justify-between">
-            <div className="space-y-1.5 sm:space-y-3">
-              <h1 className="text-xl font-bold tracking-[-0.03em] text-white sm:text-4xl">
+          <div className="relative flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between lg:gap-6">
+            {/* Left: greeting */}
+            <div className="min-w-0 space-y-0.5 sm:space-y-1">
+              <h1 className="text-lg font-bold tracking-[-0.03em] text-white sm:text-2xl lg:text-3xl">
                 {overviewGreeting}
               </h1>
-              <p className="max-w-2xl text-xs text-emerald-50/90 sm:text-lg">
-                {overviewHeroSubtitle}
+              <p className="text-[11px] text-emerald-50/80 sm:text-sm">
+                {overviewHeroDateFormatter.format(overviewHeroDate)}
               </p>
             </div>
 
-            <div className="inline-flex w-fit min-w-[138px] flex-col rounded-[18px] bg-white/12 px-3 py-2 text-white shadow-[0_14px_32px_rgba(4,45,20,0.18)] backdrop-blur-sm sm:min-w-[170px] sm:rounded-[24px] sm:px-5 sm:py-4">
-              <span className="text-lg font-semibold tracking-[-0.02em] sm:text-2xl">{overviewHeroProgrammeLabel}</span>
-              <span className="mt-0.5 text-xs text-emerald-50/80 sm:mt-1 sm:text-sm">Dashboard Overview</span>
+            {/* Right: programme badge + selector inline */}
+            <div className="flex items-center gap-3">
+              {canSwitchProgrammes ? (
+                <div className="w-full min-w-[130px] max-w-[170px] sm:min-w-[150px] sm:max-w-[200px]">
+                  <Select value={selectedProgramme} onValueChange={setSelectedProgramme}>
+                    <SelectTrigger className="h-9 rounded-xl border-white/20 bg-white/12 px-3 text-sm text-white backdrop-blur-sm focus:ring-white/30 sm:h-10 sm:rounded-xl sm:px-4">
+                      <SelectValue placeholder="Select programme" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {programmeOptions.map((programme) => (
+                        <SelectItem key={programme} value={programme}>
+                          {programme}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              ) : null}
+              <div className="hidden shrink-0 rounded-2xl bg-white/12 px-4 py-2 shadow-[0_10px_24px_rgba(4,45,20,0.15)] backdrop-blur-sm sm:block">
+                <span className="text-sm font-semibold tracking-[-0.01em] sm:text-base">
+                  {overviewHeroProgrammeLabel}
+                </span>
+                <span className="mt-0.5 block text-[10px] text-emerald-50/70 sm:text-xs">
+                  Dashboard Overview
+                </span>
+              </div>
             </div>
           </div>
         </div>
 
-        <div className="flex flex-wrap items-end justify-end gap-4">
-          {canSwitchProgrammes ? (
-            <div className="w-full max-w-[170px] space-y-2">
-              <Label htmlFor="overview-programme" className={`text-xs uppercase tracking-[0.16em] ${SECONDARY_TEXT_CLASS}`}>
-                Programme
-              </Label>
-              <Select value={selectedProgramme} onValueChange={setSelectedProgramme}>
-              <SelectTrigger id="overview-programme" className={`rounded-2xl border-slate-200 bg-white ${SECONDARY_TEXT_CLASS}`}>
-                <SelectValue placeholder="Select programme" />
-              </SelectTrigger>
-                <SelectContent>
-                  {programmeOptions.map((programme) => (
-                    <SelectItem key={programme} value={programme}>
-                      {programme}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          ) : null}
-        </div>
-
+        {/* ── Data panels ───────────────────────────────────────────── */}
         {isLoadingData ? (
           <OverviewLoading />
         ) : (
           <>
+            {/* Metric cards */}
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
               <TopMetricCard
                 title="Registered Farmers"
                 value={stats.totalFarmers}
                 progressValue={registrationPercentage}
                 progressLabel=""
-                accentColor="#2ea55f" 
+                accentColor="#2ea55f"
                 icon={<UsersRound className="h-5 w-5 text-[#2ea55f]" />}
                 detail={
                   <>
@@ -1775,6 +2065,7 @@ const DashboardOverview = () => {
               />
             </div>
 
+            {/* Row 1: Infrastructure + Animal Census */}
             <div className="grid items-stretch gap-6 lg:grid-cols-2">
               <DonutPanel
                 title="INFRASTRUCTURE"
@@ -1788,6 +2079,7 @@ const DashboardOverview = () => {
               />
             </div>
 
+            {/* Row 2: Registration Donut + Recently Visited Locations */}
             <div className="grid items-stretch gap-6 lg:grid-cols-2">
               <DonutPanel
                 title="FARMERS REGISTRATION PER YEAR"
@@ -1798,17 +2090,23 @@ const DashboardOverview = () => {
               <RecentLocationsPanel locations={overviewData.recentLocations ?? EMPTY_OVERVIEW_DATA.recentLocations} />
             </div>
 
+            {/* Row 3: Vaccination Trend + Counties Covered */}
             <div className="grid items-stretch gap-6 lg:grid-cols-2">
               <YearTrendPanel
                 title="ANIMAL HEALTH (VACCINATION)"
                 trend={overviewData.vaccinationTrend ?? EMPTY_OVERVIEW_DATA.vaccinationTrend}
                 tooltipValueLabel="vaccinated goats"
               />
-
               <CountiesCoveredPanel data={overviewData.countyCoverage ?? EMPTY_COUNTY_COVERAGE} />
             </div>
 
-            <RecentActivitiesPanel activities={overviewData.recentActivities ?? EMPTY_OVERVIEW_DATA.recentActivities} />
+            {/* Row 4: Recently Registered Farmers + Recent Activities */}
+            <div className="grid items-stretch gap-6 lg:grid-cols-2">
+              <RecentFarmersPanel
+                farmers={overviewData.recentFarmers ?? EMPTY_OVERVIEW_DATA.recentFarmers}
+              />
+              <RecentActivitiesPanel activities={overviewData.recentActivities ?? EMPTY_OVERVIEW_DATA.recentActivities} />
+            </div>
           </>
         )}
       </div>

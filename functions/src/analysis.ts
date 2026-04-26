@@ -4,7 +4,7 @@ import {onCall, HttpsError} from "firebase-functions/v2/https";
 
 const PROGRAMME_OPTIONS = ["KPMD", "RANGE"] as const;
 const CACHE_TTL_MS = 2 * 60 * 1000;
-const ANALYSIS_CACHE_VERSION = "v5";
+const ANALYSIS_CACHE_VERSION = "v6";
 const QUARTER_TARGET_MILESTONES = [352, 702, 1053, 1404];
 const CHART_COLORS = {
   male: "#1e3a8a",
@@ -19,6 +19,17 @@ const INFRASTRUCTURE_SERIES_COLORS = {
   equipped: "#0ea5e9",
   maintained: "#f89b0d",
 };
+const SALES_TREND_SERIES_COLORS = [
+  "#1e3a8a",
+  "#f97316",
+  "#16a34a",
+  "#7c3aed",
+  "#0d9488",
+  "#991b1b",
+  "#dc2626",
+  "#f59e0b",
+  "#9ca3af",
+] as const;
 
 const getQuarterCountingCutoff = (year: number): Date | null => {
   const today = new Date();
@@ -86,6 +97,18 @@ type ProgressStatus = "target-met" | "on-track" | "needs-attention" | "not-start
 interface CacheEntry {
   expiresAt: number;
   value: any;
+}
+
+interface TrendPoint {
+  month: string;
+  [key: string]: string | number;
+}
+
+interface TrendSeriesMeta {
+  key: string;
+  label: string;
+  year: string;
+  color: string;
 }
 
 const cache = new Map<string, CacheEntry>();
@@ -343,6 +366,27 @@ const getRequisitionRequestedAmount = (record: Record<string, unknown>): number 
   return Math.max(getFieldNumber(record, "total"), getFieldNumber(record, "totalAmount"), 0);
 };
 
+const getRequisitionStatus = (record: Record<string, unknown>): string => {
+  const normalizedStatus = normalizeLooseText(record.status);
+  if (normalizedStatus) return normalizedStatus;
+  if (record.transactionCompletedAt || record.completedAt) return "complete";
+  if (record.rejectedAt) return "rejected";
+  if (record.authorizedAt || record.approvedAt) return "approved";
+  return "pending";
+};
+
+const getRequisitionAnalyticsAmount = (record: Record<string, unknown>): number => {
+  const transactedAmount = getFieldNumber(record, "transactedAmount");
+  if (
+    transactedAmount > 0 &&
+    (record.transactionCompletedAt || record.completedAt || getRequisitionStatus(record) === "complete")
+  ) {
+    return transactedAmount;
+  }
+
+  return getRequisitionRequestedAmount(record);
+};
+
 const getRequisitionRecordDate = (record: Record<string, unknown>): unknown =>
   record.submittedAt ||
   record.createdAt ||
@@ -390,6 +434,75 @@ const getFarmerVaccinationDate = (record: Record<string, unknown>): Date | null 
     record.updated_at,
   );
 
+const getFarmerRegistrationDate = (record: Record<string, unknown>): Date | null =>
+  parseDate(
+    record.createdAt ??
+    record.created_at ??
+    record.registrationDate ??
+    record.registration_date ??
+    record.registeredAt ??
+    record.timestamp ??
+    record.date,
+  );
+
+const getFarmerDisplayName = (record: Record<string, unknown>): string => {
+  const directName =
+    typeof record.fullName === "string" && record.fullName.trim() ?
+      record.fullName.trim() :
+      typeof record.name === "string" && record.name.trim() ?
+        record.name.trim() :
+        typeof record.farmerName === "string" && record.farmerName.trim() ?
+          record.farmerName.trim() :
+          "";
+
+  if (directName) return directName;
+
+  const firstName = typeof record.firstName === "string" ? record.firstName.trim() : "";
+  const lastName = typeof record.lastName === "string" ? record.lastName.trim() : "";
+  const combinedName = `${firstName} ${lastName}`.trim();
+  if (combinedName) return combinedName;
+
+  return "Unknown farmer";
+};
+
+const getOrderPurchasedGoats = (record: Record<string, unknown>): number => {
+  const purchasedGoats = Math.max(getFieldNumber(record, "goatsBought"), 0);
+  const totalGoats = Math.max(getOrderTotalGoats(record), 0);
+  return Math.min(purchasedGoats, totalGoats);
+};
+
+const buildTrendSeries = (
+  monthlyValues: Record<string, number>,
+): {data: TrendPoint[]; series: TrendSeriesMeta[]} => {
+  const years = Array.from(
+    new Set(
+      Object.keys(monthlyValues)
+        .map((monthKey) => monthKey.slice(0, 4))
+        .filter((year) => /^\d{4}$/.test(year)),
+    ),
+  ).sort();
+
+  const series = years.map((year, index) => ({
+    key: `year_${year}`,
+    label: year,
+    year,
+    color: SALES_TREND_SERIES_COLORS[index % SALES_TREND_SERIES_COLORS.length],
+  }));
+
+  const data = MONTH_LABELS.map((month, monthIndex) => {
+    const point: TrendPoint = {month};
+    const monthToken = String(monthIndex + 1).padStart(2, "0");
+
+    series.forEach(({key, year}) => {
+      point[key] = monthlyValues[`${year}-${monthToken}`] ?? 0;
+    });
+
+    return point;
+  });
+
+  return {data, series};
+};
+
 const getFarmerVisitDate = (record: Record<string, unknown>): Date | null =>
   parseDate(
     record.lastVisitedAt ??
@@ -400,7 +513,9 @@ const getFarmerVisitDate = (record: Record<string, unknown>): Date | null =>
     record.vaccinationDate ??
     record.vaccination_date ??
     record.createdAt ??
-    record.registrationDate,
+    record.created_at ??
+    record.registrationDate ??
+    record.registration_date,
   );
 
 const getInfrastructureStatuses = (record: Record<string, unknown>) => ({
@@ -611,7 +726,7 @@ const buildOverviewRegistrationComparison = (
 ) =>
   buildYearlySegments(
     farmers,
-    (record) => parseDate(record.createdAt || record.registrationDate),
+    getFarmerRegistrationDate,
   );
 
 const buildOverviewRecentLocations = (farmers: Record<string, unknown>[]) => {
@@ -641,6 +756,25 @@ const buildOverviewRecentLocations = (farmers: Record<string, unknown>[]) => {
     .slice(0, 4)
     .map(({timestamp, ...entry}) => entry);
 };
+
+const buildOverviewRecentFarmers = (farmers: Record<string, unknown>[]) =>
+  [...farmers]
+    .map((record, index) => {
+      const registeredAt = getFarmerRegistrationDate(record);
+      return {
+        id: String(record.id || record.farmerId || `farmer-${index + 1}`),
+        name: getFarmerDisplayName(record),
+        county: String(record.county || record.region || "").trim() || "Unknown county",
+        registeredAt: registeredAt ? registeredAt.toISOString() : "",
+        gender: String(record.gender || "").trim(),
+        goats: getRecordGoatTotal(record),
+      };
+    })
+    .filter((record) => parseDate(record.registeredAt))
+    .sort((left, right) =>
+      (parseDate(right.registeredAt)?.getTime() || 0) -
+      (parseDate(left.registeredAt)?.getTime() || 0))
+    .slice(0, 5);
 
 const getRecordProgramme = (record: Record<string, unknown>): string =>
   toProgramme(record.programme ?? record.Programme);
@@ -860,6 +994,7 @@ const emptyOverview = () => ({
   countyCoverage: [],
   recentLocations: [],
   recentActivities: [],
+  recentFarmers: [],
   pendingActivitiesCount: 0,
 });
 
@@ -943,15 +1078,20 @@ const emptySales = () => ({
     netProfit: 0,
     avgCostPerKgCarcass: 0,
     totalGoatOrdersPlaced: 0,
+    totalGoatsPurchasedFromOrders: 0,
     requisitionExpenses: 0,
     totalRequisitions: 0,
+    completedRequisitions: 0,
+    completedRequisitionAmount: 0,
   },
   genderData: [],
   countyData: [],
   topLocations: [],
   topFarmers: [],
   monthlyTrend: [],
+  monthlyTrendSeries: [],
   requisitionTrend: [],
+  requisitionTrendSeries: [],
   top3Months: [],
 });
 
@@ -983,7 +1123,7 @@ const createOverview = async (
   const availableYears = new Set<number>();
 
   for (const farmer of farmers) {
-    const farmerDate = parseDate(farmer.createdAt || farmer.registrationDate);
+    const farmerDate = getFarmerRegistrationDate(farmer);
     if (farmerDate) {
       availableYears.add(farmerDate.getFullYear());
     }
@@ -1105,6 +1245,7 @@ const createOverview = async (
     countyCoverage,
     recentLocations: buildOverviewRecentLocations(farmers),
     recentActivities,
+    recentFarmers: buildOverviewRecentFarmers(farmers),
     pendingActivitiesCount,
   };
 };
@@ -1673,14 +1814,17 @@ const createSalesReport = async (
   let totalCarcassWeight = 0;
   let totalAnimalsCount = 0;
   let totalGoatOrdersPlaced = 0;
+  let totalGoatsPurchasedFromOrders = 0;
   let requisitionExpenses = 0;
   let totalRequisitions = 0;
+  let completedRequisitions = 0;
+  let completedRequisitionAmount = 0;
   const genderCounts: Record<string, number> = {Male: 0, Female: 0};
   const countySales: Record<string, number> = {};
   const locationSales: Record<string, number> = {};
   const farmerSales: Record<string, {name: string; revenue: number; animals: number; goats: number; county: string; records: number}> = {};
-  const monthlyData: Record<string, {monthName: string; revenue: number; volume: number; animalsPurchased: number; purchaseCost: number}> = {};
-  const requisitionMonthlyData: Record<string, {monthName: string; count: number; amount: number}> = {};
+  const monthlyData: Record<string, {year: string; monthName: string; revenue: number; volume: number; animalsPurchased: number; purchaseCost: number}> = {};
+  const requisitionMonthlyData: Record<string, {year: string; monthName: string; count: number; amount: number}> = {};
   const pricePerKg = parseNumber(salesInputs?.pricePerKg);
   const expenses = parseNumber(salesInputs?.expenses);
 
@@ -1741,7 +1885,14 @@ const createSalesReport = async (
       const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
       const monthName = date.toLocaleString("default", {month: "short"});
       if (!monthlyData[monthKey]) {
-        monthlyData[monthKey] = {monthName, revenue: 0, volume: 0, animalsPurchased: 0, purchaseCost: 0};
+        monthlyData[monthKey] = {
+          year: String(date.getFullYear()),
+          monthName,
+          revenue: 0,
+          volume: 0,
+          animalsPurchased: 0,
+          purchaseCost: 0,
+        };
       }
       monthlyData[monthKey].revenue += txCarcassWeight * pricePerKg;
       monthlyData[monthKey].volume += txGoats + txSheep + txCattle;
@@ -1753,12 +1904,17 @@ const createSalesReport = async (
   for (const record of filteredOrders) {
     if (!isBatchOrderRecord(record)) continue;
     totalGoatOrdersPlaced += getOrderTotalGoats(record);
+    totalGoatsPurchasedFromOrders += getOrderPurchasedGoats(record);
   }
 
   for (const record of filteredRequisitions) {
-    const requestedAmount = getRequisitionRequestedAmount(record);
-    requisitionExpenses += requestedAmount;
+    const requisitionAmount = getRequisitionAnalyticsAmount(record);
+    requisitionExpenses += requisitionAmount;
     totalRequisitions += 1;
+    if (getRequisitionStatus(record) === "complete") {
+      completedRequisitions += 1;
+      completedRequisitionAmount += requisitionAmount;
+    }
 
     const date = parseDate(getRequisitionRecordDate(record));
     if (!date) continue;
@@ -1766,10 +1922,15 @@ const createSalesReport = async (
     const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
     const monthName = date.toLocaleString("default", {month: "short"});
     if (!requisitionMonthlyData[monthKey]) {
-      requisitionMonthlyData[monthKey] = {monthName, count: 0, amount: 0};
+      requisitionMonthlyData[monthKey] = {
+        year: String(date.getFullYear()),
+        monthName,
+        count: 0,
+        amount: 0,
+      };
     }
     requisitionMonthlyData[monthKey].count += 1;
-    requisitionMonthlyData[monthKey].amount += requestedAmount;
+    requisitionMonthlyData[monthKey].amount += requisitionAmount;
   }
 
   const costPerGoat = totalGoats > 0 ? totalPurchaseCost / totalGoats : 0;
@@ -1791,19 +1952,20 @@ const createSalesReport = async (
   const topFarmers = Object.values(farmerSales)
     .sort((a, b) => (b.animals - a.animals) || (b.revenue - a.revenue))
     .slice(0, 5);
-  const monthlyTrend = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"].map((month) => {
-    const match = Object.values(monthlyData).find((entry) => entry.monthName === month);
-    return {month, revenue: match ? match.revenue : 0, volume: match ? match.volume : 0};
-  });
-  const requisitionTrend = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"].map((month) => {
-    const match = Object.values(requisitionMonthlyData).find((entry) => entry.monthName === month);
-    return {month, count: match ? match.count : 0, amount: match ? match.amount : 0};
-  });
+  const monthlyTrendValues = Object.fromEntries(
+    Object.entries(monthlyData).map(([monthKey, entry]) => [monthKey, entry.volume]),
+  );
+  const requisitionTrendValues = Object.fromEntries(
+    Object.entries(requisitionMonthlyData).map(([monthKey, entry]) => [monthKey, entry.count]),
+  );
+  const {data: monthlyTrend, series: monthlyTrendSeries} = buildTrendSeries(monthlyTrendValues);
+  const {data: requisitionTrend, series: requisitionTrendSeries} = buildTrendSeries(requisitionTrendValues);
+  const includesMultiplePurchaseYears = new Set(Object.values(monthlyData).map((entry) => entry.year)).size > 1;
   const top3Months = Object.values(monthlyData)
     .sort((a, b) => (b.animalsPurchased - a.animalsPurchased) || (b.purchaseCost - a.purchaseCost))
     .slice(0, 3)
     .map((entry) => ({
-      month: entry.monthName,
+      month: includesMultiplePurchaseYears ? `${entry.monthName} ${entry.year}` : entry.monthName,
       animalsPurchased: entry.animalsPurchased,
       purchaseCost: entry.purchaseCost,
     }));
@@ -1829,15 +1991,20 @@ const createSalesReport = async (
       netProfit,
       avgCostPerKgCarcass,
       totalGoatOrdersPlaced,
+      totalGoatsPurchasedFromOrders,
       requisitionExpenses,
       totalRequisitions,
+      completedRequisitions,
+      completedRequisitionAmount,
     },
     genderData,
     countyData,
     topLocations,
     topFarmers,
     monthlyTrend,
+    monthlyTrendSeries,
     requisitionTrend,
+    requisitionTrendSeries,
     top3Months,
   };
 };

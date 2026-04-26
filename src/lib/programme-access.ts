@@ -9,6 +9,14 @@ export const normalizeProgramme = (value: unknown): ProgrammeOption | "" => {
   return "";
 };
 
+export const includesProgramme = (
+  programmes: readonly ProgrammeOption[],
+  value: unknown
+): boolean => {
+  const normalized = normalizeProgramme(value);
+  return normalized !== "" && programmes.includes(normalized);
+};
+
 export const getAssignedProgrammes = (
   allowedProgrammes: Record<string, boolean> | null | undefined
 ): ProgrammeOption[] =>

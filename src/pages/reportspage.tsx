@@ -49,7 +49,7 @@ import {
 } from "@/components/ui/table";
 import { toast } from "@/hooks/use-toast";
 import { fetchAnalysisSummary } from "@/lib/analysis";
-import { PROGRAMME_OPTIONS, resolveAccessibleProgrammes, resolveActiveProgramme } from "@/lib/programme-access";
+import { PROGRAMME_OPTIONS, includesProgramme, resolveAccessibleProgrammes, resolveActiveProgramme } from "@/lib/programme-access";
 
 // --- Constants ---
 const COLORS = {
@@ -1627,7 +1627,7 @@ const PerformanceReport = () => {
 
   useEffect(() => {
     const isDirectProgrammeSelection =
-      activeProgram === ALL_PROGRAMMES_VALUE || accessibleProgrammes.includes(activeProgram);
+      activeProgram === ALL_PROGRAMMES_VALUE || includesProgramme(accessibleProgrammes, activeProgram);
     const nextProgramme = canViewAllReportProgrammes ?
       (isDirectProgrammeSelection ?
         activeProgram :

@@ -1,9 +1,9 @@
 import { memo, type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState, startTransition, useDeferredValue } from "react";
 import * as XLSX from "xlsx";
 import { useAuth } from "@/contexts/AuthContext";
-import { onValue, ref, remove, update, push, set, get, runTransaction } from "firebase/database";
+import { onValue, ref, remove, update, push, set, get } from "firebase/database";
 import { db, fetchCollection } from "@/lib/firebase";
-import { canViewAllProgrammes, isChiefAdmin, isOfftakeOfficer, resolvePermissionPrincipal } from "@/contexts/authhelper";
+import { canViewAllProgrammes, isChiefAdmin, isOfftakeOfficer } from "@/contexts/authhelper";
 import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -13,8 +13,6 @@ import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
@@ -35,7 +33,13 @@ import {
   Upload,
   Users,
   X,
+  CalendarDays,
+  CalendarRange,
 } from "lucide-react";
+
+/* ------------------------------------------------------------------ */
+/* Interfaces                                                          */
+/* ------------------------------------------------------------------ */
 
 interface OrderItem {
   id?: string;
@@ -63,6 +67,7 @@ interface OrderRecord {
   batchId?: string;
   fieldOfficer?: string;
   fieldOfficerName?: string;
+  purchaseDate?: string | number;
   recordId?: string;
   completedAt?: string | number;
   county?: string;
@@ -108,7 +113,8 @@ interface NormalizedOrderItem {
 interface BatchOrderRow {
   batchId: string;
   orderCode: string;
-  batchDate: string | number;
+  orderDate: string | number;
+  purchaseDate: string | number;
   createdAt: string | number;
   completedAt: string | number;
   targetGoats: number;
@@ -213,8 +219,16 @@ interface FieldOfficerOption {
   aliases: string[];
 }
 
+/* ------------------------------------------------------------------ */
+/* Constants                                                           */
+/* ------------------------------------------------------------------ */
+
 const PAGE_LIMIT = 15;
 const PROGRAMME_OPTIONS = ["KPMD", "RANGE", "MTLDK"] as const;
+
+/* ------------------------------------------------------------------ */
+/* Pure utility functions (outside component)                          */
+/* ------------------------------------------------------------------ */
 
 const parseDate = (value: unknown): Date | null => {
   if (!value) return null;
@@ -231,6 +245,22 @@ const formatDate = (value: unknown): string => {
   const date = parseDate(value);
   if (!date) return "N/A";
   return date.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
+};
+
+const resolveOrderDate = (
+  record: Pick<OrderRecord, "purchaseDate" | "date" | "createdAt" | "timestamp" | "completedAt"> | null | undefined,
+  fallback: string | number = "",
+): string | number => {
+  if (!record) return fallback;
+  return record.date || record.createdAt || record.timestamp || record.purchaseDate || record.completedAt || fallback;
+};
+
+const resolvePurchaseDate = (
+  record: Pick<OrderRecord, "purchaseDate" | "date" | "completedAt" | "createdAt" | "timestamp"> | null | undefined,
+  fallback: string | number = "",
+): string | number => {
+  if (!record) return fallback;
+  return record.purchaseDate || fallback;
 };
 
 const normalizeStatus = (value: string | undefined): string => {
@@ -254,13 +284,20 @@ const getCurrentMonthDates = () => {
   return { startDate: toInput(startOfMonth), endDate: toInput(endOfMonth) };
 };
 
+const getCurrentYearDates = () => {
+  const now = new Date();
+  return {
+    startDate: `${now.getFullYear()}-01-01`,
+    endDate: `${now.getFullYear()}-12-31`,
+  };
+};
+
 const toInputDate = (value: unknown): string => {
   const date = parseDate(value);
   if (!date) return "";
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 };
 
-// Generate county code from name (e.g., Samburu -> SM, Isiolo -> IS)
 const generateCountyCode = (countyName: string): string => {
   if (!countyName) return "XX";
   const normalized = countyName
@@ -298,8 +335,9 @@ const generateOrderCode = async (county: string): Promise<string> => {
 
   if (snapshot.exists()) {
     const data = snapshot.val();
-    Object.values(data as Record<string, any>).forEach((record: any) => {
-      const existingCode = record?.orderId || "";
+    Object.values(data as Record<string, unknown>).forEach((record) => {
+      const rec = record as Record<string, unknown>;
+      const existingCode = String(rec?.orderId || "");
       if (existingCode.startsWith(countyCode)) {
         const match = existingCode.match(new RegExp(`^${countyCode}(\\d+)$`));
         if (match) {
@@ -451,7 +489,7 @@ const getImportedSubmissionSignature = (
 };
 
 const ORDER_CSV_ID_HEADERS = ["id", "record id", "submission id", "reference", "reference id", "entry id"] as const;
-const ORDER_CSV_DATE_HEADERS = ["date", "order date", "submission date", "recorded date", "created at", "completed at"] as const;
+const ORDER_CSV_DATE_HEADERS = ["date", "purchase date", "order date", "submission date", "recorded date", "created at", "completed at"] as const;
 const ORDER_CSV_GOATS_HEADERS = ["goats", "goat", "quantity", "qty", "goats bought", "number of goats", "total goats", "goat count"] as const;
 const ORDER_CSV_LOCATION_HEADERS = ["location", "village", "market", "trading center", "trading centre", "ward"] as const;
 const ORDER_CSV_SUBCOUNTY_HEADERS = ["subcounty", "sub county", "sub-county", "subcounty name", "sub county name"] as const;
@@ -459,7 +497,7 @@ const ORDER_CSV_OFFICER_HEADERS = ["field officer", "field officer name", "offic
 
 const parseOrderCsvText = (
   text: string,
-  row: Pick<BatchOrderRow, "batchId" | "batchDate" | "location" | "subcounty">
+  row: Pick<BatchOrderRow, "batchId" | "orderDate" | "purchaseDate" | "location" | "subcounty">
 ): ParsedOrderCsvResult => {
   const lines = text
     .replace(/\r/g, "")
@@ -497,7 +535,9 @@ const parseOrderCsvText = (
     }
 
     const explicitId = getCsvCell(values, idIndex);
-    const date = normalizeImportedDateValue(getCsvCell(values, dateIndex)) || toInputDate(row.batchDate);
+    const date =
+      normalizeImportedDateValue(getCsvCell(values, dateIndex)) ||
+      toInputDate(row.purchaseDate || row.orderDate);
     const location = getCsvCell(values, locationIndex) || row.location || "N/A";
     const subcounty = getCsvCell(values, subcountyIndex) || row.subcounty || "";
     const officer = getCsvCell(values, officerIndex) || "N/A";
@@ -782,7 +822,6 @@ const getRecordOfficerCandidates = (record: OrderRecord): unknown[] => [
 ];
 
 const getOrderEntries = (record: OrderRecord): OrderItem[] => {
-  /* Prefer mobileAppdata (new format) over orders (legacy format) */
   const mobileData = record.mobileAppdata;
   if (mobileData) {
     if (Array.isArray(mobileData)) return mobileData.filter(Boolean) as OrderItem[];
@@ -793,8 +832,6 @@ const getOrderEntries = (record: OrderRecord): OrderItem[] => {
   if (orders && typeof orders === "object") return Object.values(orders).filter(Boolean);
   return [];
 };
-
-const looksLikeReferenceKey = (key: string): boolean => /order|batch|request|target|offtake|parent/i.test(key);
 
 const getBatchIdentifiers = (record: OrderRecord): string[] => {
   const identifiers = new Set<string>();
@@ -816,7 +853,6 @@ const getBatchIdentifiers = (record: OrderRecord): string[] => {
 
 const getBatchReferenceId = (record: OrderRecord): string | null => {
   const recordId = normalizeIdValue(record.id);
-  // orderId is the record's own business identifier (e.g. "SM001"), NOT a parent reference
   const candidates = [
     record.parentOrderId,
     record.batchId,
@@ -840,17 +876,11 @@ const hasDirectGoatsOnly = (record: OrderRecord): boolean => {
   return !hasTarget;
 };
 
-const hasTopLevelGoats = (record: OrderRecord): boolean => {
-  const goatsValue = Number(record.goats);
-  return Number.isFinite(goatsValue) && goatsValue > 0;
-};
-
 const isSubmissionRecord = (record: OrderRecord): boolean => {
   if (getBatchReferenceId(record)) return true;
   if (hasDirectGoatsOnly(record)) return true;
 
   const ordersCount = getOrderEntries(record).length;
-  // A submission should NOT have its own target/remaining/goatsBought - those indicate a batch parent
   const hasBatchCharacteristics =
     Number.isFinite(Number(record.targetGoats)) && Number(record.targetGoats) > 0 ||
     Number.isFinite(Number(record.remainingGoats)) ||
@@ -896,7 +926,7 @@ const getSubmissionItems = (record: OrderRecord): NormalizedOrderItem[] => {
         "N/A";
       return {
         id: item.id || `${record.id}-${index + 1}`,
-        date: item.date || record.date || record.completedAt || record.createdAt || record.timestamp || "",
+        date: item.date || record.purchaseDate || record.date || record.completedAt || record.createdAt || record.timestamp || "",
         goats: Number(item.goats || record.goats || 0),
         location: itemLocation,
         village: item.village || itemLocation,
@@ -909,7 +939,7 @@ const getSubmissionItems = (record: OrderRecord): NormalizedOrderItem[] => {
 
   const goatsValue = Number(record.goats || record.totalGoats || record.goatsBought || 0);
   if (!Number.isFinite(goatsValue) || goatsValue <= 0) return [];
-  const dateValue = record.date || record.completedAt || record.createdAt || record.timestamp || "";
+  const dateValue = record.purchaseDate || record.date || record.completedAt || record.createdAt || record.timestamp || "";
   const location = record.location || record.village || "N/A";
   const subcounty = record.subcounty || "";
   const officer = record.username || record.createdBy || "N/A";
@@ -942,7 +972,7 @@ const getNormalizedItems = (record: OrderRecord): NormalizedOrderItem[] => {
         "N/A";
       return {
         id: item.id || `${record.id}-${index + 1}`,
-        date: item.date || record.completedAt || record.createdAt || record.timestamp || "",
+        date: item.date || record.purchaseDate || record.completedAt || record.createdAt || record.timestamp || "",
         goats: Number(item.goats || 0),
         location: itemLocation,
         village: item.village || itemLocation,
@@ -956,9 +986,9 @@ const getNormalizedItems = (record: OrderRecord): NormalizedOrderItem[] => {
   return [];
 };
 
-/* ------------------------------------------------------------------
- * Lightweight pre-computation helpers (pure, outside component)
- * ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------ */
+/* Lightweight pre-computation helpers (pure, outside component)       */
+/* ------------------------------------------------------------------ */
 
 interface PrecomputedRecord {
   id: string;
@@ -978,15 +1008,37 @@ interface PrecomputedRecord {
 }
 
 /**
- * JSON-stringify a record's key fields for cheap deep equality.
- * Used to skip re-precomputation when a record hasn't changed.
+ * Optimized fingerprint: avoids expensive JSON.stringify on arrays.
+ * Uses array length + goats sum for mobileAppdata/orders to detect changes
+ * in O(n) instead of O(n) with huge string allocation overhead.
  */
-const getRecordFingerprint = (r: OrderRecord): string =>
-  `${r.programme}:${r.county}:${r.subcounty}:${r.location}:${r.status}:${r.targetGoats}:${r.totalGoats}:${r.goatsBought}:${r.remainingGoats}:${r.date}:${r.completedAt}:${r.parentOrderId}:${r.orderId}:${r.batchId}:${r.requestId}:${r.targetOrderId}:${r.offtakeOrderId}:${r.goats}:${JSON.stringify(r.orders)}:${JSON.stringify(r.mobileAppdata)}:${JSON.stringify(r.offtakeTeamIds)}:${JSON.stringify(r.offtakeTeamMembers)}`;
+const getRecordFingerprint = (r: OrderRecord): string => {
+  const mobileData = r.mobileAppdata;
+  let mobileLen = 0;
+  let mobileGoatsSum = 0;
+  if (Array.isArray(mobileData)) {
+    mobileLen = mobileData.length;
+    for (let i = 0; i < mobileData.length; i++) {
+      mobileGoatsSum += Number((mobileData[i] as OrderItem)?.goats) || 0;
+    }
+  } else if (isObjectRecord(mobileData)) {
+    mobileLen = Object.keys(mobileData).length;
+  }
+
+  const orders = r.orders;
+  let ordersLen = 0;
+  if (Array.isArray(orders)) {
+    ordersLen = orders.length;
+  } else if (isObjectRecord(orders)) {
+    ordersLen = Object.keys(orders).length;
+  }
+
+  return `${r.programme}:${r.county}:${r.subcounty}:${r.location}:${r.status}:${r.targetGoats}:${r.totalGoats}:${r.goatsBought}:${r.remainingGoats}:${r.purchaseDate}:${r.date}:${r.completedAt}:${r.parentOrderId}:${r.orderId}:${r.batchId}:${r.requestId}:${r.targetOrderId}:${r.offtakeOrderId}:${r.goats}:${mobileLen}:${mobileGoatsSum}:${ordersLen}`;
+};
 
 /**
  * Incremental precompute: reuses cached precomputed records when unchanged.
- * Returns a Map<id, PrecomputedRecord> for O(1) lookup.
+ * Returns an array for indexed iteration.
  */
 const buildPrecomputedMap = (
   records: OrderRecord[],
@@ -1002,7 +1054,6 @@ const buildPrecomputedMap = (
     result[i] = pc;
     nextCache.set(record.id, { pc, fp });
   }
-  // Update the cache ref in-place so the caller's ref stays current
   prevCache.clear();
   for (const [k, v] of nextCache) prevCache.set(k, v);
   return result;
@@ -1018,12 +1069,12 @@ const precomputeRecord = (record: OrderRecord): PrecomputedRecord => {
   const normProgramme = normalizeText(record.programme);
   const normCounty = normalizeText(record.county);
   const normLocation = normalizeText(record.location || record.village || record.subcounty);
-  const dateMs = parseDate(record.date || record.completedAt || record.createdAt || record.timestamp)?.getTime() || 0;
+  const dateMs = parseDate(resolveOrderDate(record))?.getTime() || 0;
   const goatsTotal = Number(record.targetGoats || record.totalGoats || record.goatsBought || record.goats || 0);
   const officerTokens = getRecordOfficerCandidates(record)
     .map((v) => (typeof v === "number" && Number.isFinite(v) ? String(v) : normalizeText(v)))
     .filter((t) => t.length > 0);
-  const sortDate = record.date || record.completedAt || record.createdAt || record.timestamp || "";
+  const sortDate = resolveOrderDate(record);
   return { id, record, isBatch, isSubmission, refId, identifiers, normalizedItems, normProgramme, normCounty, normLocation, dateMs, goatsTotal, officerTokens, sortDate };
 };
 
@@ -1036,10 +1087,10 @@ const BATCH_REFERENCE_KEYS: readonly (keyof OrderRecord)[] = [
   "offtakeOrderId",
 ];
 
-/* ------------------------------------------------------------------
- * Memoized table row component to prevent unnecessary re-renders
- * when sibling rows change (React renders all children on parent update)
- * ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------ */
+/* Memoized table row component                                        */
+/* ------------------------------------------------------------------ */
+
 interface OrderTableRowProps {
   row: BatchOrderRow;
   userCanEditOrders: boolean;
@@ -1056,7 +1107,7 @@ const OrderTableRow = memo(function OrderTableRow({
 }: OrderTableRowProps) {
   return (
     <tr className="border-b hover:bg-blue-50 transition-colors group">
-      <td className="py-2 px-4 text-xs text-gray-500">{formatDate(row.batchDate)}</td>
+      <td className="py-2 px-4 text-xs text-gray-500">{formatDate(row.orderDate)}</td>
       <td className="py-2 px-4 font-medium text-sm">{row.county}</td>
       <td className="py-2 px-4">
         <span className=" text-xs  px-3 py-2 rounded">{row.orderCode}</span>
@@ -1104,9 +1155,17 @@ const OrderTableRow = memo(function OrderTableRow({
   );
 });
 
+/* ================================================================== */
+/* Main Component                                                      */
+/* ================================================================== */
+
 const OrdersPage = () => {
   const { userRole, userAttribute, allowedProgrammes, userName } = useAuth();
   const { toast } = useToast();
+
+  /* ---------------------------------------------------------------- */
+  /* State                                                             */
+  /* ---------------------------------------------------------------- */
 
   const [allRecords, setAllRecords] = useState<OrderRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1126,7 +1185,6 @@ const OrdersPage = () => {
   const [offtakeTeamDraftMembers, setOfftakeTeamDraftMembers] = useState<OfftakeTeamMember[]>([]);
   const [offtakeTeamFormName, setOfftakeTeamFormName] = useState<string>("");
   const [offtakeTeamFormPurchaseDate, setOfftakeTeamFormPurchaseDate] = useState<string>("");
-  const [dialogPurchaseDateDraft, setDialogPurchaseDateDraft] = useState<string>("");
   const [offtakeTeamSaving, setOfftakeTeamSaving] = useState(false);
 
   const [editingOrderKey, setEditingOrderKey] = useState<string | null>(null);
@@ -1137,37 +1195,27 @@ const OrdersPage = () => {
   const [orderSubcountyDraft, setOrderSubcountyDraft] = useState<string>("");
 
   const [dialogGoatsBoughtDraft, setDialogGoatsBoughtDraft] = useState<string>("");
+  const [dialogOrderDateDraft, setDialogOrderDateDraft] = useState<string>("");
+  const [dialogPurchaseDateDraft, setDialogPurchaseDateDraft] = useState<string>("");
   const orderCsvInputRef = useRef<HTMLInputElement | null>(null);
   const [orderCsvFile, setOrderCsvFile] = useState<File | null>(null);
   const [orderCsvPreviewItems, setOrderCsvPreviewItems] = useState<NormalizedOrderItem[]>([]);
   const [orderCsvSkippedRows, setOrderCsvSkippedRows] = useState(0);
   const [orderCsvUploading, setOrderCsvUploading] = useState(false);
 
-  const monthDates = useMemo(getCurrentMonthDates, []);
+  /* FIX: Default date filters are empty — show ALL orders on initial load.
+     The previous code used getCurrentMonthDates() which filtered out orders
+     whose `date` field was in a different month, causing "No orders found". */
   const [filters, setFilters] = useState<Filters>({
     search: "",
-    startDate: monthDates.startDate,
-    endDate: monthDates.endDate,
+    startDate: "",
+    endDate: "",
     status: "all",
   });
+
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const deferredSearch = useDeferredValue(debouncedSearch);
-
-  const handleSearchChange = useCallback((value: string) => {
-    setFilters((prev) => ({ ...prev, search: value }));
-    setPagination((prev) => ({ ...prev, page: 1 }));
-    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
-    searchDebounceRef.current = setTimeout(() => {
-      startTransition(() => setDebouncedSearch(value));
-    }, 200);
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
-    };
-  }, []);
 
   const [pagination, setPagination] = useState<Pagination>({
     page: 1,
@@ -1176,6 +1224,10 @@ const OrdersPage = () => {
     hasNext: false,
     hasPrev: false,
   });
+
+  /* ---------------------------------------------------------------- */
+  /* Permissions                                                       */
+  /* ---------------------------------------------------------------- */
 
   const userCanViewAllProgrammeData = useMemo(
     () => canViewAllProgrammes(userRole, userAttribute, allowedProgrammes),
@@ -1195,19 +1247,23 @@ const OrdersPage = () => {
     if (userCanCreateOrders) return true;
     toast({ title: "Unauthorized", description: "Only offtake officer or chief admin can create orders.", variant: "destructive" });
     return false;
-  }, [userCanCreateOrders]);
+  }, [userCanCreateOrders, toast]);
 
   const ensureOrderEditAccess = useCallback(() => {
     if (userCanEditOrders) return true;
     toast({ title: "Unauthorized", description: "Only offtake officer or chief admin can edit orders.", variant: "destructive" });
     return false;
-  }, [userCanEditOrders]);
+  }, [userCanEditOrders, toast]);
 
   const ensureBatchDeleteAccess = useCallback(() => {
     if (userIsChiefAdmin) return true;
     toast({ title: "Unauthorized", description: "Only chief admin can delete batches.", variant: "destructive" });
     return false;
-  }, [userIsChiefAdmin]);
+  }, [userIsChiefAdmin, toast]);
+
+  /* ---------------------------------------------------------------- */
+  /* Programme management                                              */
+  /* ---------------------------------------------------------------- */
 
   useEffect(() => {
     if (userCanViewAllProgrammeData) {
@@ -1224,8 +1280,10 @@ const OrdersPage = () => {
     });
   }, [allowedProgrammes, userCanViewAllProgrammeData]);
 
-  /* Delta-aware Firebase listener: compares new snapshot with previous to
-     minimize state churn. Only creates new array when records actually change. */
+  /* ---------------------------------------------------------------- */
+  /* Firebase listener — delta-aware                                   */
+  /* ---------------------------------------------------------------- */
+
   const prevRecordsRef = useRef<Map<string, string>>(new Map());
   useEffect(() => {
     if (!activeProgram) {
@@ -1289,6 +1347,10 @@ const OrdersPage = () => {
     return () => unsubscribe();
   }, [activeProgram, toast]);
 
+  /* ---------------------------------------------------------------- */
+  /* Reset dialogs on programme change                                 */
+  /* ---------------------------------------------------------------- */
+
   useEffect(() => {
     setOrdersDialogBatchId(null);
     setOrdersDialogMode("view");
@@ -1299,7 +1361,10 @@ const OrdersPage = () => {
     setOfftakeTeamSaving(false);
   }, [activeProgram]);
 
-  /* Load field officers lazily — only once per session, in parallel with orders */
+  /* ---------------------------------------------------------------- */
+  /* Load field officers lazily                                        */
+  /* ---------------------------------------------------------------- */
+
   useEffect(() => {
     if (!activeProgram) {
       setFieldOfficers([]);
@@ -1314,7 +1379,6 @@ const OrdersPage = () => {
       try {
         const allUsers = await fetchCollection<FieldOfficerRecord>("users");
         if (cancelled) return;
-        /* Use requestAnimationFrame to avoid blocking the main thread during filtering */
         const officers = allUsers
           .filter(isMobileUserRecord)
           .map((record) => ({
@@ -1358,8 +1422,6 @@ const OrdersPage = () => {
     return () => { cancelled = true; };
   }, [activeProgram, toast]);
 
-  /* Memoize the officer token set so batchRows doesn't re-run when fieldOfficers ref changes identity
-     but the actual tokens haven't changed. */
   const mobileOfficerTokenSet = useMemo(() => {
     const tokens = new Set<string>();
     for (const officer of fieldOfficers) {
@@ -1371,20 +1433,24 @@ const OrdersPage = () => {
     return tokens;
   }, [fieldOfficers]);
 
-  /* Incremental pre-computation: reuse cached records when unchanged,
-     only recompute records whose fingerprint has changed. */
+  /* ---------------------------------------------------------------- */
+  /* Incremental pre-computation                                       */
+  /* ---------------------------------------------------------------- */
+
   const precomputedCacheRef = useRef<Map<string, { pc: PrecomputedRecord; fp: string }>>(new Map());
   const precomputed = useMemo(
     () => buildPrecomputedMap(allRecords, precomputedCacheRef.current),
     [allRecords],
   );
 
-  /* Core batch grouping – county-indexed fuzzy matching for O(n) instead of O(n²) */
+  /* ---------------------------------------------------------------- */
+  /* Core batch grouping                                              */
+  /* ---------------------------------------------------------------- */
+
   const batchRows = useMemo(() => {
     const batchMap = new Map<string, { pr: PrecomputedRecord; items: NormalizedOrderItem[]; itemIds: Set<string> }>();
     const batchAliasMap = new Map<string, string>();
     const consumedRecordIds = new Set<string>();
-    /* County index: Map<normCounty, batchIds[]> for O(1) fuzzy lookup */
     const countyBatchIndex = new Map<string, string[]>();
 
     /* 1. Register batch parents that belong to the active programme */
@@ -1397,7 +1463,6 @@ const OrdersPage = () => {
       for (const id of pc.identifiers) {
         if (!batchAliasMap.has(id)) batchAliasMap.set(id, pc.id);
       }
-      /* Build county index */
       if (pc.normCounty) {
         let list = countyBatchIndex.get(pc.normCounty);
         if (!list) { list = []; countyBatchIndex.set(pc.normCounty, list); }
@@ -1412,12 +1477,10 @@ const OrdersPage = () => {
 
       let batchId: string | null = null;
 
-      // Explicit reference
       if (pc.refId) {
         batchId = batchAliasMap.get(pc.refId) || (batchMap.has(pc.refId) ? pc.refId : null);
       }
 
-      // Scan known reference keys only (not all Object.entries)
       if (!batchId) {
         const rec = pc.record;
         for (const key of BATCH_REFERENCE_KEYS) {
@@ -1430,7 +1493,6 @@ const OrdersPage = () => {
         }
       }
 
-      // Fuzzy match (submission / mobile officer) — county-indexed for O(k) where k = batches in same county
       if (!batchId && (pc.isSubmission || pc.officerTokens.some((t) => mobileOfficerTokenSet.has(t)))) {
         let bestScore = 0;
         const candidateBatchIds = pc.normCounty ? countyBatchIndex.get(pc.normCounty) : null;
@@ -1459,7 +1521,6 @@ const OrdersPage = () => {
 
       if (!batchId || batchId === pc.id) continue;
 
-      // Attach submission items
       const parent = batchMap.get(batchId);
       if (!parent) continue;
       const subItems = getSubmissionItems(pc.record);
@@ -1471,9 +1532,9 @@ const OrdersPage = () => {
       consumedRecordIds.add(pc.id);
     }
 
-    /* 3. Build output rows with pre-computed searchable text */
+    /* 3. Build output rows */
     const result: BatchOrderRow[] = [];
-    for (const [_, entry] of batchMap.entries()) {
+    for (const [, entry] of batchMap.entries()) {
       if (consumedRecordIds.has(entry.pr.id)) continue;
       const rec = entry.pr.record;
       const items = entry.items;
@@ -1483,7 +1544,8 @@ const OrdersPage = () => {
       const remainingGoats = Math.max(totalGoats - goatsBought, 0);
       const createdAt = rec.createdAt || rec.timestamp || "";
       const completedAt = rec.completedAt || "";
-      const batchDate = rec.date || completedAt || createdAt || items[0]?.date || "";
+      const orderDate = resolveOrderDate(rec, items[0]?.date || "");
+      const purchaseDate = resolvePurchaseDate(rec);
       const storedStatus = normalizeStatus(rec.status);
       const isReadyForCompletion = totalGoats > 0 && remainingGoats <= 0 && storedStatus !== "completed";
       const status = storedStatus === "completed"
@@ -1497,16 +1559,20 @@ const OrdersPage = () => {
       const targetGoats = Number(rec.targetGoats || 0) || totalGoats;
       const orderCode = normalizeIdValue(rec.orderId) || normalizeIdValue(rec.batchId) || normalizeIdValue(rec.id) || "N/A";
       result.push({
-        batchId: rec.id, orderCode, batchDate, createdAt, completedAt, targetGoats, totalGoats, recordedGoats: itemsTotal,
+        batchId: rec.id, orderCode, orderDate, purchaseDate, createdAt, completedAt, targetGoats, totalGoats, recordedGoats: itemsTotal,
         goatsBought, remainingGoats, status,
         county, subcounty, location, programme, username,
-        sortTimestamp: parseDate(batchDate)?.getTime() || 0, isReadyForCompletion, items,
-        searchableText: `${county} ${subcounty} ${location} ${username} ${status} ${programme} ${rec.id} ${orderCode} ${totalGoats}`.toLowerCase(),
+        sortTimestamp: parseDate(orderDate)?.getTime() || 0, isReadyForCompletion, items,
+        searchableText: `${county} ${subcounty} ${location} ${username} ${status} ${programme} ${rec.id} ${orderCode} ${totalGoats} ${orderDate} ${purchaseDate}`.toLowerCase(),
       });
     }
     result.sort((a, b) => b.sortTimestamp - a.sortTimestamp);
     return result;
   }, [precomputed, activeProgram, mobileOfficerTokenSet]);
+
+  /* ---------------------------------------------------------------- */
+  /* Dialog memoized data                                             */
+  /* ---------------------------------------------------------------- */
 
   const ordersDialogRow = useMemo(
     () => batchRows.find((r) => r.batchId === ordersDialogBatchId) || null,
@@ -1584,6 +1650,10 @@ const OrdersPage = () => {
     return offtakeTeam.find((member) => normalizeText(member.name) === target) || null;
   }, [offtakeTeam, offtakeTeamFormName]);
 
+  /* ---------------------------------------------------------------- */
+  /* Dialog effects                                                    */
+  /* ---------------------------------------------------------------- */
+
   useEffect(() => {
     if (ordersDialogBatchId && !ordersDialogRow) {
       setOrdersDialogBatchId(null);
@@ -1591,17 +1661,22 @@ const OrdersPage = () => {
       setEditingOrderKey(null);
       setOrderGoatsDraft("");
       setOrderDateDraft("");
+      setDialogOrderDateDraft("");
+      setDialogPurchaseDateDraft("");
     }
   }, [ordersDialogBatchId, ordersDialogRow]);
 
+  /* Initialize edit-mode drafts including order and purchasing dates */
   useEffect(() => {
     if (!ordersDialogRow) return;
     if (ordersDialogMode === "edit") {
       setDialogGoatsBoughtDraft(String(ordersDialogRow.goatsBought));
-      setDialogPurchaseDateDraft(toInputDate(ordersDialogRow.batchDate));
+      setDialogOrderDateDraft(toInputDate(ordersDialogRow.orderDate));
+      setDialogPurchaseDateDraft(toInputDate(ordersDialogRow.purchaseDate));
       return;
     }
     setDialogGoatsBoughtDraft("");
+    setDialogOrderDateDraft("");
     setDialogPurchaseDateDraft("");
   }, [ordersDialogMode, ordersDialogRow]);
 
@@ -1625,11 +1700,16 @@ const OrdersPage = () => {
     }
     setOfftakeTeamDraftMembers(resolveAssignedOfftakeTeam(offtakeTeamDialogRecord, offtakeTeam));
     setOfftakeTeamFormName("");
-    setOfftakeTeamFormPurchaseDate(toInputDate(offtakeTeamDialogRecord.date || offtakeTeamDialogRow?.batchDate || new Date()));
+    setOfftakeTeamFormPurchaseDate(
+      toInputDate(resolvePurchaseDate(offtakeTeamDialogRecord, offtakeTeamDialogRow?.purchaseDate || ""))
+    );
     setOfftakeTeamSaving(false);
   }, [offtakeTeam, offtakeTeamDialogBatchId, offtakeTeamDialogRecord, offtakeTeamDialogRow]);
 
-  /* Pre-parse filter dates once */
+  /* ---------------------------------------------------------------- */
+  /* Filtering & pagination                                            */
+  /* ---------------------------------------------------------------- */
+
   const filterStartDateMs = useMemo(
     () => filters.startDate ? new Date(filters.startDate).setHours(0, 0, 0, 0) : null,
     [filters.startDate],
@@ -1657,7 +1737,6 @@ const OrdersPage = () => {
       if (!needsSearch) return true;
       return row.searchableText.includes(searchTerm);
     });
-    // Already sorted from batchRows, no need to re-sort
     return rows;
   }, [batchRows, filters.status, filterStartDateMs, filterEndDateMs, deferredSearch]);
 
@@ -1710,6 +1789,10 @@ const OrdersPage = () => {
     batchRows.forEach((r) => set.add(r.status));
     return Array.from(set).sort();
   }, [batchRows]);
+
+  /* ---------------------------------------------------------------- */
+  /* Create order helpers                                              */
+  /* ---------------------------------------------------------------- */
 
   const countyOptions = useMemo(() => {
     const countyMap = new Map<string, string>();
@@ -1775,6 +1858,25 @@ const OrdersPage = () => {
     });
   }, [countyFieldOfficers]);
 
+  /* ---------------------------------------------------------------- */
+  /* Filter & search handlers                                          */
+  /* ---------------------------------------------------------------- */
+
+  const handleSearchChange = useCallback((value: string) => {
+    setFilters((prev) => ({ ...prev, search: value }));
+    setPagination((prev) => ({ ...prev, page: 1 }));
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    searchDebounceRef.current = setTimeout(() => {
+      startTransition(() => setDebouncedSearch(value));
+    }, 200);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    };
+  }, []);
+
   const handleFilterChange = useCallback((key: keyof Filters, value: string) => {
     setPagination((prev) => ({ ...prev, page: 1 }));
     if (key === "search") {
@@ -1789,6 +1891,11 @@ const OrdersPage = () => {
     setPagination((prev) => ({ ...prev, page: 1 }));
     startTransition(() => setDebouncedSearch(""));
   }, []);
+
+ 
+  /* ---------------------------------------------------------------- */
+  /* Dialog open/close callbacks                                       */
+  /* ---------------------------------------------------------------- */
 
   const openOrdersDialog = useCallback((batchId: string, mode: OrdersDialogMode) => {
     setOrdersDialogMode(mode);
@@ -1825,6 +1932,7 @@ const OrdersPage = () => {
     setOrderLocationDraft("");
     setOrderSubcountyDraft("");
     setDialogGoatsBoughtDraft("");
+    setDialogOrderDateDraft("");
     setDialogPurchaseDateDraft("");
     clearOrderCsvImport();
   }, [clearOrderCsvImport]);
@@ -1836,6 +1944,10 @@ const OrdersPage = () => {
     setOfftakeTeamFormPurchaseDate("");
     setOfftakeTeamSaving(false);
   }, []);
+
+  /* ---------------------------------------------------------------- */
+  /* Offtake team management                                           */
+  /* ---------------------------------------------------------------- */
 
   const addOfftakeTeamMember = useCallback(() => {
     if (!ensureOrderEditAccess()) return;
@@ -1902,6 +2014,10 @@ const OrdersPage = () => {
     toast,
   ]);
 
+  /* ---------------------------------------------------------------- */
+  /* Order CRUD operations                                             */
+  /* ---------------------------------------------------------------- */
+
   const resetNewOrderForm = useCallback((programme: string) => {
     setNewOrder(getDefaultOrderForm(programme));
     setSelectedFieldOfficerIds([]);
@@ -1915,7 +2031,7 @@ const OrdersPage = () => {
     }
     resetNewOrderForm(activeProgram);
     setIsCreateDialogOpen(true);
-  }, [activeProgram, userCanCreateOrders]);
+  }, [activeProgram, userCanCreateOrders, ensureOrderCreateAccess]);
 
   const closeCreateDialog = useCallback(() => { setIsCreateDialogOpen(false); }, []);
 
@@ -1937,7 +2053,7 @@ const OrdersPage = () => {
           ...rawItem,
           id: item.id || `${row.batchId}-${index + 1}`,
           goats: Math.max(0, Number(item.goats || 0)),
-          date: item.date || row.batchDate || "",
+          date: item.date || row.purchaseDate || row.orderDate || "",
           location: orderLocation,
           village: item.village || orderLocation,
           subcounty: item.subcounty || row.subcounty || "",
@@ -1959,22 +2075,33 @@ const OrdersPage = () => {
     });
   };
 
+  /** Save order date, purchasing date, goats purchased, and recalculate status from the edit dialog */
   const saveDialogGoatsBought = async () => {
     if (!ordersDialogRow) return;
     if (!ensureOrderEditAccess()) return;
     const nextValue = Number(dialogGoatsBoughtDraft);
     if (!Number.isFinite(nextValue) || nextValue < 0) {
-      toast({ title: "Invalid value", description: "Goats bought must be 0 or greater.", variant: "destructive" });
+      toast({ title: "Invalid value", description: "Goats purchased must be 0 or greater.", variant: "destructive" });
       return;
     }
     if (nextValue > (ordersDialogRow.targetGoats || ordersDialogRow.totalGoats)) {
       toast({ title: "Invalid value", description: "Cannot exceed target goats.", variant: "destructive" });
       return;
     }
-    if (!dialogPurchaseDateDraft) {
-      toast({ title: "Date required", description: "Purchase date is required.", variant: "destructive" });
+
+    const nextOrderDate = dialogOrderDateDraft || toInputDate(ordersDialogRow.orderDate);
+    if (!nextOrderDate) {
+      toast({ title: "Date required", description: "Order date is required.", variant: "destructive" });
       return;
     }
+
+    const existingPurchaseDate = toInputDate(ordersDialogRow.purchaseDate);
+    const normalizedPurchaseDate = dialogPurchaseDateDraft.trim();
+    const nextPurchaseDate =
+      nextValue > 0
+        ? normalizedPurchaseDate || existingPurchaseDate || toInputDate(new Date())
+        : "";
+
     try {
       const target = ordersDialogRow.targetGoats || ordersDialogRow.totalGoats;
       const remainingGoats = Math.max(target - nextValue, 0);
@@ -1986,10 +2113,12 @@ const OrdersPage = () => {
         remainingGoats,
         status: nextStatus,
         completedAt: nextCompletedAt,
-        date: dialogPurchaseDateDraft,
+        date: nextOrderDate,
+        purchaseDate: nextPurchaseDate,
       });
-      toast({ title: "Updated", description: "Purchase details updated." });
-      setDialogGoatsBoughtDraft(ordersDialogMode === "edit" ? String(nextValue) : "");
+      setDialogOrderDateDraft(nextOrderDate);
+      setDialogPurchaseDateDraft(nextPurchaseDate);
+      toast({ title: "Updated", description: "Order details updated." });
     } catch {
       toast({ title: "Error", description: "Failed to update.", variant: "destructive" });
     }
@@ -2010,6 +2139,10 @@ const OrdersPage = () => {
       toast({ title: "Error", description: "Failed to mark complete.", variant: "destructive" });
     }
   };
+
+  /* ---------------------------------------------------------------- */
+  /* Inline order-item editing in submissions table                    */
+  /* ---------------------------------------------------------------- */
 
   const startOrderEdit = (row: BatchOrderRow, item: NormalizedOrderItem, index: number) => {
     if (!ensureOrderEditAccess()) return;
@@ -2082,6 +2215,10 @@ const OrdersPage = () => {
     }
   };
 
+  /* ---------------------------------------------------------------- */
+  /* CSV / Excel import                                                */
+  /* ---------------------------------------------------------------- */
+
   const handleOrderFileSelect = useCallback(
     async (event: ChangeEvent<HTMLInputElement>) => {
       const file = event.target.files?.[0] || null;
@@ -2109,14 +2246,12 @@ const OrdersPage = () => {
         let parsed: ParsedOrderCsvResult;
 
         if (isExcel) {
-          // Parse Excel file
           const data = await file.arrayBuffer();
           const workbook = XLSX.read(new Uint8Array(data), { type: "array" });
           const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
           const csvText = XLSX.utils.sheet_to_csv(firstSheet);
           parsed = parseOrderCsvText(csvText, ordersDialogRow);
         } else {
-          // Parse CSV file
           const text = await file.text();
           parsed = parseOrderCsvText(text, ordersDialogRow);
         }
@@ -2202,6 +2337,10 @@ const OrdersPage = () => {
     }
   }, [clearOrderCsvImport, ensureOrderEditAccess, orderCsvPreviewItems, ordersDialogRow, toast]);
 
+  /* ---------------------------------------------------------------- */
+  /* Create new order                                                  */
+  /* ---------------------------------------------------------------- */
+
   const handleCreateOrder = async () => {
     if (!ensureOrderCreateAccess()) return;
     const selectedProgramme = resolvedOrderProgramme.trim();
@@ -2210,7 +2349,7 @@ const OrdersPage = () => {
     const goatsValue = Number(newOrder.goats);
     const trimmedOrderCode = newOrder.orderCode.trim();
 
-    if (!newOrder.date) { toast({ title: "Date required", variant: "destructive" }); return; }
+    if (!newOrder.date) { toast({ title: "Order date required", variant: "destructive" }); return; }
     if (!trimmedCounty) { toast({ title: "County required", variant: "destructive" }); return; }
     if (!Number.isFinite(goatsValue) || goatsValue <= 0) { toast({ title: "Invalid goats", description: "Enter the total number of goats to be collected.", variant: "destructive" }); return; }
 
@@ -2268,6 +2407,19 @@ const OrdersPage = () => {
     }
   };
 
+  /* ================================================================== */
+  /* RENDER                                                             */
+  /* ================================================================== */
+
+  const activeQuickRange = useMemo((): "month" | "year" | "all" | null => {
+    if (!filters.startDate && !filters.endDate) return "all";
+    const monthDates = getCurrentMonthDates();
+    const yearDates = getCurrentYearDates();
+    if (filters.startDate === monthDates.startDate && filters.endDate === monthDates.endDate) return "month";
+    if (filters.startDate === yearDates.startDate && filters.endDate === yearDates.endDate) return "year";
+    return null;
+  }, [filters.startDate, filters.endDate]);
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -2295,7 +2447,6 @@ const OrdersPage = () => {
 
       {/* Stat Cards */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {/* Orders Card */}
         <Card className="border-slate-200 border-l-4 border-l-[#0B1F5F] shadow-sm">
           <CardContent className="flex items-center gap-4 p-5">
             <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-blue-50 border border-blue-100">
@@ -2309,7 +2460,6 @@ const OrdersPage = () => {
           </CardContent>
         </Card>
 
-        {/* Goats Purchased Card */}
         <Card className="border-slate-200 border-l-4 border-l-orange-500 shadow-sm">
           <CardContent className="p-5">
             <div className="flex items-center gap-4">
@@ -2343,7 +2493,6 @@ const OrdersPage = () => {
           </CardContent>
         </Card>
 
-        {/* Counties Covered Card */}
         <Card className="border-slate-200 border-l-4 border-l-[#7B1E3A] shadow-sm">
           <CardContent className="p-5">
             <div className="flex items-center gap-4">
@@ -2437,6 +2586,8 @@ const OrdersPage = () => {
               Clear
             </Button>
           </div>
+
+         
         </CardContent>
       </Card>
 
@@ -2450,7 +2601,11 @@ const OrdersPage = () => {
             </div>
           ) : pageRows.length === 0 ? (
             <div className="text-center py-12 text-muted-foreground text-sm">
-              {activeProgram ? "No orders found for current filters." : "You do not have access to any programme data."}
+              {activeProgram
+                ? filters.startDate || filters.endDate
+                  ? "No orders match the selected date range. Try \"All Time\" to see all orders."
+                  : "No orders found for current filters."
+                : "You do not have access to any programme data."}
             </div>
           ) : (
             <>
@@ -2458,7 +2613,7 @@ const OrdersPage = () => {
                 <table className="w-full border-collapse border border-gray-300 text-sm text-left whitespace-nowrap">
                   <thead>
                     <tr className="bg-blue-500 text-White text-xs">
-                      <th className="py-3 px-3 font-semibold text-white ">Date</th>
+                      <th className="py-3 px-3 font-semibold text-white ">Order Date</th>
                       <th className="py-3 px-3 font-semibold text-white ">County</th>
                       <th className="py-3 px-3 font-semibold text-white ">Order Code</th>
                       <th className="py-3 px-3 font-semibold text-white ">Ordered By</th>
@@ -2544,7 +2699,7 @@ const OrdersPage = () => {
                 </Select>
               </div>
             )}
-            
+
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label className="text-xs font-medium text-slate-600">Order Date *</Label>
@@ -2562,7 +2717,6 @@ const OrdersPage = () => {
                 onValueChange={async (value) => {
                   setNewOrder((prev) => ({ ...prev, county: value }));
                   setSelectedFieldOfficerIds([]);
-                  // Auto-generate order code with county prefix
                   const code = await generateOrderCode(value);
                   setNewOrder((prev) => ({ ...prev, orderCode: code }));
                 }}
@@ -2645,9 +2799,10 @@ const OrdersPage = () => {
           {ordersDialogRow ? (
             <div className="space-y-4 px-6 pb-6 pt-4">
                 {/* Summary Grid */}
-                <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
+                <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
                 {([
-                  { label: "Date", value: formatDate(ordersDialogRow.batchDate)},
+                  { label: "Order Date", value: formatDate(ordersDialogRow.orderDate)},
+                  { label: "Purchasing Date", value: ordersDialogRow.purchaseDate ? formatDate(ordersDialogRow.purchaseDate) : "Not set" },
                   { label: "County", value: ordersDialogRow.county },
                   !ordersDialogIsEditing ? { label: "Order Code", value: ordersDialogRow.orderCode } : null,
                   { label: "Status", badge: ordersDialogRow.status },
@@ -2664,7 +2819,6 @@ const OrdersPage = () => {
                 ))}
                 </div>
 
-
               {/* Status Banner */}
               {ordersDialogRow.status === "completed" ? (
                 <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">
@@ -2680,16 +2834,35 @@ const OrdersPage = () => {
                 </div>
               )}
 
+              {/* Edit section: Order Date + Purchasing Date + Goats Purchased */}
               {ordersDialogIsEditing && (
                 <div className="rounded-lg border border-blue-100 bg-blue-50/40 p-4">
                   <div className="flex items-center justify-between mb-3">
-                    <p className="text-xs font-semibold uppercase tracking-wider text-blue-700">Purchase Details</p>
+                    <p className="text-xs font-semibold uppercase tracking-wider text-blue-700">Order And Purchase Details</p>
                     <Button size="sm" className="h-8 bg-blue-600 text-white hover:bg-blue-700 text-xs" onClick={saveDialogGoatsBought}>
                       <Save className="mr-1.5 h-3.5 w-3.5" />
                       Save Changes
                     </Button>
                   </div>
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid gap-4 sm:grid-cols-3">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-medium text-slate-600">Order Date</Label>
+                      <Input
+                        type="date"
+                        value={dialogOrderDateDraft}
+                        onChange={(e) => setDialogOrderDateDraft(e.target.value)}
+                        className="h-9 text-sm border-slate-200"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-medium text-slate-600">Purchasing Date</Label>
+                      <Input
+                        type="date"
+                        value={dialogPurchaseDateDraft}
+                        onChange={(e) => setDialogPurchaseDateDraft(e.target.value)}
+                        className="h-9 text-sm border-slate-200"
+                      />
+                    </div>
                     <div className="space-y-1.5">
                       <Label className="text-xs font-medium text-slate-600">Goats Purchased</Label>
                       <Input
@@ -2700,17 +2873,6 @@ const OrdersPage = () => {
                         onChange={(e) => setDialogGoatsBoughtDraft(e.target.value)}
                         className="h-9 text-sm border-slate-200"
                       />
-                      
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label className="text-xs font-medium text-slate-600">Purchase Date</Label>
-                      <Input
-                        type="date"
-                        value={dialogPurchaseDateDraft}
-                        onChange={(e) => setDialogPurchaseDateDraft(e.target.value)}
-                        className="h-9 text-sm border-slate-200"
-                      />
-                     
                     </div>
                   </div>
                 </div>
@@ -2795,7 +2957,7 @@ const OrdersPage = () => {
                         </Button>
                       ) : null}
                     </div>
-                   
+
                     {orderCsvFile ? (
                       <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-3">
                         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -2935,6 +3097,7 @@ const OrdersPage = () => {
         </DialogContent>
       </Dialog>
 
+      {/* Offtake Team Dialog */}
       <Dialog open={Boolean(offtakeTeamDialogBatchId && offtakeTeamDialogRow)} onOpenChange={(open) => { if (!open) closeOfftakeTeamDialog(); }}>
         <DialogContent className="sm:max-w-xl bg-white rounded-2xl border-slate-200 shadow-xl max-h-[90vh] overflow-hidden">
           <DialogHeader className="border-b border-slate-100 pb-3">
@@ -2948,14 +3111,12 @@ const OrdersPage = () => {
                   {offtakeTeamDialogRow.county}
                 </p>
                 <p className="mt-1 text-sm font-medium text-slate-800">
-                  Order date {formatDate(offtakeTeamDialogRow.batchDate)}
+                  Order date {formatDate(offtakeTeamDialogRow.orderDate)}
                 </p>
-                
               </div>
 
               <div className="rounded-lg border border-slate-200 overflow-hidden">
                 <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50 px-4 py-2.5">
-                  
                 </div>
 
                 <div className="space-y-4 bg-white p-4">
@@ -3000,7 +3161,6 @@ const OrdersPage = () => {
                   <div className="rounded-lg border border-slate-200 overflow-hidden">
                     <div className="border-b border-slate-100 bg-slate-50 px-4 py-2.5">
                       <p className="text-xs font-semibold uppercase tracking-wider text-slate-600">Added Team Members</p>
-                      
                     </div>
                     <div className="max-h-[320px] divide-y divide-slate-100 overflow-y-auto bg-white">
                       {offtakeTeamDraftMembers.length === 0 ? (

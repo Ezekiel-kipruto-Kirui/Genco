@@ -10,11 +10,23 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
-import { Download, Users, BookOpen, Edit, Trash2, Calendar, Eye, MapPin, GraduationCap, Upload, User, UserCircle } from "lucide-react";
+import { Download, Users, BookOpen, Edit, Trash2, Calendar, Eye, MapPin, GraduationCap, Upload, User, UserCircle, Syringe } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { canViewAllProgrammes, isChiefAdmin } from "@/contexts/authhelper";
 import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
 import { resolveAccessibleProgrammes, resolveActiveProgramme } from "@/lib/programme-access";
+
+// ──────────────────────────────────────────────
+// Utility: Format large numbers (e.g. 1,200 → 1.2K, 1,500,000 → 1.5M)
+// ──────────────────────────────────────────────
+const formatNumber = (num: number): string => {
+  if (num == null || !Number.isFinite(num)) return "0";
+  const abs = Math.abs(num);
+  if (abs >= 1_000_000_000) return `${(num / 1_000_000_000).toFixed(1).replace(/\.0$/, "")}B`;
+  if (abs >= 1_000_000) return `${(num / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
+  if (abs >= 1_000) return `${(num / 1_000).toFixed(1).replace(/\.0$/, "")}K`;
+  return num.toLocaleString();
+};
 
 // --- Types ---
 interface TrainingRecord {
@@ -85,8 +97,8 @@ interface EditForm {
 const PAGE_LIMIT = 15;
 
 const EXPORT_HEADERS = [
-  'Date Created', 'Topic/Module', 'County/Region', 'Subcounty/Location', 
-  'Start Date', 'End Date', 'Total Farmers', 'Officers (Trainers)', 'Sub Counties', 'Officer', 'Programme'
+  'Date Created', 'Topic/Module', 'County', 'Subcounty', 'Village', 
+  'Start Date', 'End Date', 'Total Farmers', 'Officer', 'Programme'
 ];
 
 const parseDate = (date: any): Date | null => {
@@ -369,17 +381,13 @@ const CapacityBuildingPage = () => {
     const sortedFiltered = sortTrainingByLatest(filtered);
     setFilteredRecords(sortedFiltered);
 
-    // --- CORRECTED STATS CALCULATION ---
-    // Derive counts from actual string data (unique officers, unique subcounties)
-    // rather than summing empty numeric fields.
+    // Stats Calculation
     const totalParticipants = sortedFiltered.reduce((sum, r) => sum + (Number(r.totalFarmers) || 0), 0);
     
-    // Count unique officers (Trainers)
     const allOfficers = sortedFiltered.map(r => r.fieldOfficer || r.username).filter(Boolean);
     const uniqueOfficersSet = new Set(allOfficers);
     const totalTrainers = uniqueOfficersSet.size;
 
-    // Count unique subcounties
     const allSubCounties = sortedFiltered.map(r => r.subcounty).filter(Boolean);
     const uniqueSubCountiesSet = new Set(allSubCounties);
     const totalSubCounties = uniqueSubCountiesSet.size;
@@ -446,6 +454,11 @@ const CapacityBuildingPage = () => {
   const getCurrentPageRecords = () => {
     const start = (pagination.page - 1) * pagination.limit;
     return filteredRecords.slice(start, start + pagination.limit);
+  };
+
+  const openViewDialog = (record: TrainingRecord) => {
+    setViewingRecord(record);
+    setIsViewDialogOpen(true);
   };
 
   const openEditDialog = (record: TrainingRecord) => {
@@ -660,17 +673,16 @@ const CapacityBuildingPage = () => {
         formatDateForExcel(r.createdAt || r.rawTimestamp),
         r.topicTrained || r.Modules || 'N/A',
         r.county || r.region || 'N/A',
-        r.subcounty || r.location || 'N/A',
+        r.subcounty || 'N/A',
+        r.location || 'N/A',
         formatDateForExcel(r.startDate),
         formatDateForExcel(r.endDate),
         r.totalFarmers || 0,
-        r.fieldOfficer || r.username || 'N/A', // Exporting Officer name instead of count
-        r.subcounty || 'N/A', // Exporting Subcounty name instead of count
         r.fieldOfficer || r.username || 'N/A',
         r.programme || activeProgram
       ]);
 
-      const dateColumns = new Set([0, 4, 5]);
+      const dateColumns = new Set([0, 5, 6]);
       const csvContent = [
         EXPORT_HEADERS.map(escapeCsvCell).join(','),
         ...csvData.map(row =>
@@ -688,6 +700,7 @@ const CapacityBuildingPage = () => {
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
+      URL.revokeObjectURL(url);
     } catch (error) {
       console.error(error);
       toast({ title: "Error", description: "Export failed", variant: "destructive" });
@@ -781,33 +794,28 @@ const CapacityBuildingPage = () => {
         </div>
       </div>
 
+      {/* ─── Stats Cards ─── */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <StatsCard title="TOTAL PARTICIPANTS" value={stats.totalParticipants.toLocaleString()} icon={Users} description="Total farmers trained" />
-        <StatsCard title="TOTAL OFFICERS (TRAINERS)" value={stats.totalTrainers.toLocaleString()} icon={User} description="Officers Involved" />
-        <StatsCard title="SUB COUNTIES COVERED" value={stats.totalSubCounties.toLocaleString()} icon={MapPin} description="Sub-counties reached" />
+        <StatsCard title="TOTAL PARTICIPANTS" value={formatNumber(stats.totalParticipants)} icon={Users} description="Total farmers trained" />
+        <StatsCard title="TOTAL OFFICERS (TRAINERS)" value={formatNumber(stats.totalTrainers)} icon={User} description="Officers Involved" />
+        <StatsCard title="SUB COUNTIES COVERED" value={formatNumber(stats.totalSubCounties)} icon={MapPin} description="Sub-counties reached" />
       </div>
 
+      {/* ─── Filters ─── */}
       <Card className="shadow-lg bg-white">
         <CardContent className="pt-6">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             <div className="space-y-2">
               <Label>Search</Label>
-              <Input placeholder="Topic, region, officer..." value={searchValue} onChange={(e) => handleSearch(e.target.value)} />
+              <Input placeholder="Topic, county, officer..." value={searchValue} onChange={(e) => handleSearch(e.target.value)} />
             </div>
             <div className="space-y-2">
               <Label>County</Label>
               <Select value={filters.region} onValueChange={(v) => handleFilterChange("region", v)}>
-                <SelectTrigger><SelectValue placeholder="Select Region" /></SelectTrigger>
+                <SelectTrigger><SelectValue placeholder="Select County" /></SelectTrigger>
                 <SelectContent><SelectItem value="all">All Counties</SelectItem>{uniqueRegions.slice(0, 20).map(r => <SelectItem key={r} value={r}>{r}</SelectItem>)}</SelectContent>
               </Select>
             </div>
-            {/* <div className="space-y-2">
-              <Label>Module/Topic</Label>
-              <Select value={filters.modules} onValueChange={(v) => handleFilterChange("modules", v)}>
-                <SelectTrigger><SelectValue placeholder="Select Module" /></SelectTrigger>
-                <SelectContent><SelectItem value="all">All Modules</SelectItem>{uniqueModules.slice(0, 20).map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent>
-              </Select>
-            </div> */}
             <div className="space-y-2">
               <Label>Date Range</Label>
               <div className="flex gap-2">
@@ -819,6 +827,7 @@ const CapacityBuildingPage = () => {
         </CardContent>
       </Card>
 
+      {/* ─── Data Table ─── */}
       <Card className="shadow-lg bg-white">
         <CardContent className="p-0">
           {loading ? (
@@ -838,9 +847,8 @@ const CapacityBuildingPage = () => {
                         />
                       </th>
                       <th className="py-3 px-3 font-semibold text-gray-700">Date</th>
-                      <th className="py-3 px-3 font-semibold text-gray-700">Topic/Module</th>
                       <th className="py-3 px-3 font-semibold text-gray-700">County</th>
-                      <th className="py-3 px-3 font-semibold text-gray-700">Sub County</th>
+                      <th className="py-3 px-3 font-semibold text-gray-700">Subcounty</th>
                       <th className="py-3 px-3 font-semibold text-gray-700">Village</th>
                       <th className="py-3 px-3 font-semibold text-gray-700">Farmers</th>
                       <th className="py-3 px-3 font-semibold text-gray-700">Officer</th>
@@ -853,9 +861,8 @@ const CapacityBuildingPage = () => {
                         <td className="py-2 px-3">
                           <Checkbox checked={selectedRecords.includes(record.id)} onCheckedChange={() => handleSelectRecord(record.id)} />
                         </td>
-                        <td className="py-2 px-3 text-xs text-gray-500">{formatDate(record.createdAt || record.rawTimestamp)}</td>
-                        <td className="py-2 px-3 font-medium text-sm">{record.topicTrained || record.Modules || 'N/A'}</td>
-                        <td className="py-2 px-3 text-xs">{record.county || 'N/A'}</td>
+                        <td className="py-2 px-3 text-xs text-gray-500">{formatDate(record.startDate || record.createdAt || record.rawTimestamp)}</td>
+                        <td className="py-2 px-3 text-xs font-medium">{record.county || record.region || 'N/A'}</td>
                         <td className="py-2 px-3 text-xs">{record.subcounty || 'N/A'}</td>
                         <td className="py-2 px-3 text-xs">{record.location || 'N/A'}</td>
                         <td className="py-2 px-3">
@@ -868,7 +875,7 @@ const CapacityBuildingPage = () => {
                               size="icon"
                               variant="ghost"
                               className="h-7 w-7 text-green-600 hover:bg-green-50"
-                              onClick={() => { setViewingRecord(record); setIsViewDialogOpen(true); }}
+                              onClick={() => openViewDialog(record)}
                             >
                               <Eye className="h-3.5 w-3.5" />
                             </Button>
@@ -900,7 +907,7 @@ const CapacityBuildingPage = () => {
                 </table>
               </div>
               <div className="flex flex-col sm:flex-row items-center justify-between p-4 border-t bg-gray-50 gap-4">
-                <span className="text-sm text-muted-foreground">{filteredRecords.length} total records â€¢ Page {pagination.page} of {pagination.totalPages}</span>
+                <span className="text-sm text-muted-foreground">{filteredRecords.length} total records &bull; Page {pagination.page} of {pagination.totalPages}</span>
                 <div className="flex gap-2">
                   <Button size="sm" variant="outline" disabled={!pagination.hasPrev} onClick={() => handlePageChange(pagination.page - 1)}>Previous</Button>
                   <Button size="sm" variant="outline" disabled={!pagination.hasNext} onClick={() => handlePageChange(pagination.page + 1)}>Next</Button>
@@ -911,40 +918,163 @@ const CapacityBuildingPage = () => {
         </CardContent>
       </Card>
 
+      {/* ─── VIEW DIALOG ─── */}
       <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Session Details</DialogTitle></DialogHeader>
+        <DialogContent className="sm:max-w-[600px] bg-white rounded-2xl border-0 shadow-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex justify-between items-center">
+              <span>Session Details</span>
+              <Badge
+                variant="secondary"
+                className="bg-blue-100 text-blue-800 text-xs font-semibold px-2.5 py-0.5"
+              >
+                {viewingRecord?.programme || activeProgram}
+              </Badge>
+            </DialogTitle>
+            <DialogDescription className="sr-only">View full training session details</DialogDescription>
+          </DialogHeader>
           {viewingRecord && (
-            <div className="space-y-4 py-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4"><div><Label>Topic</Label><p>{viewingRecord.topicTrained || viewingRecord.Modules}</p></div><div><Label>Date</Label><p>{formatDate(viewingRecord.createdAt)}</p></div></div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4"><div><Label>Region</Label><p>{viewingRecord.county}</p></div><div><Label>Location</Label><p>{viewingRecord.subcounty}</p></div></div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                 <div><Label>Farmers Trained</Label><p>{viewingRecord.totalFarmers}</p></div>
-                 <div><Label>Officer</Label><p>{viewingRecord.fieldOfficer}</p></div>
+            <div className="grid gap-4 py-4">
+              {/* Topic / Module */}
+              <div className="border border-indigo-100 rounded-xl bg-indigo-50/50 p-4">
+                <div className="flex items-start gap-3">
+                  <div className="rounded-full bg-indigo-100 p-2 mt-0.5">
+                    <BookOpen className="h-4 w-4 text-indigo-600" />
+                  </div>
+                  <div className="flex-1">
+                    <Label className="text-xs text-indigo-500 uppercase tracking-wide font-semibold">
+                      Topic / Module
+                    </Label>
+                    <p className="text-base font-semibold text-slate-900 mt-1">
+                      {viewingRecord.topicTrained || viewingRecord.Modules || "N/A"}
+                    </p>
+                  </div>
+                </div>
               </div>
-              <div className="bg-gray-50 p-4 rounded"><Label>Details</Label><p className="text-sm mt-1">{viewingRecord.totalFarmers} farmers trained by {viewingRecord.fieldOfficer}.</p></div>
+
+              {/* Location Info */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="border border-slate-200 rounded-xl bg-slate-50 p-4">
+                  <div className="flex items-center gap-2 mb-1">
+                    <MapPin className="h-3.5 w-3.5 text-emerald-500" />
+                    <Label className="text-xs text-slate-500 uppercase tracking-wide font-semibold">County</Label>
+                  </div>
+                  <p className="text-sm font-semibold text-slate-800">
+                    {viewingRecord.county || viewingRecord.region || "N/A"}
+                  </p>
+                </div>
+                <div className="border border-slate-200 rounded-xl bg-slate-50 p-4">
+                  <div className="flex items-center gap-2 mb-1">
+                    <MapPin className="h-3.5 w-3.5 text-blue-500" />
+                    <Label className="text-xs text-slate-500 uppercase tracking-wide font-semibold">Subcounty</Label>
+                  </div>
+                  <p className="text-sm font-semibold text-slate-800">
+                    {viewingRecord.subcounty || "N/A"}
+                  </p>
+                </div>
+              </div>
+              {viewingRecord.location && (
+                <div className="border border-slate-200 rounded-xl bg-slate-50 p-4">
+                  <div className="flex items-center gap-2 mb-1">
+                    <MapPin className="h-3.5 w-3.5 text-amber-500" />
+                    <Label className="text-xs text-slate-500 uppercase tracking-wide font-semibold">Village</Label>
+                  </div>
+                  <p className="text-sm font-semibold text-slate-800">
+                    {viewingRecord.location}
+                  </p>
+                </div>
+              )}
+
+              {/* Dates */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="border border-slate-200 rounded-xl bg-slate-50 p-4">
+                  <div className="flex items-center gap-2 mb-1">
+                    <Calendar className="h-3.5 w-3.5 text-blue-500" />
+                    <Label className="text-xs text-slate-500 uppercase tracking-wide font-semibold">Start Date</Label>
+                  </div>
+                  <p className="text-sm font-semibold text-slate-800">
+                    {formatDate(viewingRecord.startDate)}
+                  </p>
+                </div>
+                <div className="border border-slate-200 rounded-xl bg-slate-50 p-4">
+                  <div className="flex items-center gap-2 mb-1">
+                    <Calendar className="h-3.5 w-3.5 text-purple-500" />
+                    <Label className="text-xs text-slate-500 uppercase tracking-wide font-semibold">End Date</Label>
+                  </div>
+                  <p className="text-sm font-semibold text-slate-800">
+                    {formatDate(viewingRecord.endDate)}
+                  </p>
+                </div>
+              </div>
+
+              {/* Summary Stats */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="border border-green-100 rounded-xl bg-green-50 p-4 text-center">
+                  <Users className="h-5 w-5 text-green-500 mx-auto mb-1" />
+                  <Label className="text-xs text-green-600 uppercase tracking-wide font-semibold">Farmers Trained</Label>
+                  <p className="text-xl font-bold text-green-700 mt-1">
+                    {formatNumber(viewingRecord.totalFarmers || 0)}
+                  </p>
+                </div>
+                <div className="border border-blue-100 rounded-xl bg-blue-50 p-4 text-center">
+                  <UserCircle className="h-5 w-5 text-blue-500 mx-auto mb-1" />
+                  <Label className="text-xs text-blue-600 uppercase tracking-wide font-semibold">Officer</Label>
+                  <p className="text-sm font-bold text-blue-700 mt-1">
+                    {viewingRecord.fieldOfficer || viewingRecord.username || "N/A"}
+                  </p>
+                </div>
+              </div>
+
+              {/* Meta info */}
+              <div className="border border-slate-100 rounded-lg bg-slate-50 p-3">
+                <p className="text-xs text-slate-400">
+                  Record created: {formatDate(viewingRecord.createdAt || viewingRecord.rawTimestamp)}
+                </p>
+              </div>
             </div>
           )}
         </DialogContent>
       </Dialog>
 
+      {/* ─── EDIT DIALOG ─── */}
       <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
-        <DialogContent>
+        <DialogContent className="sm:max-w-[550px] bg-white rounded-2xl border-0 shadow-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Edit Session</DialogTitle></DialogHeader>
           <div className="grid gap-4 py-4">
              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div><Label>Officer Name</Label><Input value={editForm.Name} onChange={e => setEditForm({...editForm, Name: e.target.value})} /></div>
-                <div><Label>Topic</Label><Input value={editForm.topicTrained} onChange={e => setEditForm({...editForm, topicTrained: e.target.value})} /></div>
+                <div>
+                  <Label>Officer Name</Label>
+                  <Input value={editForm.Name} onChange={e => setEditForm({...editForm, Name: e.target.value})} />
+                </div>
+                <div>
+                  <Label>Topic</Label>
+                  <Input value={editForm.topicTrained} onChange={e => setEditForm({...editForm, topicTrained: e.target.value})} />
+                </div>
              </div>
              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div><Label>Region (County)</Label><Input value={editForm.county} onChange={e => setEditForm({...editForm, county: e.target.value})} /></div>
-                <div><Label>Location (Subcounty)</Label><Input value={editForm.subcounty} onChange={e => setEditForm({...editForm, subcounty: e.target.value})} /></div>
+                <div>
+                  <Label>County</Label>
+                  <Input value={editForm.county} onChange={e => setEditForm({...editForm, county: e.target.value})} />
+                </div>
+                <div>
+                  <Label>Subcounty</Label>
+                  <Input value={editForm.subcounty} onChange={e => setEditForm({...editForm, subcounty: e.target.value})} />
+                </div>
              </div>
              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div><Label>Start Date</Label><Input type="date" value={editForm.startDate} onChange={e => setEditForm({...editForm, startDate: e.target.value})} /></div>
-                <div><Label>End Date</Label><Input type="date" value={editForm.endDate} onChange={e => setEditForm({...editForm, endDate: e.target.value})} /></div>
+                <div>
+                  <Label>Start Date</Label>
+                  <Input type="date" value={editForm.startDate} onChange={e => setEditForm({...editForm, startDate: e.target.value})} />
+                </div>
+                <div>
+                  <Label>End Date</Label>
+                  <Input type="date" value={editForm.endDate} onChange={e => setEditForm({...editForm, endDate: e.target.value})} />
+                </div>
              </div>
-             <div><Label>Total Farmers</Label><Input type="number" value={editForm.totalFarmers} onChange={e => setEditForm({...editForm, totalFarmers: Number(e.target.value)})} /></div>
+             <div>
+               <Label>Total Farmers</Label>
+               <Input type="number" value={editForm.totalFarmers} onChange={e => setEditForm({...editForm, totalFarmers: Number(e.target.value)})} />
+             </div>
              {userIsChiefAdmin && (
                 <div>
                     <Label>Programme</Label>
@@ -962,6 +1092,7 @@ const CapacityBuildingPage = () => {
         </DialogContent>
       </Dialog>
 
+      {/* ─── UPLOAD DIALOG ─── */}
       <Dialog open={isUploadDialogOpen} onOpenChange={setIsUploadDialogOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>Upload Data</DialogTitle></DialogHeader>
@@ -977,6 +1108,7 @@ const CapacityBuildingPage = () => {
         </DialogContent>
       </Dialog>
 
+      {/* ─── DELETE CONFIRM DIALOG ─── */}
       <Dialog open={isDeleteConfirmOpen} onOpenChange={setIsDeleteConfirmOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>Confirm Deletion</DialogTitle></DialogHeader>
@@ -991,4 +1123,3 @@ const CapacityBuildingPage = () => {
   );
 };
 export default CapacityBuildingPage;
-

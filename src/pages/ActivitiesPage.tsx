@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { canViewAllProgrammes, isChiefAdmin } from "@/contexts/authhelper";
-import { PROGRAMME_OPTIONS, normalizeProgramme, resolveAccessibleProgrammes } from "@/lib/programme-access";
+import { PROGRAMME_OPTIONS, includesProgramme, normalizeProgramme, resolveAccessibleProgrammes } from "@/lib/programme-access";
 
 import { 
   Users, 
@@ -153,9 +153,9 @@ const ActivitiesPage = () => {
   useEffect(() => {
     setFilterProgramme((prev) => {
       if (userCanViewAllProgrammeData) {
-        return prev === "all" || accessibleProgrammes.includes(prev) ? prev : "all";
+        return prev === "all" || includesProgramme(accessibleProgrammes, prev) ? prev : "all";
       }
-      return accessibleProgrammes.includes(prev) ? prev : defaultProgrammeFilter;
+      return includesProgramme(accessibleProgrammes, prev) ? prev : defaultProgrammeFilter;
     });
   }, [accessibleProgrammes, defaultProgrammeFilter, userCanViewAllProgrammeData]);
 
@@ -450,15 +450,8 @@ const ActivitiesPage = () => {
         {/* Header */}
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-4">
-            {/* <Link to="/dashboard">
-              <Button variant="outline" size="sm">
-                <ArrowLeft className="h-4 w-4 mr-2" />
-                Back to Dashboard
-              </Button>
-            </Link> */}
             <div>
               <h1 className="text-md font-bold text-slate-900">Activities Management</h1>
-            
             </div>
           </div>
           <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
@@ -467,7 +460,6 @@ const ActivitiesPage = () => {
                 <Plus className="h-4 w-4 mr-2" />
                 Schedule Activity
               </Button>) : <span className="hidden" />}
-              
             </DialogTrigger>
             <DialogContent className="sm:max-w-[700px] bg-white rounded-2xl border-0 shadow-2xl max-h-[90vh] overflow-y-auto">
               <DialogHeader>
@@ -630,10 +622,11 @@ const ActivitiesPage = () => {
           </Dialog>
         </div>
 
-        {/* Stats Overview */}
+        {/* Stats Overview — with left gradient borders */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <Card className="bg-white/95 backdrop-blur-sm">
-            <CardContent className="p-4">
+          <Card className="bg-white/95 backdrop-blur-sm relative overflow-hidden">
+            <div className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-blue-500 to-blue-700"></div>
+            <CardContent className="p-4 pl-6">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-slate-600">Total Activities</p>
@@ -645,8 +638,9 @@ const ActivitiesPage = () => {
               </div>
             </CardContent>
           </Card>
-          <Card className="bg-white/95 backdrop-blur-sm">
-            <CardContent className="p-4">
+          <Card className="bg-white/95 backdrop-blur-sm relative overflow-hidden">
+            <div className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-yellow-400 to-yellow-600"></div>
+            <CardContent className="p-4 pl-6">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-slate-600">Pending</p>
@@ -658,8 +652,9 @@ const ActivitiesPage = () => {
               </div>
             </CardContent>
           </Card>
-          <Card className="bg-white/95 backdrop-blur-sm">
-            <CardContent className="p-4">
+          <Card className="bg-white/95 backdrop-blur-sm relative overflow-hidden">
+            <div className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-green-500 to-green-700"></div>
+            <CardContent className="p-4 pl-6">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-slate-600">Completed</p>
@@ -671,7 +666,6 @@ const ActivitiesPage = () => {
               </div>
             </CardContent>
           </Card>
-        
         </div>
 
         {/* Filters */}
@@ -731,15 +725,15 @@ const ActivitiesPage = () => {
               <div className="w-full overflow-x-auto rounded-md">
                 <table className="w-full border-collapse border border-gray-300 text-sm text-left whitespace-nowrap">
                   <thead>
-                    <tr className="bg-blue-50 text-xs">
-                      <th className="py-3 px-3 font-semibold text-gray-700">Activity Name</th>
-                      <th className="py-3 px-3 font-semibold text-gray-700">Date</th>
-                      <th className="py-3 px-3 font-semibold text-gray-700">Programme</th>
-                      <th className="py-3 px-3 font-semibold text-gray-700">Location</th>
-                      <th className="py-3 px-3 font-semibold text-gray-700">County</th>
-                      <th className="py-3 px-3 font-semibold text-gray-700">Participants</th>
-                      <th className="py-3 px-3 font-semibold text-gray-700">Status</th>
-                      <th className="py-3 px-3 font-semibold text-gray-700">Actions</th>
+                    <tr className="bg-blue-600 text-white text-xs">
+                      <th className="py-3 px-3 font-semibold text-white">Activity Name</th>
+                      <th className="py-3 px-3 font-semibold text-white">Date</th>
+                      <th className="py-3 px-3 font-semibold text-white">Programme</th>
+                      <th className="py-3 px-3 font-semibold text-white">Location</th>
+                      <th className="py-3 px-3 font-semibold text-white">County</th>
+                      <th className="py-3 px-3 font-semibold text-white">Participants</th>
+                      <th className="py-3 px-3 font-semibold text-white">Status</th>
+                      <th className="py-3 px-3 font-semibold text-white">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1060,4 +1054,3 @@ const ActivitiesPage = () => {
 };
 
 export default ActivitiesPage;
-

@@ -9,7 +9,7 @@ export type AnalysisScope =
   | "performance-report"
   | "sales-report";
 
-const ANALYSIS_CACHE_VERSION = "v5";
+const ANALYSIS_CACHE_VERSION = "v6";
 
 export interface AnalysisRequest {
   scope: AnalysisScope;
