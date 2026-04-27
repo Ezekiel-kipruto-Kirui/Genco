@@ -1684,7 +1684,7 @@ const OrdersPage = () => {
     setOfftakeTeamDraftMembers(resolveAssignedOfftakeTeam(offtakeTeamDialogRecord, offtakeTeam));
     setOfftakeTeamFormName("");
     setOfftakeTeamFormPurchaseDate(
-      toInputDate(resolveOrderPurchaseDate(offtakeTeamDialogRecord, offtakeTeamDialogRow?.batchDate || new Date()))
+      toInputDate(resolveOrderPurchaseDate(offtakeTeamDialogRecord, offtakeTeamDialogRow?.batchDate || Date.now()))
     );
     setOfftakeTeamSaving(false);
   }, [offtakeTeam, offtakeTeamDialogBatchId, offtakeTeamDialogRecord, offtakeTeamDialogRow]);
