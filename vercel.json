@@ -2,6 +2,22 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "npm run build:vercel",
   "outputDirectory": ".vercel/output/static",
+  "build": {
+    "env": {
+      "VERCEL_FORCE_NO_BUILD_CACHE": "1"
+    }
+  },
+  "routes": [
+    {
+      "src": "/(?!assets/|img/|fonts/|favicon\\.ico|robots\\.txt).*$",
+      "headers": {
+        "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        "Pragma": "no-cache",
+        "Expires": "0"
+      },
+      "continue": true
+    }
+  ],
   "rewrites": [
     {
       "source": "/(.*)",
