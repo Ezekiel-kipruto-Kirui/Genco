@@ -113,8 +113,7 @@ interface NormalizedOrderItem {
 interface BatchOrderRow {
   batchId: string;
   orderCode: string;
-  orderDate: string | number;
-  purchaseDate: string | number;
+  batchDate: string | number;
   createdAt: string | number;
   completedAt: string | number;
   targetGoats: number;
@@ -247,20 +246,12 @@ const formatDate = (value: unknown): string => {
   return date.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
 };
 
-const resolveOrderDate = (
-  record: Pick<OrderRecord, "purchaseDate" | "date" | "createdAt" | "timestamp" | "completedAt"> | null | undefined,
-  fallback: string | number = "",
-): string | number => {
-  if (!record) return fallback;
-  return record.date || record.createdAt || record.timestamp || record.purchaseDate || record.completedAt || fallback;
-};
-
-const resolvePurchaseDate = (
+const resolveOrderPurchaseDate = (
   record: Pick<OrderRecord, "purchaseDate" | "date" | "completedAt" | "createdAt" | "timestamp"> | null | undefined,
   fallback: string | number = "",
 ): string | number => {
   if (!record) return fallback;
-  return record.purchaseDate || fallback;
+  return record.purchaseDate || record.date || record.completedAt || record.createdAt || record.timestamp || fallback;
 };
 
 const normalizeStatus = (value: string | undefined): string => {
@@ -497,7 +488,7 @@ const ORDER_CSV_OFFICER_HEADERS = ["field officer", "field officer name", "offic
 
 const parseOrderCsvText = (
   text: string,
-  row: Pick<BatchOrderRow, "batchId" | "orderDate" | "purchaseDate" | "location" | "subcounty">
+  row: Pick<BatchOrderRow, "batchId" | "batchDate" | "location" | "subcounty">
 ): ParsedOrderCsvResult => {
   const lines = text
     .replace(/\r/g, "")
@@ -535,9 +526,7 @@ const parseOrderCsvText = (
     }
 
     const explicitId = getCsvCell(values, idIndex);
-    const date =
-      normalizeImportedDateValue(getCsvCell(values, dateIndex)) ||
-      toInputDate(row.purchaseDate || row.orderDate);
+    const date = normalizeImportedDateValue(getCsvCell(values, dateIndex)) || toInputDate(row.batchDate);
     const location = getCsvCell(values, locationIndex) || row.location || "N/A";
     const subcounty = getCsvCell(values, subcountyIndex) || row.subcounty || "";
     const officer = getCsvCell(values, officerIndex) || "N/A";
@@ -926,7 +915,7 @@ const getSubmissionItems = (record: OrderRecord): NormalizedOrderItem[] => {
         "N/A";
       return {
         id: item.id || `${record.id}-${index + 1}`,
-        date: item.date || record.purchaseDate || record.date || record.completedAt || record.createdAt || record.timestamp || "",
+        date: item.date || record.date || record.completedAt || record.createdAt || record.timestamp || "",
         goats: Number(item.goats || record.goats || 0),
         location: itemLocation,
         village: item.village || itemLocation,
@@ -939,7 +928,7 @@ const getSubmissionItems = (record: OrderRecord): NormalizedOrderItem[] => {
 
   const goatsValue = Number(record.goats || record.totalGoats || record.goatsBought || 0);
   if (!Number.isFinite(goatsValue) || goatsValue <= 0) return [];
-  const dateValue = record.purchaseDate || record.date || record.completedAt || record.createdAt || record.timestamp || "";
+  const dateValue = record.date || record.completedAt || record.createdAt || record.timestamp || "";
   const location = record.location || record.village || "N/A";
   const subcounty = record.subcounty || "";
   const officer = record.username || record.createdBy || "N/A";
@@ -972,7 +961,7 @@ const getNormalizedItems = (record: OrderRecord): NormalizedOrderItem[] => {
         "N/A";
       return {
         id: item.id || `${record.id}-${index + 1}`,
-        date: item.date || record.purchaseDate || record.completedAt || record.createdAt || record.timestamp || "",
+        date: item.date || record.completedAt || record.createdAt || record.timestamp || "",
         goats: Number(item.goats || 0),
         location: itemLocation,
         village: item.village || itemLocation,
@@ -1069,12 +1058,12 @@ const precomputeRecord = (record: OrderRecord): PrecomputedRecord => {
   const normProgramme = normalizeText(record.programme);
   const normCounty = normalizeText(record.county);
   const normLocation = normalizeText(record.location || record.village || record.subcounty);
-  const dateMs = parseDate(resolveOrderDate(record))?.getTime() || 0;
+  const dateMs = parseDate(resolveOrderPurchaseDate(record))?.getTime() || 0;
   const goatsTotal = Number(record.targetGoats || record.totalGoats || record.goatsBought || record.goats || 0);
   const officerTokens = getRecordOfficerCandidates(record)
     .map((v) => (typeof v === "number" && Number.isFinite(v) ? String(v) : normalizeText(v)))
     .filter((t) => t.length > 0);
-  const sortDate = resolveOrderDate(record);
+  const sortDate = resolveOrderPurchaseDate(record);
   return { id, record, isBatch, isSubmission, refId, identifiers, normalizedItems, normProgramme, normCounty, normLocation, dateMs, goatsTotal, officerTokens, sortDate };
 };
 
@@ -1107,7 +1096,7 @@ const OrderTableRow = memo(function OrderTableRow({
 }: OrderTableRowProps) {
   return (
     <tr className="border-b hover:bg-blue-50 transition-colors group">
-      <td className="py-2 px-4 text-xs text-gray-500">{formatDate(row.orderDate)}</td>
+      <td className="py-2 px-4 text-xs text-gray-500">{formatDate(row.batchDate)}</td>
       <td className="py-2 px-4 font-medium text-sm">{row.county}</td>
       <td className="py-2 px-4">
         <span className=" text-xs  px-3 py-2 rounded">{row.orderCode}</span>
@@ -1195,7 +1184,6 @@ const OrdersPage = () => {
   const [orderSubcountyDraft, setOrderSubcountyDraft] = useState<string>("");
 
   const [dialogGoatsBoughtDraft, setDialogGoatsBoughtDraft] = useState<string>("");
-  const [dialogOrderDateDraft, setDialogOrderDateDraft] = useState<string>("");
   const [dialogPurchaseDateDraft, setDialogPurchaseDateDraft] = useState<string>("");
   const orderCsvInputRef = useRef<HTMLInputElement | null>(null);
   const [orderCsvFile, setOrderCsvFile] = useState<File | null>(null);
@@ -1544,8 +1532,7 @@ const OrdersPage = () => {
       const remainingGoats = Math.max(totalGoats - goatsBought, 0);
       const createdAt = rec.createdAt || rec.timestamp || "";
       const completedAt = rec.completedAt || "";
-      const orderDate = resolveOrderDate(rec, items[0]?.date || "");
-      const purchaseDate = resolvePurchaseDate(rec);
+      const batchDate = resolveOrderPurchaseDate(rec, items[0]?.date || "");
       const storedStatus = normalizeStatus(rec.status);
       const isReadyForCompletion = totalGoats > 0 && remainingGoats <= 0 && storedStatus !== "completed";
       const status = storedStatus === "completed"
@@ -1559,11 +1546,11 @@ const OrdersPage = () => {
       const targetGoats = Number(rec.targetGoats || 0) || totalGoats;
       const orderCode = normalizeIdValue(rec.orderId) || normalizeIdValue(rec.batchId) || normalizeIdValue(rec.id) || "N/A";
       result.push({
-        batchId: rec.id, orderCode, orderDate, purchaseDate, createdAt, completedAt, targetGoats, totalGoats, recordedGoats: itemsTotal,
+        batchId: rec.id, orderCode, batchDate, createdAt, completedAt, targetGoats, totalGoats, recordedGoats: itemsTotal,
         goatsBought, remainingGoats, status,
         county, subcounty, location, programme, username,
-        sortTimestamp: parseDate(orderDate)?.getTime() || 0, isReadyForCompletion, items,
-        searchableText: `${county} ${subcounty} ${location} ${username} ${status} ${programme} ${rec.id} ${orderCode} ${totalGoats} ${orderDate} ${purchaseDate}`.toLowerCase(),
+        sortTimestamp: parseDate(batchDate)?.getTime() || 0, isReadyForCompletion, items,
+        searchableText: `${county} ${subcounty} ${location} ${username} ${status} ${programme} ${rec.id} ${orderCode} ${totalGoats}`.toLowerCase(),
       });
     }
     result.sort((a, b) => b.sortTimestamp - a.sortTimestamp);
@@ -1661,22 +1648,18 @@ const OrdersPage = () => {
       setEditingOrderKey(null);
       setOrderGoatsDraft("");
       setOrderDateDraft("");
-      setDialogOrderDateDraft("");
-      setDialogPurchaseDateDraft("");
     }
   }, [ordersDialogBatchId, ordersDialogRow]);
 
-  /* Initialize edit-mode drafts including order and purchasing dates */
+  /* Initialize edit-mode drafts including the purchasing date */
   useEffect(() => {
     if (!ordersDialogRow) return;
     if (ordersDialogMode === "edit") {
       setDialogGoatsBoughtDraft(String(ordersDialogRow.goatsBought));
-      setDialogOrderDateDraft(toInputDate(ordersDialogRow.orderDate));
-      setDialogPurchaseDateDraft(toInputDate(ordersDialogRow.purchaseDate));
+      setDialogPurchaseDateDraft(toInputDate(ordersDialogRow.batchDate));
       return;
     }
     setDialogGoatsBoughtDraft("");
-    setDialogOrderDateDraft("");
     setDialogPurchaseDateDraft("");
   }, [ordersDialogMode, ordersDialogRow]);
 
@@ -1701,7 +1684,7 @@ const OrdersPage = () => {
     setOfftakeTeamDraftMembers(resolveAssignedOfftakeTeam(offtakeTeamDialogRecord, offtakeTeam));
     setOfftakeTeamFormName("");
     setOfftakeTeamFormPurchaseDate(
-      toInputDate(resolvePurchaseDate(offtakeTeamDialogRecord, offtakeTeamDialogRow?.purchaseDate || ""))
+      toInputDate(resolveOrderPurchaseDate(offtakeTeamDialogRecord, offtakeTeamDialogRow?.batchDate || new Date()))
     );
     setOfftakeTeamSaving(false);
   }, [offtakeTeam, offtakeTeamDialogBatchId, offtakeTeamDialogRecord, offtakeTeamDialogRow]);
@@ -1846,7 +1829,7 @@ const OrdersPage = () => {
       : "0";
     const dateLabel = newOrder.date ? formatDate(newOrder.date) : "selected date";
 
-    return `Dear Field Officer, a ${programmeLabel} order has been created for ${countyLabel} on ${dateLabel}. Target goats: ${goatsLabel}. Order reference will be attached automatically.`;
+    return `Dear Field Officer, a ${programmeLabel} order has been created for ${countyLabel}. Purchasing date: ${dateLabel}. Target goats: ${goatsLabel}. Order reference will be attached automatically.`;
   }, [newOrder.county, newOrder.date, newOrder.goats, resolvedOrderProgramme]);
 
   useEffect(() => {
@@ -1932,7 +1915,6 @@ const OrdersPage = () => {
     setOrderLocationDraft("");
     setOrderSubcountyDraft("");
     setDialogGoatsBoughtDraft("");
-    setDialogOrderDateDraft("");
     setDialogPurchaseDateDraft("");
     clearOrderCsvImport();
   }, [clearOrderCsvImport]);
@@ -2053,7 +2035,7 @@ const OrdersPage = () => {
           ...rawItem,
           id: item.id || `${row.batchId}-${index + 1}`,
           goats: Math.max(0, Number(item.goats || 0)),
-          date: item.date || row.purchaseDate || row.orderDate || "",
+          date: item.date || row.batchDate || "",
           location: orderLocation,
           village: item.village || orderLocation,
           subcounty: item.subcounty || row.subcounty || "",
@@ -2075,7 +2057,7 @@ const OrdersPage = () => {
     });
   };
 
-  /** Save order date, purchasing date, goats purchased, and recalculate status from the edit dialog */
+  /** Save purchasing date, goats purchased, and recalculate status from the edit dialog */
   const saveDialogGoatsBought = async () => {
     if (!ordersDialogRow) return;
     if (!ensureOrderEditAccess()) return;
@@ -2089,19 +2071,13 @@ const OrdersPage = () => {
       return;
     }
 
-    const nextOrderDate = dialogOrderDateDraft || toInputDate(ordersDialogRow.orderDate);
-    if (!nextOrderDate) {
-      toast({ title: "Date required", description: "Order date is required.", variant: "destructive" });
+    /* Purchasing date is editable — use the dedicated draft; fall back to the existing batch date */
+    const nextPurchaseDate = dialogPurchaseDateDraft || toInputDate(ordersDialogRow.batchDate);
+
+    if (!nextPurchaseDate) {
+      toast({ title: "Date required", description: "Purchasing date is required.", variant: "destructive" });
       return;
     }
-
-    const existingPurchaseDate = toInputDate(ordersDialogRow.purchaseDate);
-    const normalizedPurchaseDate = dialogPurchaseDateDraft.trim();
-    const nextPurchaseDate =
-      nextValue > 0
-        ? normalizedPurchaseDate || existingPurchaseDate || toInputDate(new Date())
-        : "";
-
     try {
       const target = ordersDialogRow.targetGoats || ordersDialogRow.totalGoats;
       const remainingGoats = Math.max(target - nextValue, 0);
@@ -2113,11 +2089,9 @@ const OrdersPage = () => {
         remainingGoats,
         status: nextStatus,
         completedAt: nextCompletedAt,
-        date: nextOrderDate,
         purchaseDate: nextPurchaseDate,
+        date: nextPurchaseDate,
       });
-      setDialogOrderDateDraft(nextOrderDate);
-      setDialogPurchaseDateDraft(nextPurchaseDate);
       toast({ title: "Updated", description: "Order details updated." });
     } catch {
       toast({ title: "Error", description: "Failed to update.", variant: "destructive" });
@@ -2349,7 +2323,7 @@ const OrdersPage = () => {
     const goatsValue = Number(newOrder.goats);
     const trimmedOrderCode = newOrder.orderCode.trim();
 
-    if (!newOrder.date) { toast({ title: "Order date required", variant: "destructive" }); return; }
+    if (!newOrder.date) { toast({ title: "Purchasing date required", variant: "destructive" }); return; }
     if (!trimmedCounty) { toast({ title: "County required", variant: "destructive" }); return; }
     if (!Number.isFinite(goatsValue) || goatsValue <= 0) { toast({ title: "Invalid goats", description: "Enter the total number of goats to be collected.", variant: "destructive" }); return; }
 
@@ -2369,6 +2343,7 @@ const OrdersPage = () => {
         id: orderRecordId,
         orderId: batchOrderCode,
         programme: selectedProgramme,
+        purchaseDate: newOrder.date,
         date: newOrder.date,
         county: trimmedCounty,
         username: userName || "Unknown",
@@ -2613,7 +2588,7 @@ const OrdersPage = () => {
                 <table className="w-full border-collapse border border-gray-300 text-sm text-left whitespace-nowrap">
                   <thead>
                     <tr className="bg-blue-500 text-White text-xs">
-                      <th className="py-3 px-3 font-semibold text-white ">Order Date</th>
+                      <th className="py-3 px-3 font-semibold text-white ">Purchasing Date</th>
                       <th className="py-3 px-3 font-semibold text-white ">County</th>
                       <th className="py-3 px-3 font-semibold text-white ">Order Code</th>
                       <th className="py-3 px-3 font-semibold text-white ">Ordered By</th>
@@ -2702,7 +2677,7 @@ const OrdersPage = () => {
 
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
-                <Label className="text-xs font-medium text-slate-600">Order Date *</Label>
+                <Label className="text-xs font-medium text-slate-600">Purchasing Date *</Label>
                 <Input type="date" value={newOrder.date} onChange={(e) => setNewOrder((p) => ({ ...p, date: e.target.value }))} className="border-slate-200 bg-white text-sm focus:border-blue-400" />
               </div>
               <div className="space-y-1.5">
@@ -2799,10 +2774,9 @@ const OrdersPage = () => {
           {ordersDialogRow ? (
             <div className="space-y-4 px-6 pb-6 pt-4">
                 {/* Summary Grid */}
-                <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
+                <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
                 {([
-                  { label: "Order Date", value: formatDate(ordersDialogRow.orderDate)},
-                  { label: "Purchasing Date", value: ordersDialogRow.purchaseDate ? formatDate(ordersDialogRow.purchaseDate) : "Not set" },
+                  { label: "Purchasing Date", value: formatDate(ordersDialogRow.batchDate)},
                   { label: "County", value: ordersDialogRow.county },
                   !ordersDialogIsEditing ? { label: "Order Code", value: ordersDialogRow.orderCode } : null,
                   { label: "Status", badge: ordersDialogRow.status },
@@ -2834,26 +2808,17 @@ const OrdersPage = () => {
                 </div>
               )}
 
-              {/* Edit section: Order Date + Purchasing Date + Goats Purchased */}
+              {/* Edit section: Purchasing Date + Goats Purchased */}
               {ordersDialogIsEditing && (
                 <div className="rounded-lg border border-blue-100 bg-blue-50/40 p-4">
                   <div className="flex items-center justify-between mb-3">
-                    <p className="text-xs font-semibold uppercase tracking-wider text-blue-700">Order And Purchase Details</p>
+                    <p className="text-xs font-semibold uppercase tracking-wider text-blue-700">Purchase Details</p>
                     <Button size="sm" className="h-8 bg-blue-600 text-white hover:bg-blue-700 text-xs" onClick={saveDialogGoatsBought}>
                       <Save className="mr-1.5 h-3.5 w-3.5" />
                       Save Changes
                     </Button>
                   </div>
-                  <div className="grid gap-4 sm:grid-cols-3">
-                    <div className="space-y-1.5">
-                      <Label className="text-xs font-medium text-slate-600">Order Date</Label>
-                      <Input
-                        type="date"
-                        value={dialogOrderDateDraft}
-                        onChange={(e) => setDialogOrderDateDraft(e.target.value)}
-                        className="h-9 text-sm border-slate-200"
-                      />
-                    </div>
+                  <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-1.5">
                       <Label className="text-xs font-medium text-slate-600">Purchasing Date</Label>
                       <Input
@@ -3111,7 +3076,7 @@ const OrdersPage = () => {
                   {offtakeTeamDialogRow.county}
                 </p>
                 <p className="mt-1 text-sm font-medium text-slate-800">
-                  Order date {formatDate(offtakeTeamDialogRow.orderDate)}
+                  Purchasing date {formatDate(offtakeTeamDialogRow.batchDate)}
                 </p>
               </div>
 

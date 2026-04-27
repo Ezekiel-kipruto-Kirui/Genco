@@ -82,7 +82,7 @@ const SALES_INPUTS_STORAGE_KEY = "sales-metrics-inputs-v1";
 const USE_REMOTE_ANALYTICS =
   typeof window !== "undefined" && !["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
 
-const SALES_ANALYTICS_QUERY_VERSION = "v5";
+const SALES_ANALYTICS_QUERY_VERSION = "v4";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -143,7 +143,6 @@ interface RequisitionAnalyticsRecord {
   submittedAt?: Date | string | number;
   createdAt?: Date | string | number;
   approvedAt?: Date | string | number;
-  authorizedBy?: string;
   authorizedAt?: Date | string | number;
   transactionCompletedAt?: Date | string | number;
   completedAt?: Date | string | number;
@@ -188,9 +187,8 @@ interface SalesAnalyticsPayload {
     totalGoatsPurchasedFromOrders: number;
     requisitionExpenses: number;
     totalRequisitions: number;
-    authorizedRequisitions: number;
     completedRequisitions: number;
-    authorizedOrCompletedRequisitionAmount: number;
+    completedRequisitionAmount: number;
   };
   genderData: Array<{ name: string; value: number }>;
   countyData: Array<{ name: string; count: number }>;
@@ -497,18 +495,6 @@ const getRequisitionAnalyticsAmount = (
   return getRequisitionRequestedAmount(record);
 };
 
-const isAuthorizedRequisition = (
-  record: RequisitionAnalyticsRecord,
-): boolean => {
-  if (getRequisitionStatus(record) === "complete") return false;
-  return Boolean(record.authorizedAt) || Boolean(String(record.authorizedBy || "").trim());
-};
-
-const isAuthorizedOrCompletedRequisition = (
-  record: RequisitionAnalyticsRecord,
-): boolean =>
-  isAuthorizedRequisition(record) || getRequisitionStatus(record) === "complete";
-
 const getOrderPurchasedGoats = (record: OrderAnalyticsRecord): number => {
   const purchasedGoats = Math.max(parseNumber(record.goatsBought), 0);
   const totalGoats = Math.max(getOrderTotalGoats(record), 0);
@@ -574,9 +560,8 @@ const createEmptySalesAnalytics = (salesInputs: SalesInputs): SalesAnalyticsPayl
     totalGoatsPurchasedFromOrders: 0,
     requisitionExpenses: 0,
     totalRequisitions: 0,
-    authorizedRequisitions: 0,
     completedRequisitions: 0,
-    authorizedOrCompletedRequisitionAmount: 0,
+    completedRequisitionAmount: 0,
   },
   genderData: [],
   countyData: [],
@@ -627,9 +612,8 @@ const buildLocalSalesAnalytics = (
   let totalGoatsPurchasedFromOrders = 0;
   let requisitionExpenses = 0;
   let totalRequisitions = 0;
-  let authorizedRequisitions = 0;
   let completedRequisitions = 0;
-  let authorizedOrCompletedRequisitionAmount = 0;
+  let completedRequisitionAmount = 0;
 
   const genderCounts: Record<string, number> = { Male: 0, Female: 0 };
   const countySales: Record<string, number> = {};
@@ -776,14 +760,9 @@ const buildLocalSalesAnalytics = (
     const requisitionAmount = getRequisitionAnalyticsAmount(record);
     requisitionExpenses += requisitionAmount;
     totalRequisitions += 1;
-    if (isAuthorizedRequisition(record)) {
-      authorizedRequisitions += 1;
-    }
     if (getRequisitionStatus(record) === "complete") {
       completedRequisitions += 1;
-    }
-    if (isAuthorizedOrCompletedRequisition(record)) {
-      authorizedOrCompletedRequisitionAmount += requisitionAmount;
+      completedRequisitionAmount += requisitionAmount;
     }
 
     const date = parseDate(getRequisitionRecordDate(record));
@@ -847,9 +826,8 @@ const buildLocalSalesAnalytics = (
       totalGoatsPurchasedFromOrders,
       requisitionExpenses,
       totalRequisitions,
-      authorizedRequisitions,
       completedRequisitions,
-      authorizedOrCompletedRequisitionAmount,
+      completedRequisitionAmount,
     },
     genderData: [
       { name: "Male", value: genderCounts.Male },
@@ -1418,7 +1396,6 @@ const SalesReport = () => {
                   submittedAt: rec.submittedAt,
                   createdAt: rec.createdAt,
                   approvedAt: rec.approvedAt,
-                  authorizedBy: typeof rec.authorizedBy === "string" ? rec.authorizedBy : undefined,
                   authorizedAt: rec.authorizedAt,
                   transactionCompletedAt: rec.transactionCompletedAt,
                   completedAt: rec.completedAt,
@@ -2365,8 +2342,8 @@ const SalesReport = () => {
               icon={DollarSign}
               subText={`${formatNumber(stats.totalRequisitions)} requisitions in the selected range`}
               subLines={[
-                `${formatNumber(stats.authorizedRequisitions)} authorized | ${formatNumber(stats.completedRequisitions)} complete`,
-                `Amount: ${formatCurrency(stats.authorizedOrCompletedRequisitionAmount)}`,
+                `${formatNumber(stats.completedRequisitions)} marked complete`,
+                `Amount: ${formatCurrency(stats.completedRequisitionAmount)}`,
               ]}
               color="orange"
             />

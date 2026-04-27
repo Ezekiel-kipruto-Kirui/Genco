@@ -385,34 +385,6 @@ const getFarmerVaccinationDate = (record: Record<string, unknown>) =>
     record.updated_at,
   );
 
-const getFarmerRegistrationDate = (record: Record<string, unknown>) =>
-  parseDate(
-    record.createdAt ??
-    record.created_at ??
-    record.registrationDate ??
-    record.registration_date ??
-    record.registeredAt ??
-    record.timestamp ??
-    record.date,
-  );
-
-const getFarmerDisplayName = (record: Record<string, unknown>): string => {
-  const directName =
-    typeof record.fullName === "string" && record.fullName.trim() ? record.fullName.trim() :
-    typeof record.name === "string" && record.name.trim() ? record.name.trim() :
-    typeof record.farmerName === "string" && record.farmerName.trim() ? record.farmerName.trim() :
-    "";
-
-  if (directName) return directName;
-
-  const firstName = typeof record.firstName === "string" ? record.firstName.trim() : "";
-  const lastName = typeof record.lastName === "string" ? record.lastName.trim() : "";
-  const combinedName = `${firstName} ${lastName}`.trim();
-  if (combinedName) return combinedName;
-
-  return "Unknown farmer";
-};
-
 const getFarmerVisitDate = (record: Record<string, unknown>) =>
   parseDate(
     record.lastVisitedAt ??
@@ -423,9 +395,7 @@ const getFarmerVisitDate = (record: Record<string, unknown>) =>
     record.vaccinationDate ??
     record.vaccination_date ??
     record.createdAt ??
-    record.created_at ??
-    record.registrationDate ??
-    record.registration_date,
+    record.registrationDate,
   );
 
 const getSeriesColor = (index: number): string => SERIES_COLORS[index % SERIES_COLORS.length];
@@ -511,7 +481,7 @@ const buildAnnualComparison = (
   const goatsPurchasedByYear = new Map<number, number>();
 
   for (const farmer of farmers) {
-    const date = getFarmerRegistrationDate(farmer);
+    const date = parseDate(farmer.createdAt || farmer.registrationDate);
     if (!date) continue;
 
     const year = date.getFullYear();
@@ -592,17 +562,21 @@ const buildRecentLocations = (farmers: OverviewRecord[]): RecentLocation[] => {
 
 const buildRecentFarmers = (farmers: OverviewRecord[]): RecentFarmer[] =>
   [...farmers]
-    .map((record, index) => {
-      const registeredAt = getFarmerRegistrationDate(record);
-      return {
-        id: String(record.id || record.farmerId || `farmer-${index + 1}`),
-        name: getFarmerDisplayName(record),
-        county: String(record.county || record.region || "").trim() || "Unknown county",
-        registeredAt: registeredAt ? registeredAt.toISOString() : "",
-        gender: String(record.gender || "").trim(),
-        goats: getFarmerGoatTotal(record),
-      };
-    })
+    .map((record) => ({
+      id: String(record.id || ""),
+      name: String(
+        record.fullName ||
+        record.name ||
+        record.farmerName ||
+        record.firstName
+          ? `${record.firstName} ${record.lastName || ""}`.trim()
+          : "",
+      ).trim() || "Unknown farmer",
+      county: String(record.county || record.region || "").trim() || "Unknown county",
+      registeredAt: String(record.createdAt || record.registrationDate || ""),
+      gender: String(record.gender || "").trim(),
+      goats: getFarmerGoatTotal(record),
+    }))
     .filter((record) => parseDate(record.registeredAt))
     .sort(
       (left, right) =>
@@ -969,25 +943,6 @@ const hasMeaningfulOverviewData = (value: unknown): boolean => {
     data.recentActivities.length > 0 ||
     data.recentFarmers.length > 0
   );
-};
-
-const mergeOverviewSummary = (
-  primary: unknown,
-  ...fallbacks: unknown[]
-): OverviewSummaryData => {
-  const base = sanitizeOverviewSummary(primary);
-  const normalizedFallbacks = fallbacks.map((fallback) => sanitizeOverviewSummary(fallback));
-
-  const firstNonEmptyRecentFarmers = normalizedFallbacks.find((fallback) => fallback.recentFarmers.length > 0)?.recentFarmers;
-  const firstNonEmptyRecentLocations = normalizedFallbacks.find((fallback) => fallback.recentLocations.length > 0)?.recentLocations;
-  const firstNonEmptyRecentActivities = normalizedFallbacks.find((fallback) => fallback.recentActivities.length > 0)?.recentActivities;
-
-  return {
-    ...base,
-    recentFarmers: base.recentFarmers.length > 0 ? base.recentFarmers : (firstNonEmptyRecentFarmers ?? []),
-    recentLocations: base.recentLocations.length > 0 ? base.recentLocations : (firstNonEmptyRecentLocations ?? []),
-    recentActivities: base.recentActivities.length > 0 ? base.recentActivities : (firstNonEmptyRecentActivities ?? []),
-  };
 };
 
 const formatWholeNumber = (value: unknown) => getSafeNumber(value).toLocaleString();
@@ -1798,14 +1753,8 @@ const DashboardOverview = () => {
   });
 
   const remoteOverviewData = overviewQuery.data as OverviewSummaryData | undefined;
-  const remoteOverviewSummary = sanitizeOverviewSummary(remoteOverviewData);
-  const remoteOverviewHasData = hasMeaningfulOverviewData(remoteOverviewSummary);
+  const remoteOverviewHasData = hasMeaningfulOverviewData(remoteOverviewData);
   const remoteOverviewHasUsableData = remoteOverviewHasData;
-  const remoteOverviewNeedsRecentFarmers =
-    remoteOverviewEnabled &&
-    !overviewQuery.isLoading &&
-    remoteOverviewHasUsableData &&
-    remoteOverviewSummary.recentFarmers.length === 0;
 
   // ── Cache remote results ──────────────────────────────────────────────
   useEffect(() => {
@@ -1825,8 +1774,7 @@ const DashboardOverview = () => {
     (
       !remoteOverviewEnabled ||
       overviewQuery.isError ||
-      (remoteOverviewEnabled && !overviewQuery.isLoading && !remoteOverviewHasUsableData) ||
-      remoteOverviewNeedsRecentFarmers
+      (remoteOverviewEnabled && !overviewQuery.isLoading && !remoteOverviewHasUsableData)
     );
 
   useEffect(() => {
@@ -1900,20 +1848,14 @@ const DashboardOverview = () => {
     return () => {
       cancelled = true;
     };
-  }, [
-    cachedOverviewData,
-    hasImmediateOverviewData,
-    overviewCacheStorageKey,
-    selectedProgramme,
-    shouldFetchLocalOverview,
-  ]);
+  }, [cachedOverviewData, hasImmediateOverviewData, overviewCacheStorageKey, selectedProgramme, shouldFetchLocalOverview]);
 
   // ── Resolved overview data ────────────────────────────────────────────
-  const overviewData = mergeOverviewSummary(
-    remoteOverviewHasUsableData ? remoteOverviewSummary : localOverviewData ?? cachedOverviewData ?? EMPTY_OVERVIEW_DATA,
-    localOverviewData,
-    cachedOverviewData,
-    EMPTY_OVERVIEW_DATA,
+  const overviewData = sanitizeOverviewSummary(
+    (remoteOverviewHasUsableData ? remoteOverviewData : undefined) ??
+    localOverviewData ??
+    cachedOverviewData ??
+    EMPTY_OVERVIEW_DATA
   );
 
   const stats = overviewData.stats ?? EMPTY_OVERVIEW_DATA.stats;
