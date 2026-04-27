@@ -24,6 +24,13 @@ const ROLE_HR_IDENTIFIERS = new Set([
 ]);
 const ROLE_PROJECT_MANAGER_IDENTIFIERS = new Set(["project manager"]);
 const ROLE_FINANCE_IDENTIFIERS = new Set(["finance"]);
+const BLOCKED_STATUS_IDENTIFIERS = new Set([
+  "inactive",
+  "disabled",
+  "deactivated",
+  "deactivate",
+  "suspended",
+]);
 
 interface RequisitionRecord {
   status?: string;
@@ -125,6 +132,9 @@ const getEnv = (name: string): string => (process.env[name] ?? "").trim();
 
 const normalize = (value: unknown): string =>
   typeof value === "string" ? value.trim().toLowerCase() : "";
+
+const isBlockedUserStatus = (value: unknown): boolean =>
+  BLOCKED_STATUS_IDENTIFIERS.has(normalize(value));
 
 const isValidEmail = (value: string): boolean => EMAIL_REGEX.test(value.trim());
 
@@ -569,7 +579,7 @@ const getEmailsByRole = async (
     const users = snapshot.val() as Record<string, UserRecord>;
     for (const user of Object.values(users)) {
       if (!hasAnyRoleToken(user, roleTokens)) continue;
-      if (normalize(user.status) === "inactive") continue;
+      if (isBlockedUserStatus(user.status)) continue;
       if (!userCanHandleProgramme(user, programme)) continue;
 
       const email = typeof user.email === "string" ? user.email.trim() : "";
@@ -598,7 +608,7 @@ const getPhoneRecipientsByRole = async (
     const users = snapshot.val() as Record<string, UserRecord>;
     for (const user of Object.values(users)) {
       if (!hasAnyRoleToken(user, roleTokens)) continue;
-      if (normalize(user.status) === "inactive") continue;
+      if (isBlockedUserStatus(user.status)) continue;
       if (!userCanHandleProgramme(user, programme)) continue;
 
       const phone = getUserPhone(user);

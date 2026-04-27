@@ -1,0 +1,99 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+
+    "users": {
+      ".read": "auth != null && root.child('users').child(auth.uid).exists() && (!root.child('users').child(auth.uid).child('status').exists() || root.child('users').child(auth.uid).child('status').val() === 'active') && root.child('users').child(auth.uid).child('role').val() === 'chief-admin'",
+      ".write": false,
+      ".indexOn": ["uid", "role", "status"],
+      "$userId": {
+        ".read": "auth != null && root.child('users').child(auth.uid).exists() && (!root.child('users').child(auth.uid).child('status').exists() || root.child('users').child(auth.uid).child('status').val() === 'active') && (auth.uid === $userId || data.child('uid').val() === auth.uid || root.child('users').child(auth.uid).child('role').val() === 'chief-admin')",
+        ".write": "auth != null && root.child('users').child(auth.uid).exists() && (!root.child('users').child(auth.uid).child('status').exists() || root.child('users').child(auth.uid).child('status').val() === 'active') && root.child('users').child(auth.uid).child('role').val() === 'chief-admin'"
+      }
+    },
+
+    "orders": {
+      ".read": "auth != null && root.child('users').child(auth.uid).exists() && (!root.child('users').child(auth.uid).child('status').exists() || root.child('users').child(auth.uid).child('status').val() === 'active')",
+      ".write": "auth != null && root.child('users').child(auth.uid).exists() && (!root.child('users').child(auth.uid).child('status').exists() || root.child('users').child(auth.uid).child('status').val() === 'active')",
+      ".indexOn": ["status", "programme", "remainingGoats", "targetGoats"]
+    },
+
+    "requisitions": {
+      ".read": "auth != null && root.child('users').child(auth.uid).exists() && (!root.child('users').child(auth.uid).child('status').exists() || root.child('users').child(auth.uid).child('status').val() === 'active')",
+      ".write": "auth != null && root.child('users').child(auth.uid).exists() && (!root.child('users').child(auth.uid).child('status').exists() || root.child('users').child(auth.uid).child('status').val() === 'active')",
+      ".indexOn": ["status", "programme", "uid"]
+    },
+
+    "farmers": {
+      ".read": "auth != null && root.child('users').child(auth.uid).exists() && (!root.child('users').child(auth.uid).child('status').exists() || root.child('users').child(auth.uid).child('status').val() === 'active')",
+      ".write": "auth != null && root.child('users').child(auth.uid).exists() && (!root.child('users').child(auth.uid).child('status').exists() || root.child('users').child(auth.uid).child('status').val() === 'active')",
+      ".indexOn": ["programme"]
+    },
+
+    "fodderFarmers": {
+      ".read": "auth != null && root.child('users').child(auth.uid).exists() && (!root.child('users').child(auth.uid).child('status').exists() || root.child('users').child(auth.uid).child('status').val() === 'active')",
+      ".write": "auth != null && root.child('users').child(auth.uid).exists() && (!root.child('users').child(auth.uid).child('status').exists() || root.child('users').child(auth.uid).child('status').val() === 'active')",
+      ".indexOn": ["programme"]
+    },
+
+    "capacityBuilding": {
+      ".read": "auth != null && root.child('users').child(auth.uid).exists() && (!root.child('users').child(auth.uid).child('status').exists() || root.child('users').child(auth.uid).child('status').val() === 'active')",
+      ".write": "auth != null && root.child('users').child(auth.uid).exists() && (!root.child('users').child(auth.uid).child('status').exists() || root.child('users').child(auth.uid).child('status').val() === 'active')",
+      ".indexOn": ["programme"]
+    },
+
+    "offtakes": {
+      ".read": "auth != null && root.child('users').child(auth.uid).exists() && (!root.child('users').child(auth.uid).child('status').exists() || root.child('users').child(auth.uid).child('status').val() === 'active')",
+      ".write": "auth != null && root.child('users').child(auth.uid).exists() && (!root.child('users').child(auth.uid).child('status').exists() || root.child('users').child(auth.uid).child('status').val() === 'active')",
+      ".indexOn": ["programme"]
+    },
+
+    "onboarding": {
+      ".read": "auth != null && root.child('users').child(auth.uid).exists() && (!root.child('users').child(auth.uid).child('status').exists() || root.child('users').child(auth.uid).child('status').val() === 'active')",
+      ".write": "auth != null && root.child('users').child(auth.uid).exists() && (!root.child('users').child(auth.uid).child('status').exists() || root.child('users').child(auth.uid).child('status').val() === 'active')",
+      ".indexOn": ["programme"]
+    },
+
+    "Recent Activities": {
+      ".read": "auth != null && root.child('users').child(auth.uid).exists() && (!root.child('users').child(auth.uid).child('status').exists() || root.child('users').child(auth.uid).child('status').val() === 'active')",
+      ".write": "auth != null && root.child('users').child(auth.uid).exists() && (!root.child('users').child(auth.uid).child('status').exists() || root.child('users').child(auth.uid).child('status').val() === 'active')"
+    },
+
+    "AnimalHealthActivities": {
+      ".read": "auth != null && root.child('users').child(auth.uid).exists() && (!root.child('users').child(auth.uid).child('status').exists() || root.child('users').child(auth.uid).child('status').val() === 'active')",
+      ".write": "auth != null && root.child('users').child(auth.uid).exists() && (!root.child('users').child(auth.uid).child('status').exists() || root.child('users').child(auth.uid).child('status').val() === 'active')",
+      ".indexOn": ["programme"]
+    },
+
+    "BoreholeStorage": {
+      ".read": "auth != null && root.child('users').child(auth.uid).exists() && (!root.child('users').child(auth.uid).child('status').exists() || root.child('users').child(auth.uid).child('status').val() === 'active')",
+      ".write": "auth != null && root.child('users').child(auth.uid).exists() && (!root.child('users').child(auth.uid).child('status').exists() || root.child('users').child(auth.uid).child('status').val() === 'active')"
+    },
+
+    "Infrastructure Data": {
+      ".read": "auth != null && root.child('users').child(auth.uid).exists() && (!root.child('users').child(auth.uid).child('status').exists() || root.child('users').child(auth.uid).child('status').val() === 'active')",
+      ".write": "auth != null && root.child('users').child(auth.uid).exists() && (!root.child('users').child(auth.uid).child('status').exists() || root.child('users').child(auth.uid).child('status').val() === 'active')"
+    },
+
+    "Fodder Offtake Data": {
+      ".read": "auth != null && root.child('users').child(auth.uid).exists() && (!root.child('users').child(auth.uid).child('status').exists() || root.child('users').child(auth.uid).child('status').val() === 'active')",
+      ".write": "auth != null && root.child('users').child(auth.uid).exists() && (!root.child('users').child(auth.uid).child('status').exists() || root.child('users').child(auth.uid).child('status').val() === 'active')"
+    },
+
+    "hrStaffDirectory": {
+      ".read": "auth != null && root.child('users').child(auth.uid).exists() && (!root.child('users').child(auth.uid).child('status').exists() || root.child('users').child(auth.uid).child('status').val() === 'active')",
+      ".write": "auth != null && root.child('users').child(auth.uid).exists() && (!root.child('users').child(auth.uid).child('status').exists() || root.child('users').child(auth.uid).child('status').val() === 'active')"
+    },
+
+    "hrStaffMarks": {
+      ".read": "auth != null && root.child('users').child(auth.uid).exists() && (!root.child('users').child(auth.uid).child('status').exists() || root.child('users').child(auth.uid).child('status').val() === 'active')",
+      ".write": "auth != null && root.child('users').child(auth.uid).exists() && (!root.child('users').child(auth.uid).child('status').exists() || root.child('users').child(auth.uid).child('status').val() === 'active')"
+    },
+
+    "$other": {
+      ".read": "auth != null && root.child('users').child(auth.uid).exists() && (!root.child('users').child(auth.uid).child('status').exists() || root.child('users').child(auth.uid).child('status').val() === 'active')",
+      ".write": "auth != null && root.child('users').child(auth.uid).exists() && (!root.child('users').child(auth.uid).child('status').exists() || root.child('users').child(auth.uid).child('status').val() === 'active')"
+    }
+  }
+}

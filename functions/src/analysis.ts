@@ -2,9 +2,9 @@
 import * as admin from "firebase-admin";
 import {onCall, HttpsError} from "firebase-functions/v2/https";
 
-const PROGRAMME_OPTIONS = ["KPMD", "RANGE"] as const;
+const PROGRAMME_OPTIONS = ["KPMD", "RANGE", "MTLDK"] as const;
 const CACHE_TTL_MS = 2 * 60 * 1000;
-const ANALYSIS_CACHE_VERSION = "v6";
+const ANALYSIS_CACHE_VERSION = "v7";
 const QUARTER_TARGET_MILESTONES = [352, 702, 1053, 1404];
 const CHART_COLORS = {
   male: "#1e3a8a",
@@ -30,6 +30,42 @@ const SALES_TREND_SERIES_COLORS = [
   "#f59e0b",
   "#9ca3af",
 ] as const;
+const CHIEF_ADMIN_IDENTIFIERS = new Set(["chief-admin", "chief admin"]);
+const ADMIN_IDENTIFIERS = new Set(["admin"]);
+const HR_IDENTIFIERS = new Set([
+  "humman resource manager",
+  "human resource manager",
+  "humman resource manger",
+  "human resource manger",
+  "hr",
+]);
+const PROJECT_MANAGER_IDENTIFIERS = new Set(["project manager", "project officer"]);
+const FINANCE_IDENTIFIERS = new Set(["finance"]);
+const OFFTAKE_IDENTIFIERS = new Set(["offtake officer"]);
+const MOBILE_IDENTIFIERS = new Set(["mobile", "mobile user"]);
+const FULL_ACCESS_ATTRIBUTE_IDENTIFIERS = new Set([
+  "ceo",
+  "chief executive officer",
+  "chief operations manager",
+  "chief operational manager",
+  "chief operations officer",
+  "chief operational officer",
+  "chief operatons manger",
+  "project manager",
+  "project officer",
+  "m&e officer",
+  "mne officer",
+  "me officer",
+  "monitoring and evaluation officer",
+  "monitoring & evaluation officer",
+]);
+const BLOCKED_STATUS_IDENTIFIERS = new Set([
+  "inactive",
+  "disabled",
+  "deactivated",
+  "deactivate",
+  "suspended",
+]);
 
 const getQuarterCountingCutoff = (year: number): Date | null => {
   const today = new Date();
@@ -88,6 +124,7 @@ interface AnalysisProfile {
   uid: string;
   role: string;
   userAttribute: string;
+  status: string;
   allowedProgrammes: string[];
 }
 
@@ -115,6 +152,90 @@ const cache = new Map<string, CacheEntry>();
 
 const normalize = (value: unknown): string =>
   typeof value === "string" ? value.trim().toLowerCase() : "";
+
+const extractUserAttribute = (userData: any): string => {
+  const directAttribute = normalize(userData?.accessControl?.customAttribute);
+  if (directAttribute) return directAttribute;
+
+  const legacyAttributes = userData?.accessControl?.customAttributes;
+  if (legacyAttributes && typeof legacyAttributes === "object") {
+    const firstKey = normalize(Object.keys(legacyAttributes)[0]);
+    if (firstKey) return firstKey;
+  }
+
+  return normalize(userData?.customAttribute);
+};
+
+const getPermissionTokens = (
+  role: string,
+  userAttribute: string,
+): string[] =>
+  Array.from(new Set([role, userAttribute, userAttribute || role].filter(Boolean)));
+
+const isChiefAdminToken = (value: string): boolean =>
+  CHIEF_ADMIN_IDENTIFIERS.has(normalize(value));
+
+const isAdminToken = (value: string): boolean =>
+  ADMIN_IDENTIFIERS.has(normalize(value));
+
+const isProjectManagerToken = (value: string): boolean =>
+  PROJECT_MANAGER_IDENTIFIERS.has(normalize(value));
+
+const isFinanceToken = (value: string): boolean =>
+  FINANCE_IDENTIFIERS.has(normalize(value));
+
+const isHrToken = (value: string): boolean =>
+  HR_IDENTIFIERS.has(normalize(value));
+
+const isOfftakeToken = (value: string): boolean =>
+  OFFTAKE_IDENTIFIERS.has(normalize(value));
+
+const isMobileToken = (value: string): boolean =>
+  MOBILE_IDENTIFIERS.has(normalize(value));
+
+const isFullAccessAttributeToken = (value: string): boolean =>
+  FULL_ACCESS_ATTRIBUTE_IDENTIFIERS.has(normalize(value));
+
+const isBlockedUserStatus = (status: string): boolean =>
+  BLOCKED_STATUS_IDENTIFIERS.has(normalize(status));
+
+const canViewAllProgrammesForProfile = (profile: AnalysisProfile): boolean =>
+  getPermissionTokens(profile.role, profile.userAttribute).some((token) =>
+    isChiefAdminToken(token) ||
+    isAdminToken(token) ||
+    isFullAccessAttributeToken(token) ||
+    isOfftakeToken(token),
+  );
+
+const canAccessAnalyticsScope = (
+  scope: AnalysisScope,
+  profile: AnalysisProfile,
+): boolean => {
+  const tokens = getPermissionTokens(profile.role, profile.userAttribute);
+  const matches = (predicate: (value: string) => boolean) =>
+    tokens.some((token) => predicate(token));
+
+  const fullAccess =
+    matches(isChiefAdminToken) ||
+    matches(isAdminToken) ||
+    matches(isFullAccessAttributeToken);
+
+  if (fullAccess) return true;
+
+  if (scope === "sales-report") return matches(isFinanceToken);
+  if (scope === "performance-report") return matches(isProjectManagerToken) || matches(isHrToken);
+  if (scope === "livestock-analytics") return matches(isProjectManagerToken) || matches(isHrToken);
+  if (scope === "overview") {
+    return (
+      matches(isFinanceToken) ||
+      matches(isProjectManagerToken) ||
+      matches(isHrToken) ||
+      matches(isOfftakeToken)
+    );
+  }
+
+  return false;
+};
 
 const toProgramme = (value: unknown): string => {
   const normalized = normalize(value);
@@ -386,6 +507,14 @@ const getRequisitionAnalyticsAmount = (record: Record<string, unknown>): number 
 
   return getRequisitionRequestedAmount(record);
 };
+
+const isAuthorizedRequisition = (record: Record<string, unknown>): boolean => {
+  if (getRequisitionStatus(record) === "complete") return false;
+  return Boolean(record.authorizedAt) || Boolean(String(record.authorizedBy || "").trim());
+};
+
+const isAuthorizedOrCompletedRequisition = (record: Record<string, unknown>): boolean =>
+  isAuthorizedRequisition(record) || getRequisitionStatus(record) === "complete";
 
 const getRequisitionRecordDate = (record: Record<string, unknown>): unknown =>
   record.submittedAt ||
@@ -825,13 +954,17 @@ const getAllowedProgrammes = (user: any): string[] => {
 };
 
 const canViewAllProgrammes = (user: any): boolean => {
-  return normalize(user?.role) === "chief-admin";
+  const role = normalize(user?.role);
+  const userAttribute = extractUserAttribute(user);
+  return getPermissionTokens(role, userAttribute).some((token) =>
+    isChiefAdminToken(token) ||
+    isAdminToken(token) ||
+    isFullAccessAttributeToken(token) ||
+    isOfftakeToken(token),
+  );
 };
 
 const loadProfile = async (uid: string): Promise<AnalysisProfile | null> => {
-  const cachedProfile = getCached(profileCacheKey(uid));
-  if (cachedProfile) return cachedProfile as AnalysisProfile;
-
   const directSnapshot = await admin.database().ref(`users/${uid}`).get();
   let userData = directSnapshot.exists() ? directSnapshot.val() : null;
 
@@ -855,10 +988,17 @@ const loadProfile = async (uid: string): Promise<AnalysisProfile | null> => {
   const profile = {
     uid,
     role: normalize(userData.role),
-    userAttribute: normalize(userData.accessControl?.customAttribute),
+    userAttribute: extractUserAttribute(userData),
+    status: normalize(userData.status),
     allowedProgrammes: getAllowedProgrammes(userData),
   };
-  setCached(profileCacheKey(uid), profile);
+
+  if (
+    isBlockedUserStatus(profile.status) ||
+    getPermissionTokens(profile.role, profile.userAttribute).some((token) => isMobileToken(token))
+  ) {
+    return null;
+  }
   return profile;
 };
 
@@ -920,8 +1060,6 @@ const cacheKey = (uid: string, request: AnalysisRequest): string => {
     expenses,
   ].join("|");
 };
-
-const profileCacheKey = (uid: string): string => `profile|${uid}`;
 
 const collectionCacheKey = (collectionPath: string): string =>
   `collection|${collectionPath}`;
@@ -1081,8 +1219,9 @@ const emptySales = () => ({
     totalGoatsPurchasedFromOrders: 0,
     requisitionExpenses: 0,
     totalRequisitions: 0,
+    authorizedRequisitions: 0,
     completedRequisitions: 0,
-    completedRequisitionAmount: 0,
+    authorizedOrCompletedRequisitionAmount: 0,
   },
   genderData: [],
   countyData: [],
@@ -1817,8 +1956,9 @@ const createSalesReport = async (
   let totalGoatsPurchasedFromOrders = 0;
   let requisitionExpenses = 0;
   let totalRequisitions = 0;
+  let authorizedRequisitions = 0;
   let completedRequisitions = 0;
-  let completedRequisitionAmount = 0;
+  let authorizedOrCompletedRequisitionAmount = 0;
   const genderCounts: Record<string, number> = {Male: 0, Female: 0};
   const countySales: Record<string, number> = {};
   const locationSales: Record<string, number> = {};
@@ -1911,9 +2051,14 @@ const createSalesReport = async (
     const requisitionAmount = getRequisitionAnalyticsAmount(record);
     requisitionExpenses += requisitionAmount;
     totalRequisitions += 1;
+    if (isAuthorizedRequisition(record)) {
+      authorizedRequisitions += 1;
+    }
     if (getRequisitionStatus(record) === "complete") {
       completedRequisitions += 1;
-      completedRequisitionAmount += requisitionAmount;
+    }
+    if (isAuthorizedOrCompletedRequisition(record)) {
+      authorizedOrCompletedRequisitionAmount += requisitionAmount;
     }
 
     const date = parseDate(getRequisitionRecordDate(record));
@@ -1994,8 +2139,9 @@ const createSalesReport = async (
       totalGoatsPurchasedFromOrders,
       requisitionExpenses,
       totalRequisitions,
+      authorizedRequisitions,
       completedRequisitions,
-      completedRequisitionAmount,
+      authorizedOrCompletedRequisitionAmount,
     },
     genderData,
     countyData,
@@ -2023,7 +2169,11 @@ export const getAnalysisSummary = onCall(async (request) => {
 
   const profile = await loadProfile(uid);
   if (!profile) {
-    return {scope, resolvedProgrammes: []};
+    throw new HttpsError("permission-denied", "Your account is not allowed to access analytics.");
+  }
+
+  if (!canAccessAnalyticsScope(scope as AnalysisScope, profile)) {
+    throw new HttpsError("permission-denied", "Your role or attribute is not allowed to access this analytics view.");
   }
 
   const key = cacheKey(uid, payload);

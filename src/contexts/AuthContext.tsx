@@ -1,9 +1,13 @@
 import { createContext, useContext, useEffect, useRef, useState, type FC, type ReactNode } from "react";
 import { User, onAuthStateChanged, signInWithEmailAndPassword, signOut } from "firebase/auth";
-import { equalTo, get, orderByChild, query, ref, serverTimestamp, update } from "firebase/database";
+import { equalTo, get, onValue, orderByChild, query, ref, serverTimestamp, set, update } from "firebase/database";
 import { auth, db, invalidateCollectionCache, warmAppCaches } from "@/lib/firebase";
 import { useToast } from "@/hooks/use-toast";
-import { isMobileUser } from "@/contexts/authhelper";
+import {
+  getLandingRouteForRole,
+  isActiveUserStatus,
+  isMobileUser,
+} from "@/contexts/authhelper";
 
 interface UserProfile {
   recordId: string | null;
@@ -11,6 +15,7 @@ interface UserProfile {
   allowedProgrammes: Record<string, boolean> | null;
   name: string | null;
   userAttribute: string | null;
+  status: string | null;
 }
 
 interface AuthContextType {
@@ -45,6 +50,7 @@ export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const pendingLoginRef = useRef(false);
   const blockedSessionRef = useRef<string | null>(null);
+  const profileListenerRef = useRef<(() => void) | null>(null);
   const { toast } = useToast();
 
   const clearAuthState = () => {
@@ -78,13 +84,84 @@ export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
     return null;
   };
 
+  const extractUserStatus = (userData: any): string | null =>
+    typeof userData?.status === "string" && userData.status.trim()
+      ? userData.status.trim()
+      : null;
+
+  const buildUserProfile = (
+    recordId: string | null,
+    userData: any,
+  ): UserProfile => ({
+    recordId,
+    role: userData?.role || null,
+    allowedProgrammes: userData?.allowedProgrammes || null,
+    name: userData?.name || null,
+    userAttribute: extractUserAttribute(userData),
+    status: extractUserStatus(userData),
+  });
+
+  const syncProfileState = (firebaseUser: User, profile: UserProfile) => {
+    blockedSessionRef.current = null;
+    setUser(firebaseUser);
+    setUserRole(profile.role);
+    setUserAttribute(profile.userAttribute);
+    setAllowedProgrammes(profile.allowedProgrammes);
+    setUserName(profile.name || firebaseUser.displayName || firebaseUser.email || "Admin");
+
+    if (profile.role) {
+      localStorage.setItem(ROLE_STORAGE_KEY, profile.role);
+    } else {
+      localStorage.removeItem(ROLE_STORAGE_KEY);
+    }
+  };
+
+  const resolveBlockedAccessMessage = (profile: UserProfile): string => {
+    if (isMobileUser(profile.role, profile.userAttribute)) {
+      return "Mobile users can submit data only and cannot access the web dashboard.";
+    }
+
+    if (!isActiveUserStatus(profile.status)) {
+      return "Your account has been deactivated or disabled. Contact a chief admin for help.";
+    }
+
+    return "Your account is not authorized to access the web dashboard.";
+  };
+
+  const canAccessWebDashboard = (profile: UserProfile): boolean => {
+    if (!profile.recordId) return false;
+    if (isMobileUser(profile.role, profile.userAttribute)) return false;
+    if (!isActiveUserStatus(profile.status)) return false;
+    return getLandingRouteForRole(profile.role, profile.userAttribute) !== "/auth";
+  };
+
+  const blockUserSession = async (
+    firebaseUser: User,
+    profile: UserProfile,
+    title = "Access restricted",
+  ) => {
+    profileListenerRef.current?.();
+    profileListenerRef.current = null;
+    pendingLoginRef.current = false;
+    clearAuthState();
+
+    if (blockedSessionRef.current !== firebaseUser.uid) {
+      blockedSessionRef.current = firebaseUser.uid;
+      toast({
+        title,
+        description: resolveBlockedAccessMessage(profile),
+        variant: "destructive",
+      });
+    }
+
+    await signOut(auth);
+  };
+
   const touchLastLogin = async (recordId: string | null) => {
     if (!recordId) return;
 
     try {
-      await update(ref(db, `users/${recordId}`), {
-        lastLogin: serverTimestamp(),
-      });
+      await set(ref(db, `users/${recordId}/lastLogin`), serverTimestamp());
       invalidateCollectionCache("users");
     } catch (error) {
       console.error("Error updating last login:", error);
@@ -97,14 +174,7 @@ export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
       const snapshot = await get(userRef);
 
       if (snapshot.exists()) {
-        const userData = snapshot.val();
-        return {
-          recordId: uid,
-          role: userData.role || null,
-          allowedProgrammes: userData.allowedProgrammes || null,
-          name: userData.name || null,
-          userAttribute: extractUserAttribute(userData),
-        };
+        return buildUserProfile(uid, snapshot.val());
       }
 
       console.warn("User not found at direct UID path, falling back to uid query...");
@@ -116,20 +186,28 @@ export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
         const matchEntry = Object.entries(data)[0];
         if (matchEntry) {
           const [recordId, match] = matchEntry;
-          return {
-            recordId,
-            role: match.role || null,
-            allowedProgrammes: match.allowedProgrammes || null,
-            name: match.name || null,
-            userAttribute: extractUserAttribute(match),
-          };
+          return buildUserProfile(recordId, match);
         }
       }
 
-      return { recordId: null, role: null, allowedProgrammes: null, name: null, userAttribute: null };
+      return {
+        recordId: null,
+        role: null,
+        allowedProgrammes: null,
+        name: null,
+        userAttribute: null,
+        status: null,
+      };
     } catch (error) {
       console.error("Error fetching user profile:", error);
-      return { recordId: null, role: null, allowedProgrammes: null, name: null, userAttribute: null };
+      return {
+        recordId: null,
+        role: null,
+        allowedProgrammes: null,
+        name: null,
+        userAttribute: null,
+        status: null,
+      };
     }
   };
 
@@ -144,6 +222,8 @@ export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
       if (!firebaseUser) {
         pendingLoginRef.current = false;
         blockedSessionRef.current = null;
+        profileListenerRef.current?.();
+        profileListenerRef.current = null;
         clearAuthState();
         if (isMounted) setLoading(false);
         return;
@@ -155,33 +235,49 @@ export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
         const profile = await fetchUserProfile(firebaseUser.uid);
         if (!isMounted) return;
 
+        if (!canAccessWebDashboard(profile)) {
+          await blockUserSession(firebaseUser, profile);
+          return;
+        }
+
+        profileListenerRef.current?.();
+        profileListenerRef.current = onValue(
+          ref(db, `users/${profile.recordId}`),
+          (snapshot) => {
+            if (!snapshot.exists()) {
+              void blockUserSession(
+                firebaseUser,
+                {
+                  recordId: profile.recordId,
+                  role: profile.role,
+                  allowedProgrammes: profile.allowedProgrammes,
+                  name: profile.name,
+                  userAttribute: profile.userAttribute,
+                  status: "disabled",
+                },
+                "Account removed",
+              );
+              return;
+            }
+
+            const liveProfile = buildUserProfile(profile.recordId, snapshot.val());
+            if (!canAccessWebDashboard(liveProfile)) {
+              void blockUserSession(firebaseUser, liveProfile);
+              return;
+            }
+
+            syncProfileState(firebaseUser, liveProfile);
+          },
+          (error) => {
+            console.error("Error watching user profile:", error);
+          },
+        );
+
         if (pendingLoginRef.current) {
           await touchLastLogin(profile.recordId);
         }
 
-        if (isMobileUser(profile.role, profile.userAttribute)) {
-          pendingLoginRef.current = false;
-          clearAuthState();
-
-          if (blockedSessionRef.current !== firebaseUser.uid) {
-            blockedSessionRef.current = firebaseUser.uid;
-            toast({
-              title: "Access restricted",
-              description: "Mobile users can submit data only and cannot access the web dashboard.",
-              variant: "destructive",
-            });
-          }
-
-          await signOut(auth);
-          return;
-        }
-
-        blockedSessionRef.current = null;
-        setUser(firebaseUser);
-        setUserRole(profile.role);
-        setUserAttribute(profile.userAttribute);
-        setAllowedProgrammes(profile.allowedProgrammes);
-        setUserName(profile.name || firebaseUser.displayName || firebaseUser.email || "Admin");
+        syncProfileState(firebaseUser, profile);
 
         if (typeof window !== "undefined") {
           window.setTimeout(() => {
@@ -189,12 +285,6 @@ export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
               console.error("Error warming application caches:", error);
             });
           }, 0);
-        }
-
-        if (profile.role) {
-          localStorage.setItem(ROLE_STORAGE_KEY, profile.role);
-        } else {
-          localStorage.removeItem(ROLE_STORAGE_KEY);
         }
 
         if (pendingLoginRef.current) {
@@ -215,6 +305,8 @@ export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
 
     return () => {
       isMounted = false;
+      profileListenerRef.current?.();
+      profileListenerRef.current = null;
       unsubscribe();
     };
   }, [toast]);

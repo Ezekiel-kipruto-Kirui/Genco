@@ -589,15 +589,17 @@ const RequisitionsPage = () => {
     const sortedFilteredList = sortRequisitionsByLatest(tableFilteredList);
     setFilteredRequisitions(sortedFilteredList);
 
-    const totalRequests = baseFilteredList.length;
-    const pendingRequests = baseFilteredList.filter((r) => getNormalizedStatus(r.status) === "pending").length;
-    const approvedRequests = baseFilteredList.filter((r) => getNormalizedStatus(r.status) === "approved").length;
-    const authorizedRequests = baseFilteredList.filter(
+    const statsSourceList = tableFilteredList;
+
+    const totalRequests = statsSourceList.length;
+    const pendingRequests = statsSourceList.filter((r) => getNormalizedStatus(r.status) === "pending").length;
+    const approvedRequests = statsSourceList.filter((r) => getNormalizedStatus(r.status) === "approved").length;
+    const authorizedRequests = statsSourceList.filter(
       (r) => getNormalizedStatus(r.status) === "approved" && !!String(r.authorizedBy || "").trim()
     ).length;
-    const rejectedRequests = baseFilteredList.filter((r) => getNormalizedStatus(r.status) === "rejected").length;
-    const completeRequests = baseFilteredList.filter((r) => getNormalizedStatus(r.status) === "complete").length;
-    const totalAmount = baseFilteredList.reduce((sum, r) => sum + (r.totalAmount || 0), 0);
+    const rejectedRequests = statsSourceList.filter((r) => getNormalizedStatus(r.status) === "rejected").length;
+    const completeRequests = statsSourceList.filter((r) => getNormalizedStatus(r.status) === "complete").length;
+    const totalAmount = statsSourceList.reduce((sum, r) => sum + (r.totalAmount || 0), 0);
     
     setStats({
       totalRequests,
@@ -2042,11 +2044,11 @@ const RequisitionsPage = () => {
       {/* Stats Section */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         <StatsCard
-          title="TOTAL REQUESTS"
+          title="TOTAL REQUISITIONS"
           value={stats.totalRequests.toLocaleString()}
           icon={FileText}
           color="blue"
-          description={`Pending Orders: ${stats.pendingRequests.toLocaleString()} | Approved Orders: ${stats.approvedRequests.toLocaleString()}`}
+          description={`Pending Requisitions: ${stats.pendingRequests.toLocaleString()} | Approved Requisitions: ${stats.approvedRequests.toLocaleString()}`}
         />
         <StatsCard
           title="AUTHORIZED REQUISITIONS"

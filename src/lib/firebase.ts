@@ -131,7 +131,6 @@ export interface AppData {
   capacity: DatabaseRecord<any>[];
   lofftake: DatabaseRecord<any>[];
   fofftake: DatabaseRecord<any>[];
-  users: DatabaseRecord<any>[];
 }
 
 /**
@@ -148,7 +147,6 @@ export const fetchData = async (): Promise<AppData> => {
       capacity,
       lofftake,
       fofftake,
-      users,
     ] = await Promise.all([
       fetchCollection("farmers"),
       fetchCollection("fodderFarmers"),
@@ -157,7 +155,6 @@ export const fetchData = async (): Promise<AppData> => {
       fetchCollection("capacityBuilding"),
       fetchCollection("offtakes"),
       fetchCollection("Fodder Offtake Data"),
-      fetchCollection("users"),
     ]);
 
     return {
@@ -168,7 +165,6 @@ export const fetchData = async (): Promise<AppData> => {
       capacity,
       lofftake,
       fofftake,
-      users,
     };
   } catch (error) {
     console.error("Error fetching all data:", error);

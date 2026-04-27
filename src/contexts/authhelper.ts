@@ -23,6 +23,13 @@ const PROJECT_MANAGER_IDENTIFIERS = new Set(["project manager", "project officer
 const FINANCE_IDENTIFIERS = new Set(["finance"]);
 const OFFTAKE_IDENTIFIERS = new Set(["offtake officer"]);
 const MOBILE_IDENTIFIERS = new Set(["mobile", "mobile user"]);
+const BLOCKED_STATUS_IDENTIFIERS = new Set([
+  "inactive",
+  "disabled",
+  "deactivated",
+  "deactivate",
+  "suspended",
+]);
 const ME_IDENTIFIERS = new Set([
   "m&e officer",
   "mne officer",
@@ -105,6 +112,17 @@ export const normalizeAttribute = (userAttribute: string | null | undefined): st
   if (!userAttribute) return "";
   return normalizeText(userAttribute);
 };
+
+export const normalizeUserStatus = (status: string | null | undefined): string => {
+  if (!status) return "";
+  return normalizeText(status);
+};
+
+export const isBlockedUserStatus = (status: string | null | undefined): boolean =>
+  BLOCKED_STATUS_IDENTIFIERS.has(normalizeUserStatus(status));
+
+export const isActiveUserStatus = (status: string | null | undefined): boolean =>
+  !isBlockedUserStatus(status);
 
 export const resolvePermissionPrincipal = (
   userRole: string | null | undefined,
