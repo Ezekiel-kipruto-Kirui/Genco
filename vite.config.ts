@@ -9,8 +9,10 @@ export default defineConfig(({ mode }) => ({
     host: "::",
     port: 8080,
     allowedHosts: [
-      'stumpiest-caudally-eloy.ngrok-free.dev',
-      // '.ngrok-free.dev',
+      ".ngrok-free.dev",
+      ".ngrok-free.app",
+      ".ngrok.dev",
+      ".ngrok.app",
     ],
   },
   build: {

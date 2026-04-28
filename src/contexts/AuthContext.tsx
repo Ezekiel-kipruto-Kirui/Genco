@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useRef, useState, type FC, type ReactNode } from "react";
 import { User, onAuthStateChanged, signInWithEmailAndPassword, signOut } from "firebase/auth";
 import { equalTo, get, onValue, orderByChild, query, ref, serverTimestamp, set, update } from "firebase/database";
-import { auth, db, invalidateCollectionCache, warmAppCaches } from "@/lib/firebase";
+import { auth, db, invalidateCollectionCache } from "@/lib/firebase";
 import { useToast } from "@/hooks/use-toast";
 import {
   canViewAllProgrammes,
@@ -297,14 +297,6 @@ export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
         }
 
         syncProfileState(firebaseUser, profile);
-
-        if (typeof window !== "undefined") {
-          window.setTimeout(() => {
-            void warmAppCaches().catch((error) => {
-              console.error("Error warming application caches:", error);
-            });
-          }, 0);
-        }
 
         if (pendingLoginRef.current) {
           pendingLoginRef.current = false;

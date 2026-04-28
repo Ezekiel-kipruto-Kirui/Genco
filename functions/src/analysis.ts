@@ -4,7 +4,7 @@ import {onCall, HttpsError} from "firebase-functions/v2/https";
 
 const PROGRAMME_OPTIONS = ["KPMD", "RANGE", "MTLDK"] as const;
 const CACHE_TTL_MS = 2 * 60 * 1000;
-const ANALYSIS_CACHE_VERSION = "v8";
+const ANALYSIS_CACHE_VERSION = "v9";
 const QUARTER_TARGET_MILESTONES = [352, 702, 1053, 1404];
 const CHART_COLORS = {
   male: "#1e3a8a",
@@ -939,8 +939,27 @@ const fetchCollectionByProgrammes = async (
 
   if (uniqueProgrammes.length === 0) return [];
 
-  const records = await getCollectionRecords(collectionPath);
-  return records.filter((record) => {
+  if (uniqueProgrammes.length >= PROGRAMME_OPTIONS.length) {
+    const records = await getCollectionRecords(collectionPath);
+    return records.filter((record) => {
+      const programme = getRecordProgramme(record);
+      return Boolean(programme) && uniqueProgrammes.includes(programme);
+    });
+  }
+
+  const scopedRecords = await Promise.all(
+    ["programme", "Programme"].flatMap((fieldName) =>
+      uniqueProgrammes.map((programme) => getCollectionRecordsByChildValue(collectionPath, fieldName, programme)),
+    ),
+  );
+
+  const mergedRecords = new Map<string, any>();
+  scopedRecords.flat().forEach((record) => {
+    if (!record?.id) return;
+    mergedRecords.set(String(record.id), record);
+  });
+
+  return Array.from(mergedRecords.values()).filter((record) => {
     const programme = getRecordProgramme(record);
     return Boolean(programme) && uniqueProgrammes.includes(programme);
   });
@@ -1064,8 +1083,8 @@ const cacheKey = (uid: string, request: AnalysisRequest): string => {
   ].join("|");
 };
 
-const collectionCacheKey = (collectionPath: string): string =>
-  `collection|${collectionPath}`;
+const collectionCacheKey = (collectionPath: string, scope = "all"): string =>
+  `collection|${collectionPath}|${scope}`;
 
 const getCached = (key: string): any | null => {
   const cached = cache.get(key);
@@ -1090,6 +1109,26 @@ const getCollectionRecords = async (collectionPath: string): Promise<any[]> => {
   if (cachedRecords) return cachedRecords as any[];
 
   const snapshot = await admin.database().ref(collectionPath).get();
+  const records = snapshotToArray(snapshot);
+  setCached(key, records);
+  return records;
+};
+
+const getCollectionRecordsByChildValue = async (
+  collectionPath: string,
+  childKey: string,
+  childValue: string,
+): Promise<any[]> => {
+  const key = collectionCacheKey(collectionPath, `${childKey}:${childValue}`);
+  const cachedRecords = getCached(key);
+  if (cachedRecords) return cachedRecords as any[];
+
+  const snapshot = await admin
+    .database()
+    .ref(collectionPath)
+    .orderByChild(childKey)
+    .equalTo(childValue)
+    .get();
   const records = snapshotToArray(snapshot);
   setCached(key, records);
   return records;

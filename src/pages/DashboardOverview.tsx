@@ -34,7 +34,7 @@ import { canViewAllProgrammes } from "@/contexts/authhelper";
 import { useSharedProgrammeSelection } from "@/hooks/use-shared-programme-selection";
 import { fetchAnalysisSummary } from "@/lib/analysis";
 import { cacheKey, readCachedValue, writeCachedValue } from "@/lib/data-cache";
-import { fetchCollection } from "@/lib/firebase";
+import { fetchCollection, fetchCollectionByProgramme } from "@/lib/firebase";
 import {
   PROGRAMME_OPTIONS,
   isAllProgrammesSelection,
@@ -1786,13 +1786,18 @@ const DashboardOverview = () => {
       setLocalOverviewLoading(!hasImmediateOverviewData);
 
       try {
+        const loadOverviewCollection = (path: string) =>
+          isAllProgrammesSelection(selectedProgramme)
+            ? fetchCollection<OverviewRecord>(path)
+            : fetchCollectionByProgramme<OverviewRecord>(path, selectedProgramme);
+
         const [farmersRecords, capacityRecords, offtakesRecords, animalHealthRecords, boreholeRecords, activityRecords] = await Promise.all([
-          fetchCollection<OverviewRecord>("farmers"),
-          fetchCollection<OverviewRecord>("capacityBuilding"),
-          fetchCollection<OverviewRecord>("offtakes"),
-          fetchCollection<OverviewRecord>("AnimalHealthActivities"),
-          fetchCollection<OverviewRecord>("BoreholeStorage"),
-          fetchCollection<OverviewRecord>("Recent Activities"),
+          loadOverviewCollection("farmers"),
+          loadOverviewCollection("capacityBuilding"),
+          loadOverviewCollection("offtakes"),
+          loadOverviewCollection("AnimalHealthActivities"),
+          loadOverviewCollection("BoreholeStorage"),
+          loadOverviewCollection("Recent Activities"),
         ]);
 
         if (cancelled) return;

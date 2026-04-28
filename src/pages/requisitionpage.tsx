@@ -39,6 +39,7 @@ interface HistoryEntry {
   id?: string; 
   action: string;
   actor: string;
+  actorAttribute?: string;
   timestamp: number;
   details?: string;
 }
@@ -246,14 +247,21 @@ const getTransactedAmount = (record: RequisitionData | null | undefined): number
 };
 
 // --- Helper to Log History ---
-const logHistory = async (recordId: string, action: string, details: string) => {
+const logHistory = async (
+  recordId: string,
+  action: string,
+  details: string,
+  actorName?: string,
+  actorAttribute?: string,
+) => {
   const auth = getAuth();
   const currentUser = auth.currentUser;
   if (!currentUser) return;
 
   const entry: HistoryEntry = {
     action,
-    actor: currentUser.displayName || currentUser.email || "Admin",
+    actor: actorName?.trim() || currentUser.displayName || currentUser.email || "Admin",
+    actorAttribute: actorAttribute?.trim() || undefined,
     timestamp: Date.now(),
     details
   };
@@ -263,6 +271,52 @@ const logHistory = async (recordId: string, action: string, details: string) => 
   } catch (error) {
     console.error("Failed to log history:", error);
   }
+};
+
+const HISTORY_ACTOR_PATTERN = /\bby\s+(.+?)(?:\s+\(([^)]+)\))?(?=(?:\s+after\b)|(?:\.\s)|[.]?$|$)/i;
+
+const extractHistoryActorMeta = (entry: HistoryEntry): { name: string; attribute: string } => {
+  const details = typeof entry.details === "string" ? entry.details : "";
+  const match = details.match(HISTORY_ACTOR_PATTERN);
+  return {
+    name: match?.[1]?.trim() || "",
+    attribute: match?.[2]?.trim() || "",
+  };
+};
+
+const getHistoryActorName = (entry: HistoryEntry): string => {
+  const actor = typeof entry.actor === "string" ? entry.actor.trim() : "";
+  if (actor && !actor.includes("@")) return actor;
+
+  const parsed = extractHistoryActorMeta(entry);
+  if (parsed.name) return parsed.name;
+
+  if (actor.includes("@")) {
+    const [localPart = ""] = actor.split("@");
+    return localPart.trim() || "Unknown User";
+  }
+
+  return "Unknown User";
+};
+
+const getHistoryActorAttribute = (entry: HistoryEntry): string => {
+  if (typeof entry.actorAttribute === "string" && entry.actorAttribute.trim()) {
+    return entry.actorAttribute.trim();
+  }
+  return extractHistoryActorMeta(entry).attribute;
+};
+
+const shouldHideHistoryActorMeta = (entry: HistoryEntry): boolean => {
+  const details = typeof entry.details === "string" ? entry.details.trim() : "";
+  if (!details) return false;
+
+  const actorName = getHistoryActorName(entry);
+  const actorAttribute = getHistoryActorAttribute(entry);
+  const normalizedDetails = details.toLowerCase();
+  const includesActorName = actorName ? normalizedDetails.includes(actorName.toLowerCase()) : false;
+  const includesActorAttribute = actorAttribute ? normalizedDetails.includes(actorAttribute.toLowerCase()) : true;
+
+  return includesActorName && includesActorAttribute;
 };
 
 // --- Main Component ---
@@ -430,6 +484,16 @@ const RequisitionsPage = () => {
     if (typeof userRole === "string" && userRole.trim()) return userRole.trim();
     return "Unknown";
   }, [userAttribute, userRole]);
+  const historyActorName = useMemo(
+    () => userName || user?.displayName || user?.email || "Admin",
+    [user?.displayName, user?.email, userName]
+  );
+  const historyActorAttribute = useMemo(() => {
+    if (typeof permissionPrincipal === "string" && permissionPrincipal.trim()) {
+      return permissionPrincipal.trim();
+    }
+    return actorAttribute;
+  }, [actorAttribute, permissionPrincipal]);
   const requisitionCacheKey = useMemo(
     () => cacheKey("admin-page", "requisitions", permissionPrincipal || "no-access", activeProgram || "all"),
     [permissionPrincipal, activeProgram]
@@ -765,7 +829,7 @@ const RequisitionsPage = () => {
           ? { ...prev, requisitionUrl: nextUrl, fileUploaded: nextImages.length > 0 }
           : prev
       );
-      await logHistory(recordId, "Receipts Updated", historyDetails);
+      await logHistory(recordId, "Receipts Updated", historyDetails, historyActorName, historyActorAttribute);
       toast({ title: "Updated", description: "Receipt images updated." });
     } catch (error) {
       console.error("Failed to update receipt images:", error);
@@ -959,13 +1023,13 @@ const RequisitionsPage = () => {
       removeCachedValue(requisitionCacheKey);
 
       if (statusChanged && nextStatus === 'approved') {
-        await logHistory(editRecord.id, "Approved", `Approved by ${actorName}`);
+        await logHistory(editRecord.id, "Approved", `Approved by ${actorName}`, actorName, approvalActorAttribute || historyActorAttribute);
       } else if (statusChanged && nextStatus === 'complete') {
-        await logHistory(editRecord.id, "Completed", `Marked complete by ${actorName}`);
+        await logHistory(editRecord.id, "Completed", `Marked complete by ${actorName}`, actorName, historyActorAttribute);
       } else if (statusChanged && nextStatus === 'rejected') {
-        await logHistory(editRecord.id, "Rejected", `Rejected by ${actorName}`);
+        await logHistory(editRecord.id, "Rejected", `Rejected by ${actorName}`, actorName, historyActorAttribute);
       } else {
-        await logHistory(editRecord.id, "Edited", "Requisition details updated.");
+        await logHistory(editRecord.id, "Edited", "Requisition details updated.", actorName, historyActorAttribute);
       }
 
       toast({ title: "Success", description: "Requisition updated successfully." });
@@ -1034,7 +1098,7 @@ const RequisitionsPage = () => {
         const approvalDetails = approvalActorAttribute ?
           `Approved by ${approverName} (${approvalActorAttribute})` :
           `Approved by ${approverName}`;
-        await logHistory(viewingRecord.id, "Approved", approvalDetails);
+        await logHistory(viewingRecord.id, "Approved", approvalDetails, approverName, approvalActorAttribute || historyActorAttribute);
         
         toast({ title: "Approved", description: "Requisition approved successfully" });
         handleViewDialogOpenChange(false); 
@@ -1091,7 +1155,7 @@ const RequisitionsPage = () => {
         });
         removeCachedValue(requisitionCacheKey);
 
-        await logHistory(viewingRecord.id, "Authorized", `Authorized by ${actorName} (${actorAttribute})`);
+        await logHistory(viewingRecord.id, "Authorized", `Authorized by ${actorName} (${actorAttribute})`, actorName, actorAttribute);
 
         toast({ title: "Authorized", description: "Requisition authorized successfully." });
         
@@ -1163,7 +1227,7 @@ const RequisitionsPage = () => {
         rejectionSmsText: rejectionMessage,
       });
       removeCachedValue(requisitionCacheKey);
-      await logHistory(viewingRecord.id, "Rejected", `Rejected by ${actorName}. SMS sent to requester.`);
+      await logHistory(viewingRecord.id, "Rejected", `Rejected by ${actorName}. SMS sent to requester.`, actorName, historyActorAttribute);
 
       toast({ title: "Rejected", description: "Requisition rejected and requester will be notified by SMS." });
       setViewingRecord((prev) =>
@@ -1217,7 +1281,7 @@ const RequisitionsPage = () => {
         await update(ref(db, `requisitions/${viewingRecord.id}`), updatePayload);
         removeCachedValue(requisitionCacheKey);
 
-        await logHistory(viewingRecord.id, "Transaction Completed", `Finance completed transaction by ${actorName}`);
+        await logHistory(viewingRecord.id, "Transaction Completed", `Finance completed transaction by ${actorName}`, actorName, historyActorAttribute);
 
         toast({ title: "Transaction Completed", description: "Finance transaction completed successfully." });
         
@@ -1267,7 +1331,7 @@ const RequisitionsPage = () => {
         await update(ref(db, `requisitions/${viewingRecord.id}`), updatePayload);
         removeCachedValue(requisitionCacheKey);
 
-        await logHistory(viewingRecord.id, "Completed", `Marked complete by ${actorName} after receipt submission.`);
+        await logHistory(viewingRecord.id, "Completed", `Marked complete by ${actorName} after receipt submission.`, actorName, historyActorAttribute);
 
         toast({ title: "Completed", description: "Requisition marked as complete." });
         
@@ -1314,7 +1378,7 @@ const RequisitionsPage = () => {
             const approvalDetails = approvalActorAttribute ?
               `Approved by ${actorName} (${approvalActorAttribute})` :
               `Approved by ${actorName}`;
-            await logHistory(record.id, "Approved", approvalDetails);
+            await logHistory(record.id, "Approved", approvalDetails, actorName, approvalActorAttribute || historyActorAttribute);
             return true;
           } catch (error) {
             console.error("Bulk approve failed for record:", record.id, error);
@@ -1360,7 +1424,7 @@ const RequisitionsPage = () => {
               authorizedByAttribute: actorAttribute,
               authorizedAt: Date.now(),
             });
-            await logHistory(record.id, "Authorized", `Authorized by ${actorName} (${actorAttribute})`);
+            await logHistory(record.id, "Authorized", `Authorized by ${actorName} (${actorAttribute})`, actorName, actorAttribute);
             return true;
           } catch (error) {
             console.error("Bulk authorize failed for record:", record.id, error);
@@ -1415,7 +1479,7 @@ const RequisitionsPage = () => {
               rejectionReason: rejectionMessage,
               rejectionSmsText: rejectionMessage,
             });
-            await logHistory(record.id, "Rejected", `Rejected by ${actorName}. SMS sent to requester.`);
+            await logHistory(record.id, "Rejected", `Rejected by ${actorName}. SMS sent to requester.`, actorName, historyActorAttribute);
             return true;
           } catch (error) {
             console.error("Bulk reject failed for record:", record.id, error);
@@ -1465,7 +1529,7 @@ const RequisitionsPage = () => {
               transactionCompletedBy: actorName,
               transactionCompletedAt,
             });
-            await logHistory(record.id, "Transaction Completed", `Finance completed transaction by ${actorName}`);
+            await logHistory(record.id, "Transaction Completed", `Finance completed transaction by ${actorName}`, actorName, historyActorAttribute);
             return true;
           } catch (error) {
             console.error("Bulk transaction completion failed for record:", record.id, error);
@@ -1513,7 +1577,7 @@ const RequisitionsPage = () => {
               transactionCompletedBy: actorName,
               transactionCompletedAt,
             });
-            await logHistory(record.id, "Transaction Completed", `Finance completed transaction by ${actorName}`);
+            await logHistory(record.id, "Transaction Completed", `Finance completed transaction by ${actorName}`, actorName, historyActorAttribute);
             return true;
           } catch (error) {
             console.error("Complete-all transaction failed for record:", record.id, error);
@@ -1565,7 +1629,7 @@ const RequisitionsPage = () => {
               completedBy: actorName,
               completedAt,
             });
-            await logHistory(record.id, "Completed", `Marked complete by ${actorName} after receipt submission.`);
+            await logHistory(record.id, "Completed", `Marked complete by ${actorName} after receipt submission.`, actorName, historyActorAttribute);
             return true;
           } catch (error) {
             console.error("Bulk mark complete failed for record:", record.id, error);
@@ -1617,7 +1681,7 @@ const RequisitionsPage = () => {
               completedBy: actorName,
               completedAt,
             });
-            await logHistory(record.id, "Completed", `Marked complete by ${actorName} after receipt submission.`);
+            await logHistory(record.id, "Completed", `Marked complete by ${actorName} after receipt submission.`, actorName, historyActorAttribute);
             return true;
           } catch (error) {
             console.error("Mark-all complete failed for record:", record.id, error);
@@ -2677,14 +2741,24 @@ const RequisitionsPage = () => {
                                     <div className="w-0.5 h-full bg-gray-200 mt-1"></div>
                                 </div>
                                 <div className="pb-4 flex-1">
+                                    {(() => {
+                                      const hideActorMeta = shouldHideHistoryActorMeta(entry);
+                                      return (
+                                        <>
                                     <div className="flex justify-between items-start">
                                         <span className="font-semibold text-gray-800">{entry.action}</span>
                                         <span className="text-xs text-gray-500 whitespace-nowrap">
                                             {formatDateTime(entry.timestamp)}
                                         </span>
                                     </div>
-                                    <p className="text-gray-600 text-xs mt-1">{entry.actor}</p>
+                                    {!hideActorMeta && <p className="text-gray-600 text-xs mt-1">{getHistoryActorName(entry)}</p>}
+                                    {!hideActorMeta && getHistoryActorAttribute(entry) && (
+                                      <p className="text-gray-500 text-[11px] mt-0.5">{getHistoryActorAttribute(entry)}</p>
+                                    )}
                                     {entry.details && <p className="text-gray-500 text-xs mt-0.5 italic">{entry.details}</p>}
+                                        </>
+                                      );
+                                    })()}
                                 </div>
                             </div>
                         ))}

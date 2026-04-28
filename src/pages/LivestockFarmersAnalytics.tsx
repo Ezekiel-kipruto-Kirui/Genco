@@ -1214,7 +1214,7 @@ const LivestockFarmersAnalytics = () => {
                 variant="ghost"
                 size="icon"
                 onClick={() => scrollFilterStripBy("left")}
-                className="h-9 w-9 shrink-0 rounded-full border border-slate-200 bg-white text-slate-800 shadow-sm hover:bg-slate-50 sm:hidden"
+                className="hidden h-9 w-9 shrink-0 rounded-full border border-slate-200 bg-white text-slate-800 shadow-sm hover:bg-slate-50 max-[900px]:inline-flex"
               >
                 <ChevronLeft className="h-5 w-5" />
                 <span className="sr-only">Scroll filters left</span>
@@ -1304,7 +1304,7 @@ const LivestockFarmersAnalytics = () => {
                 variant="ghost"
                 size="icon"
                 onClick={() => scrollFilterStripBy("right")}
-                className="h-9 w-9 shrink-0 rounded-full border border-slate-200 bg-white text-slate-800 shadow-sm hover:bg-slate-50 sm:hidden"
+                className="hidden h-9 w-9 shrink-0 rounded-full border border-slate-200 bg-white text-slate-800 shadow-sm hover:bg-slate-50 max-[900px]:inline-flex"
               >
                 <ChevronRight className="h-5 w-5" />
                 <span className="sr-only">Scroll filters right</span>

@@ -105,6 +105,8 @@ interface AddUserForm {
   allowedProgrammes: { [key: string]: boolean };
 }
 
+type KenyaAreasResponse = Record<string, Record<string, string[]>>;
+
 // --- Constants ---
 const PAGE_LIMIT = 15;
 const EXPORT_HEADERS = [
@@ -166,10 +168,71 @@ const LEGACY_ROLE_ATTRIBUTE_MAP: Record<string, string> = {
 };
 
 const USER_MANAGEMENT_CACHE_KEY = cacheKey("admin-page", "users");
+const KENYA_AREAS_API_KEY = "keyPub1569gsvndc123kg9sjhg";
+const KENYA_AREAS_API_URL = "https://kenyaareadata.vercel.app/api/areas";
+const KENYA_AREAS_CACHE_KEY = cacheKey("lookups", "kenya-areas");
+const KENYA_AREAS_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 // --- Helper Functions ---
 const buildAccessControl = (customAttribute: string): AccessControl =>
   customAttribute ? { customAttribute } : {};
+
+const normalizeAreaValue = (value: string | null | undefined): string =>
+  typeof value === "string" ? value.trim().toLowerCase() : "";
+
+const isKenyaAreasResponse = (value: unknown): value is KenyaAreasResponse => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+
+  return Object.values(value as Record<string, unknown>).every((countyValue) => {
+    if (!countyValue || typeof countyValue !== "object" || Array.isArray(countyValue)) return false;
+    return Object.values(countyValue as Record<string, unknown>).every((subcountyValue) =>
+      Array.isArray(subcountyValue) && subcountyValue.every((ward) => typeof ward === "string")
+    );
+  });
+};
+
+const sortAreaOptions = (options: string[]): string[] =>
+  [...options].sort((left, right) => left.localeCompare(right));
+
+const withCurrentAreaOption = (options: string[], currentValue: string): string[] => {
+  const trimmedCurrentValue = currentValue.trim();
+  if (!trimmedCurrentValue) return sortAreaOptions(options);
+  return sortAreaOptions(
+    options.some((option) => normalizeAreaValue(option) === normalizeAreaValue(trimmedCurrentValue))
+      ? options
+      : [...options, trimmedCurrentValue],
+  );
+};
+
+const resolveAreaSelectionValue = (
+  options: string[],
+  currentValue: string,
+): string | undefined => {
+  const trimmedCurrentValue = currentValue.trim();
+  if (!trimmedCurrentValue) return undefined;
+  return options.find((option) => normalizeAreaValue(option) === normalizeAreaValue(trimmedCurrentValue)) || trimmedCurrentValue;
+};
+
+const getMatchingCountyName = (
+  areas: KenyaAreasResponse,
+  county: string,
+): string => {
+  const target = normalizeAreaValue(county);
+  if (!target) return "";
+  return Object.keys(areas).find((countyName) => normalizeAreaValue(countyName) === target) || "";
+};
+
+const getCountyOptions = (areas: KenyaAreasResponse): string[] =>
+  sortAreaOptions(Object.keys(areas));
+
+const getSubcountyOptions = (
+  areas: KenyaAreasResponse,
+  county: string,
+): string[] => {
+  const matchingCountyName = getMatchingCountyName(areas, county);
+  if (!matchingCountyName) return [];
+  return sortAreaOptions(Object.keys(areas[matchingCountyName] || {}));
+};
 
 const getCustomAttributeText = (accessControl?: AccessControl): string => {
   if (!accessControl) return "";
@@ -563,6 +626,9 @@ const UserManagementPage = () => {
   const [recordToDelete, setRecordToDelete] = useState<UserRecord | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [addLoading, setAddLoading] = useState(false);
+  const [kenyaAreas, setKenyaAreas] = useState<KenyaAreasResponse>({});
+  const [kenyaAreasLoading, setKenyaAreasLoading] = useState(false);
+  const [kenyaAreasError, setKenyaAreasError] = useState<string>("");
   
   const currentMonth = useMemo(getCurrentMonthDates, []);
 
@@ -627,6 +693,85 @@ const UserManagementPage = () => {
   const addFormIsMobile = isMobileSystemRole(addForm.role);
   const editFormIsMobile = isMobileSystemRole(editForm.role);
 
+  const fetchKenyaAreas = useCallback(async () => {
+    const cachedAreas = readCachedValue<KenyaAreasResponse>(
+      KENYA_AREAS_CACHE_KEY,
+      KENYA_AREAS_CACHE_TTL_MS,
+    );
+
+    if (cachedAreas && isKenyaAreasResponse(cachedAreas)) {
+      setKenyaAreas(cachedAreas);
+      setKenyaAreasError("");
+      return;
+    }
+
+    try {
+      setKenyaAreasLoading(true);
+      const response = await fetch(`${KENYA_AREAS_API_URL}?apiKey=${KENYA_AREAS_API_KEY}`);
+      if (!response.ok) {
+        throw new Error(`Failed to load Kenya areas (${response.status})`);
+      }
+
+      const payload: unknown = await response.json();
+      if (!isKenyaAreasResponse(payload)) {
+        throw new Error("Unexpected Kenya areas response format.");
+      }
+
+      setKenyaAreas(payload);
+      setKenyaAreasError("");
+      writeCachedValue(KENYA_AREAS_CACHE_KEY, payload);
+    } catch (error) {
+      console.error("Error loading Kenya areas:", error);
+      setKenyaAreasError("Failed to load counties and sub counties.");
+    } finally {
+      setKenyaAreasLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void fetchKenyaAreas();
+  }, [fetchKenyaAreas]);
+
+  const addCountyOptions = useMemo(
+    () => withCurrentAreaOption(getCountyOptions(kenyaAreas), addForm.county),
+    [addForm.county, kenyaAreas],
+  );
+
+  const editCountyOptions = useMemo(
+    () => withCurrentAreaOption(getCountyOptions(kenyaAreas), editForm.county),
+    [editForm.county, kenyaAreas],
+  );
+
+  const addSubcountyOptions = useMemo(
+    () => withCurrentAreaOption(getSubcountyOptions(kenyaAreas, addForm.county), addForm.subcounty),
+    [addForm.county, addForm.subcounty, kenyaAreas],
+  );
+
+  const editSubcountyOptions = useMemo(
+    () => withCurrentAreaOption(getSubcountyOptions(kenyaAreas, editForm.county), editForm.subcounty),
+    [editForm.county, editForm.subcounty, kenyaAreas],
+  );
+
+  const addSelectedCountyValue = useMemo(
+    () => resolveAreaSelectionValue(addCountyOptions, addForm.county),
+    [addCountyOptions, addForm.county],
+  );
+
+  const editSelectedCountyValue = useMemo(
+    () => resolveAreaSelectionValue(editCountyOptions, editForm.county),
+    [editCountyOptions, editForm.county],
+  );
+
+  const addSelectedSubcountyValue = useMemo(
+    () => resolveAreaSelectionValue(addSubcountyOptions, addForm.subcounty),
+    [addForm.subcounty, addSubcountyOptions],
+  );
+
+  const editSelectedSubcountyValue = useMemo(
+    () => resolveAreaSelectionValue(editSubcountyOptions, editForm.subcounty),
+    [editForm.subcounty, editSubcountyOptions],
+  );
+
   const handleRoleFormChange = (value: string, isEdit: boolean) => {
     const setter = isEdit ? setEditForm : setAddForm;
     setter((prev) => ({
@@ -636,6 +781,19 @@ const UserManagementPage = () => {
       subcounty: isMobileSystemRole(value) ? prev.subcounty : "",
     }));
   };
+
+  const handleLocationFieldChange = useCallback((
+    field: "county" | "subcounty",
+    value: string,
+    isEdit: boolean,
+  ) => {
+    const setter = isEdit ? setEditForm : setAddForm;
+    setter((prev) => ({
+      ...prev,
+      county: field === "county" ? value : prev.county,
+      subcounty: field === "county" ? "" : value,
+    }));
+  }, []);
 
   // Data fetching
   const fetchAllData = useCallback(async () => {
@@ -1529,27 +1687,68 @@ const UserManagementPage = () => {
               </div>
 
               {addFormIsMobile && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="add-county" className="text-sm font-medium text-slate-700">County *</Label>
-                    <Input
-                      id="add-county"
-                      value={addForm.county}
-                      onChange={(e) => setAddForm((prev) => ({ ...prev, county: e.target.value }))}
-                      className="bg-white border-slate-300"
-                      placeholder="Enter county"
-                    />
+                <div className="space-y-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="add-county" className="text-sm font-medium text-slate-700">County *</Label>
+                      <Select
+                        value={addSelectedCountyValue}
+                        onValueChange={(value) => handleLocationFieldChange("county", value, false)}
+                        disabled={kenyaAreasLoading || addCountyOptions.length === 0}
+                      >
+                        <SelectTrigger id="add-county" className="bg-white border-slate-300">
+                          <SelectValue
+                            placeholder={
+                              kenyaAreasLoading
+                                ? "Loading counties..."
+                                : addCountyOptions.length === 0
+                                  ? "No counties available"
+                                  : "Select county"
+                            }
+                          />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {addCountyOptions.map((county) => (
+                            <SelectItem key={county} value={county}>
+                              {county}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="add-subcounty" className="text-sm font-medium text-slate-700">Sub County *</Label>
+                      <Select
+                        value={addSelectedSubcountyValue}
+                        onValueChange={(value) => handleLocationFieldChange("subcounty", value, false)}
+                        disabled={kenyaAreasLoading || !addForm.county || addSubcountyOptions.length === 0}
+                      >
+                        <SelectTrigger id="add-subcounty" className="bg-white border-slate-300">
+                          <SelectValue
+                            placeholder={
+                              kenyaAreasLoading
+                                ? "Loading sub counties..."
+                                : !addForm.county
+                                  ? "Select county first"
+                                  : addSubcountyOptions.length === 0
+                                    ? "No sub counties available"
+                                    : "Select sub county"
+                            }
+                          />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {addSubcountyOptions.map((subcounty) => (
+                            <SelectItem key={subcounty} value={subcounty}>
+                              {subcounty}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="add-subcounty" className="text-sm font-medium text-slate-700">Sub County *</Label>
-                    <Input
-                      id="add-subcounty"
-                      value={addForm.subcounty}
-                      onChange={(e) => setAddForm((prev) => ({ ...prev, subcounty: e.target.value }))}
-                      className="bg-white border-slate-300"
-                      placeholder="Enter sub county"
-                    />
-                  </div>
+                  {kenyaAreasError ? (
+                    <p className="text-xs text-red-600">{kenyaAreasError}</p>
+                  ) : null}
                 </div>
               )}
 
@@ -1668,27 +1867,68 @@ const UserManagementPage = () => {
               </div>
 
               {editFormIsMobile && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="edit-county" className="text-sm font-medium text-slate-700">County *</Label>
-                    <Input
-                      id="edit-county"
-                      value={editForm.county}
-                      onChange={(e) => setEditForm((prev) => ({ ...prev, county: e.target.value }))}
-                      className="bg-white border-slate-300"
-                      placeholder="Enter county"
-                    />
+                <div className="space-y-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="edit-county" className="text-sm font-medium text-slate-700">County *</Label>
+                      <Select
+                        value={editSelectedCountyValue}
+                        onValueChange={(value) => handleLocationFieldChange("county", value, true)}
+                        disabled={kenyaAreasLoading || editCountyOptions.length === 0}
+                      >
+                        <SelectTrigger id="edit-county" className="bg-white border-slate-300">
+                          <SelectValue
+                            placeholder={
+                              kenyaAreasLoading
+                                ? "Loading counties..."
+                                : editCountyOptions.length === 0
+                                  ? "No counties available"
+                                  : "Select county"
+                            }
+                          />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {editCountyOptions.map((county) => (
+                            <SelectItem key={county} value={county}>
+                              {county}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="edit-subcounty" className="text-sm font-medium text-slate-700">Sub County *</Label>
+                      <Select
+                        value={editSelectedSubcountyValue}
+                        onValueChange={(value) => handleLocationFieldChange("subcounty", value, true)}
+                        disabled={kenyaAreasLoading || !editForm.county || editSubcountyOptions.length === 0}
+                      >
+                        <SelectTrigger id="edit-subcounty" className="bg-white border-slate-300">
+                          <SelectValue
+                            placeholder={
+                              kenyaAreasLoading
+                                ? "Loading sub counties..."
+                                : !editForm.county
+                                  ? "Select county first"
+                                  : editSubcountyOptions.length === 0
+                                    ? "No sub counties available"
+                                    : "Select sub county"
+                            }
+                          />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {editSubcountyOptions.map((subcounty) => (
+                            <SelectItem key={subcounty} value={subcounty}>
+                              {subcounty}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="edit-subcounty" className="text-sm font-medium text-slate-700">Sub County *</Label>
-                    <Input
-                      id="edit-subcounty"
-                      value={editForm.subcounty}
-                      onChange={(e) => setEditForm((prev) => ({ ...prev, subcounty: e.target.value }))}
-                      className="bg-white border-slate-300"
-                      placeholder="Enter sub county"
-                    />
-                  </div>
+                  {kenyaAreasError ? (
+                    <p className="text-xs text-red-600">{kenyaAreasError}</p>
+                  ) : null}
                 </div>
               )}
 
