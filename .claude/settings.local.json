@@ -8,7 +8,9 @@
       "Bash(npx firebase *)",
       "Bash(git add *)",
       "Bash(git commit -m 'Fix Vercel build: use standard dist output instead of Build Output API *)",
-      "Bash(git push *)"
+      "Bash(git push *)",
+      "Bash(git rm *)",
+      "Bash(git commit -m 'Remove committed .vercel/output artifacts and exclude via .gitignore *)"
     ]
   }
 }
