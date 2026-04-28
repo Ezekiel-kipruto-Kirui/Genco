@@ -3,7 +3,9 @@
     "allow": [
       "mcp__ide__getDiagnostics",
       "Bash(npm run *)",
-      "Bash(npx tsc *)"
+      "Bash(npx tsc *)",
+      "Bash(firebase deploy *)",
+      "Bash(npx firebase *)"
     ]
   }
 }

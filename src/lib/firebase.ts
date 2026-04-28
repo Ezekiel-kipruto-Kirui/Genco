@@ -72,9 +72,11 @@ const snapshotToRecords = <T = Record<string, any>>(snapshot: DataSnapshot): Dat
   }));
 };
 
+// Programmes are always stored in uppercase (KPMD, RANGE, MTLDK).
+// Only query the canonical uppercase form to avoid 4→2 duplicate round-trips.
 const buildProgrammeCandidates = (programme: string): string[] => {
-  const trimmed = programme.trim();
-  return [...new Set([trimmed, trimmed.toUpperCase(), trimmed.toLowerCase()].filter(Boolean))];
+  const upper = programme.trim().toUpperCase();
+  return upper ? [upper] : [];
 };
 
 /**

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { onValue, ref, type DataSnapshot } from "firebase/database";
+import { get, ref, type DataSnapshot } from "firebase/database";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/contexts/AuthContext";
 import {
@@ -188,59 +188,61 @@ export const useDashboardNotifications = (): DashboardNotificationState => {
       return;
     }
 
-    const unsubscribers: Array<() => void> = [];
+    let cancelled = false;
 
-    const attachListener = (
+    const fetchCollection = async (
       path: string,
       setter: (records: TimedProgrammeRecord[]) => void,
       parser: (id: string, record: Record<string, any>) => TimedProgrammeRecord
     ) => {
-      const unsubscribe = onValue(
-        ref(db, path),
-        (snapshot) => setter(readCollectionSnapshot(snapshot, parser)),
-        (error) => {
-          console.error(`Failed to load notification data from ${path}:`, error);
-          setter([]);
-        }
-      );
-
-      unsubscribers.push(unsubscribe);
+      try {
+        const snapshot = await get(ref(db, path));
+        if (!cancelled) setter(readCollectionSnapshot(snapshot, parser));
+      } catch (error) {
+        console.error(`Failed to load notification data from ${path}:`, error);
+        if (!cancelled) setter([]);
+      }
     };
 
-    attachListener("Recent Activities", setActivities, (id, record) =>
-      parseProgrammeRecord(id, record, ["createdAt", "date"])
-    );
-    attachListener("farmers", setFarmers, (id, record) =>
-      parseProgrammeRecord(id, record, ["createdAt", "registrationDate", "created_at"])
-    );
-    attachListener("fodderFarmers", setFodder, (id, record) =>
-      parseProgrammeRecord(id, record, ["date", "createdAt", "created_at"])
-    );
-    attachListener("capacityBuilding", setCapacity, (id, record) =>
-      parseProgrammeRecord(id, record, ["startDate", "createdAt", "rawTimestamp"])
-    );
-    attachListener("HayStorage", setHayStorage, (id, record) =>
-      parseProgrammeRecord(id, record, ["date_planted", "created_at", "createdAt"])
-    );
-    attachListener("BoreholeStorage", setBorehole, (id, record) =>
-      parseProgrammeRecord(id, record, ["date", "createdAt", "created_at"])
-    );
-    attachListener("requisitions", setRequisitions, (id, record) =>
-      parseProgrammeRecord(id, record, [
-        "submittedAt",
-        "createdAt",
-        "approvedAt",
-        "authorizedAt",
-        "transactionCompletedAt",
-        "completedAt",
-        "rejectedAt",
-      ])
-    );
+    const fetchAll = () => {
+      void fetchCollection("Recent Activities", setActivities, (id, record) =>
+        parseProgrammeRecord(id, record, ["createdAt", "date"])
+      );
+      void fetchCollection("farmers", setFarmers, (id, record) =>
+        parseProgrammeRecord(id, record, ["createdAt", "registrationDate", "created_at"])
+      );
+      void fetchCollection("fodderFarmers", setFodder, (id, record) =>
+        parseProgrammeRecord(id, record, ["date", "createdAt", "created_at"])
+      );
+      void fetchCollection("capacityBuilding", setCapacity, (id, record) =>
+        parseProgrammeRecord(id, record, ["startDate", "createdAt", "rawTimestamp"])
+      );
+      void fetchCollection("HayStorage", setHayStorage, (id, record) =>
+        parseProgrammeRecord(id, record, ["date_planted", "created_at", "createdAt"])
+      );
+      void fetchCollection("BoreholeStorage", setBorehole, (id, record) =>
+        parseProgrammeRecord(id, record, ["date", "createdAt", "created_at"])
+      );
+      void fetchCollection("requisitions", setRequisitions, (id, record) =>
+        parseProgrammeRecord(id, record, [
+          "submittedAt",
+          "createdAt",
+          "approvedAt",
+          "authorizedAt",
+          "transactionCompletedAt",
+          "completedAt",
+          "rejectedAt",
+        ])
+      );
+    };
+
+    fetchAll();
+    // Refresh every 3 minutes instead of streaming full collections on every change
+    const intervalId = setInterval(fetchAll, 3 * 60 * 1000);
 
     return () => {
-      unsubscribers.forEach((unsubscribe) => {
-        if (typeof unsubscribe === "function") unsubscribe();
-      });
+      cancelled = true;
+      clearInterval(intervalId);
     };
   }, [user?.uid]);
 

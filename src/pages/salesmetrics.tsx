@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useCallback, useMemo, useRef, useDeferredValue } from "react";
+﻿import { useState, useEffect, useCallback, useMemo, useRef, useDeferredValue, memo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import {
@@ -927,14 +927,12 @@ const useOfftakeData = (
     staleTime: 2 * 60 * 1000,
   });
 
-  const data: SalesAnalyticsPayload =
-    USE_REMOTE_ANALYTICS ? (queryResult.data ?? localData) : localData;
+  const data: SalesAnalyticsPayload = queryResult.data ?? localData;
 
   return {
     ...data,
-    isLoading: USE_REMOTE_ANALYTICS
-      ? queryResult.isLoading || queryResult.isFetching
-      : false,
+    isLoading: queryResult.isLoading || queryResult.isFetching,
+    isError: queryResult.isError,
   };
 };
 
@@ -964,14 +962,14 @@ const STATS_COLOR_MAP: Record<
   teal:   { border: "bg-teal-500",   bg: "bg-teal-50",   text: "text-teal-600" },
 };
 
-const StatsCard = ({
+const StatsCard = memo(function StatsCard({
   title,
   value,
   icon: Icon,
   subText,
   subLines = [],
   color = "blue",
-}: StatsCardProps) => {
+}: StatsCardProps) {
   const theme = STATS_COLOR_MAP[color];
   const detailLines = [subText, ...subLines].filter(
     (line): line is string => Boolean(line),
@@ -1011,7 +1009,7 @@ const StatsCard = ({
       </CardContent>
     </Card>
   );
-};
+});
 
 const renderCenterLabel = ({
   viewBox,
@@ -1039,15 +1037,6 @@ const TOOLTIP_STYLE: React.CSSProperties = {
   border: "none",
   boxShadow: "0 4px 6px -1px rgb(0 0 0 / 0.1)",
 };
-
-// ---------------------------------------------------------------------------
-// Shared tooltip style for Recharts
-// ---------------------------------------------------------------------------
-
-const ALL_MONTHS_LABELS = [
-  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-];
 
 // ---------------------------------------------------------------------------
 // Main Component
@@ -1164,6 +1153,7 @@ const SalesReport = () => {
     filteredCount,
     top3Months,
     isLoading: analysisLoading,
+    isError: analysisError,
   } = useOfftakeData(
     offtakeData,
     orderData,
@@ -1176,6 +1166,15 @@ const SalesReport = () => {
   // ---------------------------------------------------------------------------
   // Effects
   // ---------------------------------------------------------------------------
+
+  // Notify user when Cloud Function fails so they know local data is being used
+  useEffect(() => {
+    if (!analysisError) return;
+    toast({
+      title: "Analytics service unavailable",
+      description: "Showing locally computed metrics. Data is still accurate.",
+    });
+  }, [analysisError, toast]);
 
   // Restore persisted sales inputs
   useEffect(() => {
@@ -1202,13 +1201,8 @@ const SalesReport = () => {
     localStorage.setItem(SALES_INPUTS_STORAGE_KEY, JSON.stringify(salesInputs));
   }, [salesInputs]);
 
-  // Fetch offtake data from Firebase
+  // Fetch offtake data from Firebase (always, used as fallback when Cloud Function is unavailable)
   useEffect(() => {
-    if (USE_REMOTE_ANALYTICS) {
-      setLoading(false);
-      return;
-    }
-
     if (unsubscribeRef.current) {
       unsubscribeRef.current();
       unsubscribeRef.current = null;
@@ -1320,15 +1314,9 @@ const SalesReport = () => {
     };
   }, [activeProgram, toast]);
 
-  // Fetch orders & requisitions
+  // Fetch orders & requisitions (always, used as fallback when Cloud Function is unavailable)
   useEffect(() => {
     let cancelled = false;
-
-    if (USE_REMOTE_ANALYTICS) {
-      setOrderData([]);
-      setRequisitionData([]);
-      return;
-    }
 
     if (!activeProgram) {
       setOrderData([]);
@@ -1596,7 +1584,7 @@ const SalesReport = () => {
   // Loading state
   // ---------------------------------------------------------------------------
 
-  if (loading || analysisLoading) {
+  if (loading || (analysisLoading && !analysisError)) {
     return (
       <div className="flex flex-col justify-center items-center h-96 space-y-4">
         <Loader2 className="h-12 w-12 animate-spin text-blue-600" />
