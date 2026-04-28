@@ -14,8 +14,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { useSharedProgrammeSelection } from "@/hooks/use-shared-programme-selection";
 import { canViewAllProgrammes, isChiefAdmin } from "@/contexts/authhelper";
-import { resolveAccessibleProgrammes, resolveActiveProgramme } from "@/lib/programme-access";
+import { resolveAccessibleProgrammes } from "@/lib/programme-access";
 
 // --- Constants ---
 const COLORS = {
@@ -509,7 +510,6 @@ const LivestockFarmersAnalytics = () => {
   const [allFarmers, setAllFarmers] = useState<FarmerData[]>([]);
   const [trainingRecords, setTrainingRecords] = useState<TrainingData[]>([]);
   const [filteredData, setFilteredData] = useState<FarmerData[]>([]);
-  const [activeProgram, setActiveProgram] = useState<string>(""); 
   const [availablePrograms, setAvailablePrograms] = useState<string[]>([]);
   const [filterMode, setFilterMode] = useState<FilterMode>("yearly");
 
@@ -579,6 +579,7 @@ const LivestockFarmersAnalytics = () => {
     () => resolveAccessibleProgrammes(userCanViewAllProgrammeData, allowedProgrammes),
     [allowedProgrammes, userCanViewAllProgrammeData]
   );
+  const [activeProgram, setActiveProgram] = useSharedProgrammeSelection(accessibleProgrammes);
   const resetAnalyticsState = useCallback(() => {
     setStats(EMPTY_STATS);
     setGenderData([]);
@@ -648,7 +649,6 @@ const LivestockFarmersAnalytics = () => {
   // --- 1. Fetch User Permissions ---
   useEffect(() => {
     setAvailablePrograms(accessibleProgrammes);
-    setActiveProgram((prev) => resolveActiveProgramme(prev, accessibleProgrammes));
   }, [accessibleProgrammes]);
 
   // --- 2. Data Fetching (Farmers) ---

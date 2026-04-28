@@ -4,10 +4,12 @@ import { equalTo, get, onValue, orderByChild, query, ref, serverTimestamp, set, 
 import { auth, db, invalidateCollectionCache, warmAppCaches } from "@/lib/firebase";
 import { useToast } from "@/hooks/use-toast";
 import {
+  canViewAllProgrammes,
   getLandingRouteForRole,
   isActiveUserStatus,
   isMobileUser,
 } from "@/contexts/authhelper";
+import { resolveAccessibleProgrammes } from "@/lib/programme-access";
 
 interface UserProfile {
   recordId: string | null;
@@ -116,6 +118,18 @@ export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
     }
   };
 
+  const getAccessibleProgrammesForProfile = (
+    profile: UserProfile,
+  ): string[] =>
+    resolveAccessibleProgrammes(
+      canViewAllProgrammes(
+        profile.role,
+        profile.userAttribute,
+        profile.allowedProgrammes,
+      ),
+      profile.allowedProgrammes,
+    );
+
   const resolveBlockedAccessMessage = (profile: UserProfile): string => {
     if (isMobileUser(profile.role, profile.userAttribute)) {
       return "Mobile users can submit data only and cannot access the web dashboard.";
@@ -125,6 +139,10 @@ export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
       return "Your account has been deactivated or disabled. Contact a chief admin for help.";
     }
 
+    if (getAccessibleProgrammesForProfile(profile).length === 0) {
+      return "Your account is not assigned to any programme. Contact a chief admin for help.";
+    }
+
     return "Your account is not authorized to access the web dashboard.";
   };
 
@@ -132,6 +150,7 @@ export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
     if (!profile.recordId) return false;
     if (isMobileUser(profile.role, profile.userAttribute)) return false;
     if (!isActiveUserStatus(profile.status)) return false;
+    if (getAccessibleProgrammesForProfile(profile).length === 0) return false;
     return getLandingRouteForRole(profile.role, profile.userAttribute) !== "/auth";
   };
 

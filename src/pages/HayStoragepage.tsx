@@ -19,13 +19,14 @@ import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Download, Warehouse, Eye, Calendar, Building, DollarSign, Package, Archive, Edit, Save, X, Upload, Trash2, Plus, LandPlot } from "lucide-react";
+import { useSharedProgrammeSelection } from "@/hooks/use-shared-programme-selection";
 import { useToast } from "@/hooks/use-toast";
 import { canManageInfrastructureRecords, canViewAllProgrammes } from "@/contexts/authhelper";
 import { uploadDataWithValidation, formatValidationErrors, UploadResult } from "@/lib/uploads-util";
 import { db } from "@/lib/firebase";
 import { millify} from "millify";
 import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
-import { resolveAccessibleProgrammes, resolveActiveProgramme } from "@/lib/programme-access";
+import { resolveAccessibleProgrammes } from "@/lib/programme-access";
 
 // --- Types ---
 
@@ -389,8 +390,6 @@ const HayStoragePage = () => {
   const [allHayStorage, setAllHayStorage] = useState<HayStorage[]>([]);
   const [filteredHayStorage, setFilteredHayStorage] = useState<HayStorage[]>([]);
   const [rawFilteredHayStorage, setRawFilteredHayStorage] = useState<HayStorage[]>([]);
-  const [activeProgram, setActiveProgram] = useState<string>("");
-  const [availablePrograms, setAvailablePrograms] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [exportLoading, setExportLoading] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
@@ -480,6 +479,8 @@ const HayStoragePage = () => {
     () => resolveAccessibleProgrammes(userCanViewAllProgrammeData, allowedProgrammes),
     [allowedProgrammes, userCanViewAllProgrammeData]
   );
+  const [activeProgram, setActiveProgram] = useSharedProgrammeSelection(accessibleProgrammes);
+  const availablePrograms = accessibleProgrammes;
   const selectableProgrammes = useMemo(() => {
     const normalizedProgrammes = availablePrograms
       .map((programme) => getProgrammeValue(programme))
@@ -499,11 +500,6 @@ const HayStoragePage = () => {
     });
     return false;
   };
-
-  useEffect(() => {
-    setAvailablePrograms(accessibleProgrammes);
-    setActiveProgram((prev) => resolveActiveProgramme(prev, accessibleProgrammes));
-  }, [accessibleProgrammes]);
 
   useEffect(() => {
     const selectedProgramme = getProgrammeValue(activeProgram);

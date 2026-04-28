@@ -4,7 +4,7 @@ import {onCall, HttpsError} from "firebase-functions/v2/https";
 
 const PROGRAMME_OPTIONS = ["KPMD", "RANGE", "MTLDK"] as const;
 const CACHE_TTL_MS = 2 * 60 * 1000;
-const ANALYSIS_CACHE_VERSION = "v7";
+const ANALYSIS_CACHE_VERSION = "v8";
 const QUARTER_TARGET_MILESTONES = [352, 702, 1053, 1404];
 const CHART_COLORS = {
   male: "#1e3a8a",
@@ -198,14 +198,6 @@ const isFullAccessAttributeToken = (value: string): boolean =>
 
 const isBlockedUserStatus = (status: string): boolean =>
   BLOCKED_STATUS_IDENTIFIERS.has(normalize(status));
-
-const canViewAllProgrammesForProfile = (profile: AnalysisProfile): boolean =>
-  getPermissionTokens(profile.role, profile.userAttribute).some((token) =>
-    isChiefAdminToken(token) ||
-    isAdminToken(token) ||
-    isFullAccessAttributeToken(token) ||
-    isOfftakeToken(token),
-  );
 
 const canAccessAnalyticsScope = (
   scope: AnalysisScope,
@@ -905,8 +897,19 @@ const buildOverviewRecentFarmers = (farmers: Record<string, unknown>[]) =>
       (parseDate(left.registeredAt)?.getTime() || 0))
     .slice(0, 5);
 
-const getRecordProgramme = (record: Record<string, unknown>): string =>
-  toProgramme(record.programme ?? record.Programme);
+const getRecordProgramme = (record: Record<string, unknown>): string => {
+  const candidates = [record.programme, record.Programme];
+
+  for (const candidate of candidates) {
+    if (typeof candidate !== "string") continue;
+    const trimmed = candidate.trim();
+    if (PROGRAMME_OPTIONS.includes(trimmed as (typeof PROGRAMME_OPTIONS)[number])) {
+      return trimmed;
+    }
+  }
+
+  return "";
+};
 
 const filterRecordsByDateRange = <T extends Record<string, unknown>>(
   records: T[],
@@ -1426,9 +1429,9 @@ const createLivestockAnalytics = async (
       endYear: maxYear,
     };
   })();
-  const activeTarget = hasDateRange
-    ? Math.max(1, Math.round(target ?? 1404))
-    : Math.max(1, (coverageYears.count || 1) * 1404);
+  const activeTarget = hasDateRange ?
+    Math.max(1, Math.round(target ?? 1404)) :
+    Math.max(1, (coverageYears.count || 1) * 1404);
 
   const filteredFarmers = filterRecordsByDateRange(
     farmers,

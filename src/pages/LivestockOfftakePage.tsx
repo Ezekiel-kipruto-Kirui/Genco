@@ -14,10 +14,11 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Download, Users, MapPin, Eye, Calendar, Scale, Phone, CreditCard, Edit, Trash2, Weight, Upload, Loader2 } from "lucide-react";
+import { useSharedProgrammeSelection } from "@/hooks/use-shared-programme-selection";
 import { toast, useToast } from "@/hooks/use-toast";
 import { canViewAllProgrammes, isChiefAdmin } from "@/contexts/authhelper";
 import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
-import { PROGRAMME_OPTIONS, resolveAccessibleProgrammes, resolveActiveProgramme } from "@/lib/programme-access";
+import { PROGRAMME_OPTIONS, resolveAccessibleProgrammes } from "@/lib/programme-access";
 
 // Types
 interface OfftakeData {
@@ -295,7 +296,6 @@ const LivestockOfftakePage = () => {
   
   // User Permissions State
   // Logic: Admin can switch, User restricted to assigned programmes
-  const [activeProgram, setActiveProgram] = useState<string>("");
   
   const [loading, setLoading] = useState(true);
   const [exportLoading, setExportLoading] = useState(false);
@@ -380,6 +380,7 @@ const LivestockOfftakePage = () => {
     () => resolveAccessibleProgrammes(userCanViewAllProgrammeData, allowedProgrammes),
     [allowedProgrammes, userCanViewAllProgrammeData]
   );
+  const [activeProgram, setActiveProgram] = useSharedProgrammeSelection(accessibleProgrammes);
   const requireChiefAdmin = () => {
     if (userIsChiefAdmin) return true;
     toast({
@@ -648,11 +649,6 @@ const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
 
   reader.readAsText(file);
 });
-
-
-  useEffect(() => {
-    setActiveProgram((prev) => resolveActiveProgramme(prev, accessibleProgrammes));
-  }, [accessibleProgrammes]);
 
   // Data fetching
   useEffect(() => {

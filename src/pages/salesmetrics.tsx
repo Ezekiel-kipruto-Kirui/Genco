@@ -31,10 +31,11 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"; 
+import { useSharedProgrammeSelection } from "@/hooks/use-shared-programme-selection";
 import { useToast } from "@/hooks/use-toast";
 import { millify } from "millify";
 import { fetchAnalysisSummary } from "@/lib/analysis";
-import { resolveAccessibleProgrammes, resolveActiveProgramme } from "@/lib/programme-access";
+import { resolveAccessibleProgrammes } from "@/lib/programme-access";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -82,7 +83,7 @@ const SALES_INPUTS_STORAGE_KEY = "sales-metrics-inputs-v1";
 const USE_REMOTE_ANALYTICS =
   typeof window !== "undefined" && !["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
 
-const SALES_ANALYTICS_QUERY_VERSION = "v4";
+const SALES_ANALYTICS_QUERY_VERSION = "v5";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -331,8 +332,13 @@ const getQDates = (year: number, quarter: 1 | 2 | 3 | 4) => {
 // Normalisation helpers
 // ---------------------------------------------------------------------------
 
-const normalizeProgrammeToken = (value: string | null | undefined): string =>
-  (value || "").trim().toUpperCase();
+const CANONICAL_PROGRAMME_SET = new Set(["KPMD", "RANGE", "MTLDK"]);
+
+const getAnalyticsProgrammeToken = (value: unknown): string => {
+  if (typeof value !== "string") return "";
+  const trimmed = value.trim();
+  return CANONICAL_PROGRAMME_SET.has(trimmed) ? trimmed : "";
+};
 
 const normalizeLooseText = (value: unknown): string =>
   typeof value === "string"
@@ -589,10 +595,10 @@ const buildLocalSalesAnalytics = (
   const emptyState = createEmptySalesAnalytics(salesInputs);
   if (records.length === 0) return emptyState;
 
-  const targetProgramme = normalizeProgrammeToken(selectedProgramme);
+  const targetProgramme = getAnalyticsProgrammeToken(selectedProgramme);
 
   const filteredData = records.filter((record) => {
-    const recordProgramme = normalizeProgrammeToken(record.programme);
+    const recordProgramme = getAnalyticsProgrammeToken(record.programme);
     const matchesProgramme = !targetProgramme || recordProgramme === targetProgramme;
     return matchesProgramme && isDateInRange(record.date, dateRange.startDate, dateRange.endDate);
   });
@@ -643,13 +649,13 @@ const buildLocalSalesAnalytics = (
 
   // Pre-filter orders & requisitions
   const filteredOrders = orders.filter((record) => {
-    const recordProgramme = normalizeProgrammeToken(record.programme);
+    const recordProgramme = getAnalyticsProgrammeToken(record.programme);
     const matchesProgramme = !targetProgramme || recordProgramme === targetProgramme;
     return matchesProgramme && isDateInRange(getOrderRecordDate(record), dateRange.startDate, dateRange.endDate);
   });
 
   const filteredRequisitions = requisitions.filter((record) => {
-    const recordProgramme = normalizeProgrammeToken(record.programme);
+    const recordProgramme = getAnalyticsProgrammeToken(record.programme);
     const matchesProgramme = !targetProgramme || recordProgramme === targetProgramme;
     return matchesProgramme && isDateInRange(getRequisitionRecordDate(record), dateRange.startDate, dateRange.endDate);
   });
@@ -1070,8 +1076,6 @@ const SalesReport = () => {
     startDate: currentYearDates.startDate,
     endDate: currentYearDates.endDate,
   });
-  const [selectedProgramme, setSelectedProgramme] = useState<string | null>(null);
-  const [activeProgram, setActiveProgram] = useState<string>("");
 
   const [salesInputs, setSalesInputs] = useState<SalesInputs>({
     pricePerKg: 0,
@@ -1131,8 +1135,9 @@ const SalesReport = () => {
   );
 
   const showProgrammeFilter = accessibleProgrammes.length > 1;
-
-  const analysisProgramme = selectedProgramme || activeProgram || null;
+  const [activeProgram, setActiveProgram] = useSharedProgrammeSelection(accessibleProgrammes);
+  const selectedProgramme = activeProgram || null;
+  const analysisProgramme = activeProgram || null;
 
   const hasConfiguredSalesInputs =
     salesInputs.pricePerKg > 0 || salesInputs.expenses > 0;
@@ -1197,24 +1202,6 @@ const SalesReport = () => {
     localStorage.setItem(SALES_INPUTS_STORAGE_KEY, JSON.stringify(salesInputs));
   }, [salesInputs]);
 
-  // Sync active programme with accessibility rules
-  useEffect(() => {
-    const resolve = (prev: string) =>
-      resolveActiveProgramme(prev, accessibleProgrammes) ?? accessibleProgrammes[0] ?? "";
-
-    if (userCanViewAllProgrammeData) {
-      setActiveProgram((prev) =>
-        prev && accessibleProgrammes.includes(prev) ? prev : accessibleProgrammes[0] ?? "",
-      );
-      setSelectedProgramme((prev) =>
-        prev && accessibleProgrammes.includes(prev) ? prev : accessibleProgrammes[0] ?? "",
-      );
-    } else {
-      setActiveProgram(resolve);
-      setSelectedProgramme(resolve);
-    }
-  }, [accessibleProgrammes, userCanViewAllProgrammeData]);
-
   // Fetch offtake data from Firebase
   useEffect(() => {
     if (USE_REMOTE_ANALYTICS) {
@@ -1243,7 +1230,7 @@ const SalesReport = () => {
       setIsCacheHit(false);
     }
 
-    const normalizedActive = normalizeProgrammeToken(activeProgram);
+    const normalizedActive = getAnalyticsProgrammeToken(activeProgram);
 
     const unsubscribe = onValue(
       ref(db, "offtakes"),
@@ -1262,8 +1249,8 @@ const SalesReport = () => {
           // Skip if programme filter was applied server-side but some
           // records don't match (defensive)
           if (normalizedActive) {
-            const recProg = normalizeProgrammeToken(
-              (item.programme ?? item.Programme ?? "") as string,
+            const recProg = getAnalyticsProgrammeToken(
+              item.programme ?? item.Programme ?? "",
             );
             if (!recProg || recProg !== normalizedActive) continue;
           }
@@ -1343,7 +1330,7 @@ const SalesReport = () => {
       return;
     }
 
-    const normalizedActive = normalizeProgrammeToken(activeProgram);
+    const normalizedActive = getAnalyticsProgrammeToken(activeProgram);
 
         const loadFinanceCollections = async () => {
       try {
@@ -1379,7 +1366,7 @@ const SalesReport = () => {
               })
               .filter(
                 (record) =>
-                  normalizeProgrammeToken(record.programme) ===
+                  getAnalyticsProgrammeToken(record.programme) ===
                   normalizedActive,
               )
           : [];
@@ -1408,7 +1395,7 @@ const SalesReport = () => {
               })
               .filter(
                 (record) =>
-                  normalizeProgrammeToken(record.programme) ===
+                  getAnalyticsProgrammeToken(record.programme) ===
                   normalizedActive,
               )
           : [];
@@ -1506,7 +1493,6 @@ const SalesReport = () => {
 
   const handleProgramChange = useCallback((program: string) => {
     setActiveProgram(program);
-    setSelectedProgramme(program);
   }, []);
 
   const scrollFilterStripBy = useCallback(

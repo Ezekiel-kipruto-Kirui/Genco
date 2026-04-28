@@ -10,11 +10,12 @@ import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Download, MapPin, Eye, Droplets, Users, Building, Trash2, Upload, Plus, Edit } from "lucide-react";
+import { useSharedProgrammeSelection } from "@/hooks/use-shared-programme-selection";
 import { useToast } from "@/hooks/use-toast";
 import { canManageInfrastructureRecords, canViewAllProgrammes } from "@/contexts/authhelper";
 import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
 import {millify} from "millify";
-import { resolveAccessibleProgrammes, resolveActiveProgramme } from "@/lib/programme-access";
+import { resolveAccessibleProgrammes } from "@/lib/programme-access";
 
 // REALTIME DATABASE IMPORTS ONLY
 import { 
@@ -366,8 +367,6 @@ const BoreholePage = () => {
   const { toast } = useToast();
   const [allBoreholes, setAllBoreholes] = useState<Borehole[]>([]);
   const [filteredBoreholes, setFilteredBoreholes] = useState<Borehole[]>([]);
-  const [activeProgram, setActiveProgram] = useState<string>("");
-  const [availablePrograms, setAvailablePrograms] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [exportLoading, setExportLoading] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
@@ -438,6 +437,8 @@ const BoreholePage = () => {
     () => resolveAccessibleProgrammes(userCanViewAllProgrammeData, allowedProgrammes),
     [allowedProgrammes, userCanViewAllProgrammeData]
   );
+  const [activeProgram, setActiveProgram] = useSharedProgrammeSelection(accessibleProgrammes);
+  const availablePrograms = accessibleProgrammes;
   const boreholeCacheKey = useMemo(
     () => cacheKey("admin-page", "borehole-storage", activeProgram || "no-program"),
     [activeProgram]
@@ -451,11 +452,6 @@ const BoreholePage = () => {
     });
     return false;
   };
-
-  useEffect(() => {
-    setAvailablePrograms(accessibleProgrammes);
-    setActiveProgram((prev) => resolveActiveProgramme(prev, accessibleProgrammes));
-  }, [accessibleProgrammes]);
 
   // Data fetching from Realtime Database
   const fetchAllData = useCallback(async () => {

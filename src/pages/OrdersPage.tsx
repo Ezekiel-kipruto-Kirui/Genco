@@ -5,6 +5,7 @@ import { onValue, ref, remove, update, push, set, get } from "firebase/database"
 import { db, fetchCollection } from "@/lib/firebase";
 import { canViewAllProgrammes, isChiefAdmin, isOfftakeOfficer } from "@/contexts/authhelper";
 import { useToast } from "@/hooks/use-toast";
+import { resolveAccessibleProgrammes } from "@/lib/programme-access";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -36,6 +37,7 @@ import {
   CalendarDays,
   CalendarRange,
 } from "lucide-react";
+import { useSharedProgrammeSelection } from "@/hooks/use-shared-programme-selection";
 
 /* ------------------------------------------------------------------ */
 /* Interfaces                                                          */
@@ -223,8 +225,6 @@ interface FieldOfficerOption {
 /* ------------------------------------------------------------------ */
 
 const PAGE_LIMIT = 15;
-const PROGRAMME_OPTIONS = ["KPMD", "RANGE", "MTLDK"] as const;
-
 /* ------------------------------------------------------------------ */
 /* Pure utility functions (outside component)                          */
 /* ------------------------------------------------------------------ */
@@ -1158,8 +1158,6 @@ const OrdersPage = () => {
 
   const [allRecords, setAllRecords] = useState<OrderRecord[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeProgram, setActiveProgram] = useState<string>("");
-  const [availablePrograms, setAvailablePrograms] = useState<string[]>([]);
   const [ordersDialogBatchId, setOrdersDialogBatchId] = useState<string | null>(null);
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [creatingOrder, setCreatingOrder] = useState(false);
@@ -1221,6 +1219,12 @@ const OrdersPage = () => {
     () => canViewAllProgrammes(userRole, userAttribute, allowedProgrammes),
     [allowedProgrammes, userRole, userAttribute]
   );
+  const accessibleProgrammes = useMemo(
+    () => resolveAccessibleProgrammes(userCanViewAllProgrammeData, allowedProgrammes),
+    [allowedProgrammes, userCanViewAllProgrammeData]
+  );
+  const [activeProgram, setActiveProgram] = useSharedProgrammeSelection(accessibleProgrammes);
+  const availablePrograms = accessibleProgrammes;
   const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
   const userCanCreateOrders = useMemo(
     () => isChiefAdmin(userRole) || isOfftakeOfficer(userRole) || isOfftakeOfficer(userAttribute),
@@ -1248,25 +1252,6 @@ const OrdersPage = () => {
     toast({ title: "Unauthorized", description: "Only chief admin can delete batches.", variant: "destructive" });
     return false;
   }, [userIsChiefAdmin, toast]);
-
-  /* ---------------------------------------------------------------- */
-  /* Programme management                                              */
-  /* ---------------------------------------------------------------- */
-
-  useEffect(() => {
-    if (userCanViewAllProgrammeData) {
-      setAvailablePrograms([...PROGRAMME_OPTIONS]);
-      setActiveProgram((prev) => prev || PROGRAMME_OPTIONS[0]);
-      return;
-    }
-    const assignedPrograms = Object.keys(allowedProgrammes || {}).filter((p) => allowedProgrammes?.[p]);
-    setAvailablePrograms(assignedPrograms);
-    setActiveProgram((prev) => {
-      if (assignedPrograms.length === 0) return "";
-      if (prev && assignedPrograms.includes(prev)) return prev;
-      return assignedPrograms[0];
-    });
-  }, [allowedProgrammes, userCanViewAllProgrammeData]);
 
   /* ---------------------------------------------------------------- */
   /* Firebase listener — delta-aware                                   */

@@ -33,10 +33,11 @@ import {
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
+import { useSharedProgrammeSelection } from "@/hooks/use-shared-programme-selection";
 import * as XLSX from 'xlsx';
 import { canViewAllProgrammes, isChiefAdmin } from "@/contexts/authhelper";
 import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
-import { resolveAccessibleProgrammes, resolveActiveProgramme } from "@/lib/programme-access";
+import { resolveAccessibleProgrammes } from "@/lib/programme-access";
 
 // --- Constants ---
 const COLLECTION_NAME = "Onboarding";
@@ -361,8 +362,6 @@ const OnboardingPage = () => {
   const [allOnboarding, setAllOnboarding] = useState<OnboardingData[]>([]);
   const [filteredOnboarding, setFilteredOnboarding] = useState<OnboardingData[]>([]);
   const [displayedOnboarding, setDisplayedOnboarding] = useState<OnboardingData[]>([]);
-  const [activeProgram, setActiveProgram] = useState<string>("");
-  const [availablePrograms, setAvailablePrograms] = useState<string[]>([]); 
 
   const [onboardingForm, setOnboardingForm] = useState({
     id: "",
@@ -396,6 +395,12 @@ const OnboardingPage = () => {
     () => canViewAllProgrammes(userRole, userAttribute, allowedProgrammes),
     [allowedProgrammes, userRole, userAttribute]
   );
+  const accessibleProgrammes = useMemo(
+    () => resolveAccessibleProgrammes(userCanViewAllProgrammeData, allowedProgrammes),
+    [allowedProgrammes, userCanViewAllProgrammeData]
+  );
+  const [activeProgram, setActiveProgram] = useSharedProgrammeSelection(accessibleProgrammes);
+  const availablePrograms = accessibleProgrammes;
   const requireChiefAdmin = () => {
     if (userIsChiefAdmin) return true;
     toast({
@@ -455,12 +460,6 @@ const OnboardingPage = () => {
       reader.readAsArrayBuffer(file);
     });
   };
-
-  useEffect(() => {
-    const accessible = resolveAccessibleProgrammes(userCanViewAllProgrammeData, allowedProgrammes);
-    setAvailablePrograms(accessible);
-    setActiveProgram((prev) => resolveActiveProgramme(prev, accessible));
-  }, [allowedProgrammes, userCanViewAllProgrammeData]);
 
   const fetchOnboardingData = async () => {
     try {

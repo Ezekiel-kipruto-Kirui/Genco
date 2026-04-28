@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback, useMemo, useRef, ChangeEvent, memo } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { getAuth } from "firebase/auth"; 
-import { ref, set, update, remove, push, onValue } from "firebase/database";
+import { ref, set, update, remove, push, onValue, query, orderByChild, equalTo } from "firebase/database";
 import { db } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
+import ProgrammeSelector from "@/components/programme-selector";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,6 +15,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { Textarea } from "@/components/ui/textarea";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu"; 
 import { Download, Eye, Calendar, Edit, Trash2, Car, Wallet, CheckCircle, XCircle, MapPin, Printer, Plus, Minus, Save, FileImage, ExternalLink, MoreHorizontal, History, Clock, ChevronDown, FileText } from "lucide-react"; 
+import { useSharedProgrammeSelection } from "@/hooks/use-shared-programme-selection";
 import { useToast } from "@/hooks/use-toast";
 import { canViewAllProgrammes, isAdmin, isChiefAdmin, isFinance, isHummanResourceManager, isMonitoringAndEvaluationOfficer, isProjectManager, resolvePermissionPrincipal } from "@/contexts/authhelper";
 import html2canvas from "html2canvas";
@@ -24,7 +26,6 @@ import {
   canAccessProgrammeRecord,
   normalizeProgramme,
   resolveAccessibleProgrammes,
-  resolveActiveProgramme,
 } from "@/lib/programme-access";
 
 // --- Types ---
@@ -127,7 +128,6 @@ interface Pagination {
 
 // --- Constants ---
 const PAGE_LIMIT = 10;
-const ALL_PROGRAMMES_VALUE = "ALL";
 
 const createDefaultFilters = (): Filters => ({
   search: "",
@@ -274,7 +274,6 @@ const RequisitionsPage = () => {
   // List State
   const [allRequisitions, setAllRequisitions] = useState<RequisitionData[]>([]);
   const [filteredRequisitions, setFilteredRequisitions] = useState<RequisitionData[]>([]);
-  const [activeProgram, setActiveProgram] = useState<string>(ALL_PROGRAMMES_VALUE);
   const [loading, setLoading] = useState(true);
   const [exportLoading, setExportLoading] = useState(false);
   const [selectedRecords, setSelectedRecords] = useState<string[]>([]);
@@ -373,6 +372,10 @@ const RequisitionsPage = () => {
     () => resolveAccessibleProgrammes(canViewAllRequisitionProgrammes, allowedProgrammes),
     [allowedProgrammes, canViewAllRequisitionProgrammes]
   );
+  const [activeProgram, setActiveProgram] = useSharedProgrammeSelection(accessibleProgrammes, {
+    allowAll: canViewAllRequisitionProgrammes || accessibleProgrammes.length > 1,
+  });
+  const canSelectAllProgrammes = canViewAllRequisitionProgrammes || accessibleProgrammes.length > 1;
   const showProgrammeSelector = accessibleProgrammes.length > 1;
   const canApproveRequisition =
     isAdmin(permissionPrincipal) ||
@@ -432,31 +435,6 @@ const RequisitionsPage = () => {
     [permissionPrincipal, activeProgram]
   );
 
-  // --- 1. Fetch User Permissions ---
-  useEffect(() => {
-    setActiveProgram((prev) => {
-      const normalizedPrev = normalizeProgramme(prev);
-
-      if (canViewAllRequisitionProgrammes) {
-        if (prev === ALL_PROGRAMMES_VALUE || (!!normalizedPrev && accessibleProgrammes.includes(normalizedPrev))) {
-          return prev || ALL_PROGRAMMES_VALUE;
-        }
-        return ALL_PROGRAMMES_VALUE;
-      }
-
-      if (accessibleProgrammes.length === 0) return "";
-
-      if (accessibleProgrammes.length > 1) {
-        if (prev === ALL_PROGRAMMES_VALUE || (!!normalizedPrev && accessibleProgrammes.includes(normalizedPrev))) {
-          return prev || ALL_PROGRAMMES_VALUE;
-        }
-        return ALL_PROGRAMMES_VALUE;
-      }
-
-      return resolveActiveProgramme(prev === ALL_PROGRAMMES_VALUE ? "" : prev, accessibleProgrammes);
-    });
-  }, [accessibleProgrammes, canViewAllRequisitionProgrammes]);
-
   // --- 2. Data Fetching ---
   useEffect(() => {
     if (!canViewAllRequisitionProgrammes && !activeProgram) {
@@ -472,8 +450,12 @@ const RequisitionsPage = () => {
       setLoading(true);
     }
 
-    // Always fetch from the full requisitions collection, then apply view/program filters locally.
-    const unsubscribe = onValue(ref(db, 'requisitions'), (snapshot) => {
+    const normalizedActiveProgram = normalizeProgramme(activeProgram);
+    const requisitionsRef = normalizedActiveProgram
+      ? query(ref(db, "requisitions"), orderByChild("programme"), equalTo(normalizedActiveProgram))
+      : ref(db, "requisitions");
+
+    const unsubscribe = onValue(requisitionsRef, (snapshot) => {
         const data = snapshot.val();
         if (!data) {
             setAllRequisitions([]);
@@ -1919,19 +1901,14 @@ const RequisitionsPage = () => {
          <div className="flex flex-col xl:flex-row gap-4 w-full xl:w-auto">
           {showProgrammeSelector && (
             <div className="w-full sm:w-[220px]">
-              <Select value={activeProgram} onValueChange={setActiveProgram}>
-                <SelectTrigger className="h-9 w-full border-gray-300 bg-white px-6 text-sm font-medium text-gray-700 shadow-sm focus:border-blue-500 xl:w-auto">
-                  <SelectValue placeholder="All Programmes" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ALL_PROGRAMMES_VALUE}>All Programmes</SelectItem>
-                  {accessibleProgrammes.map((programme) => (
-                    <SelectItem key={programme} value={programme}>
-                      {programme}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <ProgrammeSelector
+                value={activeProgram}
+                onValueChange={setActiveProgram}
+                programmes={accessibleProgrammes}
+                includeAll={canSelectAllProgrammes}
+                placeholder="All Programmes"
+                triggerClassName="h-9 w-full border-gray-300 bg-white px-6 text-sm font-medium text-gray-700 shadow-sm focus:border-blue-500 xl:w-auto"
+              />
             </div>
           )}
           
@@ -1992,19 +1969,14 @@ const RequisitionsPage = () => {
          <div className="flex flex-col xl:flex-row gap-4 w-full xl:w-auto">
           {showProgrammeSelector && (
             <div className="w-full sm:w-[220px]">
-              <Select value={activeProgram} onValueChange={setActiveProgram}>
-                <SelectTrigger className="h-9 w-full border-gray-300 bg-white px-6 text-sm font-medium text-gray-700 shadow-sm focus:border-blue-500 xl:w-auto">
-                  <SelectValue placeholder="All Programmes" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ALL_PROGRAMMES_VALUE}>All Programmes</SelectItem>
-                  {accessibleProgrammes.map((programme) => (
-                    <SelectItem key={programme} value={programme}>
-                      {programme}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <ProgrammeSelector
+                value={activeProgram}
+                onValueChange={setActiveProgram}
+                programmes={accessibleProgrammes}
+                includeAll={canSelectAllProgrammes}
+                placeholder="All Programmes"
+                triggerClassName="h-9 w-full border-gray-300 bg-white px-6 text-sm font-medium text-gray-700 shadow-sm focus:border-blue-500 xl:w-auto"
+              />
             </div>
           )}
           

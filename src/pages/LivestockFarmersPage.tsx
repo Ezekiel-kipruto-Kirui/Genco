@@ -12,9 +12,10 @@ import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Download, Users, MapPin, Eye, Calendar, Scale, Phone, CreditCard, Edit, Trash2, ShieldCheck, Activity, ChevronRight, Upload, GraduationCap } from "lucide-react";
+import { useSharedProgrammeSelection } from "@/hooks/use-shared-programme-selection";
 import { useToast } from "@/hooks/use-toast";
 import { canViewAllProgrammes, isChiefAdmin } from "@/contexts/authhelper";
-import { resolveAccessibleProgrammes, resolveActiveProgramme } from "@/lib/programme-access";
+import { normalizeProgramme, resolveAccessibleProgrammes } from "@/lib/programme-access";
 
 // --- Types ---
 
@@ -223,7 +224,6 @@ const LivestockFarmersPage = () => {
   
   const [allFarmers, setAllFarmers] = useState<FarmerData[]>([]);
   const [filteredFarmers, setFilteredFarmers] = useState<FarmerData[]>([]);
-  const [activeProgram, setActiveProgram] = useState<string>(""); 
   const [availablePrograms, setAvailablePrograms] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [exportLoading, setExportLoading] = useState(false);
@@ -306,6 +306,7 @@ const LivestockFarmersPage = () => {
     () => resolveAccessibleProgrammes(userCanViewAllProgrammeData, allowedProgrammes),
     [allowedProgrammes, userCanViewAllProgrammeData]
   );
+  const [activeProgram, setActiveProgram] = useSharedProgrammeSelection(accessibleProgrammes);
   const requireChiefAdmin = () => {
     if (userIsChiefAdmin) return true;
     toast({
@@ -328,7 +329,6 @@ const LivestockFarmersPage = () => {
 
   useEffect(() => {
     setAvailablePrograms(accessibleProgrammes);
-    setActiveProgram((prev) => resolveActiveProgramme(prev, accessibleProgrammes));
   }, [accessibleProgrammes]);
 
   useEffect(() => {
@@ -380,7 +380,7 @@ const LivestockFarmersPage = () => {
           vaccines: Array.isArray(item.vaccines) ? item.vaccines : [],
           ageDistribution: item.ageDistribution || {},
           registrationDate: item.registrationDate || formatDate(dateValue),
-          programme: item.programme || activeProgram,
+          programme: normalizeProgramme(item.programme ?? item.Programme) || "",
           username: item.username || 'Unknown',
           aggregationGroup: item.aggregationGroup || '',
           bucksServed: item.bucksServed || '0',
@@ -430,7 +430,8 @@ const LivestockFarmersPage = () => {
         }
         const records = Object.keys(data).map((key) => ({
             id: key,
-            ...data[key]
+            ...data[key],
+            programme: normalizeProgramme(data[key]?.programme ?? data[key]?.Programme) || "",
         }));
         setTrainingRecords(records);
         try {

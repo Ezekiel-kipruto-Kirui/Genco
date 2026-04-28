@@ -11,10 +11,11 @@ import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Download, Users, BookOpen, Edit, Trash2, Calendar, Eye, MapPin, GraduationCap, Upload, User, UserCircle, Syringe } from "lucide-react";
+import { useSharedProgrammeSelection } from "@/hooks/use-shared-programme-selection";
 import { useToast } from "@/hooks/use-toast";
 import { canViewAllProgrammes, isChiefAdmin } from "@/contexts/authhelper";
 import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
-import { resolveAccessibleProgrammes, resolveActiveProgramme } from "@/lib/programme-access";
+import { resolveAccessibleProgrammes } from "@/lib/programme-access";
 
 // ──────────────────────────────────────────────
 // Utility: Format large numbers (e.g. 1,200 → 1.2K, 1,500,000 → 1.5M)
@@ -179,8 +180,6 @@ const CapacityBuildingPage = () => {
   // State
   const [allRecords, setAllRecords] = useState<TrainingRecord[]>([]);
   const [filteredRecords, setFilteredRecords] = useState<TrainingRecord[]>([]);
-  const [activeProgram, setActiveProgram] = useState<string>(""); 
-  const [availablePrograms, setAvailablePrograms] = useState<string[]>([]); 
   
   const [loading, setLoading] = useState(true);
   const [exportLoading, setExportLoading] = useState(false);
@@ -209,6 +208,8 @@ const CapacityBuildingPage = () => {
     () => resolveAccessibleProgrammes(userCanViewAllProgrammeData, allowedProgrammes),
     [allowedProgrammes, userCanViewAllProgrammeData]
   );
+  const [activeProgram, setActiveProgram] = useSharedProgrammeSelection(accessibleProgrammes);
+  const availablePrograms = accessibleProgrammes;
   const requireChiefAdmin = () => {
     if (userIsChiefAdmin) return true;
     toast({
@@ -261,12 +262,6 @@ const CapacityBuildingPage = () => {
     numberOfTrainers: 0,
     numberOfSubCounties: 0
   });
-
-  // --- 1. Fetch User Permissions & Determine Available Programmes ---
-  useEffect(() => {
-    setAvailablePrograms(accessibleProgrammes);
-    setActiveProgram((prev) => resolveActiveProgramme(prev, accessibleProgrammes));
-  }, [accessibleProgrammes]);
 
   // --- 2. Data Fetching ---
   useEffect(() => {

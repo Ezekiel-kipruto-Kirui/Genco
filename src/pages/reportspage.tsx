@@ -47,9 +47,15 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { useSharedProgrammeSelection } from "@/hooks/use-shared-programme-selection";
 import { toast } from "@/hooks/use-toast";
 import { fetchAnalysisSummary } from "@/lib/analysis";
-import { PROGRAMME_OPTIONS, includesProgramme, resolveAccessibleProgrammes, resolveActiveProgramme } from "@/lib/programme-access";
+import {
+  ALL_PROGRAMMES_VALUE,
+  PROGRAMME_OPTIONS,
+  matchesProgrammeSelection,
+  resolveAccessibleProgrammes,
+} from "@/lib/programme-access";
 
 // --- Constants ---
 const COLORS = {
@@ -514,43 +520,37 @@ function computeLocalPerformanceReportData(
 ): PerformanceReportData {
   if (!selectedProgramme) return EMPTY_PERFORMANCE_DATA;
 
-  const requestedProgramme = normalizeProgramme(selectedProgramme);
-  const includeAllProgrammes = !requestedProgramme || requestedProgramme === "ALL";
   const filteredFarmers = farmers.filter((farmer) => {
-    const programme = normalizeProgramme(farmer.programme);
     const farmerDate = farmer.createdAt || farmer.registrationDate;
-    return (includeAllProgrammes || programme === requestedProgramme) &&
+    return matchesProgrammeSelection(farmer.programme, selectedProgramme) &&
       isDateInRange(farmerDate, dateRange.startDate, dateRange.endDate);
   });
 
   const filteredTraining = trainingRecords.filter((record) => {
-    const programme = normalizeProgramme(record.programme);
     const recordDate = record.createdAt || record.startDate;
-    return (includeAllProgrammes || programme === requestedProgramme) &&
+    return matchesProgrammeSelection(record.programme, selectedProgramme) &&
       isDateInRange(recordDate, dateRange.startDate, dateRange.endDate);
   });
   const filteredAnimalHealthActivities = animalHealthActivities.filter((record) => {
-    const programme = normalizeProgramme(record.programme);
     const recordDate = record.createdAt || record.date;
-    return (includeAllProgrammes || programme === requestedProgramme) &&
+    return matchesProgrammeSelection(record.programme, selectedProgramme) &&
       isDateInRange(recordDate, dateRange.startDate, dateRange.endDate);
   });
   const filteredOfftakeRecords = offtakeRecords.filter((record) => {
-    const programme = normalizeProgramme(record.programme);
     const recordDate = record.date || record.Date || record.createdAt;
-    return (includeAllProgrammes || programme === requestedProgramme) &&
+    return matchesProgrammeSelection(record.programme, selectedProgramme) &&
       isDateInRange(recordDate, dateRange.startDate, dateRange.endDate);
   });
   const filteredStaffMarks = staffMarkRecords.filter((record) => {
-    const programme = normalizeProgramme(record.programme);
     const recordDate = record.dateAwarded || record.createdAt;
-    return (includeAllProgrammes || programme === requestedProgramme) &&
+    return matchesProgrammeSelection(record.programme, selectedProgramme) &&
       isDateInRange(recordDate, dateRange.startDate, dateRange.endDate);
   });
-  const programmeFarmers = farmers.filter((farmer) => {
-    const programme = normalizeProgramme(farmer.programme);
-    return includeAllProgrammes || programme === requestedProgramme;
-  });
+  const requestedProgramme = normalizeProgramme(selectedProgramme);
+  const includeAllProgrammes = selectedProgramme === ALL_PROGRAMMES_VALUE || !requestedProgramme;
+  const programmeFarmers = farmers.filter((farmer) =>
+    matchesProgrammeSelection(farmer.programme, selectedProgramme)
+  );
 
   let maleFarmers = 0;
   let femaleFarmers = 0;
@@ -973,7 +973,6 @@ const REPORT_VIEW_PROFILES: Record<ReportAudience, { title: string; sections: Re
   },
 };
 
-const ALL_PROGRAMMES_VALUE = "ALL";
 const ALL_YEARS_VALUE = "ALL";
 
 const resolveReportAudience = (
@@ -1035,8 +1034,6 @@ const PerformanceReport = () => {
     return years;
   }, [currentYear]);
 
-  const [activeProgram, setActiveProgram] = useState<string>(""); 
-  const filterStripRef = useRef<HTMLDivElement | null>(null);
   const userCanViewAllProgrammeData = useMemo(
     () => canViewAllProgrammes(userRole, userAttribute, allowedProgrammes),
     [allowedProgrammes, userRole, userAttribute]
@@ -1057,6 +1054,10 @@ const PerformanceReport = () => {
   );
   const showProgrammeFilter = accessibleProgrammes.length > 1;
   const canViewAllReportProgrammes = userCanViewAllProgrammeData || accessibleProgrammes.length > 1;
+  const [activeProgram, setActiveProgram] = useSharedProgrammeSelection(accessibleProgrammes, {
+    allowAll: canViewAllReportProgrammes,
+  });
+  const filterStripRef = useRef<HTMLDivElement | null>(null);
   
   const selectedYearNum = useMemo(() => {
     const parsed = parseInt(selectedYear, 10);
@@ -1196,7 +1197,7 @@ const PerformanceReport = () => {
         .filter((record) => {
           if (!allowedProgrammeSet) return true;
           const programme = normalizeProgramme(record.programme);
-          return !programme || allowedProgrammeSet.has(programme);
+          return allowedProgrammeSet.has(programme);
         })
         .sort((first, second) => {
           const firstDate = parseDate(second.createdAt || second.updatedAt)?.getTime() || 0;
@@ -1250,14 +1251,8 @@ const PerformanceReport = () => {
       if (!isHrReport) return EMPTY_STAFF_MARK_RECORDS;
       return (
       staffMarkRecords.filter((record) => {
-        const programme = normalizeProgramme(record.programme);
         const recordDate = record.dateAwarded || record.createdAt;
-        const normalizedActiveProgramme = normalizeProgramme(activeProgram);
-        const matchesProgramme =
-          !normalizedActiveProgramme ||
-          normalizedActiveProgramme === ALL_PROGRAMMES_VALUE ||
-          programme === normalizedActiveProgramme;
-        return matchesProgramme &&
+        return matchesProgrammeSelection(record.programme, activeProgram) &&
           isDateInRange(recordDate, dateRange.startDate, dateRange.endDate);
       })
       );
@@ -1270,14 +1265,7 @@ const PerformanceReport = () => {
       if (!isHrReport) return EMPTY_STAFF_DIRECTORY_RECORDS;
       return (
       staffDirectoryRecords.filter((record) => {
-        const programme = normalizeProgramme(record.programme);
-        const normalizedActiveProgramme = normalizeProgramme(activeProgram);
-        return (
-          !normalizedActiveProgramme ||
-          normalizedActiveProgramme === ALL_PROGRAMMES_VALUE ||
-          !programme ||
-          programme === normalizedActiveProgramme
-        );
+        return matchesProgrammeSelection(record.programme, activeProgram);
       })
       );
     },
@@ -1418,7 +1406,7 @@ const PerformanceReport = () => {
       return;
     }
 
-    if (!activeProgram || normalizeProgramme(activeProgram) === ALL_PROGRAMMES_VALUE) {
+    if (!activeProgram || activeProgram === ALL_PROGRAMMES_VALUE) {
       toast({
         title: "Programme required",
         description: "Select a specific programme before saving staff.",
@@ -1430,7 +1418,7 @@ const PerformanceReport = () => {
     const alreadyExists = staffDirectoryRecords.some((record) =>
       record.id !== editingStaffRow?.id &&
       normalizeStaffName(record.staffName) === normalizeStaffName(staffName) &&
-      normalizeProgramme(record.programme || activeProgram) === normalizeProgramme(activeProgram),
+      normalizeProgramme(record.programme) === normalizeProgramme(activeProgram),
     );
 
     if (alreadyExists) {
@@ -1560,7 +1548,7 @@ const PerformanceReport = () => {
       return;
     }
 
-    if (!activeProgram || normalizeProgramme(activeProgram) === ALL_PROGRAMMES_VALUE) {
+    if (!activeProgram || activeProgram === ALL_PROGRAMMES_VALUE) {
       toast({
         title: "Programme required",
         description: "Select a specific programme before awarding marks.",
@@ -1624,20 +1612,6 @@ const PerformanceReport = () => {
   useEffect(() => {
     fetchStaffMarks();
   }, [fetchStaffMarks]);
-
-  useEffect(() => {
-    const isDirectProgrammeSelection =
-      activeProgram === ALL_PROGRAMMES_VALUE || includesProgramme(accessibleProgrammes, activeProgram);
-    const nextProgramme = canViewAllReportProgrammes ?
-      (isDirectProgrammeSelection ?
-        activeProgram :
-        ALL_PROGRAMMES_VALUE) :
-      resolveActiveProgramme(activeProgram, accessibleProgrammes);
-
-    if (nextProgramme !== activeProgram) {
-      setActiveProgram(nextProgramme);
-    }
-  }, [activeProgram, accessibleProgrammes, canViewAllReportProgrammes]);
 
   const scrollFilterStripBy = useCallback((direction: "left" | "right") => {
     const strip = filterStripRef.current;
@@ -1722,12 +1696,7 @@ const PerformanceReport = () => {
     });
     setTimeFrame('yearly');
     setRegistrationTrendMode("auto");
-    if (canViewAllReportProgrammes) {
-      setActiveProgram(ALL_PROGRAMMES_VALUE);
-    } else {
-      setActiveProgram(resolveActiveProgramme(activeProgram, accessibleProgrammes));
-    }
-  }, [accessibleProgrammes, activeProgram, canViewAllReportProgrammes]);
+  }, []);
 
   const setWeekFilter = useCallback(() => {
     const dates = getCurrentWeekDates();
@@ -1849,7 +1818,7 @@ const PerformanceReport = () => {
                           <SelectValue placeholder="Select Programme" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value={ALL_PROGRAMMES_VALUE}>Programme</SelectItem>
+                          <SelectItem value={ALL_PROGRAMMES_VALUE}>All Programmes</SelectItem>
                           {accessibleProgrammes.map((programme) => (
                             <SelectItem key={programme} value={programme}>{programme}</SelectItem>
                           ))}

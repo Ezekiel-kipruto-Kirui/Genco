@@ -26,15 +26,20 @@ import {
 } from "recharts";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
+import ProgrammeSelector from "@/components/programme-selector";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/contexts/AuthContext";
 import { canViewAllProgrammes } from "@/contexts/authhelper";
+import { useSharedProgrammeSelection } from "@/hooks/use-shared-programme-selection";
 import { fetchAnalysisSummary } from "@/lib/analysis";
 import { cacheKey, readCachedValue, writeCachedValue } from "@/lib/data-cache";
 import { fetchCollection } from "@/lib/firebase";
-import { normalizeProgramme, resolveAccessibleProgrammes, resolveActiveProgramme } from "@/lib/programme-access";
+import {
+  PROGRAMME_OPTIONS,
+  isAllProgrammesSelection,
+  resolveAccessibleProgrammes,
+} from "@/lib/programme-access";
 
 type OverviewRecord = Record<string, any>;
 
@@ -199,11 +204,12 @@ const EMPTY_OVERVIEW_DATA: OverviewSummaryData = {
 };
 
 const OVERVIEW_CACHE_TTL_MS = 10 * 60 * 1000;
+const CANONICAL_PROGRAMME_SET = new Set<string>(PROGRAMME_OPTIONS);
 
 const buildOverviewCacheKey = (
   userId: string | null | undefined,
   programme: string | null | undefined,
-) => cacheKey("overview-summary-v3", userId || "anon", programme || "none");
+) => cacheKey("overview-summary-v4", userId || "anon", programme || "none");
 
 const getGreetingLabel = (date: Date): string => {
   const hour = date.getHours();
@@ -529,8 +535,14 @@ const buildInfrastructureComparison = (records: OverviewRecord[]): DonutSegment[
   ];
 };
 
+const getAnalyticsProgrammeToken = (value: unknown): string => {
+  if (typeof value !== "string") return "";
+  const trimmed = value.trim();
+  return CANONICAL_PROGRAMME_SET.has(trimmed) ? trimmed : "";
+};
+
 const getOverviewRecordProgramme = (record: OverviewRecord) =>
-  normalizeProgramme(record.programme ?? record.Programme);
+  getAnalyticsProgrammeToken(record.programme ?? record.Programme);
 
 const buildRecentLocations = (farmers: OverviewRecord[]): RecentLocation[] => {
   const seen = new Set<string>();
@@ -1661,12 +1673,10 @@ const DashboardOverview = () => {
     [allowedProgrammes, userCanViewAllProgrammeData],
   );
   const canSwitchProgrammes = userCanViewAllProgrammeData || accessibleProgrammes.length > 1;
-  const programmeOptions = useMemo(
-    () => (userCanViewAllProgrammeData ? ["All", ...accessibleProgrammes] : accessibleProgrammes),
-    [accessibleProgrammes, userCanViewAllProgrammeData],
-  );
 
-  const [selectedProgramme, setSelectedProgramme] = useState("");
+  const [selectedProgramme, setSelectedProgramme] = useSharedProgrammeSelection(accessibleProgrammes, {
+    allowAll: userCanViewAllProgrammeData,
+  });
 
   // ── Local overview state ───────────────────────────────────────────────
   const [localOverviewState, setLocalOverviewState] = useState<{
@@ -1695,25 +1705,6 @@ const DashboardOverview = () => {
   const localOverviewData = localOverviewState.key === overviewCacheStorageKey ? localOverviewState.data : null;
   const hasImmediateOverviewData = Boolean(cachedOverviewData || localOverviewData);
 
-  // ── Programme initialisation effect ───────────────────────────────────
-  useEffect(() => {
-    if (!userRole && !userAttribute) {
-      setSelectedProgramme("");
-      return;
-    }
-
-    if (userCanViewAllProgrammeData) {
-      setSelectedProgramme((current) => {
-        if (current === "All") return current;
-        if (accessibleProgrammes.includes(current as (typeof accessibleProgrammes)[number])) return current;
-        return "All";
-      });
-      return;
-    }
-
-    setSelectedProgramme((current) => resolveActiveProgramme(current, accessibleProgrammes));
-  }, [accessibleProgrammes, userAttribute, userCanViewAllProgrammeData, userRole]);
-
   // ── Sync local state when cache key or cached data changes ────────────
   useEffect(() => {
     if (!selectedProgramme) {
@@ -1741,7 +1732,7 @@ const DashboardOverview = () => {
     queryFn: async () =>
       sanitizeOverviewSummary(await fetchAnalysisSummary({
         scope: "overview",
-        programme: selectedProgramme === "All" ? "All" : selectedProgramme || null,
+        programme: isAllProgrammesSelection(selectedProgramme) ? "All" : selectedProgramme || null,
       })),
     enabled: remoteOverviewEnabled,
     retry: 0,
@@ -1806,10 +1797,14 @@ const DashboardOverview = () => {
 
         if (cancelled) return;
 
-        const requestedProgramme = normalizeProgramme(selectedProgramme);
-        const includeAllProgrammes = selectedProgramme === "All" || !requestedProgramme;
         const byProgramme = (records: OverviewRecord[]) =>
-          records.filter((record) => includeAllProgrammes || getOverviewRecordProgramme(record) === requestedProgramme);
+          records.filter((record) => {
+            if (!selectedProgramme || isAllProgrammesSelection(selectedProgramme)) {
+              return Boolean(getOverviewRecordProgramme(record));
+            }
+
+            return getOverviewRecordProgramme(record) === selectedProgramme;
+          });
 
         const summary = buildOverviewSummaryFromRecords({
           farmers: byProgramme(farmersRecords),
@@ -1885,7 +1880,7 @@ const DashboardOverview = () => {
   }, [overviewHeroDate, user?.displayName, user?.email, userName]);
 
   const overviewHeroProgrammeLabel = useMemo(() => {
-    if (!selectedProgramme || selectedProgramme === "All") return "All Programmes";
+    if (!selectedProgramme || isAllProgrammesSelection(selectedProgramme)) return "All Programmes";
     return selectedProgramme;
   }, [selectedProgramme]);
 
@@ -1932,18 +1927,13 @@ const DashboardOverview = () => {
             <div className="flex items-center gap-3">
               {canSwitchProgrammes ? (
                 <div className="w-full min-w-[130px] max-w-[170px] sm:min-w-[150px] sm:max-w-[200px]">
-                  <Select value={selectedProgramme} onValueChange={setSelectedProgramme}>
-                    <SelectTrigger className="h-9 rounded-xl border-white/20 bg-white/12 px-3 text-sm text-white backdrop-blur-sm focus:ring-white/30 sm:h-10 sm:rounded-xl sm:px-4">
-                      <SelectValue placeholder="Select programme" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {programmeOptions.map((programme) => (
-                        <SelectItem key={programme} value={programme}>
-                          {programme}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <ProgrammeSelector
+                    value={selectedProgramme}
+                    onValueChange={setSelectedProgramme}
+                    programmes={accessibleProgrammes}
+                    includeAll={userCanViewAllProgrammeData}
+                    triggerClassName="h-9 rounded-xl border-white/20 bg-white/12 px-3 text-sm text-white backdrop-blur-sm focus:ring-white/30 sm:h-10 sm:rounded-xl sm:px-4"
+                  />
                 </div>
               ) : null}
               <div className="hidden shrink-0 rounded-2xl bg-white/12 px-4 py-2 shadow-[0_10px_24px_rgba(4,45,20,0.15)] backdrop-blur-sm sm:block">

@@ -11,10 +11,11 @@ import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Download, Users, MapPin, Eye, Calendar, Sprout, Globe, LayoutGrid, Edit, Trash2, Upload, UserCircle } from "lucide-react";
+import { useSharedProgrammeSelection } from "@/hooks/use-shared-programme-selection";
 import { useToast } from "@/hooks/use-toast";
 import { canViewAllProgrammes, isChiefAdmin } from "@/contexts/authhelper";
 import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
-import { resolveAccessibleProgrammes, resolveActiveProgramme } from "@/lib/programme-access";
+import { resolveAccessibleProgrammes } from "@/lib/programme-access";
 
 // --- Types ---
 
@@ -134,8 +135,6 @@ const FodderFarmersPage = () => {
   // State
   const [allFodder, setAllFodder] = useState<FodderFarmer[]>([]);
   const [filteredFodder, setFilteredFodder] = useState<FodderFarmer[]>([]);
-  const [activeProgram, setActiveProgram] = useState<string>(""); 
-  const [availablePrograms, setAvailablePrograms] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [exportLoading, setExportLoading] = useState(false);
   const [uploadLoading, setUploadLoading] = useState(false);
@@ -183,6 +182,8 @@ const FodderFarmersPage = () => {
     () => resolveAccessibleProgrammes(userCanViewAllProgrammeData, allowedProgrammes),
     [allowedProgrammes, userCanViewAllProgrammeData]
   );
+  const [activeProgram, setActiveProgram] = useSharedProgrammeSelection(accessibleProgrammes);
+  const availablePrograms = accessibleProgrammes;
   const requireChiefAdmin = () => {
     if (userIsChiefAdmin) return true;
     toast({
@@ -198,11 +199,6 @@ const FodderFarmersPage = () => {
   );
 
   // --- 1. Fetch User Permissions & Determine Available Programmes ---
-  useEffect(() => {
-    setAvailablePrograms(accessibleProgrammes);
-    setActiveProgram((prev) => resolveActiveProgramme(prev, accessibleProgrammes));
-  }, [accessibleProgrammes]);
-
   // --- 2. Data Fetching (Realtime with Programme Query) ---
   useEffect(() => {
     if (!activeProgram) {
