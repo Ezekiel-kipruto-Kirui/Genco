@@ -24,7 +24,7 @@ dist-ssr
 *.sw?
 
 # Vercel build artifacts (must not be committed — Vercel uses them as prebuilt output)
-
+.vercel/
 
 # Local environment secrets
 .env
