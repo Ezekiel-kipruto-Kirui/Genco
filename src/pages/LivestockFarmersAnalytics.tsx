@@ -16,7 +16,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useSharedProgrammeSelection } from "@/hooks/use-shared-programme-selection";
 import { canViewAllProgrammes, isChiefAdmin } from "@/contexts/authhelper";
-import { resolveAccessibleProgrammes } from "@/lib/programme-access";
+import { ALL_PROGRAMMES_VALUE, resolveAccessibleProgrammes } from "@/lib/programme-access";
 
 // --- Constants ---
 const COLORS = {
@@ -511,7 +511,7 @@ const LivestockFarmersAnalytics = () => {
   const [trainingRecords, setTrainingRecords] = useState<TrainingData[]>([]);
   const [filteredData, setFilteredData] = useState<FarmerData[]>([]);
   const [availablePrograms, setAvailablePrograms] = useState<string[]>([]);
-  const [filterMode, setFilterMode] = useState<FilterMode>("yearly");
+  const [filterMode, setFilterMode] = useState<FilterMode>("custom");
 
   // Chart Data States
   const [genderData, setGenderData] = useState<PieDataItem[]>([]);
@@ -525,7 +525,7 @@ const LivestockFarmersAnalytics = () => {
   
   const [stats, setStats] = useState(EMPTY_STATS);
 
-  const [dateRange, setDateRange] = useState(getCurrentYearDates);
+  const [dateRange, setDateRange] = useState<{ startDate: string; endDate: string }>({ startDate: "", endDate: "" });
   const [selectedYear, setSelectedYear] = useState(() => String(getToday().getFullYear()));
   const hasActiveDateFilters = Boolean(dateRange.startDate || dateRange.endDate);
   const targetMode = useMemo(
@@ -579,7 +579,10 @@ const LivestockFarmersAnalytics = () => {
     () => resolveAccessibleProgrammes(userCanViewAllProgrammeData, allowedProgrammes),
     [allowedProgrammes, userCanViewAllProgrammeData]
   );
-  const [activeProgram, setActiveProgram] = useSharedProgrammeSelection(accessibleProgrammes);
+  const [activeProgram, setActiveProgram] = useSharedProgrammeSelection(accessibleProgrammes, {
+    allowAll: accessibleProgrammes.length > 1,
+    fallbackToAll: accessibleProgrammes.length > 1,
+  });
   const resetAnalyticsState = useCallback(() => {
     setStats(EMPTY_STATS);
     setGenderData([]);
@@ -607,7 +610,7 @@ const LivestockFarmersAnalytics = () => {
     queryFn: () =>
       fetchAnalysisSummary({
         scope: "livestock-analytics",
-        programme: activeProgram || null,
+        programme: activeProgram === ALL_PROGRAMMES_VALUE ? "All" : (activeProgram || null),
         dateRange: hasActiveDateFilters ? dateRange : null,
         selectedYear: selectedYear || null,
         timeFrame: targetMode,
@@ -684,7 +687,7 @@ const LivestockFarmersAnalytics = () => {
         .map<FarmerData | null>((key) => {
           const item = data[key] || {};
           const programme = normalizeProgramme(item.programme ?? item.Programme);
-          if (normalizedActiveProgram && programme !== normalizedActiveProgram) {
+          if (normalizedActiveProgram && normalizedActiveProgram !== "ALL" && programme !== normalizedActiveProgram) {
             return null;
           }
 
@@ -1246,6 +1249,7 @@ const LivestockFarmersAnalytics = () => {
                           <SelectValue placeholder="Select Programme" />
                         </SelectTrigger>
                         <SelectContent>
+                          <SelectItem value="ALL">All Programmes</SelectItem>
                           {availablePrograms.map((p) => (
                             <SelectItem key={p} value={p}>
                               {p}
@@ -1270,27 +1274,11 @@ const LivestockFarmersAnalytics = () => {
 
                     <Button
                       variant="outline"
-                      onClick={setWeekFilter}
-                      size="sm"
-                      className={getFilterButtonClass(filterMode === "weekly")}
-                    >
-                      This Week
-                    </Button>
-                    <Button
-                      variant="outline"
                       onClick={setMonthFilter}
                       size="sm"
                       className={getFilterButtonClass(filterMode === "monthly")}
                     >
                       This Month
-                    </Button>
-                    <Button
-                      variant="outline"
-                      onClick={setYearFilter}
-                      size="sm"
-                      className={getFilterButtonClass(filterMode === "yearly")}
-                    >
-                      This Year
                     </Button>
                     <Button onClick={clearFilters} variant="ghost" size="sm" className="h-9 shrink-0 text-red-500 hover:text-red-600">
                       Clear

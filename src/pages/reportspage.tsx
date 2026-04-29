@@ -1016,14 +1016,14 @@ const PerformanceReport = () => {
   const [isSavingStaffMark, setIsSavingStaffMark] = useState(false);
   
   const [dateRange, setDateRange] = useState({
-    startDate: currentMonthDates.startDate,
-    endDate: currentMonthDates.endDate,
+    startDate: "",
+    endDate: "",
   });
-  const [timeFrame, setTimeFrame] = useState<'weekly' | 'monthly' | 'yearly'>('monthly');
+  const [timeFrame, setTimeFrame] = useState<'weekly' | 'monthly' | 'yearly'>('yearly');
   const [registrationTrendMode, setRegistrationTrendMode] = useState<"auto" | "yearly">("auto");
-  
+
   const currentYear = new Date().getFullYear();
-  const [selectedYear, setSelectedYear] = useState<string>(String(currentYear));
+  const [selectedYear, setSelectedYear] = useState<string>(ALL_YEARS_VALUE);
   const [selectedQuarter, setSelectedQuarter] = useState<string>("");
   
   const availableYears = useMemo(() => {
@@ -1056,6 +1056,7 @@ const PerformanceReport = () => {
   const canViewAllReportProgrammes = userCanViewAllProgrammeData || accessibleProgrammes.length > 1;
   const [activeProgram, setActiveProgram] = useSharedProgrammeSelection(accessibleProgrammes, {
     allowAll: canViewAllReportProgrammes,
+    fallbackToAll: accessibleProgrammes.length > 1,
   });
   const filterStripRef = useRef<HTMLDivElement | null>(null);
   
@@ -1858,9 +1859,7 @@ const PerformanceReport = () => {
                       className="h-9 w-[150px] shrink-0 border-gray-200 pr-2 text-xs focus:border-blue-500"
                     />
 
-                    <Button variant="outline" onClick={setWeekFilter} size="sm" className="h-9 shrink-0">This Week</Button>
                     <Button variant="outline" onClick={setMonthFilter} size="sm" className="h-9 shrink-0">This Month</Button>
-                    <Button variant="outline" onClick={setYearFilter} size="sm" className="h-9 shrink-0">This Year</Button>
                     <Button onClick={clearFilters} variant="ghost" size="sm" className="h-9 shrink-0 text-red-500 hover:text-red-600">Clear</Button>
                   </div>
                 </div>

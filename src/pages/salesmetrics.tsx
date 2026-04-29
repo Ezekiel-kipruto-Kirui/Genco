@@ -7,8 +7,7 @@ import {
   isChiefAdmin,
   resolvePermissionPrincipal,
 } from "@/contexts/authhelper";
-import { equalTo, get, onValue, orderByChild, query, ref } from "firebase/database";
-import { db } from "@/lib/firebase";
+import { fetchCollectionByProgrammes } from "@/lib/firebase";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { 
   PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip, 
@@ -35,7 +34,7 @@ import { useSharedProgrammeSelection } from "@/hooks/use-shared-programme-select
 import { useToast } from "@/hooks/use-toast";
 import { millify } from "millify";
 import { fetchAnalysisSummary } from "@/lib/analysis";
-import { resolveAccessibleProgrammes } from "@/lib/programme-access";
+import { ALL_PROGRAMMES_VALUE, isAllProgrammesSelection, resolveAccessibleProgrammes } from "@/lib/programme-access";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -371,14 +370,38 @@ const getGoatCountFromUnknown = (value: unknown): number => {
   return 0;
 };
 
-const getOfftakeGoatTotal = (record: Partial<OfftakeData>): number =>
-  Math.max(
+const getAnimalArray = (value: unknown): Array<Record<string, unknown>> =>
+  Array.isArray(value) ? (value.filter(Boolean) as Array<Record<string, unknown>>) : [];
+
+const getOfftakeGoatTotal = (record: Partial<OfftakeData>): number => {
+  const goatEntries = getAnimalArray(record.goats ?? (record as Record<string, unknown>)?.Goats);
+  if (goatEntries.length > 0) return goatEntries.length;
+
+  return Math.max(
     parseNumber(record.totalGoats),
     parseNumber(record.noSheepGoats),
     getGoatCountFromUnknown(record.goats),
     parseNumber((record as Record<string, unknown>)?.Goats),
     0,
   );
+};
+
+const getAnimalPurchaseCost = (animals: Array<Record<string, unknown>>): number =>
+  animals.reduce(
+    (sum, animal) => sum + Math.max(parseNumber(animal.price ?? animal.Price ?? animal.totalPrice), 0),
+    0,
+  );
+
+const getOfftakePurchaseCost = (record: Partial<OfftakeData>): number => {
+  const animalCost = getAnimalPurchaseCost([
+    ...getAnimalArray(record.goats ?? (record as Record<string, unknown>)?.Goats),
+    ...getAnimalArray(record.sheep ?? (record as Record<string, unknown>)?.Sheep),
+    ...getAnimalArray(record.cattle ?? (record as Record<string, unknown>)?.Cattle),
+  ]);
+
+  if (animalCost > 0) return animalCost;
+  return parseNumber(record.totalPrice ?? (record as Record<string, unknown>)?.totalprice);
+};
 
 const normalizeIdentityToken = (value: unknown): string =>
   typeof value === "string" ? value.trim().toLowerCase() : "";
@@ -675,7 +698,7 @@ const buildLocalSalesAnalytics = (
     const txGoats = getOfftakeGoatTotal(record);
     const txSheep = sheepArr.length;
     const txCattle = cattleArr.length;
-    const txCost = parseNumber(record.totalPrice);
+    const txCost = getOfftakePurchaseCost(record);
 
     totalPurchaseCost += txCost;
     totalGoats += txGoats;
@@ -1045,8 +1068,6 @@ const TOOLTIP_STYLE: React.CSSProperties = {
 const SalesReport = () => {
   const { userRole, userAttribute, allowedProgrammes } = useAuth();
   const { toast } = useToast();
-  const currentYearDates = useMemo(() => getCurrentYearDates(), []);
-
   // ----- State -----
   const [loading, setLoading] = useState(true);
   const [offtakeData, setOfftakeData] = useState<OfftakeData[]>([]);
@@ -1057,13 +1078,13 @@ const SalesReport = () => {
   const [isCacheHit, setIsCacheHit] = useState(false);
 
   const currentYear = new Date().getFullYear();
-  const [selectedYear, setSelectedYear] = useState<string>(String(currentYear));
+  const [selectedYear, setSelectedYear] = useState<string>(ALL_YEARS_OPTION);
   const [timeFrame, setTimeFrame] = useState<"weekly" | "monthly" | "yearly">(
     "yearly",
   );
   const [dateRange, setDateRange] = useState({
-    startDate: currentYearDates.startDate,
-    endDate: currentYearDates.endDate,
+    startDate: "",
+    endDate: "",
   });
 
   const [salesInputs, setSalesInputs] = useState<SalesInputs>({
@@ -1124,7 +1145,17 @@ const SalesReport = () => {
   );
 
   const showProgrammeFilter = accessibleProgrammes.length > 1;
-  const [activeProgram, setActiveProgram] = useSharedProgrammeSelection(accessibleProgrammes);
+  const [activeProgram, setActiveProgram] = useSharedProgrammeSelection(accessibleProgrammes, {
+    allowAll: accessibleProgrammes.length > 1,
+    fallbackToAll: accessibleProgrammes.length > 1,
+  });
+  const appliedDefaultProgrammeRef = useRef(false);
+
+  useEffect(() => {
+    if (appliedDefaultProgrammeRef.current || accessibleProgrammes.length <= 1) return;
+    appliedDefaultProgrammeRef.current = true;
+    setActiveProgram(ALL_PROGRAMMES_VALUE);
+  }, [accessibleProgrammes.length, setActiveProgram]);
   const selectedProgramme = activeProgram || null;
   const analysisProgramme = activeProgram || null;
 
@@ -1262,15 +1293,18 @@ const SalesReport = () => {
             if (!isNaN(d.getTime())) dateValue = d;
           }
 
-          const goatsArr = Array.isArray(item.goats)
-            ? (item.goats as OfftakeData["goats"])
-            : [];
-          const sheepArr = Array.isArray(item.sheep)
-            ? (item.sheep as OfftakeData["sheep"])
-            : [];
-          const cattleArr = Array.isArray(item.cattle)
-            ? (item.cattle as OfftakeData["cattle"])
-            : [];
+          const toAnimalArr = (value: unknown): Array<{ live: string; carcass: string; price: string }> => {
+            if (Array.isArray(value)) return value.filter(Boolean) as Array<{ live: string; carcass: string; price: string }>;
+            if (value && typeof value === "object") {
+              return (Object.values(value as Record<string, unknown>)
+                .filter(Boolean) as Array<{ live: string; carcass: string; price: string }>);
+            }
+            return [];
+          };
+
+          const goatsArr = toAnimalArr(item.goats);
+          const sheepArr = toAnimalArr(item.sheep);
+          const cattleArr = toAnimalArr(item.cattle);
 
           offtakeList.push({
             id: key,
@@ -1287,9 +1321,9 @@ const SalesReport = () => {
             sheep: sheepArr,
             cattle: cattleArr,
             totalGoats:
-              Number(item.totalGoats) ||
-              Number(item.noSheepGoats) ||
-              goatsArr.length,
+              goatsArr.length > 0
+                ? goatsArr.length
+                : (Number(item.totalGoats) || Number(item.noSheepGoats) || 0),
             noSheepGoats: Number(item.noSheepGoats) || 0,
             totalPrice:
               Number(item.totalPrice ?? item.totalprice ?? 0) || 0,
@@ -1316,7 +1350,7 @@ const SalesReport = () => {
     return () => {
       if (unsubscribe) unsubscribe();
     };
-  }, [activeProgram, toast]);
+  }, [accessibleProgrammes, activeProgram, toast]);
 
   // Fetch orders & requisitions (always, used as fallback when Cloud Function is unavailable)
   useEffect(() => {
@@ -1422,7 +1456,7 @@ const SalesReport = () => {
     return () => {
       cancelled = true;
     };
-  }, [activeProgram, toast]);
+  }, [accessibleProgrammes, activeProgram, toast]);
 
   // ---------------------------------------------------------------------------
   // Callbacks
@@ -1746,22 +1780,6 @@ const SalesReport = () => {
                       />
 
                       {/* Quick-range buttons */}
-                      <Button
-                        variant="outline"
-                        onClick={setYearFilter}
-                        size="sm"
-                        className="h-9 shrink-0 text-xs"
-                      >
-                        This Year
-                      </Button>
-                      <Button
-                        variant="outline"
-                        onClick={setWeekFilter}
-                        size="sm"
-                        className="h-9 shrink-0 text-xs"
-                      >
-                        This Week
-                      </Button>
                       <Button
                         variant="outline"
                         onClick={setMonthFilter}

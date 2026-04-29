@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState, type ReactNode } from "react";
+﻿import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Activity,
@@ -695,7 +695,7 @@ const buildOverviewSummaryFromRecords = ({
   };
 };
 
-// ── Formatting helpers ──────────────────────────────────────────────────
+// -- Formatting helpers --------------------------------------------------
 
 const toPercentage = (value: number, total: number): number => {
   if (total <= 0) return 0;
@@ -1007,7 +1007,7 @@ const formatRelativeTime = (value: string): string => {
   return "just now";
 };
 
-// ── Shared UI primitives ────────────────────────────────────────────────
+// -- Shared UI primitives ------------------------------------------------
 
 const TopMetricCard = ({
   title,
@@ -1074,7 +1074,7 @@ const OverviewPanel = ({
   </div>
 );
 
-// ── Chart panels ────────────────────────────────────────────────────────
+// -- Chart panels --------------------------------------------------------
 
 const YearTrendPanel = ({
   title,
@@ -1371,7 +1371,7 @@ const CountiesCoveredPanel = ({ data }: { data: CountyCoverage[] }) => {
   );
 };
 
-// ── NEW: Recently Registered Farmers panel ──────────────────────────────
+// -- NEW: Recently Registered Farmers panel ------------------------------
 
 const RecentFarmersPanel = ({ farmers }: { farmers: RecentFarmer[] }) => (
   <div className="flex h-full min-h-[360px] flex-col rounded-[24px] border border-slate-200 bg-white p-6 shadow-[0_10px_35px_rgba(15,23,42,0.04)]">
@@ -1491,7 +1491,7 @@ const RecentFarmersPanel = ({ farmers }: { farmers: RecentFarmer[] }) => (
   </div>
 );
 
-// ── Existing side-panels ────────────────────────────────────────────────
+// -- Existing side-panels ------------------------------------------------
 
 const RecentLocationsPanel = ({ locations }: { locations: RecentLocation[] }) => (
   <div className="flex h-full min-h-[360px] flex-col rounded-[24px] border border-slate-200 bg-white p-6 shadow-[0_10px_35px_rgba(15,23,42,0.04)]">
@@ -1627,7 +1627,7 @@ const RecentActivitiesPanel = ({ activities }: { activities: RecentActivity[] })
   </div>
 );
 
-// ── Loading skeleton ────────────────────────────────────────────────────
+// -- Loading skeleton ----------------------------------------------------
 
 const OverviewLoading = () => (
   <div className="space-y-6">
@@ -1659,7 +1659,7 @@ const OverviewLoading = () => (
   </div>
 );
 
-// ── Main component ──────────────────────────────────────────────────────
+// -- Main component ------------------------------------------------------
 
 const DashboardOverview = () => {
   const { user, userRole, userAttribute, userName, allowedProgrammes, loading } = useAuth();
@@ -1672,13 +1672,14 @@ const DashboardOverview = () => {
     () => resolveAccessibleProgrammes(userCanViewAllProgrammeData, allowedProgrammes),
     [allowedProgrammes, userCanViewAllProgrammeData],
   );
-  const canSwitchProgrammes = userCanViewAllProgrammeData || accessibleProgrammes.length > 1;
+  const canSwitchProgrammes = accessibleProgrammes.length > 1;
 
   const [selectedProgramme, setSelectedProgramme] = useSharedProgrammeSelection(accessibleProgrammes, {
     allowAll: userCanViewAllProgrammeData,
+    fallbackToAll: accessibleProgrammes.length > 1,
   });
 
-  // ── Local overview state ───────────────────────────────────────────────
+  // -- Local overview state -----------------------------------------------
   const [localOverviewState, setLocalOverviewState] = useState<{
     key: string;
     data: OverviewSummaryData | null;
@@ -1705,7 +1706,7 @@ const DashboardOverview = () => {
   const localOverviewData = localOverviewState.key === overviewCacheStorageKey ? localOverviewState.data : null;
   const hasImmediateOverviewData = Boolean(cachedOverviewData || localOverviewData);
 
-  // ── Sync local state when cache key or cached data changes ────────────
+  // -- Sync local state when cache key or cached data changes ------------
   useEffect(() => {
     if (!selectedProgramme) {
       setLocalOverviewState({ key: "", data: null });
@@ -1724,7 +1725,7 @@ const DashboardOverview = () => {
     });
   }, [cachedOverviewData, overviewCacheStorageKey, selectedProgramme]);
 
-  // ── Remote analytics query ────────────────────────────────────────────
+  // -- Remote analytics query --------------------------------------------
   const remoteOverviewEnabled = USE_REMOTE_ANALYTICS && Boolean(selectedProgramme) && !loading;
 
   const overviewQuery = useQuery({
@@ -1747,7 +1748,7 @@ const DashboardOverview = () => {
   const remoteOverviewHasData = hasMeaningfulOverviewData(remoteOverviewData);
   const remoteOverviewHasUsableData = remoteOverviewHasData;
 
-  // ── Cache remote results ──────────────────────────────────────────────
+  // -- Cache remote results ----------------------------------------------
   useEffect(() => {
     const remoteData = overviewQuery.data as OverviewSummaryData | undefined;
     if (!selectedProgramme || !remoteData) return;
@@ -1759,7 +1760,7 @@ const DashboardOverview = () => {
     });
   }, [overviewCacheStorageKey, overviewQuery.data, selectedProgramme]);
 
-  // ── Local fallback fetch ──────────────────────────────────────────────
+  // -- Local fallback fetch ----------------------------------------------
   const shouldFetchLocalOverview =
     Boolean(selectedProgramme) &&
     (
@@ -1850,7 +1851,7 @@ const DashboardOverview = () => {
     };
   }, [accessibleProgrammes, cachedOverviewData, hasImmediateOverviewData, overviewCacheStorageKey, selectedProgramme, shouldFetchLocalOverview]);
 
-  // ── Resolved overview data ────────────────────────────────────────────
+  // -- Resolved overview data --------------------------------------------
   const overviewData = sanitizeOverviewSummary(
     (remoteOverviewHasUsableData ? remoteOverviewData : undefined) ??
     localOverviewData ??
@@ -1889,7 +1890,7 @@ const DashboardOverview = () => {
     return selectedProgramme;
   }, [selectedProgramme]);
 
-  // ── Auth / loading guards ─────────────────────────────────────────────
+  // -- Auth / loading guards ---------------------------------------------
 
   if (loading) {
     return (
@@ -1908,12 +1909,12 @@ const DashboardOverview = () => {
     );
   }
 
-  // ── Render ────────────────────────────────────────────────────────────
+  // -- Render ------------------------------------------------------------
 
   return (
     <div className="min-h-screen bg-[#f5f6f7] px-3 py-3 sm:px-5 sm:py-5">
       <div className="mx-auto max-w-[1120px] space-y-4 sm:space-y-6">
-        {/* ── Compact hero banner with inline programme selector ─── */}
+        {/* -- Compact hero banner with inline programme selector --- */}
         <div className="relative overflow-hidden rounded-[16px] bg-gradient-to-r from-[#042d14] via-[#0a5d29] to-[#249654] px-4 py-3 text-white shadow-[0_12px_30px_rgba(4,45,20,0.18)] sm:rounded-[20px] sm:px-6 sm:py-4">
           <div className="absolute inset-y-0 right-0 hidden w-1/3 bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.15),transparent_58%)] sm:block" />
 
@@ -1936,7 +1937,7 @@ const DashboardOverview = () => {
                     value={selectedProgramme}
                     onValueChange={setSelectedProgramme}
                     programmes={accessibleProgrammes}
-                    includeAll={userCanViewAllProgrammeData}
+                    includeAll={accessibleProgrammes.length > 1}
                     triggerClassName="h-9 rounded-xl border-white/20 bg-white/12 px-3 text-sm text-white backdrop-blur-sm focus:ring-white/30 sm:h-10 sm:rounded-xl sm:px-4"
                   />
                 </div>
@@ -1953,7 +1954,7 @@ const DashboardOverview = () => {
           </div>
         </div>
 
-        {/* ── Data panels ───────────────────────────────────────────── */}
+        {/* -- Data panels --------------------------------------------- */}
         {isLoadingData ? (
           <OverviewLoading />
         ) : (
