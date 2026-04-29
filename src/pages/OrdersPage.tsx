@@ -2924,11 +2924,9 @@ const OrdersPage = () => {
                   Target achieved. This order is closed.
                 </div>
               ) : (
-                <div className={`rounded-lg border p-3 text-sm ${ordersDialogRow.isReadyForCompletion ? "border-amber-200 bg-amber-50 text-amber-700" : "border-slate-200 bg-slate-50 text-slate-600"}`}>
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
                   <p className="text-xs leading-relaxed">
-                    {ordersDialogRow.isReadyForCompletion
-                      ? "All submissions attached. Use the table Actions menu to mark this order complete."
-                      : `${ordersDialogRow.remainingGoats.toLocaleString()} goats remaining.`}
+                    {ordersDialogRow.remainingGoats.toLocaleString()} goats remaining.
                   </p>
                 </div>
               )}
