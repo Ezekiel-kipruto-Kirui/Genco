@@ -166,6 +166,58 @@ export const fetchCollectionByProgramme = async <T = Record<string, any>>(
   }
 };
 
+export const fetchCollectionByProgrammes = async <T = Record<string, any>>(
+  path: string,
+  programmes: readonly string[],
+  ttlMs = COLLECTION_CACHE_TTL_MS,
+): Promise<DatabaseRecord<T>[]> => {
+  const normalizedProgrammes = Array.from(
+    new Set(programmes.map((programme) => programme.trim().toUpperCase()).filter(Boolean)),
+  );
+
+  if (normalizedProgrammes.length === 0) return [];
+  if (normalizedProgrammes.length === 1) {
+    return fetchCollectionByProgramme<T>(path, normalizedProgrammes[0], ttlMs);
+  }
+
+  const cacheName = buildCollectionCacheKey(path, `programmes:${normalizedProgrammes.join("|")}`);
+  const cached = readCachedValue<DatabaseRecord<T>[]>(cacheName, ttlMs);
+  if (cached) return cached;
+
+  const inFlight = inFlightCollectionRequests.get(cacheName);
+  if (inFlight) return inFlight as Promise<DatabaseRecord<T>[]>;
+
+  const request = (async () => {
+    try {
+      const results = await Promise.all(
+        normalizedProgrammes.map((programme) =>
+          fetchCollectionByProgramme<T>(path, programme, ttlMs),
+        ),
+      );
+
+      const mergedRecords = new Map<string, DatabaseRecord<T>>();
+      results.flat().forEach((record) => {
+        mergedRecords.set(record.id, record);
+      });
+
+      const records = Array.from(mergedRecords.values());
+      writeCachedValue(cacheName, records);
+      return records;
+    } catch (err) {
+      console.error(`Error fetching programme collections at ${path}:`, err);
+      throw err;
+    }
+  })();
+
+  inFlightCollectionRequests.set(cacheName, request);
+
+  try {
+    return await request;
+  } finally {
+    inFlightCollectionRequests.delete(cacheName);
+  }
+};
+
 export const invalidateCollectionCache = (path: string): void => {
   const cacheName = buildCollectionCacheKey(path);
   inFlightCollectionRequests.delete(cacheName);

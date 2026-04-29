@@ -189,18 +189,10 @@ export const canViewAllProgrammes = (
 ): boolean => {
   if (isMobileUser(userRole, userAttribute)) return false;
   const principal = resolvePermissionPrincipal(userRole, userAttribute);
-  const hasRoleBasedFullAccess = (
-    isChiefAdmin(userRole) ||
-    isChiefAdmin(principal) ||
-    isAdmin(userRole) ||
-    isAdmin(principal) ||
-    isFullAccessAttribute(principal) ||
-    isOfftakeOfficer(principal)
-  );
-  // Role-based full access grants all programmes regardless of explicit assignments
-  if (hasRoleBasedFullAccess) return true;
+  if (isChiefAdmin(userRole) || isChiefAdmin(principal) || isAdmin(userRole) || isAdmin(principal)) {
+    return true;
+  }
 
-  // For other roles, require all programmes to be explicitly granted
   const assignedProgrammes = PROGRAMME_OPTIONS.filter(
     (programme) => allowedProgrammes?.[programme] === true
   );

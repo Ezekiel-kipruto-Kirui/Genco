@@ -34,7 +34,6 @@ import {
   Upload,
   Users,
   X,
-  CalendarRange,
 } from "lucide-react";
 import { useSharedProgrammeSelection } from "@/hooks/use-shared-programme-selection";
 
@@ -172,14 +171,6 @@ interface OfftakeTeamMember {
   counties: string[];
   purchaseDate: string;
   subcounty: string;
-}
-
-interface LocationGoatRow {
-  key: string;
-  location: string;
-  subcounty: string;
-  goats: number;
-  submissionCount: number;
 }
 
 type OrdersDialogMode = "view" | "edit";
@@ -1657,51 +1648,27 @@ const OrdersPage = () => {
     [ordersDialogRow]
   );
 
-  const ordersDialogLocationRows = useMemo<LocationGoatRow[]>(() => {
-    if (!ordersDialogRow) return [];
-    const locationMap = new Map<string, LocationGoatRow>();
+  const ordersDialogPurchaseLedgerRows = useMemo(() => {
+    if (!ordersDialogRow) return [] as Array<{ key: string; dateLabel: string; goats: number; balance: number; recordedBy: string }>;
 
-    for (const item of ordersDialogItems) {
-      const location = item.location || item.village || "Unknown location";
-      const subcounty = item.subcounty || "";
-      const key = `${normalizeText(subcounty)}|${normalizeText(location)}`;
-      const current = locationMap.get(key);
-      if (current) {
-        current.goats += Number(item.goats || 0);
-        current.submissionCount += 1;
-        continue;
-      }
-      locationMap.set(key, {
-        key,
-        location,
-        subcounty,
-        goats: Number(item.goats || 0),
-        submissionCount: 1,
-      });
-    }
+    const target = ordersDialogRow.targetGoats > 0 ? ordersDialogRow.targetGoats : ordersDialogRow.totalGoats;
+    const chronologicalEntries = [...ordersDialogRow.purchaseEntries].sort((left, right) => {
+      const leftDate = parseDate(left.date)?.getTime() || parseDate(left.createdAt)?.getTime() || 0;
+      const rightDate = parseDate(right.date)?.getTime() || parseDate(right.createdAt)?.getTime() || 0;
+      return leftDate - rightDate;
+    });
 
-    return Array.from(locationMap.values()).sort((a, b) => b.goats - a.goats || a.location.localeCompare(b.location));
-  }, [ordersDialogItems, ordersDialogRow]);
-
-  const ordersDialogPurchaseDates = useMemo(() => {
-    if (!ordersDialogRow) return [] as Array<{ key: string; label: string }>;
-
-    const seen = new Set<string>();
-    const uniqueDates: Array<{ key: string; label: string }> = [];
-
-    for (const purchaseEntry of ordersDialogRow.purchaseEntries) {
-      const normalizedDate = toInputDate(purchaseEntry.date);
-      const fallbackKey = String(purchaseEntry.date || purchaseEntry.createdAt || purchaseEntry.id);
-      const key = normalizedDate || fallbackKey;
-      if (!key || seen.has(key)) continue;
-      seen.add(key);
-      uniqueDates.push({
-        key,
-        label: formatDate(purchaseEntry.date || purchaseEntry.createdAt),
-      });
-    }
-
-    return uniqueDates;
+    let runningPurchased = 0;
+    return chronologicalEntries.map((purchaseEntry) => {
+      runningPurchased += purchaseEntry.goats;
+      return {
+        key: purchaseEntry.id,
+        dateLabel: formatDate(purchaseEntry.date || purchaseEntry.createdAt),
+        goats: purchaseEntry.goats,
+        balance: target - runningPurchased,
+        recordedBy: purchaseEntry.recordedBy || "Recorded purchase",
+      };
+    });
   }, [ordersDialogRow]);
 
   const ordersDialogAssignedOfftakeTeam = useMemo(
@@ -2208,11 +2175,6 @@ const OrdersPage = () => {
       toast({ title: "Invalid value", description: "Goats purchased must be greater than 0.", variant: "destructive" });
       return;
     }
-    if (nextValue > ordersDialogRow.remainingGoats) {
-      toast({ title: "Invalid value", description: "This purchase cannot exceed the remaining goats on the order.", variant: "destructive" });
-      return;
-    }
-
     const nextPurchaseDate = dialogPurchaseDateDraft || getTodayInputDate();
     if (!nextPurchaseDate) {
       toast({ title: "Date required", description: "Purchasing date is required.", variant: "destructive" });
@@ -2940,7 +2902,7 @@ const OrdersPage = () => {
                 <div className="grid grid-cols-4 gap-2.5">
                 {([
                   { label: "Order Date", value: formatDate(ordersDialogRow.batchDate)},
-                  { label: "Latest Purchase Date", value: ordersDialogRow.purchaseEntries.length > 0 ? formatDate(ordersDialogRow.purchaseEntries[0]?.date) : "N/A" },
+                  { label: "Order Code", value: ordersDialogRow.orderCode || "N/A" },
                   { label: "County", value: ordersDialogRow.county },
                   { label: "Status", badge: ordersDialogRow.status },
                 ].filter(Boolean) as OrderSummaryItem[]).map((item) => (
@@ -2972,34 +2934,41 @@ const OrdersPage = () => {
               )}
 
               <div className="rounded-lg border border-slate-200 overflow-hidden">
-                <div className="border-b border-slate-100 bg-slate-50 px-4 py-2.5">
-                  <div className="flex items-center gap-2">
-                    <CalendarRange className="h-4 w-4 text-slate-500" />
-                    <p className="text-xs font-semibold uppercase tracking-wider text-slate-600">Purchasing Dates</p>
-                  </div>
-                  <p className="text-[11px] text-slate-500">
-                    {ordersDialogPurchaseDates.length === 0
-                      ? "No purchasing dates recorded yet."
-                      : `${ordersDialogPurchaseDates.length} purchasing date${ordersDialogPurchaseDates.length === 1 ? "" : "s"} recorded for this order.`}
-                  </p>
+                <div className="border-b border-slate-100 bg-slate-50 px-3 py-2">
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-600">Purchasing History</p>
                 </div>
-                {ordersDialogPurchaseDates.length === 0 ? (
-                  <div className="px-4 py-5 text-center text-xs text-slate-500">
-                    
-                  </div>
-                ) : (
-                  <div className="flex flex-wrap gap-2 px-4 py-4">
-                    {ordersDialogPurchaseDates.map((purchaseDate) => (
-                      <Badge
-                        key={purchaseDate.key}
-                        variant="outline"
-                        className="border-blue-200 bg-blue-50 text-blue-700"
-                      >
-                        {purchaseDate.label}
-                      </Badge>
-                    ))}
-                  </div>
-                )}
+                <Table>
+                  <TableHeader>
+                    <TableRow className="hover:bg-transparent">
+                      <TableHead className="h-7 px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-slate-500">Date</TableHead>
+                      <TableHead className="h-7 px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-slate-500">Purchased By</TableHead>
+                      <TableHead className="h-7 px-3 py-1 text-right text-[10px] font-semibold uppercase tracking-wider text-slate-500">Goats Bought</TableHead>
+                      <TableHead className="h-7 px-3 py-1 text-right text-[10px] font-semibold uppercase tracking-wider text-slate-500">Balance</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {ordersDialogPurchaseLedgerRows.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={4} className="px-3 py-2 text-center text-[10px] text-slate-500">
+                          No purchasing history recorded yet.
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      ordersDialogPurchaseLedgerRows.map((purchaseRow) => (
+                        <TableRow key={purchaseRow.key}>
+                          <TableCell className="px-3 py-1.5 text-[10px] text-slate-700">{purchaseRow.dateLabel}</TableCell>
+                          <TableCell className="px-3 py-1.5 text-[10px] text-slate-700">{purchaseRow.recordedBy}</TableCell>
+                          <TableCell className="px-3 py-1.5 text-right text-[10px] font-medium tabular-nums text-slate-800">
+                            {purchaseRow.goats.toLocaleString()}
+                          </TableCell>
+                          <TableCell className="px-3 py-1.5 text-right text-[10px] font-medium tabular-nums text-slate-800">
+                            {purchaseRow.balance.toLocaleString()}
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
               </div>
 
               {/* Edit section: Purchasing Date + Goats Purchased */}
@@ -3027,7 +2996,6 @@ const OrdersPage = () => {
                       <Input
                         type="number"
                         min={1}
-                        max={ordersDialogRow.remainingGoats}
                         value={dialogGoatsBoughtDraft}
                         onChange={(e) => setDialogGoatsBoughtDraft(e.target.value)}
                         className="h-9 text-sm border-slate-200"
@@ -3039,73 +3007,6 @@ const OrdersPage = () => {
                   </p>
                 </div>
               )}
-
-              {!ordersDialogIsEditing && (
-                <div className="rounded-lg border border-slate-200 overflow-hidden">
-                  <div className="border-b border-slate-100 bg-slate-50 px-4 py-2.5">
-                    <p className="text-xs font-semibold uppercase tracking-wider text-slate-600">Purchase History</p>
-                    <p className="text-[11px] text-slate-500">
-                      {ordersDialogRow.purchaseEntries.length === 0
-                        ? "No partial purchases recorded yet."
-                        : `${ordersDialogRow.purchaseEntries.length} purchase entr${ordersDialogRow.purchaseEntries.length === 1 ? "y" : "ies"} recorded.`}
-                    </p>
-                  </div>
-                  <div className="divide-y divide-slate-100">
-                    {ordersDialogRow.purchaseEntries.length === 0 ? (
-                      <div className="px-4 py-5 text-center text-xs text-slate-500">
-                        Record each partial purchase here so one order can carry multiple purchase dates.
-                      </div>
-                    ) : (
-                      ordersDialogRow.purchaseEntries.map((purchaseEntry) => (
-                        <div key={purchaseEntry.id} className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-slate-50/70">
-                          <div className="min-w-0">
-                            <p className="text-sm font-medium text-slate-800">{formatDate(purchaseEntry.date)}</p>
-                            <p className="text-[11px] text-slate-500">
-                              {purchaseEntry.recordedBy || "Recorded purchase"}
-                            </p>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <p className="text-sm font-semibold tabular-nums text-slate-900">
-                              {purchaseEntry.goats.toLocaleString()} goats
-                            </p>
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-              )}
-
-              <div className="rounded-lg border border-slate-200 overflow-hidden">
-                <div className="border-b border-slate-100 bg-slate-50 px-4 py-2.5">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-slate-600">Goats per Location</p>
-                  <p className="text-[11px] text-slate-500">{ordersDialogLocationRows.length} location{ordersDialogLocationRows.length === 1 ? "" : "s"}</p>
-                </div>
-                <div className="grid grid-cols-2 divide-x divide-slate-200">
-                  {ordersDialogLocationRows.length === 0 ? (
-                    <div className="col-span-2 px-4 py-5 text-center text-xs text-slate-500">No location data available yet.</div>
-                  ) : (
-                    <>
-                      <div className="divide-y divide-slate-100">
-                        {ordersDialogLocationRows.slice(0, Math.ceil(ordersDialogLocationRows.length / 2)).map((locationRow) => (
-                          <div key={locationRow.key} className="flex items-center justify-between px-4 py-2.5 hover:bg-blue-50/30">
-                            <p className="text-sm font-medium text-slate-800 truncate pr-2">{locationRow.location}</p>
-                            <p className="text-sm font-semibold tabular-nums text-slate-900">{locationRow.goats.toLocaleString()}</p>
-                          </div>
-                        ))}
-                      </div>
-                      <div className="divide-y divide-slate-100">
-                        {ordersDialogLocationRows.slice(Math.ceil(ordersDialogLocationRows.length / 2)).map((locationRow) => (
-                          <div key={locationRow.key} className="flex items-center justify-between px-4 py-2.5 hover:bg-blue-50/30">
-                            <p className="text-sm font-medium text-slate-800 truncate pr-2">{locationRow.location}</p>
-                            <p className="text-sm font-semibold tabular-nums text-slate-900">{locationRow.goats.toLocaleString()}</p>
-                          </div>
-                        ))}
-                      </div>
-                    </>
-                  )}
-                </div>
-              </div>
 
               {/* Upload Mobile App Data - Edit Mode Only */}
               {ordersDialogIsEditing && (

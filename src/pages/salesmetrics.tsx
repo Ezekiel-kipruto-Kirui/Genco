@@ -7,7 +7,7 @@ import {
   isChiefAdmin,
   resolvePermissionPrincipal,
 } from "@/contexts/authhelper";
-import { ref, onValue, get } from "firebase/database";
+import { equalTo, get, onValue, orderByChild, query, ref } from "firebase/database";
 import { db } from "@/lib/firebase";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { 
@@ -1226,8 +1226,12 @@ const SalesReport = () => {
 
     const normalizedActive = getAnalyticsProgrammeToken(activeProgram);
 
+    const offtakesRef = normalizedActive
+      ? query(ref(db, "offtakes"), orderByChild("programme"), equalTo(normalizedActive))
+      : ref(db, "offtakes");
+
     const unsubscribe = onValue(
-      ref(db, "offtakes"),
+      offtakesRef,
       (snapshot) => {
         const data = snapshot.val();
         if (!data) {
@@ -1328,9 +1332,16 @@ const SalesReport = () => {
 
     const loadFinanceCollections = async () => {
       try {
+        const ordersRef = normalizedActive
+          ? query(ref(db, "orders"), orderByChild("programme"), equalTo(normalizedActive))
+          : ref(db, "orders");
+        const requisitionsRef = normalizedActive
+          ? query(ref(db, "requisitions"), orderByChild("programme"), equalTo(normalizedActive))
+          : ref(db, "requisitions");
+
         const [ordersSnap, requisitionsSnap] = await Promise.all([
-          get(ref(db, "orders")),
-          get(ref(db, "requisitions")),
+          get(ordersRef),
+          get(requisitionsRef),
         ]);
 
         if (cancelled) return;

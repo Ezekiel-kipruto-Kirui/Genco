@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { get, ref, type DataSnapshot } from "firebase/database";
+import { equalTo, get, orderByChild, query, ref, type DataSnapshot } from "firebase/database";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/contexts/AuthContext";
 import {
@@ -177,7 +177,7 @@ export const useDashboardNotifications = (): DashboardNotificationState => {
   }, [seenMap, storageKey]);
 
   useEffect(() => {
-    if (!user?.uid) {
+    if (!user?.uid || accessibleProgrammes.length === 0) {
       setActivities([]);
       setFarmers([]);
       setFodder([]);
@@ -196,8 +196,21 @@ export const useDashboardNotifications = (): DashboardNotificationState => {
       parser: (id: string, record: Record<string, any>) => TimedProgrammeRecord
     ) => {
       try {
-        const snapshot = await get(ref(db, path));
-        if (!cancelled) setter(readCollectionSnapshot(snapshot, parser));
+        const snapshots = await Promise.all(
+          accessibleProgrammes.flatMap((programme) => [
+            get(query(ref(db, path), orderByChild("programme"), equalTo(programme))),
+            get(query(ref(db, path), orderByChild("Programme"), equalTo(programme))),
+          ])
+        );
+
+        const recordsById = new Map<string, TimedProgrammeRecord>();
+        snapshots.forEach((snapshot) => {
+          readCollectionSnapshot(snapshot, parser).forEach((record) => {
+            recordsById.set(record.id, record);
+          });
+        });
+
+        if (!cancelled) setter(Array.from(recordsById.values()));
       } catch (error) {
         console.error(`Failed to load notification data from ${path}:`, error);
         if (!cancelled) setter([]);
@@ -244,7 +257,7 @@ export const useDashboardNotifications = (): DashboardNotificationState => {
       cancelled = true;
       clearInterval(intervalId);
     };
-  }, [user?.uid]);
+  }, [accessibleProgrammes, user?.uid]);
 
   const visibleActivities = useMemo(
     () =>

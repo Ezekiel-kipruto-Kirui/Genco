@@ -34,7 +34,7 @@ import { canViewAllProgrammes } from "@/contexts/authhelper";
 import { useSharedProgrammeSelection } from "@/hooks/use-shared-programme-selection";
 import { fetchAnalysisSummary } from "@/lib/analysis";
 import { cacheKey, readCachedValue, writeCachedValue } from "@/lib/data-cache";
-import { fetchCollection, fetchCollectionByProgramme } from "@/lib/firebase";
+import { fetchCollectionByProgramme, fetchCollectionByProgrammes } from "@/lib/firebase";
 import {
   PROGRAMME_OPTIONS,
   isAllProgrammesSelection,
@@ -1788,7 +1788,7 @@ const DashboardOverview = () => {
       try {
         const loadOverviewCollection = (path: string) =>
           isAllProgrammesSelection(selectedProgramme)
-            ? fetchCollection<OverviewRecord>(path)
+            ? fetchCollectionByProgrammes<OverviewRecord>(path, accessibleProgrammes)
             : fetchCollectionByProgramme<OverviewRecord>(path, selectedProgramme);
 
         const [farmersRecords, capacityRecords, offtakesRecords, animalHealthRecords, boreholeRecords, activityRecords] = await Promise.all([
@@ -1848,7 +1848,7 @@ const DashboardOverview = () => {
     return () => {
       cancelled = true;
     };
-  }, [cachedOverviewData, hasImmediateOverviewData, overviewCacheStorageKey, selectedProgramme, shouldFetchLocalOverview]);
+  }, [accessibleProgrammes, cachedOverviewData, hasImmediateOverviewData, overviewCacheStorageKey, selectedProgramme, shouldFetchLocalOverview]);
 
   // ── Resolved overview data ────────────────────────────────────────────
   const overviewData = sanitizeOverviewSummary(
