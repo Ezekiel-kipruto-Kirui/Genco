@@ -18,6 +18,7 @@ import { useToast } from "@/hooks/use-toast";
 import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
 import {
   isFinance,
+  isChiefAdmin,
   isHummanResourceManager,
   isOfftakeOfficer,
   isProjectManager,
@@ -497,10 +498,10 @@ interface TableRowProps {
   onView: (record: UserRecord) => void;
   onEdit: (record: UserRecord) => void;
   onDeleteClick: (record: UserRecord) => void;
-  userRole: string | null;
+  userIsChiefAdmin: boolean;
 }
 
-const TableRow = ({ record, selectedRecords, onSelectRecord, onView, onEdit, onDeleteClick, userRole }: TableRowProps) => {
+const TableRow = ({ record, selectedRecords, onSelectRecord, onView, onEdit, onDeleteClick, userIsChiefAdmin }: TableRowProps) => {
   const effectiveRole = getEffectiveRole(record);
   const attribute = getEffectiveAttribute(record);
   const principal = getRecordPermissionPrincipal(record);
@@ -566,7 +567,7 @@ const TableRow = ({ record, selectedRecords, onSelectRecord, onView, onEdit, onD
           >
             <Eye className="h-3.5 w-3.5" />
           </Button>
-          {userRole === "chief-admin" && (
+          {userIsChiefAdmin && (
             <>
               <Button
                 variant="ghost"
@@ -597,9 +598,9 @@ const TableRow = ({ record, selectedRecords, onSelectRecord, onView, onEdit, onD
 // --- Main Component ---
 
 const UserManagementPage = () => {
-  const { userRole } = useAuth();
+  const { userRole, userAttribute } = useAuth();
   const { toast } = useToast();
-  const userIsChiefAdmin = userRole === "chief-admin";
+  const userIsChiefAdmin = isChiefAdmin(userRole) || isChiefAdmin(userAttribute);
   const requireChiefAdmin = useCallback(() => {
     if (userIsChiefAdmin) return true;
     toast({
@@ -1353,7 +1354,7 @@ const UserManagementPage = () => {
           <Button variant="outline" size="sm" onClick={resetToCurrentMonth} className="text-sm border-gray-200 hover:bg-gray-50 hover:text-gray-900">
             This Month
           </Button>
-          {userRole === "chief-admin" && (
+          {userIsChiefAdmin && (
             <>
               <Button onClick={openAddDialog} className="bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white shadow-sm text-sm">
                 <Plus className="h-4 w-4 mr-2" />
@@ -1455,7 +1456,7 @@ const UserManagementPage = () => {
                         onView={openViewDialog}
                         onEdit={openEditDialog}
                         onDeleteClick={openDeleteDialog}
-                        userRole={userRole}
+                        userIsChiefAdmin={userIsChiefAdmin}
                       />
                     ))}
                   </tbody>
@@ -1624,7 +1625,7 @@ const UserManagementPage = () => {
       </Dialog>
 
       {/* Add User Dialog */}
-      {userRole === "chief-admin" &&  
+      {userIsChiefAdmin &&  
       (
         <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
           <DialogContent className="sm:max-w-2xl bg-white rounded-2xl">
@@ -1795,7 +1796,7 @@ const UserManagementPage = () => {
        )} 
 
       {/* Edit Dialog */}
-      {userRole === "chief-admin" && (
+      {userIsChiefAdmin && (
         <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
           <DialogContent className="sm:max-w-2xl bg-white rounded-2xl">
             <DialogHeader>

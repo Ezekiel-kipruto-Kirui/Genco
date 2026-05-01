@@ -6,7 +6,6 @@ import {
   push,
   update,
   remove,
-  get,
   Database,
   DatabaseReference
 } from "firebase/database";
@@ -23,10 +22,10 @@ import { useSharedProgrammeSelection } from "@/hooks/use-shared-programme-select
 import { useToast } from "@/hooks/use-toast";
 import { canManageInfrastructureRecords, canViewAllProgrammes } from "@/contexts/authhelper";
 import { uploadDataWithValidation, formatValidationErrors, UploadResult } from "@/lib/uploads-util";
-import { db } from "@/lib/firebase";
+import { db, fetchCollectionByProgramme } from "@/lib/firebase";
 import { millify} from "millify";
 import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
-import { resolveAccessibleProgrammes } from "@/lib/programme-access";
+import { PROGRAMME_OPTIONS, normalizeProgramme as normalizeProgrammeValue, resolveAccessibleProgrammes } from "@/lib/programme-access";
 
 // --- Types ---
 
@@ -99,26 +98,19 @@ interface TableRowProps {
 // --- Constants ---
 const PAGE_LIMIT = 15;
 const SEARCH_DEBOUNCE_DELAY = 300;
-const PROGRAMME_OPTIONS = ["KPMD", "RANGE", "MTLDK"] as const;
 const UNASSIGNED_PROGRAMME = "UNASSIGNED" as const;
 type ProgrammeOption = (typeof PROGRAMME_OPTIONS)[number];
 type ProgrammeSelectValue = ProgrammeOption | typeof UNASSIGNED_PROGRAMME;
 
 const normalizeProgramme = (
   value: unknown,
-  fallback: ProgrammeOption = "KPMD"
-): ProgrammeOption => {
-  if (typeof value !== "string") return fallback;
-  const normalized = value.trim().toUpperCase();
-  if (normalized === "KPMD" || normalized === "RANGE" || normalized === "MTLDK") return normalized;
-  return fallback;
+  fallback: ProgrammeOption | "" = ""
+): ProgrammeOption | "" => {
+  return normalizeProgrammeValue(value) || fallback;
 };
 
 const getProgrammeValue = (value: unknown): ProgrammeOption | "" => {
-  if (typeof value !== "string") return "";
-  const normalized = value.trim().toUpperCase();
-  if (normalized === "KPMD" || normalized === "RANGE" || normalized === "MTLDK") return normalized;
-  return "";
+  return normalizeProgrammeValue(value);
 };
 
 const getProgrammeDisplayValue = (value: unknown): string =>
@@ -407,7 +399,7 @@ const HayStoragePage = () => {
   const [viewingRecord, setViewingRecord] = useState<HayStorage | null>(null);
   const [editingRecord, setEditingRecord] = useState<HayStorage | null>(null);
   const [addingRecord, setAddingRecord] = useState<Partial<HayStorage>>({
-    programme: "KPMD",
+    programme: "",
     date_planted: '',
     location: '',
     county: '',
@@ -593,18 +585,18 @@ const HayStoragePage = () => {
       } else {
         setLoading(true);
       }
-      const hayStorageRef = ref(rtdb, "HayStorage");
-      const snapshot = await get(hayStorageRef);
+      const rawHayStorage = await fetchCollectionByProgramme<Record<string, any>>(
+        "HayStorage",
+        activeProgram,
+      );
 
-      if (snapshot.exists()) {
-        const data = snapshot.val();
+      if (rawHayStorage.length > 0) {
         const normalizedActiveProgram = getProgrammeValue(activeProgram);
-        const hayStorageData = Object.keys(data)
-          .map((key) => {
-            const item = data[key] || {};
+        const hayStorageData = rawHayStorage
+          .map((item) => {
             const programme = getProgrammeValue(item.programme ?? item.Programme);
             return {
-              id: key,
+              id: item.id,
               programme,
               date_planted: item.date_planted ?? item.datePlanted ?? item.Date ?? item.created_at,
               location: item.location || item.Location || "",
@@ -750,8 +742,19 @@ const HayStoragePage = () => {
       // REMOVED: Existing record check and top-up logic.
       // We always create a new record now.
 
+      const selectedProgramme = normalizeProgramme(addingRecord.programme);
+
+      if (!selectedProgramme || !selectableProgrammes.includes(selectedProgramme)) {
+        toast({
+          title: "Validation Error",
+          description: "Please select an assigned programme.",
+          variant: "destructive"
+        });
+        return;
+      }
+
       const payload = {
-        programme: normalizeProgramme(addingRecord.programme),
+        programme: selectedProgramme,
         date_planted: new Date(addingRecord.date_planted).toISOString(),
         location: addingRecord.location,
         county: addingRecord.county,
@@ -780,7 +783,7 @@ const HayStoragePage = () => {
 
       setIsAddDialogOpen(false);
       setAddingRecord({
-        programme: getProgrammeValue(activeProgram) || "KPMD",
+        programme: getProgrammeValue(activeProgram),
         date_planted: '',
         location: '',
         county: '',
@@ -855,9 +858,16 @@ const HayStoragePage = () => {
     try {
       setSaving(true);
       const filteredStages = editingRecord.pasture_stages.filter(stage => stage.stage.trim() !== '' && stage.date.trim() !== '');
+      const selectedProgramme = getProgrammeValue(editingRecord.programme);
+
+      if (!selectedProgramme || !selectableProgrammes.includes(selectedProgramme)) {
+        toast({ title: "Validation Error", description: "Please select an assigned programme", variant: "destructive" });
+        return;
+      }
+
       const { id, ...updateData } = {
           ...editingRecord,
-          programme: getProgrammeValue(editingRecord.programme) || "",
+          programme: selectedProgramme,
           pasture_stages: filteredStages,
           date_planted: editingRecord.date_planted ? new Date(editingRecord.date_planted).toISOString() : null,
           date_sold: editingRecord.date_sold ? new Date(editingRecord.date_sold).toISOString() : null
@@ -1186,7 +1196,7 @@ const HayStoragePage = () => {
                       <SelectValue placeholder="Select programme" />
                     </SelectTrigger>
                     <SelectContent>
-                      {PROGRAMME_OPTIONS.map((programme) => (
+                      {selectableProgrammes.map((programme) => (
                         <SelectItem key={programme} value={programme}>
                           {programme}
                         </SelectItem>
@@ -1344,10 +1354,7 @@ const HayStoragePage = () => {
                         <SelectValue placeholder="Select programme" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value={UNASSIGNED_PROGRAMME}>
-                          Unassigned
-                        </SelectItem>
-                        {PROGRAMME_OPTIONS.map((programme) => (
+                        {selectableProgrammes.map((programme) => (
                           <SelectItem key={programme} value={programme}>
                             {programme}
                           </SelectItem>

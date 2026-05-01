@@ -1,7 +1,7 @@
 ﻿import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 // REALTIME DATABASE IMPORTS
-import { ref, get, push, remove, update } from "firebase/database";
-import { db } from "@/lib/firebase";
+import { ref, push, remove, update } from "firebase/database";
+import { db, fetchCollection, fetchCollectionByProgrammes } from "@/lib/firebase";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -13,7 +13,7 @@ import {
   canViewAllProgrammes,
   isChiefAdmin,
 } from "@/contexts/authhelper";
-import { PROGRAMME_OPTIONS, includesProgramme, normalizeProgramme as normalizeProg, resolveAccessibleProgrammes } from "@/lib/programme-access";
+import { includesProgramme, normalizeProgramme as normalizeProg, resolveAccessibleProgrammes } from "@/lib/programme-access";
 import { 
   Users, 
   Plus, 
@@ -272,7 +272,7 @@ const AnimalHealthPage = () => {
 
   const [activityForm, setActivityForm] = useState({
     date: "", county: "", subcounty: "", location: "",
-    malebeneficiaries: "", femalebeneficiaries: "", comment: "", programme: "RANGE",
+    malebeneficiaries: "", femalebeneficiaries: "", comment: "", programme: "",
   });
   
   const { user, userRole, userAttribute, allowedProgrammes } = useAuth();
@@ -297,6 +297,7 @@ const AnimalHealthPage = () => {
     [allowedProgrammes, userCanReadAllAnimalHealthProgrammes],
   );
   const hasProgrammeAccess = userCanReadAllAnimalHealthProgrammes || accessibleProgrammes.length > 0;
+  const defaultActivityProgramme = accessibleProgrammes[0] || "";
   const defaultProgrammeView = useMemo<ProgrammeView>(
     () => (accessibleProgrammes[0] || "KPMD") as Exclude<ProgrammeView, "ALL">,
     [accessibleProgrammes],
@@ -345,6 +346,18 @@ const AnimalHealthPage = () => {
     });
   }, [accessibleProgrammes, defaultProgrammeView, userCanReadAllAnimalHealthProgrammes]);
 
+  useEffect(() => {
+    setActivityForm((prev) => {
+      if (!defaultActivityProgramme) {
+        return prev.programme ? { ...prev, programme: "" } : prev;
+      }
+
+      return includesProgramme(accessibleProgrammes, prev.programme)
+        ? prev
+        : { ...prev, programme: defaultActivityProgramme };
+    });
+  }, [accessibleProgrammes, defaultActivityProgramme]);
+
   // ── Fetch activities ──
   const fetchActivities = useCallback(async () => {
     try {
@@ -371,13 +384,16 @@ const AnimalHealthPage = () => {
         setLoading(true);
       }
 
-      const activitiesRef = ref(db, "AnimalHealthActivities");
-      const snapshot = await get(activitiesRef);
-      
-      if (snapshot.exists()) {
-        const data = snapshot.val();
-        const activitiesData = Object.keys(data).map((key) => {
-          const item = data[key];
+      const rawActivities = userCanReadAllAnimalHealthProgrammes
+        ? await fetchCollection<Record<string, any>>("AnimalHealthActivities")
+        : await fetchCollectionByProgrammes<Record<string, any>>(
+            "AnimalHealthActivities",
+            accessibleProgrammes,
+          );
+
+      if (rawActivities.length > 0) {
+        const activitiesData = rawActivities.map((item) => {
+          const key = item.id;
           let vaccines: Vaccine[] = [];
           const rawBeneficiaries = toFarmerArray(item.beneficiaries);
           const rawFarmers = toFarmerArray(item.farmers);
@@ -407,7 +423,7 @@ const AnimalHealthPage = () => {
             fieldofficers: Array.isArray(item.fieldofficers) ? item.fieldofficers : [],
             issues: Array.isArray(item.issues) ? item.issues : [],
             beneficiaries: beneficiariesForView,
-            programme: normalizeProgramme(item.programme),
+            programme: normalizeProgramme(item.programme ?? item.Programme),
             createdAt: item.createdAt,
             createdBy: item.createdBy || "unknown",
             status: item.status || "completed",
@@ -597,7 +613,7 @@ const AnimalHealthPage = () => {
   const resetForms = () => {
     setActivityForm({
       date: "", county: "", subcounty: "", location: "",
-      malebeneficiaries: "", femalebeneficiaries: "", comment: "", programme: "RANGE",
+      malebeneficiaries: "", femalebeneficiaries: "", comment: "", programme: defaultActivityProgramme,
     });
     setFieldOfficers([]);
     setFieldOfficerForm({ name: "", role: "" });
@@ -626,7 +642,7 @@ const AnimalHealthPage = () => {
       toast({ title: "Error", description: "Enter valid total doses", variant: "destructive" });
       return;
     }
-    if (!activityForm.date || !activityForm.county || !activityForm.location || !activityForm.programme) {
+    if (!activityForm.date || !activityForm.county || !activityForm.location || !includesProgramme(accessibleProgrammes, activityForm.programme)) {
       toast({ title: "Error", description: "Fill Date, County, Location, and Programme", variant: "destructive" });
       return;
     }
@@ -875,7 +891,9 @@ const AnimalHealthPage = () => {
       malebeneficiaries: (activity.malebeneficiaries || 0).toString(),
       femalebeneficiaries: (activity.femalebeneficiaries || 0).toString(),
       comment: activity.comment || "",
-      programme: activity.programme || "RANGE",
+      programme: includesProgramme(accessibleProgrammes, activity.programme)
+        ? activity.programme
+        : defaultActivityProgramme,
     });
     setFieldOfficers(activity.fieldofficers || []);
     const aVacs = getActivityVaccines(activity);
@@ -942,7 +960,7 @@ const AnimalHealthPage = () => {
     !activityForm.date ||
     !activityForm.county ||
     !activityForm.location ||
-    !activityForm.programme;
+    !includesProgramme(accessibleProgrammes, activityForm.programme);
 
   // ── View dialog pagination ──
   const viewingFarmers = viewingActivity?.beneficiaries || [];
@@ -1006,7 +1024,7 @@ const AnimalHealthPage = () => {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {PROGRAMME_OPTIONS.map((p) => (
+                        {accessibleProgrammes.map((p) => (
                           <SelectItem key={p} value={p}>
                             {p}
                           </SelectItem>
@@ -1721,7 +1739,7 @@ const AnimalHealthPage = () => {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {PROGRAMME_OPTIONS.map((p) => (
+                      {accessibleProgrammes.map((p) => (
                         <SelectItem key={p} value={p}>
                           {p}
                         </SelectItem>

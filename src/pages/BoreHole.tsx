@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import { db } from "@/lib/firebase";
+import { db, fetchCollectionByProgramme } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -15,7 +15,7 @@ import { useToast } from "@/hooks/use-toast";
 import { canManageInfrastructureRecords, canViewAllProgrammes } from "@/contexts/authhelper";
 import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
 import {millify} from "millify";
-import { resolveAccessibleProgrammes } from "@/lib/programme-access";
+import { PROGRAMME_OPTIONS, normalizeProgramme as normalizeProgrammeValue, resolveAccessibleProgrammes } from "@/lib/programme-access";
 
 // REALTIME DATABASE IMPORTS ONLY
 import { 
@@ -23,9 +23,6 @@ import {
   push, 
   update, 
   remove, 
-  get, 
-  onValue,
-  DatabaseReference,
   Database 
 } from "firebase/database";
 
@@ -157,17 +154,13 @@ const deleteData = async (collectionName: string, docIds: string[]): Promise<Fir
 // Constants
 const PAGE_LIMIT = 15;
 const SEARCH_DEBOUNCE_DELAY = 300;
-const PROGRAMME_OPTIONS = ["KPMD", "RANGE", "MTLDK"] as const;
 type ProgrammeOption = (typeof PROGRAMME_OPTIONS)[number];
 
 const normalizeProgramme = (
   value: unknown,
-  fallback: ProgrammeOption = "KPMD"
-): ProgrammeOption => {
-  if (typeof value !== "string") return fallback;
-  const normalized = value.trim().toUpperCase();
-  if (normalized === "KPMD" || normalized === "RANGE" || normalized === "MTLDK") return normalized;
-  return fallback;
+  fallback: ProgrammeOption | "" = ""
+): ProgrammeOption | "" => {
+  return normalizeProgrammeValue(value) || fallback;
 };
 
 // Helper functions
@@ -397,7 +390,7 @@ const BoreholePage = () => {
 
   const [newBorehole, setNewBorehole] = useState<Partial<Borehole>>({
     date: formatDateToLocal(new Date()),
-    programme: "KPMD",
+    programme: "",
     location: "",
     county: "",        // Added County
     subcounty: "",     // Added Sub-County
@@ -471,15 +464,15 @@ const BoreholePage = () => {
       }
       console.log("Starting borehole data fetch from Realtime Database...");
 
-      const boreholeRef = ref(db as Database, "BoreholeStorage");
-      const snapshot = await get(boreholeRef);
-      
-      if (snapshot.exists()) {
-        const data = snapshot.val();
-        // Transform object from RTDB to array
-        const boreholeData = Object.keys(data)
-          .map((key) => {
-          const item = data[key];
+      const rawBoreholes = await fetchCollectionByProgramme<Record<string, any>>(
+        "BoreholeStorage",
+        activeProgram,
+      );
+
+      if (rawBoreholes.length > 0) {
+        const boreholeData = rawBoreholes
+          .map((item) => {
+          const key = item.id;
           const status = normalizeStatusFlags({
             drilled: toBoolean(pickFirstDefined(item.drilled, item.Drilled)),
             maintained: toBoolean(pickFirstDefined(item.maintained, item.Maintained, item.maintaned, item.Maintaned, item.rehabilitated, item.Rehabilitated)),
@@ -684,6 +677,19 @@ const BoreholePage = () => {
         return;
       }
 
+      const selectedProgramme = normalizeProgramme(
+        userCanViewAllProgrammeData ? newBorehole.programme : activeProgram,
+      );
+
+      if (!selectedProgramme || !accessibleProgrammes.includes(selectedProgramme)) {
+        toast({
+          title: "Validation Error",
+          description: "Please select an assigned programme",
+          variant: "destructive",
+        });
+        return;
+      }
+
       const status = normalizeStatusFlags({
         drilled: !!newBorehole.drilled,
         maintained: !!newBorehole.maintained,
@@ -691,9 +697,7 @@ const BoreholePage = () => {
       });
 
       const boreholeData = {
-        programme: userCanViewAllProgrammeData
-          ? normalizeProgramme(newBorehole.programme)
-          : normalizeProgramme(activeProgram),
+        programme: selectedProgramme,
         BoreholeLocation: newBorehole.location,
         County: newBorehole.county || "",           // Added County
         SubCounty: newBorehole.subcounty || "",      // Added Sub-County
@@ -719,7 +723,7 @@ const BoreholePage = () => {
         // Reset form and close dialog
         setNewBorehole({
           date: formatDateToLocal(new Date()),
-          programme: activeProgram || "KPMD",
+          programme: activeProgram || "",
           location: "",
           county: "",
           subcounty: "",
@@ -773,9 +777,19 @@ const BoreholePage = () => {
         maintained: !!editingRecord.maintained,
         equipped: !!editingRecord.equipped,
       });
+      const selectedProgramme = normalizeProgramme(editingRecord.programme);
+
+      if (!selectedProgramme || !accessibleProgrammes.includes(selectedProgramme)) {
+        toast({
+          title: "Validation Error",
+          description: "Please select an assigned programme",
+          variant: "destructive",
+        });
+        return;
+      }
 
       const boreholeData = {
-        programme: normalizeProgramme(editingRecord.programme),
+        programme: selectedProgramme,
         BoreholeLocation: editingRecord.location,
         County: editingRecord.county || "",          // Added County
         SubCounty: editingRecord.subcounty || "",     // Added Sub-County
@@ -1630,7 +1644,7 @@ const BoreholePage = () => {
                   <SelectValue placeholder="Select programme" />
                 </SelectTrigger>
                 <SelectContent>
-                  {PROGRAMME_OPTIONS.map((programme) => (
+                  {availablePrograms.map((programme) => (
                     <SelectItem key={programme} value={programme}>
                       {programme}
                     </SelectItem>
@@ -1752,7 +1766,7 @@ const BoreholePage = () => {
                 setIsCreateDialogOpen(false);
                 setNewBorehole({
                   date: formatDateToLocal(new Date()),
-                  programme: activeProgram || "KPMD",
+                  programme: activeProgram || "",
                   location: "",
                   county: "",
                   subcounty: "",
@@ -1816,7 +1830,7 @@ const BoreholePage = () => {
                     <SelectValue placeholder="Select programme" />
                   </SelectTrigger>
                   <SelectContent>
-                    {PROGRAMME_OPTIONS.map((programme) => (
+                    {availablePrograms.map((programme) => (
                       <SelectItem key={programme} value={programme}>
                         {programme}
                       </SelectItem>

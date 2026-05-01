@@ -642,12 +642,19 @@ const toAnimalArr = (value: unknown): Array<{ live: string; carcass: string; pri
 const transformOfftakeSnapshot = (
   snapshot: Record<string, Record<string, unknown>>,
   normalizedActive: string,
+  allowedProgrammes: readonly string[] = [],
 ): OfftakeData[] => {
+  const allowedProgrammeSet = new Set(
+    allowedProgrammes.map((programme) => getAnalyticsProgrammeToken(programme)).filter(Boolean),
+  );
+
   return Object.entries(snapshot).map(([key, item]) => {
     // Defensive programme filter
+    const recProg = getAnalyticsProgrammeToken(item.programme ?? item.Programme ?? "");
     if (normalizedActive) {
-      const recProg = getAnalyticsProgrammeToken(item.programme ?? item.Programme ?? "");
       if (!recProg || recProg !== normalizedActive) return null;
+    } else if (allowedProgrammeSet.size > 0 && !allowedProgrammeSet.has(recProg)) {
+      return null;
     }
 
     let dateValue: Date | string | number =
@@ -1370,11 +1377,11 @@ const SalesReport = () => {
     }
 
     // Kick off orders + requisitions fetch in parallel with the offtake listener
-    const financePromise = (async () => {
+    void (async () => {
       try {
         const fetchProgrammeSnapshots = async (path: string) => {
           if (selectedFinanceProgrammes.length === 0) {
-            return [await get(ref(db, path))];
+            return [];
           }
 
           const reads = selectedFinanceProgrammes.flatMap((programme) => [
@@ -1435,7 +1442,6 @@ const SalesReport = () => {
               })
               .filter(
                 (record) =>
-                  selectedFinanceProgrammes.length === 0 ||
                   selectedFinanceProgrammes.includes(getAnalyticsProgrammeToken(record.programme)),
               )
           : [];
@@ -1464,7 +1470,6 @@ const SalesReport = () => {
               })
               .filter(
                 (record) =>
-                  selectedFinanceProgrammes.length === 0 ||
                   selectedFinanceProgrammes.includes(getAnalyticsProgrammeToken(record.programme)),
               )
           : [];
@@ -1485,10 +1490,71 @@ const SalesReport = () => {
       }
     })();
 
+    const loadSelectedProgrammeOfftakes = async () => {
+      try {
+        const snapshots = await (async () => {
+          if (selectedFinanceProgrammes.length === 0) return [];
+
+          const reads = selectedFinanceProgrammes.flatMap((programme) => [
+            get(query(ref(db, "offtakes"), orderByChild("programme"), equalTo(programme))),
+            get(query(ref(db, "offtakes"), orderByChild("Programme"), equalTo(programme))),
+          ]);
+
+          return Promise.all(reads);
+        })();
+
+        if (cancelled) return;
+
+        const recordsById = new Map<string, Record<string, unknown>>();
+        snapshots.forEach((snapshot) => {
+          if (!snapshot.exists()) return;
+          Object.entries(snapshot.val() as Record<string, Record<string, unknown>>).forEach(
+            ([id, item]) => {
+              recordsById.set(id, item);
+            },
+          );
+        });
+
+        const offtakeList = transformOfftakeSnapshot(
+          Object.fromEntries(recordsById),
+          "",
+          selectedFinanceProgrammes,
+        );
+
+        dataCache.set(activeProgram, offtakeList);
+
+        startTransition(() => {
+          setOfftakeData(offtakeList);
+          setIsCacheHit(false);
+          setLoading(false);
+        });
+      } catch (error) {
+        if (cancelled) return;
+        console.error("Error fetching offtake data:", error);
+        toast({
+          title: "Error",
+          description: "Failed to load offtake data.",
+          variant: "destructive",
+        });
+        setLoading(false);
+      }
+    };
+
+    if (isAllProgrammesSelection(activeProgram)) {
+      void loadSelectedProgrammeOfftakes();
+      unsubscribeRef.current = () => {
+        cancelled = true;
+      };
+
+      return () => {
+        cancelled = true;
+      };
+    }
+
     // Set up real-time listener for offtake data
     const offtakesRef = normalizedActive
       ? query(ref(db, "offtakes"), orderByChild("programme"), equalTo(normalizedActive))
-      : ref(db, "offtakes");
+      : query(ref(db, "offtakes"), orderByChild("programme"), equalTo("__NO_PROGRAMME__"));
 
     const unsubscribe = onValue(
       offtakesRef,
@@ -1507,6 +1573,7 @@ const SalesReport = () => {
         const offtakeList = transformOfftakeSnapshot(
           data as Record<string, Record<string, unknown>>,
           normalizedActive,
+          selectedFinanceProgrammes,
         );
 
         dataCache.set(activeProgram, offtakeList);
@@ -1829,6 +1896,9 @@ const SalesReport = () => {
                             <SelectValue placeholder="Select" />
                           </SelectTrigger>
                           <SelectContent>
+                            <SelectItem value={ALL_PROGRAMMES_VALUE}>
+                              All Programmes
+                            </SelectItem>
                             {accessibleProgrammes.map((programme) => (
                               <SelectItem key={programme} value={programme}>
                                 {programme}

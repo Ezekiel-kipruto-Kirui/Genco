@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 // REALTIME DATABASE IMPORTS
-import { ref, get, push, update, remove } from "firebase/database";
-import { db } from "@/lib/firebase";
+import { ref, push, update, remove } from "firebase/database";
+import { db, fetchCollection, fetchCollectionByProgrammes } from "@/lib/firebase";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { canViewAllProgrammes, isChiefAdmin } from "@/contexts/authhelper";
-import { PROGRAMME_OPTIONS, includesProgramme, normalizeProgramme, resolveAccessibleProgrammes } from "@/lib/programme-access";
+import { includesProgramme, normalizeProgramme, resolveAccessibleProgrammes } from "@/lib/programme-access";
 
 import { 
   Users, 
@@ -64,6 +64,16 @@ interface ActivityForm {
 
 const UNASSIGNED_PROGRAMME_LABEL = "Unassigned";
 
+const buildEmptyActivityForm = (programme = ""): ActivityForm => ({
+  activityName: "",
+  date: "",
+  numberOfPersons: "",
+  programme,
+  county: "",
+  subcounty: "",
+  location: "",
+});
+
 const getProgrammeLabel = (programme: string | null | undefined): string =>
   normalizeProgramme(programme) || UNASSIGNED_PROGRAMME_LABEL;
 
@@ -104,15 +114,7 @@ const ActivitiesPage = () => {
   const [editingActivity, setEditingActivity] = useState<Activity | null>(null);
   const [participantForm, setParticipantForm] = useState({ name: "", role: "" });
   const [participants, setParticipants] = useState<Participant[]>([]);
-  const [activityForm, setActivityForm] = useState<ActivityForm>({
-    activityName: "",
-    date: "",
-    numberOfPersons: "",
-    programme: PROGRAMME_OPTIONS[0],
-    county: "",
-    subcounty: "",
-    location: "",
-  });
+  const [activityForm, setActivityForm] = useState<ActivityForm>(() => buildEmptyActivityForm());
   const { user, userRole, userAttribute, allowedProgrammes } = useAuth();
   const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
   const userCanViewAllProgrammeData = useMemo(
@@ -124,6 +126,7 @@ const ActivitiesPage = () => {
     [allowedProgrammes, userCanViewAllProgrammeData]
   );
   const hasProgrammeAccess = userCanViewAllProgrammeData || accessibleProgrammes.length > 0;
+  const defaultActivityProgramme = accessibleProgrammes[0] || "";
   const defaultProgrammeFilter = userCanViewAllProgrammeData ? "all" : accessibleProgrammes[0] || "all";
   const activitiesCacheKey = useMemo(
     () =>
@@ -159,6 +162,18 @@ const ActivitiesPage = () => {
     });
   }, [accessibleProgrammes, defaultProgrammeFilter, userCanViewAllProgrammeData]);
 
+  useEffect(() => {
+    setActivityForm((prev) => {
+      if (!defaultActivityProgramme) {
+        return prev.programme ? { ...prev, programme: "" } : prev;
+      }
+
+      return includesProgramme(accessibleProgrammes, prev.programme)
+        ? prev
+        : { ...prev, programme: defaultActivityProgramme };
+    });
+  }, [accessibleProgrammes, defaultActivityProgramme]);
+
   // --- REALTIME DATABASE FETCH ---
   const fetchActivities = useCallback(async () => {
     try {
@@ -185,16 +200,14 @@ const ActivitiesPage = () => {
         setLoading(true);
       }
 
-      const activitiesRef = ref(db, "Recent Activities");
-      const snapshot = await get(activitiesRef);
+      const rawActivities = userCanViewAllProgrammeData
+        ? await fetchCollection<Record<string, any>>("Recent Activities")
+        : await fetchCollectionByProgrammes<Record<string, any>>("Recent Activities", accessibleProgrammes);
 
-      if (snapshot.exists()) {
-        const data = snapshot.val();
-        // Transform object from RTDB to array
-        const activitiesData = Object.keys(data).map((key) => ({
-          id: key,
-          ...data[key],
-          programme: normalizeProgramme(data[key]?.programme),
+      if (rawActivities.length > 0) {
+        const activitiesData = rawActivities.map((record) => ({
+          ...record,
+          programme: normalizeProgramme(record?.programme ?? record?.Programme),
         })) as Activity[];
 
         const sortedActivitiesData = sortActivitiesByLatest(
@@ -250,10 +263,10 @@ const ActivitiesPage = () => {
       });
       return;
     }
-    if (!activityForm.programme) {
+    if (!includesProgramme(accessibleProgrammes, activityForm.programme)) {
       toast({
         title: "Error",
-        description: "Please select a programme",
+        description: "Please select an assigned programme",
         variant: "destructive",
       });
       return;
@@ -274,15 +287,7 @@ const ActivitiesPage = () => {
         description: "Activity scheduled successfully.",
         className: "bg-white text-slate-900 border border-slate-200"
       });
-      setActivityForm({
-        activityName: "",
-        date: "",
-        numberOfPersons: "",
-        programme: PROGRAMME_OPTIONS[0],
-        county: "",
-        subcounty: "",
-        location: "",
-      });
+      setActivityForm(buildEmptyActivityForm(defaultActivityProgramme));
       setParticipants([]);
       setIsAddDialogOpen(false);
       removeCachedValue(activitiesCacheKey);
@@ -316,15 +321,7 @@ const ActivitiesPage = () => {
       });
       setEditingActivity(null);
       setIsEditDialogOpen(false);
-      setActivityForm({
-        activityName: "",
-        date: "",
-        numberOfPersons: "",
-        programme: PROGRAMME_OPTIONS[0],
-        county: "",
-        subcounty: "",
-        location: "",
-      });
+      setActivityForm(buildEmptyActivityForm(defaultActivityProgramme));
       setParticipants([]);
       removeCachedValue(activitiesCacheKey);
       fetchActivities();
@@ -385,12 +382,15 @@ const ActivitiesPage = () => {
 
   const openEditDialog = (activity: Activity) => {
     if (!userIsChiefAdmin) return;
+    const activityProgramme = normalizeProgramme(activity.programme);
     setEditingActivity(activity);
     setActivityForm({
       activityName: activity.activityName,
       date: activity.date,
       numberOfPersons: activity.numberOfPersons.toString(),
-      programme: normalizeProgramme(activity.programme) || PROGRAMME_OPTIONS[0],
+      programme: includesProgramme(accessibleProgrammes, activityProgramme)
+        ? activityProgramme
+        : defaultActivityProgramme,
       county: activity.county,
       subcounty: activity.subcounty,
       location: activity.location,
@@ -499,7 +499,7 @@ const ActivitiesPage = () => {
                         <SelectValue placeholder="Select programme" />
                       </SelectTrigger>
                       <SelectContent>
-                        {PROGRAMME_OPTIONS.map((programmeOption) => (
+                        {accessibleProgrammes.map((programmeOption) => (
                           <SelectItem key={programmeOption} value={programmeOption}>
                             {programmeOption}
                           </SelectItem>
@@ -893,7 +893,7 @@ const ActivitiesPage = () => {
                     <SelectValue placeholder="Select programme" />
                   </SelectTrigger>
                   <SelectContent>
-                    {PROGRAMME_OPTIONS.map((programmeOption) => (
+                    {accessibleProgrammes.map((programmeOption) => (
                       <SelectItem key={programmeOption} value={programmeOption}>
                         {programmeOption}
                       </SelectItem>

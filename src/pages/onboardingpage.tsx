@@ -40,7 +40,11 @@ import { useSharedProgrammeSelection } from "@/hooks/use-shared-programme-select
 import * as XLSX from 'xlsx';
 import { canViewAllProgrammes, isChiefAdmin } from "@/contexts/authhelper";
 import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
-import { resolveAccessibleProgrammes } from "@/lib/programme-access";
+import {
+  normalizeProgramme,
+  resolveAccessibleProgrammes,
+  type ProgrammeOption,
+} from "@/lib/programme-access";
 
 // --- Constants ---
 const COLLECTION_NAME = "Onboarding";
@@ -69,7 +73,7 @@ interface OnboardingData {
   comment: string;
   staff: StaffData[];
   farmers: FarmerData[];
-  programme: 'KPMD' | 'RANGE' | 'MTLDK'; 
+  programme: ProgrammeOption; 
   createdAt?: Date;
   status: 'pending' | 'completed';
 }
@@ -97,7 +101,7 @@ const normalizeOnboardingRecord = (record: Partial<OnboardingData>): OnboardingD
   comment: record.comment || "",
   staff: Array.isArray(record.staff) ? record.staff : [],
   farmers: Array.isArray(record.farmers) ? record.farmers : [],
-  programme: record.programme === "RANGE" || record.programme === "MTLDK" ? record.programme : "KPMD",
+  programme: normalizeProgramme(record.programme) || "KPMD",
   createdAt: record.createdAt ? new Date(record.createdAt) : undefined,
   status: record.status === "completed" ? "completed" : "pending",
 });
@@ -368,7 +372,7 @@ const OnboardingPage = () => {
     comment: "",
     date: "",
     status: 'pending' as 'pending' | 'completed',
-    programme: 'KPMD' as 'KPMD' | 'RANGE' | 'MTLDK'
+    programme: "" as ProgrammeOption | "",
   });
   const [staff, setStaff] = useState<StaffData[]>([{ name: "", role: "" }]);
   const [farmers, setFarmers] = useState<FarmerData[]>([
@@ -404,6 +408,17 @@ const OnboardingPage = () => {
     [activeProgram, user?.uid]
   );
   const availablePrograms = accessibleProgrammes;
+  const resolveAssignableProgramme = useCallback(
+    (programme?: string): ProgrammeOption | "" => {
+      const normalizedProgramme = normalizeProgramme(programme);
+      if (normalizedProgramme && availablePrograms.includes(normalizedProgramme)) {
+        return normalizedProgramme;
+      }
+
+      return (availablePrograms[0] as ProgrammeOption | undefined) || "";
+    },
+    [availablePrograms],
+  );
   const requireChiefAdmin = () => {
     if (userIsChiefAdmin) return true;
     toast({
@@ -443,6 +458,13 @@ const OnboardingPage = () => {
   };
 
   const currentMonth = useMemo(getCurrentMonthDates, []);
+
+  useEffect(() => {
+    setOnboardingForm((prev) => {
+      const programme = resolveAssignableProgramme(prev.programme || activeProgram);
+      return programme === prev.programme ? prev : { ...prev, programme };
+    });
+  }, [activeProgram, resolveAssignableProgramme]);
 
   const readExcelFile = (file: File): Promise<any[]> => {
     return new Promise((resolve, reject) => {
@@ -502,7 +524,7 @@ const OnboardingPage = () => {
             comment: docData.comment || "",
             staff: docData.staff || [],
             farmers: docData.farmers || [],
-            programme: docData.programme || docData.Programme || 'KPMD',
+            programme: normalizeProgramme(docData.programme || docData.Programme || activeProgram) || "KPMD",
             createdAt: docData.createdAt ? new Date(docData.createdAt) : new Date(),
             status: docData.status || 'pending'
           };
@@ -678,8 +700,9 @@ const OnboardingPage = () => {
   const handleAddOnboarding = async () => {
     if (!requireChiefAdmin()) return;
     try {
-      if (!onboardingForm.topic || !onboardingForm.date || !onboardingForm.programme) {
-        toast({ title: "Validation Error", description: "Please fill required fields including programme", variant: "destructive" });
+      const selectedProgramme = resolveAssignableProgramme(onboardingForm.programme);
+      if (!onboardingForm.topic || !onboardingForm.date || !selectedProgramme) {
+        toast({ title: "Validation Error", description: "Please fill required fields including an assigned programme", variant: "destructive" });
         return;
       }
 
@@ -695,6 +718,7 @@ const OnboardingPage = () => {
       
       const data = {
         ...onboardingForm,
+        programme: selectedProgramme,
         date: new Date(onboardingForm.date).toISOString(),
         staff: validStaff,
         farmers: validFarmers,
@@ -726,7 +750,7 @@ const OnboardingPage = () => {
 
   const resetForm = () => {
     // Default to active program when opening new form
-    const defaultProg = activeProgram as 'KPMD' | 'RANGE' | 'MTLDK' || 'KPMD';
+    const defaultProg = resolveAssignableProgramme(activeProgram);
     
     setOnboardingForm({ id: "", topic: "", comment: "", date: "", status: 'pending', programme: defaultProg });
     setStaff([{ name: "", role: "" }]);
@@ -994,7 +1018,7 @@ const OnboardingPage = () => {
                         comment: record.comment || "",
                         date: localDate,
                         status: record.status,
-                        programme: record.programme
+                        programme: resolveAssignableProgramme(record.programme)
                       });
                       setStaff(record.staff.length > 0 ? record.staff : [{ name: "", role: "" }]);
                       setFarmers(record.farmers.length > 0 ? record.farmers : [{ name: "", idNo: "", phoneNo: "", subcounty: "", location: "", gender: "", county: "" }]);
@@ -1035,16 +1059,18 @@ const OnboardingPage = () => {
                         <Label>PROJECT *</Label>
                         <Select 
                           value={onboardingForm.programme} 
-                          onValueChange={(val: 'KPMD' | 'RANGE' | 'MTLDK') => setOnboardingForm(p => ({ ...p, programme: val }))}
-                          disabled={!!onboardingForm.id} // Lock programme on edit usually
+                          onValueChange={(val) => setOnboardingForm(p => ({ ...p, programme: resolveAssignableProgramme(val) }))}
+                          disabled={!!onboardingForm.id || availablePrograms.length === 0} // Lock programme on edit usually
                         >
                           <SelectTrigger className="w-full">
                             <SelectValue placeholder="Select Programme" />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="KPMD">KPMD</SelectItem>
-                            <SelectItem value="RANGE">RANGE</SelectItem>
-                            <SelectItem value="MTLDK">MTLDK</SelectItem>
+                            {availablePrograms.map((programme) => (
+                              <SelectItem key={programme} value={programme}>
+                                {programme}
+                              </SelectItem>
+                            ))}
                           </SelectContent>
                         </Select>
                       </div>
