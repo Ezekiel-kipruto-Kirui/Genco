@@ -374,8 +374,8 @@ const LivestockOfftakePage = () => {
     [allowedProgrammes, userRole, userAttribute]
   );
   const accessibleProgrammes = useMemo(
-    () => resolveAccessibleProgrammes(userCanViewAllProgrammeData, allowedProgrammes),
-    [allowedProgrammes, userCanViewAllProgrammeData]
+    () => resolveAccessibleProgrammes(userAttribute, allowedProgrammes),
+    [allowedProgrammes, userAttribute]
   );
   const [activeProgram, setActiveProgram] = useSharedProgrammeSelection(accessibleProgrammes);
   const requireChiefAdmin = () => {
@@ -1639,8 +1639,8 @@ const LivestockOfftakePage = () => {
   }, []);
 
   const availableProgramsForSelect = useMemo(
-    () => resolveAccessibleProgrammes(userCanViewAllProgrammeData, allowedProgrammes),
-    [allowedProgrammes, userCanViewAllProgrammeData]
+    () => resolveAccessibleProgrammes(userAttribute, allowedProgrammes),
+    [allowedProgrammes, userAttribute]
   );
 
   const StatsCard = useMemo(() => ({ title, value, icon: Icon, description, subValue }: any) => (
