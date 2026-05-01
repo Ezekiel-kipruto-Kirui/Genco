@@ -33,7 +33,7 @@ const TARGETS = {
   monthly: 117,
   yearly: 1404
 };
-const QUARTER_TARGET_MILESTONES = [352, 702, 1053, 1404];
+const QUARTER_TARGET_MILESTONES = [351, 351, 351, 351];
 const PROGRESS_ANALYTICS_QUERY_VERSION = "v4";
 const EMPTY_STATS = {
   total: 0,
@@ -490,14 +490,14 @@ const buildQuarterTargets = (year: number) => [
     label: `Q3 ${year}`,
     start: new Date(year, 6, 1),
     end: new Date(year, 8, 30),
-    target: year === getToday().getFullYear() ? 0 : QUARTER_TARGET_MILESTONES[2],
+    target: QUARTER_TARGET_MILESTONES[2],
   },
   {
     key: "q4" as const,
     label: `Q4 ${year}`,
     start: new Date(year, 9, 1),
     end: new Date(year, 11, 31),
-    target: year === getToday().getFullYear() ? 0 : QUARTER_TARGET_MILESTONES[3],
+    target: QUARTER_TARGET_MILESTONES[3],
   },
 ];
 
@@ -716,10 +716,12 @@ const LivestockFarmersAnalytics = () => {
       farmersList.sort((a, b) => getDateTimestamp(b.createdAt) - getDateTimestamp(a.createdAt));
       setAllFarmers(farmersList);
       setLoading(false);
-      try {
-        localStorage.setItem(cacheKey, JSON.stringify(farmersList));
-      } catch (e) {
-        console.warn("Cache write failed", e);
+      if (normalizedActiveProgram !== "ALL") {
+        try {
+          localStorage.setItem(cacheKey, JSON.stringify(farmersList));
+        } catch (e) {
+          console.warn("Cache write failed", e);
+        }
       }
     }, (error) => {
       console.error("Error fetching farmers data:", error);
@@ -753,7 +755,7 @@ const LivestockFarmersAnalytics = () => {
           .map((key) => {
             const item = data[key] || {};
             const programme = normalizeProgramme(item.programme ?? item.Programme);
-            if (normalizedActiveProgram && programme !== normalizedActiveProgram) {
+            if (normalizedActiveProgram && normalizedActiveProgram !== "ALL" && programme !== normalizedActiveProgram) {
               return null;
             }
             return {
@@ -766,10 +768,12 @@ const LivestockFarmersAnalytics = () => {
           })
           .filter((item): item is TrainingData => item !== null);
         setTrainingRecords(records);
-        try {
+        if (normalizedActiveProgram !== "ALL") {
+          try {
             localStorage.setItem(cacheKey, JSON.stringify(records));
-        } catch (e) {
+          } catch (e) {
             console.warn("Cache write failed", e);
+          }
         }
     }, (error) => {
         console.error("Error fetching training data:", error);
@@ -1442,7 +1446,7 @@ const LivestockFarmersAnalytics = () => {
       </div>
 
       <Dialog open={isOfficerTargetsOpen} onOpenChange={setIsOfficerTargetsOpen}>
-        <DialogContent className="max-w-3xl">
+        <DialogContent className="max-w-3xl" aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-gray-800">
               <Eye className="h-5 w-5 text-blue-600" />

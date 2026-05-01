@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useCallback, useMemo, useRef, useDeferredValue, memo } from "react";
+﻿import { useState, useEffect, useCallback, useMemo, useRef, useDeferredValue, memo, startTransition } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import {
@@ -7,16 +7,24 @@ import {
   isChiefAdmin,
   resolvePermissionPrincipal,
 } from "@/contexts/authhelper";
-import { fetchCollectionByProgrammes } from "@/lib/firebase";
+import { db, fetchCollectionByProgrammes } from "@/lib/firebase";
+import {
+  ref,
+  query,
+  orderByChild,
+  equalTo,
+  onValue,
+  get,
+} from "firebase/database";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { 
-  PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip, 
-  XAxis, YAxis, CartesianGrid, AreaChart, Area, 
+import {
+  PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip,
+  XAxis, YAxis, CartesianGrid, AreaChart, Area,
   Label as RechartsLabel
 } from "recharts";
-import { 
-  Beef, TrendingUp, Award, Star, 
-  MapPin, DollarSign, Package, Users, Loader2, Calendar, 
+import {
+  Beef, TrendingUp, Award, Star,
+  MapPin, DollarSign, Package, Users, Loader2, Calendar,
   Zap, ChevronDown, Calculator, ChevronLeft, ChevronRight
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -29,7 +37,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"; 
+} from "@/components/ui/dropdown-menu";
 import { useSharedProgrammeSelection } from "@/hooks/use-shared-programme-selection";
 import { useToast } from "@/hooks/use-toast";
 import { millify } from "millify";
@@ -42,7 +50,7 @@ import { ALL_PROGRAMMES_VALUE, isAllProgrammesSelection, resolveAccessibleProgra
 
 const COLORS = {
   darkBlue: "#1e3a8a",
-  orange: "#f97316", 
+  orange: "#f97316",
   yellow: "#f59e0b",
   green: "#16a34a",
   maroon: "#991b1b",
@@ -54,7 +62,7 @@ const COLORS = {
 } as const;
 
 const BAR_COLORS = [
-  COLORS.darkBlue, COLORS.orange, COLORS.yellow, COLORS.green, 
+  COLORS.darkBlue, COLORS.orange, COLORS.yellow, COLORS.green,
   COLORS.purple, COLORS.teal, COLORS.maroon, COLORS.red, COLORS.gray, COLORS.darkBlue,
 ] as const;
 
@@ -82,7 +90,7 @@ const SALES_INPUTS_STORAGE_KEY = "sales-metrics-inputs-v1";
 const USE_REMOTE_ANALYTICS =
   typeof window !== "undefined" && !["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
 
-const SALES_ANALYTICS_QUERY_VERSION = "v5";
+const SALES_ANALYTICS_QUERY_VERSION = "v6";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -113,7 +121,7 @@ interface SalesInputs {
 }
 
 interface OrderAnalyticsItem {
-  goats?: number;
+  goats?: unknown;
 }
 
 interface OrderAnalyticsRecord {
@@ -125,6 +133,7 @@ interface OrderAnalyticsRecord {
   goats?: number;
   goatsBought?: number;
   remainingGoats?: number;
+  targetGoats?: number;
   totalGoats?: number;
   programme?: string;
   sourcePage?: string;
@@ -133,6 +142,7 @@ interface OrderAnalyticsRecord {
   targetOrderId?: string;
   offtakeOrderId?: string;
   orders?: OrderAnalyticsItem[] | Record<string, OrderAnalyticsItem>;
+  purchaseHistory?: OrderAnalyticsItem[] | Record<string, OrderAnalyticsItem>;
 }
 
 interface RequisitionAnalyticsRecord {
@@ -432,6 +442,14 @@ const getOrderEntries = (orders: OrderAnalyticsRecord["orders"]): OrderAnalytics
   return [];
 };
 
+const getOrderPurchaseEntries = (purchaseHistory: OrderAnalyticsRecord["purchaseHistory"]): OrderAnalyticsItem[] => {
+  if (Array.isArray(purchaseHistory)) return purchaseHistory.filter(Boolean);
+  if (purchaseHistory && typeof purchaseHistory === "object") {
+    return Object.values(purchaseHistory).filter(Boolean) as OrderAnalyticsItem[];
+  }
+  return [];
+};
+
 const getOrderReferenceId = (record: OrderAnalyticsRecord): string => {
   const recordId = String(record.id || "").trim();
   const candidates = [
@@ -456,6 +474,7 @@ const getOrderTotalGoats = (record: OrderAnalyticsRecord): number => {
 
   return Math.max(
     embeddedItemsTotal,
+    parseNumber(record.targetGoats),
     parseNumber(record.totalGoats),
     parseNumber(record.goats),
     parseNumber(record.goatsBought) + parseNumber(record.remainingGoats),
@@ -525,7 +544,11 @@ const getRequisitionAnalyticsAmount = (
 };
 
 const getOrderPurchasedGoats = (record: OrderAnalyticsRecord): number => {
-  const purchasedGoats = Math.max(parseNumber(record.goatsBought), 0);
+  const purchasedFromHistory = getOrderPurchaseEntries(record.purchaseHistory).reduce(
+    (sum, item) => sum + parseNumber(item.goats),
+    0,
+  );
+  const purchasedGoats = Math.max(parseNumber(record.goatsBought), purchasedFromHistory, 0);
   const totalGoats = Math.max(getOrderTotalGoats(record), 0);
 
   return Math.min(purchasedGoats, totalGoats);
@@ -604,6 +627,68 @@ const createEmptySalesAnalytics = (salesInputs: SalesInputs): SalesAnalyticsPayl
 });
 
 // ---------------------------------------------------------------------------
+// Offtake record transformer — extracted for reuse & testability
+// ---------------------------------------------------------------------------
+
+const toAnimalArr = (value: unknown): Array<{ live: string; carcass: string; price: string }> => {
+  if (Array.isArray(value)) return value.filter(Boolean) as Array<{ live: string; carcass: string; price: string }>;
+  if (value && typeof value === "object") {
+    return Object.values(value as Record<string, unknown>)
+      .filter(Boolean) as Array<{ live: string; carcass: string; price: string }>;
+  }
+  return [];
+};
+
+const transformOfftakeSnapshot = (
+  snapshot: Record<string, Record<string, unknown>>,
+  normalizedActive: string,
+): OfftakeData[] => {
+  return Object.entries(snapshot).map(([key, item]) => {
+    // Defensive programme filter
+    if (normalizedActive) {
+      const recProg = getAnalyticsProgrammeToken(item.programme ?? item.Programme ?? "");
+      if (!recProg || recProg !== normalizedActive) return null;
+    }
+
+    let dateValue: Date | string | number =
+      (item.date ?? item.Date ?? item.createdAt) as Date | string | number;
+    if (typeof dateValue === "number") {
+      dateValue = new Date(dateValue);
+    } else if (typeof dateValue === "string") {
+      const d = new Date(dateValue);
+      if (!isNaN(d.getTime())) dateValue = d;
+    }
+
+    const goatsArr = toAnimalArr(item.goats);
+    const sheepArr = toAnimalArr(item.sheep);
+    const cattleArr = toAnimalArr(item.cattle);
+
+    return {
+      id: key,
+      date: dateValue,
+      farmerName: (item.farmerName ?? item.name ?? "") as string,
+      gender: (item.gender ?? "") as string,
+      idNumber: (item.idNumber ?? "") as string,
+      location: (item.location ?? item.Location ?? "") as string,
+      county: (item.county ?? item.region ?? item.County ?? "") as string,
+      programme: (item.programme ?? item.Programme ?? "") as string,
+      phone: (item.phone ?? item.phoneNumber ?? "") as string,
+      username: (item.username ?? item.offtakeUserId ?? "") as string,
+      goats: goatsArr,
+      sheep: sheepArr,
+      cattle: cattleArr,
+      totalGoats:
+        goatsArr.length > 0
+          ? goatsArr.length
+          : (Number(item.totalGoats) || Number(item.noSheepGoats) || 0),
+      noSheepGoats: Number(item.noSheepGoats) || 0,
+      totalPrice:
+        Number(item.totalPrice ?? item.totalprice ?? 0) || 0,
+    } as OfftakeData;
+  }).filter((r): r is OfftakeData => r !== null);
+};
+
+// ---------------------------------------------------------------------------
 // Core analytics builder
 // ---------------------------------------------------------------------------
 
@@ -615,9 +700,6 @@ const buildLocalSalesAnalytics = (
   selectedProgramme: string | null,
   salesInputs: SalesInputs,
 ): SalesAnalyticsPayload => {
-  const emptyState = createEmptySalesAnalytics(salesInputs);
-  if (records.length === 0) return emptyState;
-
   const targetProgramme = getAnalyticsProgrammeToken(selectedProgramme);
 
   const filteredData = records.filter((record) => {
@@ -625,8 +707,6 @@ const buildLocalSalesAnalytics = (
     const matchesProgramme = !targetProgramme || recordProgramme === targetProgramme;
     return matchesProgramme && isDateInRange(record.date, dateRange.startDate, dateRange.endDate);
   });
-
-  if (filteredData.length === 0) return emptyState;
 
   // Accumulators
   let totalPurchaseCost = 0;
@@ -924,7 +1004,8 @@ const useOfftakeData = (
       requisitionData,
       dateRange.endDate,
       dateRange.startDate,
-      salesInputs,
+      salesInputs.pricePerKg,
+      salesInputs.expenses,
       selectedProgramme,
     ],
   );
@@ -950,7 +1031,22 @@ const useOfftakeData = (
     staleTime: 2 * 60 * 1000,
   });
 
-  const data: SalesAnalyticsPayload = queryResult.data ?? localData;
+  const data: SalesAnalyticsPayload = queryResult.data
+    ? {
+        ...queryResult.data,
+        stats: {
+          ...queryResult.data.stats,
+          totalGoatOrdersPlaced: localData.stats.totalGoatOrdersPlaced,
+          totalGoatsPurchasedFromOrders: localData.stats.totalGoatsPurchasedFromOrders,
+          requisitionExpenses: localData.stats.requisitionExpenses,
+          totalRequisitions: localData.stats.totalRequisitions,
+          completedRequisitions: localData.stats.completedRequisitions,
+          completedRequisitionAmount: localData.stats.completedRequisitionAmount,
+        },
+        requisitionTrend: localData.requisitionTrend,
+        requisitionTrendSeries: localData.requisitionTrendSeries,
+      }
+    : localData;
 
   return {
     ...data,
@@ -1216,11 +1312,13 @@ const SalesReport = () => {
       const nextPrice = Number(parsed.pricePerKg);
       const nextExpenses = Number(parsed.expenses);
 
-      setSalesInputs({
-        pricePerKg:
-          Number.isFinite(nextPrice) && nextPrice >= 0 ? nextPrice : 0,
-        expenses:
-          Number.isFinite(nextExpenses) && nextExpenses >= 0 ? nextExpenses : 0,
+      startTransition(() => {
+        setSalesInputs({
+          pricePerKg:
+            Number.isFinite(nextPrice) && nextPrice >= 0 ? nextPrice : 0,
+          expenses:
+            Number.isFinite(nextExpenses) && nextExpenses >= 0 ? nextExpenses : 0,
+        });
       });
     } catch (error) {
       console.error("Failed to load saved sales inputs:", error);
@@ -1232,8 +1330,13 @@ const SalesReport = () => {
     localStorage.setItem(SALES_INPUTS_STORAGE_KEY, JSON.stringify(salesInputs));
   }, [salesInputs]);
 
-  // Fetch offtake data from Firebase (always, used as fallback when Cloud Function is unavailable)
+  // ---------------------------------------------------------------------------
+  // Combined data loading — offtake listener + orders/requisitions fetch
+  // coordinated to reduce overall loading time
+  // ---------------------------------------------------------------------------
+
   useEffect(() => {
+    // Cleanup previous listener
     if (unsubscribeRef.current) {
       unsubscribeRef.current();
       unsubscribeRef.current = null;
@@ -1241,147 +1344,72 @@ const SalesReport = () => {
 
     if (!activeProgram) {
       setOfftakeData([]);
+      setOrderData([]);
+      setRequisitionData([]);
       setLoading(false);
       return;
     }
 
+    const normalizedActive = getAnalyticsProgrammeToken(activeProgram);
+    let cancelled = false;
+    const selectedFinanceProgrammes = isAllProgrammesSelection(activeProgram)
+      ? [...accessibleProgrammes]
+      : normalizedActive
+        ? [normalizedActive]
+        : [];
+
+    // Check cache for offtake data
     const cachedData = dataCache.get(activeProgram);
     if (cachedData) {
       setOfftakeData(cachedData);
-      setLoading(false);
       setIsCacheHit(true);
+      // Only clear loading if orders/requisitions are not needed
+      // We still need to load them, so keep loading = true
     } else {
-      setLoading(true);
       setIsCacheHit(false);
     }
 
-    const normalizedActive = getAnalyticsProgrammeToken(activeProgram);
-
-    const offtakesRef = normalizedActive
-      ? query(ref(db, "offtakes"), orderByChild("programme"), equalTo(normalizedActive))
-      : ref(db, "offtakes");
-
-    const unsubscribe = onValue(
-      offtakesRef,
-      (snapshot) => {
-        const data = snapshot.val();
-        if (!data) {
-          setOfftakeData([]);
-          setLoading(false);
-          return;
-        }
-
-        const entries = Object.entries(data) as [string, Record<string, unknown>][];
-        const offtakeList: OfftakeData[] = [];
-
-        for (const [key, item] of entries) {
-          // Skip if programme filter was applied server-side but some
-          // records don't match (defensive)
-          if (normalizedActive) {
-            const recProg = getAnalyticsProgrammeToken(
-              item.programme ?? item.Programme ?? "",
-            );
-            if (!recProg || recProg !== normalizedActive) continue;
-          }
-
-          let dateValue: Date | string | number =
-            (item.date ?? item.Date ?? item.createdAt) as Date | string | number;
-          if (typeof dateValue === "number") {
-            dateValue = new Date(dateValue);
-          } else if (typeof dateValue === "string") {
-            const d = new Date(dateValue);
-            if (!isNaN(d.getTime())) dateValue = d;
-          }
-
-          const toAnimalArr = (value: unknown): Array<{ live: string; carcass: string; price: string }> => {
-            if (Array.isArray(value)) return value.filter(Boolean) as Array<{ live: string; carcass: string; price: string }>;
-            if (value && typeof value === "object") {
-              return (Object.values(value as Record<string, unknown>)
-                .filter(Boolean) as Array<{ live: string; carcass: string; price: string }>);
-            }
-            return [];
-          };
-
-          const goatsArr = toAnimalArr(item.goats);
-          const sheepArr = toAnimalArr(item.sheep);
-          const cattleArr = toAnimalArr(item.cattle);
-
-          offtakeList.push({
-            id: key,
-            date: dateValue,
-            farmerName: (item.farmerName ?? item.name ?? "") as string,
-            gender: (item.gender ?? "") as string,
-            idNumber: (item.idNumber ?? "") as string,
-            location: (item.location ?? item.Location ?? "") as string,
-            county: (item.county ?? item.region ?? item.County ?? "") as string,
-            programme: (item.programme ?? item.Programme ?? "") as string,
-            phone: (item.phone ?? item.phoneNumber ?? "") as string,
-            username: (item.username ?? item.offtakeUserId ?? "") as string,
-            goats: goatsArr,
-            sheep: sheepArr,
-            cattle: cattleArr,
-            totalGoats:
-              goatsArr.length > 0
-                ? goatsArr.length
-                : (Number(item.totalGoats) || Number(item.noSheepGoats) || 0),
-            noSheepGoats: Number(item.noSheepGoats) || 0,
-            totalPrice:
-              Number(item.totalPrice ?? item.totalprice ?? 0) || 0,
-          });
-        }
-
-        dataCache.set(activeProgram, offtakeList);
-        setOfftakeData(offtakeList);
-        setLoading(false);
-        setIsCacheHit(false);
-      },
-      (error) => {
-        console.error("Error fetching offtake data:", error);
-        toast({
-          title: "Error",
-          description: "Failed to load offtake data.",
-          variant: "destructive",
-        });
-        setLoading(false);
-      },
-    );
-
-    unsubscribeRef.current = unsubscribe;
-    return () => {
-      if (unsubscribe) unsubscribe();
-    };
-  }, [accessibleProgrammes, activeProgram, toast]);
-
-  // Fetch orders & requisitions (always, used as fallback when Cloud Function is unavailable)
-  useEffect(() => {
-    let cancelled = false;
-
-    if (!activeProgram) {
-      setOrderData([]);
-      setRequisitionData([]);
-      return;
-    }
-
-    const normalizedActive = getAnalyticsProgrammeToken(activeProgram);
-
-    const loadFinanceCollections = async () => {
+    // Kick off orders + requisitions fetch in parallel with the offtake listener
+    const financePromise = (async () => {
       try {
-        const ordersRef = normalizedActive
-          ? query(ref(db, "orders"), orderByChild("programme"), equalTo(normalizedActive))
-          : ref(db, "orders");
-        const requisitionsRef = normalizedActive
-          ? query(ref(db, "requisitions"), orderByChild("programme"), equalTo(normalizedActive))
-          : ref(db, "requisitions");
+        const fetchProgrammeSnapshots = async (path: string) => {
+          if (selectedFinanceProgrammes.length === 0) {
+            return [await get(ref(db, path))];
+          }
 
-        const [ordersSnap, requisitionsSnap] = await Promise.all([
-          get(ordersRef),
-          get(requisitionsRef),
+          const reads = selectedFinanceProgrammes.flatMap((programme) => [
+            get(query(ref(db, path), orderByChild("programme"), equalTo(programme))),
+            get(query(ref(db, path), orderByChild("Programme"), equalTo(programme))),
+          ]);
+
+          return Promise.all(reads);
+        };
+
+        const [ordersSnaps, requisitionsSnaps] = await Promise.all([
+          fetchProgrammeSnapshots("orders"),
+          fetchProgrammeSnapshots("requisitions"),
         ]);
 
         if (cancelled) return;
 
-        const ordersList = ordersSnap.exists()
-          ? Object.entries(ordersSnap.val() as Record<string, unknown>)
+        const orderEntries = new Map<string, unknown>();
+        ordersSnaps.forEach((snapshot) => {
+          if (!snapshot.exists()) return;
+          Object.entries(snapshot.val() as Record<string, unknown>).forEach(([id, item]) => {
+            orderEntries.set(id, item);
+          });
+        });
+
+        const requisitionEntries = new Map<string, unknown>();
+        requisitionsSnaps.forEach((snapshot) => {
+          if (!snapshot.exists()) return;
+          Object.entries(snapshot.val() as Record<string, unknown>).forEach(([id, item]) => {
+            requisitionEntries.set(id, item);
+          });
+        });
+
+        const ordersList = orderEntries.size > 0
+          ? Array.from(orderEntries.entries())
               .map(([id, item]) => {
                 const rec = item as Record<string, unknown>;
                 return {
@@ -1393,6 +1421,7 @@ const SalesReport = () => {
                   goats: rec.goats,
                   goatsBought: rec.goatsBought,
                   remainingGoats: rec.remainingGoats,
+                  targetGoats: rec.targetGoats,
                   totalGoats: rec.totalGoats,
                   programme: rec.programme || rec.Programme || "",
                   sourcePage: rec.sourcePage,
@@ -1401,17 +1430,18 @@ const SalesReport = () => {
                   targetOrderId: rec.targetOrderId,
                   offtakeOrderId: rec.offtakeOrderId,
                   orders: rec.orders,
+                  purchaseHistory: rec.purchaseHistory,
                 } as OrderAnalyticsRecord;
               })
               .filter(
                 (record) =>
-                  getAnalyticsProgrammeToken(record.programme) ===
-                  normalizedActive,
+                  selectedFinanceProgrammes.length === 0 ||
+                  selectedFinanceProgrammes.includes(getAnalyticsProgrammeToken(record.programme)),
               )
           : [];
 
-        const requisitionsList = requisitionsSnap.exists()
-          ? Object.entries(requisitionsSnap.val() as Record<string, unknown>)
+        const requisitionsList = requisitionEntries.size > 0
+          ? Array.from(requisitionEntries.entries())
               .map(([id, item]) => {
                 const rec = item as Record<string, unknown>;
                 return {
@@ -1434,27 +1464,76 @@ const SalesReport = () => {
               })
               .filter(
                 (record) =>
-                  getAnalyticsProgrammeToken(record.programme) ===
-                  normalizedActive,
+                  selectedFinanceProgrammes.length === 0 ||
+                  selectedFinanceProgrammes.includes(getAnalyticsProgrammeToken(record.programme)),
               )
           : [];
 
-        setOrderData(ordersList);
-        setRequisitionData(requisitionsList);
+        startTransition(() => {
+          setOrderData(ordersList);
+          setRequisitionData(requisitionsList);
+        });
       } catch (error) {
         console.error("Error fetching finance collections:", error);
+        if (!cancelled) {
+          toast({
+            title: "Error",
+            description: "Failed to load order and requisition data.",
+            variant: "destructive",
+          });
+        }
+      }
+    })();
+
+    // Set up real-time listener for offtake data
+    const offtakesRef = normalizedActive
+      ? query(ref(db, "offtakes"), orderByChild("programme"), equalTo(normalizedActive))
+      : ref(db, "offtakes");
+
+    const unsubscribe = onValue(
+      offtakesRef,
+      (snapshot) => {
+        if (cancelled) return;
+
+        const data = snapshot.val();
+        if (!data) {
+          startTransition(() => {
+            setOfftakeData([]);
+            setLoading(false);
+          });
+          return;
+        }
+
+        const offtakeList = transformOfftakeSnapshot(
+          data as Record<string, Record<string, unknown>>,
+          normalizedActive,
+        );
+
+        dataCache.set(activeProgram, offtakeList);
+
+        startTransition(() => {
+          setOfftakeData(offtakeList);
+          setIsCacheHit(false);
+          setLoading(false);
+        });
+      },
+      (error) => {
+        if (cancelled) return;
+        console.error("Error fetching offtake data:", error);
         toast({
           title: "Error",
-          description: "Failed to load order and requisition data.",
+          description: "Failed to load offtake data.",
           variant: "destructive",
         });
-      }
-    };
+        setLoading(false);
+      },
+    );
 
-    void loadFinanceCollections();
+    unsubscribeRef.current = unsubscribe;
 
     return () => {
       cancelled = true;
+      if (unsubscribe) unsubscribe();
     };
   }, [accessibleProgrammes, activeProgram, toast]);
 
@@ -1544,16 +1623,16 @@ const SalesReport = () => {
     [],
   );
 
-  const openSalesInputsDialog = () => {
+  const openSalesInputsDialog = useCallback(() => {
     if (!userCanManageSalesInputs) return;
     setSalesInputsForm({
       pricePerKg: salesInputs.pricePerKg.toString(),
       expenses: salesInputs.expenses.toString(),
     });
     setIsSalesInputsDialogOpen(true);
-  };
+  }, [userCanManageSalesInputs, salesInputs]);
 
-  const saveSalesInputs = () => {
+  const saveSalesInputs = useCallback(() => {
     if (!userCanManageSalesInputs) {
       toast({
         title: "Unauthorized",
@@ -1584,7 +1663,7 @@ const SalesReport = () => {
       description:
         "Revenue and expenses updated. Revenue uses carcass weight only.",
     });
-  };
+  }, [userCanManageSalesInputs, salesInputsForm, toast]);
 
   // ---------------------------------------------------------------------------
   // Formatting helpers

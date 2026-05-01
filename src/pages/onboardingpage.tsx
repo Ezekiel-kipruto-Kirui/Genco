@@ -5,7 +5,10 @@ import {
   push, 
   update, 
   remove, 
-  set
+  set,
+  query as dbQuery,
+  orderByChild,
+  equalTo
 } from "firebase/database";
 import { db } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
@@ -28,7 +31,7 @@ import {
 } from "@/components/ui/select";
 import { 
   Download, Users, Edit, Trash2, GraduationCap, Eye, MapPin, Upload, Plus, 
-  Calendar, X, UserPlus, User, Phone, Map, FileText, MessageSquare, BookOpen, 
+  Calendar, X, UserPlus, User, Phone, Map as MapIcon, FileText, MessageSquare, BookOpen, 
   Heart, Zap, Target, Leaf, Shield, CheckCircle, Clock, ChevronLeft, ChevronRight 
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
@@ -353,10 +356,6 @@ const OnboardingCard = ({
 const OnboardingPage = () => {
   const { user, userRole, userAttribute, allowedProgrammes } = useAuth();
   const { toast } = useToast();
-  const onboardingCacheKey = useMemo(
-    () => cacheKey("admin-page", "onboarding", user?.uid || "anonymous"),
-    [user?.uid]
-  );
 
   // --- Programme State (Mimicking CapacityBuildingPage) ---
   const [allOnboarding, setAllOnboarding] = useState<OnboardingData[]>([]);
@@ -400,6 +399,10 @@ const OnboardingPage = () => {
     [allowedProgrammes, userCanViewAllProgrammeData]
   );
   const [activeProgram, setActiveProgram] = useSharedProgrammeSelection(accessibleProgrammes);
+  const onboardingCacheKey = useMemo(
+    () => cacheKey("admin-page", "onboarding", user?.uid || "anonymous", activeProgram || "none"),
+    [activeProgram, user?.uid]
+  );
   const availablePrograms = accessibleProgrammes;
   const requireChiefAdmin = () => {
     if (userIsChiefAdmin) return true;
@@ -463,6 +466,14 @@ const OnboardingPage = () => {
 
   const fetchOnboardingData = async () => {
     try {
+      if (!activeProgram) {
+        setAllOnboarding([]);
+        setFilteredOnboarding([]);
+        setDisplayedOnboarding([]);
+        setLoading(false);
+        return;
+      }
+
       const cachedOnboarding = readCachedValue<OnboardingData[]>(onboardingCacheKey);
       if (cachedOnboarding) {
         const normalizedCachedOnboarding = cachedOnboarding.map(normalizeOnboardingRecord);
@@ -472,11 +483,16 @@ const OnboardingPage = () => {
         setLoading(true);
       }
       const dbRef = ref(db, COLLECTION_NAME);
-      const snapshot = await get(dbRef);
+      const [programmeSnapshot, legacyProgrammeSnapshot] = await Promise.all([
+        get(dbQuery(dbRef, orderByChild("programme"), equalTo(activeProgram))),
+        get(dbQuery(dbRef, orderByChild("Programme"), equalTo(activeProgram))),
+      ]);
       
-      const data: OnboardingData[] = [];
+      const dataById = new Map<string, OnboardingData>();
       
-      if (snapshot.exists()) {
+      const appendSnapshotRecords = (snapshot: typeof programmeSnapshot) => {
+        if (!snapshot.exists()) return;
+
         snapshot.forEach((childSnapshot) => {
           const docData = childSnapshot.val();
           const record = {
@@ -486,28 +502,27 @@ const OnboardingPage = () => {
             comment: docData.comment || "",
             staff: docData.staff || [],
             farmers: docData.farmers || [],
-            programme: docData.programme || 'KPMD',
+            programme: docData.programme || docData.Programme || 'KPMD',
             createdAt: docData.createdAt ? new Date(docData.createdAt) : new Date(),
             status: docData.status || 'pending'
           };
 
-          // Client-side filtering based on Firebase Rules logic (Match CapacityBuilding logic)
-          if (userCanViewAllProgrammeData) {
-            data.push(record);
-          } else {
-            if (availablePrograms.includes(record.programme)) {
-              data.push(record);
-            }
+          if (childSnapshot.key && (userCanViewAllProgrammeData || availablePrograms.includes(record.programme))) {
+            dataById.set(childSnapshot.key, record);
           }
         });
-      }
+      };
+
+      appendSnapshotRecords(programmeSnapshot);
+      appendSnapshotRecords(legacyProgrammeSnapshot);
       
+      const data = Array.from(dataById.values());
       const sortedData = sortOnboardingByLatest(data);
       setAllOnboarding(sortedData);
       writeCachedValue(onboardingCacheKey, sortedData);
       // FilteredOnboarding will be updated by the programme filter effect
       setSelectedRecords([]);
-      if (!snapshot.exists()) {
+      if (data.length === 0) {
         removeCachedValue(onboardingCacheKey);
       }
     } catch (error) {
@@ -540,7 +555,7 @@ const OnboardingPage = () => {
     }
 
     fetchOnboardingData();
-  }, [userRole, userCanViewAllProgrammeData, availablePrograms]); // Re-fetch when access scope is resolved
+  }, [userRole, userCanViewAllProgrammeData, availablePrograms, activeProgram]); // Re-fetch when access scope is resolved
 
   // --- Filtering Logic including Programme Switcher ---
   const filterAndProcessData = useCallback((data: OnboardingData[], filterParams: Filters, program: string) => {
@@ -909,7 +924,7 @@ const OnboardingPage = () => {
         />
         <StatsCard title="TRAINING SESSIONS" value={stats.totalOnboarding} icon={GraduationCap} description={`${stats.completedSessions} completed, ${stats.pendingSessions} pending`} />
         {/* <StatsCard title="SUBCOUNTIES COVERED" value={stats.uniqueSubcounties} icon={MapPin} description="Unique subcounties reached" /> */}
-        <StatsCard title="COUNTIES COVERED" value={stats.uniqueCounties} icon={Map} description="Unique counties reached" />
+        <StatsCard title="COUNTIES COVERED" value={stats.uniqueCounties} icon={MapIcon} description="Unique counties reached" />
       </div>
 
       {/* Date Filters Card */}

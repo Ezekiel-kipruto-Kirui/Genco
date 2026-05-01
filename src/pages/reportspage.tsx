@@ -867,6 +867,7 @@ const useProcessedData = (
     enabled: USE_REMOTE_ANALYTICS && !!selectedProgramme,
     placeholderData: (previousData) => previousData,
     staleTime: 2 * 60 * 1000,
+    retry: 0,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
   });
@@ -1760,7 +1761,7 @@ const PerformanceReport = () => {
     [data.registrationTrendComparisonData, data.registrationTrendData, registrationTrendMode],
   );
 
-  if (analysisLoading || loading) {
+  if (loading && !USE_REMOTE_ANALYTICS) {
     return (
       <div className="flex flex-col justify-center items-center h-96 space-y-4">
         <Loader2 className="h-12 w-12 animate-spin text-blue-600" />

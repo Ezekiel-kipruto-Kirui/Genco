@@ -10,7 +10,9 @@
       "Bash(git commit -m 'Fix Vercel build: use standard dist output instead of Build Output API *)",
       "Bash(git push *)",
       "Bash(git rm *)",
-      "Bash(git commit -m 'Remove committed .vercel/output artifacts and exclude via .gitignore *)"
+      "Bash(git commit -m 'Remove committed .vercel/output artifacts and exclude via .gitignore *)",
+      "Bash(node -e ' *)",
+      "PowerShell(& \"C:\\\\Users\\\\Ezekiel Kirui\\\\AppData\\\\Roaming\\\\npm\\\\firebase.cmd\" deploy --only database)"
     ]
   }
 }
