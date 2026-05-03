@@ -108,6 +108,31 @@ interface TrainingRecord {
   uploadedAtISO?: string;        // ISO string when report was uploaded
 }
 
+const getStringField = (
+  source: Record<string, unknown>,
+  keys: string[],
+): string => {
+  for (const key of keys) {
+    const value = source[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return "";
+};
+
+const getNestedStringField = (
+  source: Record<string, unknown>,
+  parentKeys: string[],
+  childKeys: string[],
+): string => {
+  for (const parentKey of parentKeys) {
+    const parent = source[parentKey];
+    if (!parent || typeof parent !== "object") continue;
+    const value = getStringField(parent as Record<string, unknown>, childKeys);
+    if (value) return value;
+  }
+  return "";
+};
+
 interface Filters {
   search: string;
   startDate: string;
@@ -237,19 +262,65 @@ const useDebounce = (value: string, delay: number) => {
 
 const getRecordPdfUrl = (record: TrainingRecord | null | undefined): string => {
   if (!record) return "";
+  const source = record as unknown as Record<string, unknown>;
   return (
-    record.pdfUrl ||
-    record.validationDocumentPdfUrl ||
-    record.validationDocumentUrl ||
-    record.documentPdfUrl ||
-    record.pdfDownloadUrl ||
-    ""
+    getStringField(source, [
+      "pdfUrl",
+      "pdfURL",
+      "validationDocumentPdfUrl",
+      "validationDocumentPdfURL",
+      "validationDocumentUrl",
+      "validationDocumentURL",
+      "documentPdfUrl",
+      "documentPdfURL",
+      "pdfDownloadUrl",
+      "pdfDownloadURL",
+      "downloadUrl",
+      "downloadURL",
+      "url",
+      "uri",
+    ]) ||
+    getNestedStringField(
+      source,
+      ["pdfFile", "validationDocument", "validationDocumentPdf", "document", "file"],
+      ["url", "uri", "downloadUrl", "downloadURL", "pdfUrl", "pdfURL"],
+    )
   );
 };
 
 const getRecordPdfName = (record: TrainingRecord | null | undefined): string => {
   if (!record) return "Validation document.pdf";
-  return record.pdfFile?.name || "Validation document.pdf";
+  const source = record as unknown as Record<string, unknown>;
+  return (
+    record.pdfFile?.name ||
+    getNestedStringField(
+      source,
+      ["pdfFile", "validationDocument", "validationDocumentPdf", "document", "file"],
+      ["name", "fileName", "filename"],
+    ) ||
+    "Validation document.pdf"
+  );
+};
+
+const normalizeGeneratedDate = (
+  raw: Record<string, unknown>,
+  fallbackCreatedAt: unknown,
+): string => {
+  const uploadedAtISO = getStringField(raw, ["uploadedAtISO", "uploadedAt", "createdAt"]);
+  if (uploadedAtISO) return uploadedAtISO;
+
+  const generatedAt =
+    typeof raw.generatedAt === "number"
+      ? raw.generatedAt
+      : typeof raw.generatedAt === "string"
+        ? Number(raw.generatedAt)
+        : NaN;
+
+  if (Number.isFinite(generatedAt)) {
+    return new Date(generatedAt).toISOString();
+  }
+
+  return typeof fallbackCreatedAt === "string" ? fallbackCreatedAt : "";
 };
 
 // ──────────────────────────────────────────────
@@ -288,23 +359,33 @@ const normalizeRecord = (
       endDate: (first.endDateISO as string) || (first.endDateLabel as string) || "",
       fieldOfficer: (raw.fieldOfficer as string) || (first.fieldOfficer as string) || "",
       username: (raw.fieldOfficer as string) || (first.fieldOfficer as string) || "",
-      createdAt: (raw.uploadedAtISO as string) || (raw.generatedAt as string)
-        ? new Date(Number(raw.generatedAt)).toISOString()
-        : (first.createdAt as string) || "",
+      createdAt: normalizeGeneratedDate(raw, first.createdAt),
       rawTimestamp: Number(raw.generatedAt) || 0,
 
       // ── Weekly report metadata ──
       recordType,
       reportId: (raw.reportId as string) || "",
       entries,
-      pdfUrl: (raw.pdfUrl as string) || "",
-      validationDocumentPdfUrl: (raw.validationDocumentPdfUrl as string) || "",
-      validationDocumentUrl: (raw.validationDocumentUrl as string) || "",
-      documentPdfUrl: (raw.documentPdfUrl as string) || "",
-      pdfDownloadUrl: (raw.pdfDownloadUrl as string) || "",
+      pdfUrl:
+        getStringField(raw, ["pdfUrl", "pdfURL", "downloadUrl", "downloadURL", "url"]) ||
+        getNestedStringField(
+          raw,
+          ["pdfFile", "validationDocument", "validationDocumentPdf", "document", "file"],
+          ["url", "uri", "downloadUrl", "downloadURL", "pdfUrl", "pdfURL"],
+        ),
+      validationDocumentPdfUrl: getStringField(raw, [
+        "validationDocumentPdfUrl",
+        "validationDocumentPdfURL",
+      ]),
+      validationDocumentUrl: getStringField(raw, [
+        "validationDocumentUrl",
+        "validationDocumentURL",
+      ]),
+      documentPdfUrl: getStringField(raw, ["documentPdfUrl", "documentPdfURL"]),
+      pdfDownloadUrl: getStringField(raw, ["pdfDownloadUrl", "pdfDownloadURL"]),
       pdfFile: (raw.pdfFile as PdfFileInfo) || null,
       generatedAt: Number(raw.generatedAt) || 0,
-      uploadedAtISO: (raw.uploadedAtISO as string) || "",
+      uploadedAtISO: getStringField(raw, ["uploadedAtISO", "uploadedAt"]),
 
       // programme is not set on weekly reports – leave empty
       programme: (raw.programme as string) || "",
