@@ -15,6 +15,7 @@ import {
   equalTo,
   onValue,
   get,
+  DataSnapshot,
 } from "firebase/database";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -416,7 +417,14 @@ const getOfftakePurchaseCost = (record: Partial<OfftakeData>): number => {
 const normalizeIdentityToken = (value: unknown): string =>
   typeof value === "string" ? value.trim().toLowerCase() : "";
 
+// ---------------------------------------------------------------------------
+// FIX #3: Beneficiary aggregation now prioritises farmerName over idNumber
+// ---------------------------------------------------------------------------
+
 const getBeneficiaryAggregationKey = (record: Partial<OfftakeData>): string => {
+  const nameToken = normalizeIdentityToken(record.farmerName);
+  if (nameToken) return `name:${nameToken}`;
+
   const idToken = normalizeIdentityToken(record.idNumber);
   if (idToken) return `id:${idToken}`;
 
@@ -425,9 +433,6 @@ const getBeneficiaryAggregationKey = (record: Partial<OfftakeData>): string => {
 
   const usernameToken = normalizeIdentityToken(record.username);
   if (usernameToken) return `user:${usernameToken}`;
-
-  const nameToken = normalizeIdentityToken(record.farmerName);
-  if (nameToken) return `name:${nameToken}`;
 
   return `record:${String(record.id || "").trim()}`;
 };
@@ -1165,6 +1170,49 @@ const TOOLTIP_STYLE: React.CSSProperties = {
 };
 
 // ---------------------------------------------------------------------------
+// Helper: safe Firebase multi-field query with index fallback
+// ---------------------------------------------------------------------------
+
+/**
+ * Tries querying by "programme" (lowercase) first, then by "Programme"
+ * (capitalised).  If the capitalised query fails because no composite index
+ * exists it is silently skipped instead of crashing the entire data load.
+ */
+const safeGetByProgramme = async (
+  path: string,
+  programme: string,
+): Promise<DataSnapshot[]> => {
+  const results: DataSnapshot[] = [];
+
+  // Always try the lowercase variant first — this is the primary field.
+  try {
+    const snap = await get(
+      query(ref(db, path), orderByChild("programme"), equalTo(programme)),
+    );
+    results.push(snap);
+  } catch (err) {
+    console.warn(`[safeGetByProgramme] "programme" query failed on /${path}:`, err);
+  }
+
+  // Try the capitalised variant — gracefully skip if the index is missing.
+  try {
+    const snap = await get(
+      query(ref(db, path), orderByChild("Programme"), equalTo(programme)),
+    );
+    results.push(snap);
+  } catch (err) {
+    // Index not defined for "Programme" — this is expected on some Realtime
+    // Database instances.  Log at debug level and continue.
+    console.debug(
+      `[safeGetByProgramme] "Programme" index missing on /${path}, skipping. Error:`,
+      err,
+    );
+  }
+
+  return results;
+};
+
+// ---------------------------------------------------------------------------
 // Main Component
 // ---------------------------------------------------------------------------
 
@@ -1248,10 +1296,17 @@ const SalesReport = () => {
   );
 
   const showProgrammeFilter = accessibleProgrammes.length > 1;
-  const [activeProgram, setActiveProgram] = useSharedProgrammeSelection(accessibleProgrammes, {
+
+  // ---------------------------------------------------------------------------
+  // FIX #2: Cast activeProgram to string to satisfy DataCache.get(string)
+  // ---------------------------------------------------------------------------
+  const sharedSelection = useSharedProgrammeSelection(accessibleProgrammes, {
     allowAll: accessibleProgrammes.length > 1,
     fallbackToAll: accessibleProgrammes.length > 1,
   });
+  const activeProgram: string = String(sharedSelection[0] ?? "");
+  const setActiveProgram = sharedSelection[1];
+
   const appliedDefaultProgrammeRef = useRef(false);
 
   useEffect(() => {
@@ -1379,41 +1434,43 @@ const SalesReport = () => {
     // Kick off orders + requisitions fetch in parallel with the offtake listener
     void (async () => {
       try {
-        const fetchProgrammeSnapshots = async (path: string) => {
-          if (selectedFinanceProgrammes.length === 0) {
-            return [];
-          }
-
-          const reads = selectedFinanceProgrammes.flatMap((programme) => [
-            get(query(ref(db, path), orderByChild("programme"), equalTo(programme))),
-            get(query(ref(db, path), orderByChild("Programme"), equalTo(programme))),
-          ]);
-
-          return Promise.all(reads);
-        };
-
-        const [ordersSnaps, requisitionsSnaps] = await Promise.all([
-          fetchProgrammeSnapshots("orders"),
-          fetchProgrammeSnapshots("requisitions"),
-        ]);
+        // -----------------------------------------------------------------
+        // FIX #1: Use safeGetByProgramme to gracefully handle missing index
+        // -----------------------------------------------------------------
+        const allSnapshots = await Promise.all(
+          selectedFinanceProgrammes.flatMap((programme) => [
+            safeGetByProgramme("orders", programme),
+            safeGetByProgramme("requisitions", programme),
+          ]),
+        );
 
         if (cancelled) return;
 
         const orderEntries = new Map<string, unknown>();
-        ordersSnaps.forEach((snapshot) => {
-          if (!snapshot.exists()) return;
-          Object.entries(snapshot.val() as Record<string, unknown>).forEach(([id, item]) => {
-            orderEntries.set(id, item);
-          });
-        });
-
         const requisitionEntries = new Map<string, unknown>();
-        requisitionsSnaps.forEach((snapshot) => {
-          if (!snapshot.exists()) return;
-          Object.entries(snapshot.val() as Record<string, unknown>).forEach(([id, item]) => {
-            requisitionEntries.set(id, item);
-          });
-        });
+
+        // First half of results are orders, second half are requisitions
+        const midPoint = Math.floor(allSnapshots.length / 2);
+
+        for (let i = 0; i < midPoint; i++) {
+          const snapshotBatches = allSnapshots[i];
+          for (const snapshot of snapshotBatches) {
+            if (!snapshot.exists()) continue;
+            Object.entries(snapshot.val() as Record<string, unknown>).forEach(([id, item]) => {
+              orderEntries.set(id, item);
+            });
+          }
+        }
+
+        for (let i = midPoint; i < allSnapshots.length; i++) {
+          const snapshotBatches = allSnapshots[i];
+          for (const snapshot of snapshotBatches) {
+            if (!snapshot.exists()) continue;
+            Object.entries(snapshot.val() as Record<string, unknown>).forEach(([id, item]) => {
+              requisitionEntries.set(id, item);
+            });
+          }
+        }
 
         const ordersList = orderEntries.size > 0
           ? Array.from(orderEntries.entries())
@@ -1492,28 +1549,28 @@ const SalesReport = () => {
 
     const loadSelectedProgrammeOfftakes = async () => {
       try {
-        const snapshots = await (async () => {
-          if (selectedFinanceProgrammes.length === 0) return [];
-
-          const reads = selectedFinanceProgrammes.flatMap((programme) => [
-            get(query(ref(db, "offtakes"), orderByChild("programme"), equalTo(programme))),
-            get(query(ref(db, "offtakes"), orderByChild("Programme"), equalTo(programme))),
-          ]);
-
-          return Promise.all(reads);
-        })();
+        // -----------------------------------------------------------------
+        // FIX #1: Use safeGetByProgramme for offtake "all programmes" path
+        // -----------------------------------------------------------------
+        const snapshotBatches = await Promise.all(
+          selectedFinanceProgrammes.map((programme) =>
+            safeGetByProgramme("offtakes", programme),
+          ),
+        );
 
         if (cancelled) return;
 
         const recordsById = new Map<string, Record<string, unknown>>();
-        snapshots.forEach((snapshot) => {
-          if (!snapshot.exists()) return;
-          Object.entries(snapshot.val() as Record<string, Record<string, unknown>>).forEach(
-            ([id, item]) => {
-              recordsById.set(id, item);
-            },
-          );
-        });
+        for (const batch of snapshotBatches) {
+          for (const snapshot of batch) {
+            if (!snapshot.exists()) continue;
+            Object.entries(snapshot.val() as Record<string, Record<string, unknown>>).forEach(
+              ([id, item]) => {
+                recordsById.set(id, item);
+              },
+            );
+          }
+        }
 
         const offtakeList = transformOfftakeSnapshot(
           Object.fromEntries(recordsById),
@@ -1551,7 +1608,8 @@ const SalesReport = () => {
       };
     }
 
-    // Set up real-time listener for offtake data
+    // Set up real-time listener for offtake data (single programme —
+    // lowercase "programme" field is indexed, so this is safe)
     const offtakesRef = normalizedActive
       ? query(ref(db, "offtakes"), orderByChild("programme"), equalTo(normalizedActive))
       : query(ref(db, "offtakes"), orderByChild("programme"), equalTo("__NO_PROGRAMME__"));

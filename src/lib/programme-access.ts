@@ -128,10 +128,15 @@ export const getAssignedProgrammes = (
  * - mobile → only programmes explicitly marked `true` in allowedProgrammes.
  */
 export const resolveAccessibleProgrammes = (
-  role: string | null | undefined,
+  roleOrCanViewAll: string | boolean | null | undefined,
   allowedProgrammes: Record<string, boolean> | null | undefined
 ): ProgrammeOption[] => {
-  if (hasAllProgrammeAccess(role)) return [...PROGRAMME_OPTIONS];
+  if (
+    roleOrCanViewAll === true ||
+    (typeof roleOrCanViewAll === "string" && hasAllProgrammeAccess(roleOrCanViewAll))
+  ) {
+    return [...PROGRAMME_OPTIONS];
+  }
   return getAssignedProgrammes(allowedProgrammes);
 };
 
