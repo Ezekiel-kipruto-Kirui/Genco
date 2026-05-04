@@ -181,6 +181,41 @@ const EXPORT_HEADERS = [
   "Officer", "Programme", "PDF Link",
 ];
 
+const INVALID_FIREBASE_KEY_CHARS = /[.#$\/\[\]]/g;
+
+const sanitizeFirebaseKey = (key: string, fallback: string): string => {
+  const sanitized = key
+    .replace(/^\uFEFF/, "")
+    .replace(INVALID_FIREBASE_KEY_CHARS, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return sanitized || fallback;
+};
+
+const sanitizeFirebaseValue = (value: unknown): unknown => {
+  if (value === undefined) return null;
+  if (value === null) return null;
+  if (Array.isArray(value)) return value.map(sanitizeFirebaseValue);
+  if (typeof value !== "object") return value;
+
+  const sanitizedObject: Record<string, unknown> = {};
+  Object.entries(value as Record<string, unknown>).forEach(([key, childValue], index) => {
+    const baseKey = sanitizeFirebaseKey(key, `field_${index + 1}`);
+    let safeKey = baseKey;
+    let suffix = 2;
+
+    while (Object.prototype.hasOwnProperty.call(sanitizedObject, safeKey)) {
+      safeKey = `${baseKey}_${suffix}`;
+      suffix += 1;
+    }
+
+    sanitizedObject[safeKey] = sanitizeFirebaseValue(childValue);
+  });
+
+  return sanitizedObject;
+};
+
 const parseDate = (date: unknown): Date | null => {
   if (!date) return null;
   try {
@@ -212,12 +247,26 @@ const getTrainingTimestamp = (
 ): number => {
   if (!record) return 0;
   const parsed =
-    parseDate(record.startDate) ||
     parseDate(record.createdAt) ||
+    parseDate(record.uploadedAtISO) ||
     parseDate(record.rawTimestamp) ||
     parseDate(record.generatedAt) ||
-    parseDate(record.uploadedAtISO);
+    parseDate(record.startDate);
   return parsed ? parsed.getTime() : 0;
+};
+
+const getRecordCreationDate = (
+  record: Partial<TrainingRecord> | null | undefined,
+): unknown => {
+  if (!record) return "";
+  return (
+    record.createdAt ||
+    record.uploadedAtISO ||
+    record.rawTimestamp ||
+    record.generatedAt ||
+    record.startDate ||
+    ""
+  );
 };
 
 const sortTrainingByLatest = (records: TrainingRecord[]): TrainingRecord[] =>
@@ -611,12 +660,7 @@ const CapacityBuildingPage = () => {
       }
 
       // ── Date range filter ──
-      const recordDate =
-        parseDate(record.startDate) ||
-        parseDate(record.createdAt) ||
-        parseDate(record.rawTimestamp) ||
-        parseDate(record.generatedAt) ||
-        parseDate(record.uploadedAtISO);
+      const recordDate = parseDate(getRecordCreationDate(record));
 
       if (filters.startDate || filters.endDate) {
         if (recordDate) {
@@ -974,6 +1018,13 @@ const CapacityBuildingPage = () => {
         const findIndex = (keys: string[]) =>
           cleanHeaders.findIndex((h) => keys.some((k) => h.includes(k)));
 
+        const idxCreated = findIndex([
+          "date created",
+          "created at",
+          "created",
+          "upload date",
+          "uploaded",
+        ]);
         const idxTopic = findIndex([
           "topic trained",
           "topic",
@@ -1015,10 +1066,12 @@ const CapacityBuildingPage = () => {
           const obj: Record<string, unknown> = {};
 
           headers.forEach((h, idx) => {
-            obj[h] = values[idx] !== undefined ? values[idx].trim() : "";
+            obj[sanitizeFirebaseKey(h, `field_${idx + 1}`)] =
+              values[idx] !== undefined ? values[idx].trim() : "";
           });
 
           if (idxTopic !== -1) obj.topicTrained = valAt(values, idxTopic);
+          if (idxCreated !== -1) obj.createdAt = valAt(values, idxCreated);
           if (idxCounty !== -1) obj.county = valAt(values, idxCounty);
           if (idxSub !== -1) obj.subcounty = valAt(values, idxSub);
           if (idxStart !== -1) obj.startDate = valAt(values, idxStart);
@@ -1036,12 +1089,14 @@ const CapacityBuildingPage = () => {
       const collectionRef = ref(db, "capacityBuilding");
 
       for (const item of parsedData) {
+        const safeItem = sanitizeFirebaseValue(item) as Record<string, unknown>;
+        const createdDate = parseDate(safeItem.createdAt) || new Date();
         await push(collectionRef, {
-          ...item,
+          ...safeItem,
           programme: selectedProgramme,
           Programme: selectedProgramme,
-          createdAt: new Date().toISOString(),
-          rawTimestamp: Date.now(),
+          createdAt: createdDate.toISOString(),
+          rawTimestamp: createdDate.getTime(),
         });
         count++;
       }
@@ -1425,13 +1480,7 @@ const CapacityBuildingPage = () => {
                           />
                         </td>
                         <td className="py-2 px-3 text-xs text-gray-500">
-                          {formatDate(
-                            record.startDate ||
-                              record.createdAt ||
-                              record.rawTimestamp ||
-                              record.generatedAt ||
-                              record.uploadedAtISO,
-                          )}
+                          {formatDate(getRecordCreationDate(record))}
                         </td>
                         <td className="py-2 px-3 text-xs font-medium">
                           {record.county || record.region || "N/A"}
