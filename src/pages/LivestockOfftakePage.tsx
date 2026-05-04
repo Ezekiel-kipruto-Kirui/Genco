@@ -1,7 +1,7 @@
 ﻿import { useState, useEffect, useCallback, useMemo, useRef, memo } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { getAuth } from "firebase/auth";
-import { ref, set, update, remove, onValue, push, query, orderByChild, equalTo } from "firebase/database";
+import { ref, set, update, remove, onValue, push } from "firebase/database";
 import { db, fetchCollection } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,6 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
+import { ScrollableFilterBar } from "@/components/ScrollableFilterBar";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Download, Users, MapPin, Eye, Calendar, Scale, Phone, CreditCard, Edit, Trash2, Weight, Upload, Loader2 } from "lucide-react";
@@ -18,7 +19,7 @@ import { useSharedProgrammeSelection } from "@/hooks/use-shared-programme-select
 import { toast, useToast } from "@/hooks/use-toast";
 import { canViewAllProgrammes, isChiefAdmin } from "@/contexts/authhelper";
 import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
-import { PROGRAMME_OPTIONS, resolveAccessibleProgrammes } from "@/lib/programme-access";
+import { matchesActiveProgramme, PROGRAMME_OPTIONS, resolveAccessibleProgrammes, resolveActiveProgramme } from "@/lib/programme-access";
 
 // Types
 interface OfftakeData {
@@ -114,8 +115,11 @@ const FilterSection = memo(({
   onSearchChange,
   onFilterChange
 }: FilterSectionProps) => (
-  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-    <div className="space-y-2">
+  <ScrollableFilterBar
+    ariaLabel="Livestock offtake filters"
+    contentClassName="sm:grid-cols-2 lg:grid-cols-5"
+  >
+    <div className="w-[240px] shrink-0 space-y-2 sm:w-auto">
       <Label htmlFor="search" className="font-semibold text-gray-700">Search</Label>
       <Input
         id="search"
@@ -126,7 +130,7 @@ const FilterSection = memo(({
       />
     </div>
 
-    <div className="space-y-2">
+    <div className="w-[190px] shrink-0 space-y-2 sm:w-auto">
       <Label htmlFor="region" className="font-semibold text-gray-700">Counties</Label>
       <Select value={filters.region} onValueChange={(value) => onFilterChange("region", value)}>
         <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white">
@@ -141,7 +145,7 @@ const FilterSection = memo(({
       </Select>
     </div>
 
-    <div className="space-y-2">
+    <div className="w-[190px] shrink-0 space-y-2 sm:w-auto">
       <Label htmlFor="gender" className="font-semibold text-gray-700">Gender</Label>
       <Select value={filters.gender} onValueChange={(value) => onFilterChange("gender", value)}>
         <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white">
@@ -156,7 +160,7 @@ const FilterSection = memo(({
       </Select>
     </div>
 
-    <div className="space-y-2">
+    <div className="w-[156px] shrink-0 space-y-2 sm:w-auto">
       <Label htmlFor="startDate" className="font-semibold text-gray-700">From Date</Label>
       <Input
         id="startDate"
@@ -167,7 +171,7 @@ const FilterSection = memo(({
       />
     </div>
 
-    <div className="space-y-2">
+    <div className="w-[156px] shrink-0 space-y-2 sm:w-auto">
       <Label htmlFor="endDate" className="font-semibold text-gray-700">To Date</Label>
       <Input
         id="endDate"
@@ -177,7 +181,7 @@ const FilterSection = memo(({
         className="border-gray-300 focus:border-blue-500 bg-white"
       />
     </div>
-  </div>
+  </ScrollableFilterBar>
 ));
 
 
@@ -703,7 +707,7 @@ const LivestockOfftakePage = () => {
       setLoading(true);
     }
     
-    const dbRef = query(ref(db, 'offtakes'), orderByChild('programme'), equalTo(activeProgram));
+    const dbRef = ref(db, 'offtakes');
 
     const unsubscribe = onValue(dbRef, (snapshot) => {
       const data = snapshot.val();
@@ -749,7 +753,7 @@ const LivestockOfftakePage = () => {
           totalprice: Number(item.totalPrice || 0),
           createdAt: item.createdAt || Date.now()
         };
-      });
+      }).filter((record) => matchesActiveProgramme(record.programme, activeProgram));
 
       const sortedOfftakeList = sortOfftakeByLatest(offtakeList);
       setAllOfftake(sortedOfftakeList);

@@ -14,6 +14,7 @@ import { db } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ScrollableFilterBar } from "@/components/ScrollableFilterBar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { 
@@ -954,21 +955,21 @@ const OnboardingPage = () => {
       {/* Date Filters Card */}
       <Card className="shadow-lg border-0 bg-white">
         <CardContent className="space-y-4 pt-6">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="space-y-2">
+          <ScrollableFilterBar ariaLabel="Onboarding filters" contentClassName="sm:grid-cols-2 lg:grid-cols-3">
+            <div className="w-[156px] shrink-0 space-y-2 sm:w-auto">
               <Label htmlFor="startDate" className="font-semibold text-gray-700">From Date</Label>
               <Input id="startDate" type="date" value={filters.startDate} onChange={(e) => setFilters(prev => ({ ...prev, startDate: e.target.value }))} className="border-gray-300 focus:border-blue-500 focus:ring-blue-500 bg-white" />
             </div>
-            <div className="space-y-2">
+            <div className="w-[156px] shrink-0 space-y-2 sm:w-auto">
               <Label htmlFor="endDate" className="font-semibold text-gray-700">To Date</Label>
               <Input id="endDate" type="date" value={filters.endDate} onChange={(e) => setFilters(prev => ({ ...prev, endDate: e.target.value }))} className="border-gray-300 focus:border-blue-500 focus:ring-blue-500 bg-white" />
             </div>
-            <div className="space-y-2 flex items-end">
+            <div className="w-[120px] shrink-0 space-y-2 sm:w-auto sm:flex sm:items-end">
               <div className="flex gap-2 w-full">
                 {/* Placeholder for potential future filters */}
               </div>
             </div>
-          </div>
+          </ScrollableFilterBar>
         </CardContent>
       </Card>
 

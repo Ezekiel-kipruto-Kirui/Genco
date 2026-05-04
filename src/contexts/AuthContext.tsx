@@ -31,7 +31,17 @@ interface AuthContextType {
   signOutUser: () => Promise<void>;
 }
 
-const AuthContext = createContext<AuthContextType | undefined>(undefined);
+declare global {
+  var __gencoAuthContext__: ReturnType<typeof createContext<AuthContextType | undefined>> | undefined;
+}
+
+const AuthContext =
+  globalThis.__gencoAuthContext__ ??
+  createContext<AuthContextType | undefined>(undefined);
+
+if (typeof globalThis !== "undefined") {
+  globalThis.__gencoAuthContext__ = AuthContext;
+}
 
 export const useAuth = () => {
   const context = useContext(AuthContext);

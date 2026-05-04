@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback, useMemo, useRef, ChangeEvent } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import { ref, update, push, onValue, query, orderByChild, equalTo } from "firebase/database";
+import { ref, update, push, onValue } from "firebase/database";
 import { db } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ScrollableFilterBar } from "@/components/ScrollableFilterBar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
@@ -15,7 +16,7 @@ import { useSharedProgrammeSelection } from "@/hooks/use-shared-programme-select
 import { useToast } from "@/hooks/use-toast";
 import { canViewAllProgrammes, isChiefAdmin } from "@/contexts/authhelper";
 import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
-import { resolveAccessibleProgrammes } from "@/lib/programme-access";
+import { matchesActiveProgramme, resolveAccessibleProgrammes, resolveActiveProgramme } from "@/lib/programme-access";
 
 // --- Types ---
 
@@ -215,11 +216,7 @@ const FodderFarmersPage = () => {
       setLoading(true);
     }
 
-    const fodderQuery = query(
-        ref(db, 'fodderFarmers'), 
-        orderByChild('programme'), 
-        equalTo(activeProgram)
-    );
+    const fodderQuery = ref(db, 'fodderFarmers');
 
     const unsubscribe = onValue(fodderQuery, (snapshot) => {
       const data = snapshot.val();
@@ -272,7 +269,7 @@ const FodderFarmersPage = () => {
           farmers: farmersList,
           programme: item.programme || activeProgram
         };
-      });
+      }).filter((record) => matchesActiveProgramme(record.programme, activeProgram));
 
       const sortedFodderData = sortFodderByLatest(fodderData);
       setAllFodder(sortedFodderData);
@@ -579,8 +576,8 @@ const FodderFarmersPage = () => {
   ), []);
 
   const FilterSection = useMemo(() => (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
-      <div className="space-y-2">
+    <ScrollableFilterBar ariaLabel="Fodder offtake filters" contentClassName="sm:grid-cols-2 lg:grid-cols-6">
+      <div className="w-[240px] shrink-0 space-y-2 sm:w-auto">
         <Label htmlFor="search" className="font-semibold text-gray-700">Search</Label>
         <Input
           id="search"
@@ -590,7 +587,7 @@ const FodderFarmersPage = () => {
         />
       </div>
 
-      <div className="space-y-2">
+      <div className="w-[190px] shrink-0 space-y-2 sm:w-auto">
         <Label htmlFor="region" className="font-semibold text-gray-700">County</Label>
         <Select value={filters.region} onValueChange={(value) => handleFilterChange("region", value)}>
           <SelectTrigger className="border-gray-300 focus:border-green-500 focus:ring-green-500 bg-white">
@@ -605,7 +602,7 @@ const FodderFarmersPage = () => {
         </Select>
       </div>
 
-      <div className="space-y-2">
+      <div className="w-[190px] shrink-0 space-y-2 sm:w-auto">
         <Label htmlFor="location" className="font-semibold text-gray-700">Location</Label>
         <Select value={filters.location} onValueChange={(value) => handleFilterChange("location", value)}>
           <SelectTrigger className="border-gray-300 focus:border-green-500 focus:ring-green-500 bg-white">
@@ -620,7 +617,7 @@ const FodderFarmersPage = () => {
         </Select>
       </div>
 
-      <div className="space-y-2">
+      <div className="w-[190px] shrink-0 space-y-2 sm:w-auto">
         <Label htmlFor="model" className="font-semibold text-gray-700">Model</Label>
         <Select value={filters.model} onValueChange={(value) => handleFilterChange("model", value)}>
           <SelectTrigger className="border-gray-300 focus:border-green-500 focus:ring-green-500 bg-white">
@@ -635,7 +632,7 @@ const FodderFarmersPage = () => {
         </Select>
       </div>
 
-      <div className="space-y-2">
+      <div className="w-[156px] shrink-0 space-y-2 sm:w-auto">
         <Label htmlFor="startDate" className="font-semibold text-gray-700">From Date</Label>
         <Input
           id="startDate"
@@ -646,7 +643,7 @@ const FodderFarmersPage = () => {
         />
       </div>
 
-      <div className="space-y-2">
+      <div className="w-[156px] shrink-0 space-y-2 sm:w-auto">
         <Label htmlFor="endDate" className="font-semibold text-gray-700">To Date</Label>
         <Input
           id="endDate"
@@ -656,7 +653,7 @@ const FodderFarmersPage = () => {
           className="border-gray-300 focus:border-green-500 focus:ring-green-500 bg-white"
         />
       </div>
-    </div>
+    </ScrollableFilterBar>
   ), [filters, uniqueRegions, uniqueLocations, uniqueModels]);
 
   const TableRow = useCallback(({ record }: { record: FodderFarmer }) => {

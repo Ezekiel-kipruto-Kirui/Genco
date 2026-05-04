@@ -1,14 +1,16 @@
 import { memo, type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState, startTransition, useDeferredValue } from "react";
 import * as XLSX from "xlsx";
 import { useAuth } from "@/contexts/AuthContext";
-import { onValue, ref, remove, update, push, set, get, query, orderByChild, equalTo } from "firebase/database";
+import { onValue, ref, remove, update, push, set, get } from "firebase/database";
 import { db, fetchCollection } from "@/lib/firebase";
-import { canViewAllProgrammes, isChiefAdmin, isOfftakeOfficer } from "@/contexts/authhelper";
+import { canViewAllProgrammes, isChiefAdmin, isOfftakeOfficer, resolvePermissionPrincipal } from "@/contexts/authhelper";
+import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
 import { useToast } from "@/hooks/use-toast";
-import { resolveAccessibleProgrammes } from "@/lib/programme-access";
+import { matchesActiveProgramme, resolveAccessibleProgrammes } from "@/lib/programme-access";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { ScrollableFilterBar } from "@/components/ScrollableFilterBar";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   DropdownMenu,
@@ -79,6 +81,7 @@ interface OrderRecord {
   recordId?: string;
   completedAt?: string | number;
   county?: string;
+  counties?: string[];
   createdAt?: string | number;
   createdBy?: string;
   date?: string | number;
@@ -193,7 +196,7 @@ interface Pagination {
 interface NewOrderForm {
   date: string;
   goats: string;
-  county: string;
+  counties: string[];
   programme: string;
   orderCode: string;
 }
@@ -233,6 +236,9 @@ interface FieldOfficerOption {
 /* ------------------------------------------------------------------ */
 
 const PAGE_LIMIT = 15;
+const ORDERS_CACHE_TTL_MS = 5 * 60 * 1000;
+const PROGRAMME_OPTIONS = ["KPMD", "RANGE", "MTLDK"] as const;
+
 /* ------------------------------------------------------------------ */
 /* Pure utility functions (outside component)                          */
 /* ------------------------------------------------------------------ */
@@ -270,6 +276,13 @@ const resolveLatestPurchaseDate = (
   const purchaseEntries = getPurchaseHistoryEntries(record as OrderRecord);
   return purchaseEntries[0]?.date || getStoredPurchaseDate(record) || fallback;
 };
+
+const sortOrdersByLatest = (records: OrderRecord[]): OrderRecord[] =>
+  [...records].sort((a, b) => {
+    const aDate = parseDate(a.completedAt || a.createdAt || a.timestamp)?.getTime() || 0;
+    const bDate = parseDate(b.completedAt || b.createdAt || b.timestamp)?.getTime() || 0;
+    return bDate - aDate;
+  });
 
 const normalizeStatus = (value: string | undefined): string => {
   if (!value) return "pending";
@@ -416,10 +429,13 @@ const generateOrderCode = async (county: string): Promise<string> => {
   return `${countyCode}${String(maxNumber + 1).padStart(3, "0")}`;
 };
 
+const formatSelectedCounties = (counties: string[]): string =>
+  counties.map((county) => county.trim()).filter(Boolean).join(", ");
+
 const getDefaultOrderForm = (programme: string): NewOrderForm => ({
   date: toInputDate(new Date()),
   goats: "",
-  county: "",
+  counties: [],
   programme,
   orderCode: "",
 });
@@ -1073,39 +1089,74 @@ interface PrecomputedRecord {
   sortDate: string | number;
 }
 
-/**
- * Optimized fingerprint: avoids expensive JSON.stringify on arrays.
- * Uses array length + goats sum for mobileAppdata/orders to detect changes
- * in O(n) instead of O(n) with huge string allocation overhead.
- */
-const getRecordFingerprint = (r: OrderRecord): string => {
-  const mobileData = r.mobileAppdata;
-  let mobileLen = 0;
-  let mobileGoatsSum = 0;
-  if (Array.isArray(mobileData)) {
-    mobileLen = mobileData.length;
-    for (let i = 0; i < mobileData.length; i++) {
-      mobileGoatsSum += Number((mobileData[i] as OrderItem)?.goats) || 0;
-    }
-  } else if (isObjectRecord(mobileData)) {
-    mobileLen = Object.keys(mobileData).length;
-  }
+const getOrderEntryFingerprint = (item: OrderItem | undefined, index: number): string => {
+  if (!item) return `missing:${index}`;
 
-  const purchaseEntries = getPurchaseHistoryEntries(r);
-  const purchaseLen = purchaseEntries.length;
-  const purchaseGoatsSum = purchaseEntries.reduce((sum, entry) => sum + entry.goats, 0);
-  const latestPurchaseDate = purchaseEntries[0]?.date || "";
-
-  const orders = r.orders;
-  let ordersLen = 0;
-  if (Array.isArray(orders)) {
-    ordersLen = orders.length;
-  } else if (isObjectRecord(orders)) {
-    ordersLen = Object.keys(orders).length;
-  }
-
-  return `${r.programme}:${r.county}:${r.subcounty}:${r.location}:${r.status}:${r.targetGoats}:${r.totalGoats}:${r.goatsBought}:${r.remainingGoats}:${r.purchaseDate}:${r.date}:${r.completedAt}:${r.parentOrderId}:${r.orderId}:${r.batchId}:${r.requestId}:${r.targetOrderId}:${r.offtakeOrderId}:${r.goats}:${mobileLen}:${mobileGoatsSum}:${ordersLen}:${purchaseLen}:${purchaseGoatsSum}:${latestPurchaseDate}`;
+  return [
+    normalizeIdValue(item.id) || `idx:${index}`,
+    item.date ?? "",
+    Number(item.goats || 0),
+    normalizeText(item.location || item.village),
+    normalizeText(item.subcounty),
+    normalizeText(
+      item.fieldOfficer ||
+      item.fieldOfficerName ||
+      item.officer ||
+      item.officerName ||
+      item.createdBy ||
+      item.username
+    ),
+  ].join(":");
 };
+
+const getOrderEntriesFingerprint = (record: OrderRecord): string => {
+  const items = getOrderEntries(record);
+  if (items.length === 0) return "";
+  return items.map(getOrderEntryFingerprint).join("|");
+};
+
+const getOfftakeTeamIdsFingerprint = (record: OrderRecord): string =>
+  getStoredOfftakeTeamIds(record).sort().join("|");
+
+const getOfftakeTeamMembersFingerprint = (record: OrderRecord): string =>
+  getStoredOfftakeTeamMembers(record.offtakeTeamMembers)
+    .map((member) => [
+      member.id,
+      member.name,
+      member.phone,
+      member.email,
+      member.purchaseDate,
+      member.subcounty,
+      member.counties.map((county) => normalizeText(county)).sort().join(","),
+    ].join(":"))
+    .join("|");
+
+const getRecordFingerprint = (r: OrderRecord): string =>
+  [
+    normalizeText(r.programme),
+    normalizeText(r.county),
+    normalizeText(r.subcounty),
+    normalizeText(r.location),
+    normalizeText(r.status),
+    r.targetGoats ?? "",
+    r.totalGoats ?? "",
+    r.goatsBought ?? "",
+    r.remainingGoats ?? "",
+    r.purchaseDate ?? "",
+    r.date ?? "",
+    r.completedAt ?? "",
+    r.parentOrderId ?? "",
+    r.orderId ?? "",
+    r.batchId ?? "",
+    r.requestId ?? "",
+    r.targetOrderId ?? "",
+    r.offtakeOrderId ?? "",
+    r.goats ?? "",
+    getOrderEntriesFingerprint(r),
+    getPurchaseHistoryEntries(r).map((entry) => [entry.id, entry.date, entry.goats, entry.createdAt, entry.recordedBy].join(":")).join("|"),
+    getOfftakeTeamIdsFingerprint(r),
+    getOfftakeTeamMembersFingerprint(r),
+  ].join("::");
 
 /**
  * Incremental precompute: reuses cached precomputed records when unchanged.
@@ -1313,6 +1364,14 @@ const OrdersPage = () => {
     () => isChiefAdmin(userRole) || isOfftakeOfficer(userRole) || isOfftakeOfficer(userAttribute),
     [userRole, userAttribute]
   );
+  const permissionPrincipal = useMemo(
+    () => resolvePermissionPrincipal(userRole, userAttribute),
+    [userAttribute, userRole],
+  );
+  const ordersCacheKey = useMemo(
+    () => cacheKey("admin-page", "orders", permissionPrincipal || "no-access", activeProgram || "no-program"),
+    [activeProgram, permissionPrincipal],
+  );
 
   const ensureOrderCreateAccess = useCallback(() => {
     if (userCanCreateOrders) return true;
@@ -1344,49 +1403,73 @@ const OrdersPage = () => {
       prevRecordsRef.current.clear();
       return;
     }
-    setLoading(true);
-    const ordersRef = query(ref(db, "orders"), orderByChild("programme"), equalTo(activeProgram));
-    const unsubscribe = onValue(
-      ordersRef,
-      (snapshot) => {
-        const data = snapshot.val();
-        if (!data) {
-          if (prevRecordsRef.current.size > 0) {
-            prevRecordsRef.current.clear();
-            startTransition(() => setAllRecords([]));
-          }
-          setLoading(false);
-          return;
-        }
-        const entries = Object.entries(data as Record<string, Partial<OrderRecord>>);
-        const newFingerprints = new Map<string, string>();
-        let hasChanges = false;
+    const cachedRecords = readCachedValue<OrderRecord[]>(ordersCacheKey, ORDERS_CACHE_TTL_MS);
+    if (cachedRecords) {
+      const sortedCachedRecords = sortOrdersByLatest(cachedRecords);
+      prevRecordsRef.current = new Map(
+        sortedCachedRecords.map((record) => [record.id, getRecordFingerprint(record)]),
+      );
+      startTransition(() => setAllRecords(sortedCachedRecords));
+      setLoading(false);
+    } else {
+      prevRecordsRef.current.clear();
+      startTransition(() => setAllRecords([]));
+      setLoading(true);
+    }
 
-        for (const [key, val] of entries) {
-          const fp = JSON.stringify(val);
-          newFingerprints.set(key, fp);
-          if (prevRecordsRef.current.get(key) !== fp) hasChanges = true;
-        }
-        if (prevRecordsRef.current.size !== newFingerprints.size) hasChanges = true;
+    const syncRecords = (rawData: Record<string, Partial<OrderRecord>> | null) => {
+      const entries = Object.entries(rawData || {}).filter(([, value]) => {
+        const recordProgramme = value?.programme;
+        return (
+          matchesActiveProgramme(recordProgramme, activeProgram) ||
+          recordProgramme === "" ||
+          recordProgramme === null ||
+          recordProgramme === undefined
+        );
+      });
+      if (entries.length === 0) {
+        prevRecordsRef.current.clear();
+        startTransition(() => setAllRecords([]));
+        removeCachedValue(ordersCacheKey);
+        setLoading(false);
+        return;
+      }
 
-        if (!hasChanges) {
-          setLoading(false);
-          return;
-        }
-
-        const records: OrderRecord[] = entries.map(([key, val]) => ({
+      const records = sortOrdersByLatest(
+        entries.map(([key, val]) => ({
           ...(val as Partial<OrderRecord> & { id?: string }),
           id: key,
           recordId: val?.id || key,
-        }));
-        records.sort((a, b) => {
-          const aDate = parseDate(a.completedAt || a.createdAt || a.timestamp)?.getTime() || 0;
-          const bDate = parseDate(b.completedAt || b.createdAt || b.timestamp)?.getTime() || 0;
-          return bDate - aDate;
-        });
-        prevRecordsRef.current = newFingerprints;
-        startTransition(() => setAllRecords(records));
+        })),
+      );
+
+      const newFingerprints = new Map<string, string>();
+      let hasChanges = records.length !== prevRecordsRef.current.size;
+
+      for (const record of records) {
+        const fingerprint = getRecordFingerprint(record);
+        newFingerprints.set(record.id, fingerprint);
+        if (prevRecordsRef.current.get(record.id) !== fingerprint) {
+          hasChanges = true;
+        }
+      }
+
+      if (!hasChanges) {
         setLoading(false);
+        return;
+      }
+
+      prevRecordsRef.current = newFingerprints;
+      startTransition(() => setAllRecords(records));
+      writeCachedValue(ordersCacheKey, records);
+      setLoading(false);
+    };
+
+    const unsubscribe = onValue(
+      ref(db, "orders"),
+      (snapshot) => {
+        const data = snapshot.val();
+        syncRecords(data && typeof data === "object" ? (data as Record<string, Partial<OrderRecord>>) : {});
       },
       (error) => {
         toast({
@@ -1397,8 +1480,11 @@ const OrdersPage = () => {
         setLoading(false);
       }
     );
-    return () => unsubscribe();
-  }, [activeProgram, toast]);
+
+    return () => {
+      unsubscribe();
+    };
+  }, [activeProgram, ordersCacheKey, toast]);
 
   /* ---------------------------------------------------------------- */
   /* Reset dialogs on programme change                                 */
@@ -1856,12 +1942,12 @@ const OrdersPage = () => {
   }, [fieldOfficers]);
 
   const countyFieldOfficers = useMemo(() => {
-    const selectedCounty = normalizeText(newOrder.county);
-    if (!selectedCounty) return [];
+    const selectedCountyTokens = new Set(newOrder.counties.map((county) => normalizeText(county)).filter(Boolean));
+    if (selectedCountyTokens.size === 0) return [];
     return fieldOfficers.filter((officer) =>
-      officer.counties.some((county) => normalizeText(county) === selectedCounty)
+      officer.counties.some((county) => selectedCountyTokens.has(normalizeText(county)))
     );
-  }, [fieldOfficers, newOrder.county]);
+  }, [fieldOfficers, newOrder.counties]);
 
   const canChooseOrderProgramme = availablePrograms.length > 1;
   const resolvedOrderProgramme = newOrder.programme || activeProgram || availablePrograms[0] || "";
@@ -1872,32 +1958,33 @@ const OrdersPage = () => {
   );
 
   const selectedOfficersSummary = useMemo(() => {
-    if (!newOrder.county) return "Select county first";
+    if (newOrder.counties.length === 0) return "Select counties first";
     if (countyFieldOfficers.length === 0) return "No field officers assigned";
     return selectedOfficerNames.length === 0 ? "Select field officers" : `${selectedOfficerNames.length} selected`;
-  }, [countyFieldOfficers.length, newOrder.county, selectedOfficerNames.length]);
+  }, [countyFieldOfficers.length, newOrder.counties.length, selectedOfficerNames.length]);
 
   const selectedOfficersPreview = useMemo(() => {
-    if (!newOrder.county) return "Choose a county to load its assigned field officers.";
-    if (countyFieldOfficers.length === 0) return `No field officers are assigned to ${newOrder.county}.`;
+    const countyLabel = formatSelectedCounties(newOrder.counties);
+    if (newOrder.counties.length === 0) return "Choose counties to load their assigned field officers.";
+    if (countyFieldOfficers.length === 0) return `No field officers are assigned to ${countyLabel}.`;
     if (selectedOfficerNames.length === 0) {
-      return `${countyFieldOfficers.length} field officer${countyFieldOfficers.length === 1 ? "" : "s"} available in ${newOrder.county}.`;
+      return `${countyFieldOfficers.length} field officer${countyFieldOfficers.length === 1 ? "" : "s"} available in ${countyLabel}.`;
     }
     const preview = selectedOfficerNames.slice(0, 3).join(", ");
     return selectedOfficerNames.length <= 3 ? preview : `${preview} +${selectedOfficerNames.length - 3} more`;
-  }, [countyFieldOfficers.length, newOrder.county, selectedOfficerNames]);
+  }, [countyFieldOfficers.length, newOrder.counties, selectedOfficerNames]);
 
   const generatedSmsPreview = useMemo(() => {
     const programmeLabel = resolvedOrderProgramme || "Selected programme";
-    const countyLabel = newOrder.county || "selected county";
+    const countyLabel = formatSelectedCounties(newOrder.counties) || "selected counties";
     const targetGoats = Number(newOrder.goats) || 0;
     const goatsLabel = targetGoats > 0
       ? targetGoats.toLocaleString()
       : "0";
     const dateLabel = newOrder.date ? formatDate(newOrder.date) : "selected date";
 
-    return `Dear Field Officer, a ${programmeLabel} order has been created for ${countyLabel}. Order date: ${dateLabel}. Target goats: ${goatsLabel}. Order reference will be attached automatically.`;
-  }, [newOrder.county, newOrder.date, newOrder.goats, resolvedOrderProgramme]);
+    return `Dear Field Officer, a ${programmeLabel} order has been created for ${countyLabel} on ${dateLabel}. Target goats: ${goatsLabel}. Order reference will be attached automatically.`;
+  }, [newOrder.counties, newOrder.date, newOrder.goats, resolvedOrderProgramme]);
 
   useEffect(() => {
     const allowedOfficerIds = new Set(countyFieldOfficers.map((officer) => officer.id));
@@ -2089,6 +2176,16 @@ const OrdersPage = () => {
       prev.includes(officerId) ? prev.filter((id) => id !== officerId) : [...prev, officerId]
     );
   }, []);
+
+  const toggleCountySelection = useCallback(async (county: string) => {
+    const nextCounties = newOrder.counties.includes(county)
+      ? newOrder.counties.filter((selectedCounty) => selectedCounty !== county)
+      : [...newOrder.counties, county];
+    setNewOrder((prev) => ({ ...prev, counties: nextCounties }));
+    setSelectedFieldOfficerIds([]);
+    const code = nextCounties.length > 0 ? await generateOrderCode(nextCounties[0]) : "";
+    setNewOrder((prev) => ({ ...prev, orderCode: code }));
+  }, [newOrder.counties]);
 
   const updateBatchOrders = async (row: BatchOrderRow, nextItems: NormalizedOrderItem[], nextGoatsBought?: number) => {
     const sanitizedItems = nextItems
@@ -2441,12 +2538,13 @@ const OrdersPage = () => {
     if (!ensureOrderCreateAccess()) return;
     const selectedProgramme = resolvedOrderProgramme.trim();
     if (!selectedProgramme) { toast({ title: "Select programme", variant: "destructive" }); return; }
-    const trimmedCounty = newOrder.county.trim();
+    const selectedCounties = newOrder.counties.map((county) => county.trim()).filter(Boolean);
+    const trimmedCounty = formatSelectedCounties(selectedCounties);
     const goatsValue = Number(newOrder.goats);
     const trimmedOrderCode = newOrder.orderCode.trim();
 
-    if (!newOrder.date) { toast({ title: "Order date required", variant: "destructive" }); return; }
-    if (!trimmedCounty) { toast({ title: "County required", variant: "destructive" }); return; }
+    if (!newOrder.date) { toast({ title: "Date required", variant: "destructive" }); return; }
+    if (selectedCounties.length === 0) { toast({ title: "County required", variant: "destructive" }); return; }
     if (!Number.isFinite(goatsValue) || goatsValue <= 0) { toast({ title: "Invalid goats", description: "Enter the total number of goats to be collected.", variant: "destructive" }); return; }
 
     const selectedOfficers = countyFieldOfficers.filter((o) => selectedFieldOfficerIds.includes(o.id));
@@ -2468,6 +2566,7 @@ const OrdersPage = () => {
         purchaseDate: "",
         date: newOrder.date,
         county: trimmedCounty,
+        counties: selectedCounties,
         username: userName || "Unknown",
         status: "pending",
         createdAt: now,
@@ -2623,8 +2722,11 @@ const OrdersPage = () => {
       {/* Filters */}
       <Card className="border-slate-200 shadow-sm">
         <CardContent className="space-y-4 pt-5">
-          <div className="flex flex-col gap-2 md:flex-row md:items-end lg:flex-row">
-            <div className="flex-1 space-y-1.5">
+          <ScrollableFilterBar
+            ariaLabel="Order filters"
+            contentClassName="sm:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_auto_auto_auto_auto_auto]"
+          >
+            <div className="w-[260px] shrink-0 space-y-1.5 sm:w-auto">
               <Label className="text-xs font-medium text-slate-600">Search</Label>
               <Input
                 placeholder="County, order code, user, status..."
@@ -2633,7 +2735,7 @@ const OrdersPage = () => {
                 className="border-slate-200 bg-white focus:border-blue-400 focus:ring-blue-100"
               />
             </div>
-            <div className="space-y-1.5">
+            <div className="w-[156px] shrink-0 space-y-1.5 sm:w-auto">
               <Label className="text-xs font-medium text-slate-600">From</Label>
               <Input
                 type="date"
@@ -2642,7 +2744,7 @@ const OrdersPage = () => {
                 className="border-slate-200 bg-white focus:border-blue-400 focus:ring-blue-100"
               />
             </div>
-            <div className="space-y-1.5">
+            <div className="w-[156px] shrink-0 space-y-1.5 sm:w-auto">
               <Label className="text-xs font-medium text-slate-600">To</Label>
               <Input
                 type="date"
@@ -2651,7 +2753,7 @@ const OrdersPage = () => {
                 className="border-slate-200 bg-white focus:border-blue-400 focus:ring-blue-100"
               />
             </div>
-            <div className="space-y-1.5">
+            <div className="w-[148px] shrink-0 space-y-1.5 sm:w-auto">
               <Label className="text-xs font-medium text-slate-600">Status</Label>
               <Select value={filters.status} onValueChange={(v) => handleFilterChange("status", v)}>
                 <SelectTrigger className="border-slate-200 bg-white focus:border-blue-400 focus:ring-blue-100 w-[140px]">
@@ -2666,7 +2768,7 @@ const OrdersPage = () => {
               </Select>
             </div>
             {userIsChiefAdmin && (
-              <div className="space-y-1.5">
+              <div className="w-[138px] shrink-0 space-y-1.5 sm:w-auto">
                 <Label className="text-xs font-medium text-slate-600">Programme</Label>
                 <Select value={activeProgram} onValueChange={setActiveProgram} disabled={availablePrograms.length === 0}>
                   <SelectTrigger className="border-slate-200 bg-white focus:border-blue-400 focus:ring-blue-100 w-[130px]">
@@ -2680,12 +2782,10 @@ const OrdersPage = () => {
                 </Select>
               </div>
             )}
-            <Button variant="outline" onClick={clearFilters} className="border-slate-200 hover:bg-slate-50 shrink-0">
+            <Button variant="outline" onClick={clearFilters} className="mt-6 border-slate-200 hover:bg-slate-50 shrink-0 sm:mt-0">
               Clear
             </Button>
-          </div>
-
-         
+          </ScrollableFilterBar>
         </CardContent>
       </Card>
 
@@ -2808,38 +2908,45 @@ const OrdersPage = () => {
               </div>
             </div>
             <div className="space-y-1.5">
-              <Label className="text-xs font-medium text-slate-600">County *</Label>
-              <Select
-                value={newOrder.county}
-                onValueChange={async (value) => {
-                  setNewOrder((prev) => ({ ...prev, county: value }));
-                  setSelectedFieldOfficerIds([]);
-                  const code = await generateOrderCode(value);
-                  setNewOrder((prev) => ({ ...prev, orderCode: code }));
-                }}
-                disabled={fieldOfficersLoading || countyOptions.length === 0}
-              >
-                <SelectTrigger className="border-slate-200 bg-white text-sm focus:border-blue-400">
-                  <SelectValue
-                    placeholder={
-                      fieldOfficersLoading
+              <Label className="text-xs font-medium text-slate-600">Counties *</Label>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={fieldOfficersLoading || countyOptions.length === 0}
+                    className="w-full justify-between border-slate-200 bg-white text-sm font-normal"
+                  >
+                    <span className="truncate">
+                      {fieldOfficersLoading
                         ? "Loading counties..."
                         : countyOptions.length === 0
                           ? "No assigned counties"
-                          : "Select county"
-                    }
-                  />
-                </SelectTrigger>
-                <SelectContent>
+                          : newOrder.counties.length === 0
+                            ? "Select counties"
+                            : `${newOrder.counties.length} selected`}
+                    </span>
+                    <ChevronDown className="h-4 w-4 opacity-50" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent className="max-h-56 w-[--radix-dropdown-menu-trigger-width] overflow-y-auto" align="start">
                   {countyOptions.map((county) => (
-                    <SelectItem key={county} value={county}>
+                    <DropdownMenuCheckboxItem
+                      key={county}
+                      checked={newOrder.counties.includes(county)}
+                      onCheckedChange={() => toggleCountySelection(county)}
+                      onSelect={(event) => event.preventDefault()}
+                    >
                       {county}
-                    </SelectItem>
+                    </DropdownMenuCheckboxItem>
                   ))}
-                </SelectContent>
-              </Select>
+                </DropdownMenuContent>
+              </DropdownMenu>
               {!fieldOfficersLoading && countyOptions.length === 0 && (
                 <p className="text-[11px] text-slate-500">No counties found on mobile users in site management.</p>
+              )}
+              {newOrder.counties.length > 0 && (
+                <p className="text-[11px] text-slate-500">{formatSelectedCounties(newOrder.counties)}</p>
               )}
             </div>
 
@@ -2848,10 +2955,10 @@ const OrdersPage = () => {
               <Label className="text-xs font-medium text-slate-600">Field Officers *</Label>
               {fieldOfficersLoading ? (
                 <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-500">Loading...</div>
-              ) : !newOrder.county ? (
-                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-500">Select a county to load field officers.</div>
+              ) : newOrder.counties.length === 0 ? (
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-500">Select counties to load field officers.</div>
               ) : countyFieldOfficers.length === 0 ? (
-                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-500">No field officers assigned to this county.</div>
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-500">No field officers assigned to these counties.</div>
               ) : (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>

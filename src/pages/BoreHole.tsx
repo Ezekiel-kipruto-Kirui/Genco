@@ -4,6 +4,7 @@ import { db, fetchCollectionByProgramme } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ScrollableFilterBar } from "@/components/ScrollableFilterBar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
@@ -1139,8 +1140,8 @@ const BoreholePage = () => {
   ), []);
 
   const FilterSection = useMemo(() => (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-      <div className="space-y-2">
+    <ScrollableFilterBar ariaLabel="Borehole filters" contentClassName="sm:grid-cols-2 lg:grid-cols-4">
+      <div className="w-[240px] shrink-0 space-y-2 sm:w-auto">
         <Label htmlFor="search" className="font-semibold text-gray-700">Search</Label>
         <Input
           id="search"
@@ -1150,7 +1151,7 @@ const BoreholePage = () => {
         />
       </div>
 
-      <div className="space-y-2">
+      <div className="w-[156px] shrink-0 space-y-2 sm:w-auto">
         <Label htmlFor="startDate" className="font-semibold text-gray-700">From Date</Label>
         <Input
           id="startDate"
@@ -1161,7 +1162,7 @@ const BoreholePage = () => {
         />
       </div>
 
-      <div className="space-y-2">
+      <div className="w-[156px] shrink-0 space-y-2 sm:w-auto">
         <Label htmlFor="endDate" className="font-semibold text-gray-700">To Date</Label>
         <Input
           id="endDate"
@@ -1171,7 +1172,7 @@ const BoreholePage = () => {
           className="border-gray-300 focus:border-blue-500 focus:ring-blue-500 bg-white"
         />
       </div>
-    </div>
+    </ScrollableFilterBar>
   ), [filters, handleSearch, handleFilterChange]);
 
   const TableRow = useCallback(({ record }: { record: Borehole }) => {

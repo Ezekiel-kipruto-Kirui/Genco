@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback, useMemo, useRef, ChangeEvent, memo } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import { ref, set, update, remove, push, onValue, query, orderByChild, equalTo } from "firebase/database";
+import { ref, set, update, remove, push, onValue } from "firebase/database";
 import { db } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ScrollableFilterBar } from "@/components/ScrollableFilterBar";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -15,7 +16,7 @@ import { Download, Users, MapPin, Eye, Calendar, Scale, Phone, CreditCard, Edit,
 import { useSharedProgrammeSelection } from "@/hooks/use-shared-programme-selection";
 import { useToast } from "@/hooks/use-toast";
 import { canViewAllProgrammes, isChiefAdmin } from "@/contexts/authhelper";
-import { normalizeProgramme, resolveAccessibleProgrammes } from "@/lib/programme-access";
+import { matchesActiveProgramme, normalizeProgramme, resolveAccessibleProgrammes, resolveActiveProgramme } from "@/lib/programme-access";
 
 // --- Types ---
 
@@ -345,7 +346,7 @@ const LivestockFarmersPage = () => {
       setLoading(false);
     }
 
-    const farmersQuery = query(ref(db, 'farmers'), orderByChild('programme'), equalTo(activeProgram));
+    const farmersQuery = ref(db, 'farmers');
     const unsubscribe = onValue(farmersQuery, (snapshot) => {
       const data = snapshot.val();
       if (!data) {
@@ -392,7 +393,7 @@ const LivestockFarmersPage = () => {
           vaccinationDate: item.vaccinationDate || null,
           acres: getAcreTotal(item)
         };
-      });
+      }).filter((record) => matchesActiveProgramme(record.programme, activeProgram));
 
       const sortedFarmersList = sortFarmersByLatest(farmersList);
       setAllFarmers(sortedFarmersList);
@@ -420,7 +421,7 @@ const LivestockFarmersPage = () => {
     if (cachedTraining && cachedTraining.length > 0) {
         setTrainingRecords(cachedTraining);
     }
-    const trainingQuery = query(ref(db, 'capacityBuilding'), orderByChild('programme'), equalTo(activeProgram));
+    const trainingQuery = ref(db, 'capacityBuilding');
     const unsubscribe = onValue(trainingQuery, (snapshot) => {
         const data = snapshot.val();
         if (!data) {
@@ -432,7 +433,7 @@ const LivestockFarmersPage = () => {
             id: key,
             ...data[key],
             programme: normalizeProgramme(data[key]?.programme ?? data[key]?.Programme) || "",
-        }));
+        })).filter((record) => matchesActiveProgramme(record.programme, activeProgram));
         setTrainingRecords(records);
         try {
             localStorage.setItem(cacheKey, JSON.stringify(records));
@@ -1156,8 +1157,11 @@ const LivestockFarmersPage = () => {
 
       <Card className="shadow-lg border-0 bg-white">
         <CardContent className="space-y-6 pt-6">
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
-            <div className="space-y-2">
+          <ScrollableFilterBar
+            ariaLabel="Livestock farmer filters"
+            contentClassName="sm:grid-cols-2 lg:grid-cols-5"
+          >
+            <div className="w-[190px] shrink-0 space-y-2 sm:w-auto">
                 <Label className="font-semibold text-gray-700 text-xs uppercase">County</Label>
                 <Select value={filters.county} onValueChange={(value) => handleFilterChange("county", value)}>
                     <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white h-9"><SelectValue placeholder="All Counties" /></SelectTrigger>
@@ -1168,7 +1172,7 @@ const LivestockFarmersPage = () => {
                 </Select>
             </div>
 
-            <div className="space-y-2">
+            <div className="w-[190px] shrink-0 space-y-2 sm:w-auto">
                 <Label className="font-semibold text-gray-700 text-xs uppercase">Subcounty</Label>
                 <Select value={filters.subcounty} onValueChange={(value) => handleFilterChange("subcounty", value)}>
                     <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white h-9"><SelectValue placeholder="All Subcounties" /></SelectTrigger>
@@ -1179,7 +1183,7 @@ const LivestockFarmersPage = () => {
                 </Select>
             </div>
 
-            <div className="space-y-2">
+            <div className="w-[190px] shrink-0 space-y-2 sm:w-auto">
                 <Label className="font-semibold text-gray-700 text-xs uppercase">Location</Label>
                 <Select value={filters.location} onValueChange={(value) => handleFilterChange("location", value)}>
                     <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white h-9"><SelectValue placeholder="All Locations" /></SelectTrigger>
@@ -1190,7 +1194,7 @@ const LivestockFarmersPage = () => {
                 </Select>
             </div>
 
-            <div className="space-y-2">
+            <div className="w-[190px] shrink-0 space-y-2 sm:w-auto">
                 <Label className="font-semibold text-gray-700 text-xs uppercase">Gender</Label>
                 <Select value={filters.gender} onValueChange={(value) => handleFilterChange("gender", value)}>
                     <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white h-9"><SelectValue placeholder="All Genders" /></SelectTrigger>
@@ -1201,11 +1205,11 @@ const LivestockFarmersPage = () => {
                 </Select>
             </div>
 
-            <div className="space-y-2">
+            <div className="w-[240px] shrink-0 space-y-2 sm:w-auto">
                 <Label className="font-semibold text-gray-700 text-xs uppercase">Search</Label>
                 <Input placeholder="Name, ID, Phone, Officer..." defaultValue={filters.search} onChange={(e) => handleSearchChange(e.target.value)} className="border-gray-300 focus:border-blue-500 bg-white h-9" />
             </div>
-          </div>
+          </ScrollableFilterBar>
         </CardContent>
       </Card>
 

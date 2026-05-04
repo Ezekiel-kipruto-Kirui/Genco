@@ -1,11 +1,16 @@
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+
 const RequisitionExpensesPage = () => {
   return (
     <div className="space-y-6">
-      <section className="rounded-2xl border border-dashed border-slate-200 bg-white/80 p-6 shadow-sm">
-        <p className="text-sm font-semibold uppercase tracking-wide text-green-700">Finance</p>
-        <h1 className="mt-2 text-2xl font-bold text-slate-900">Expenses in Requisition</h1>
-        
-      </section>
+      <Card className="border-slate-200 shadow-sm">
+        <CardHeader>
+          <CardTitle>Requisition Expenses</CardTitle>
+        </CardHeader>
+        <CardContent className="text-sm text-slate-600">
+          This page is not available yet. Use the requisition and trends pages while the expenses view is being restored.
+        </CardContent>
+      </Card>
     </div>
   );
 };

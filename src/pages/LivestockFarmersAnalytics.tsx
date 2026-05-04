@@ -33,8 +33,9 @@ const TARGETS = {
   monthly: 117,
   yearly: 1404
 };
+const QUARTER_TARGET = 351;
 const QUARTER_TARGET_MILESTONES = [351, 351, 351, 351];
-const PROGRESS_ANALYTICS_QUERY_VERSION = "v4";
+const PROGRESS_ANALYTICS_QUERY_VERSION = "v5";
 const EMPTY_STATS = {
   total: 0,
   trained: 0,
@@ -70,7 +71,7 @@ interface TrainingData {
   programme?: string;
 }
 
-type ProgressStatus = "target-met" | "on-track" | "needs-attention" | "not-started";
+type ProgressStatus = "target-met" | "on-track" | "above-average" | "below-average" | "action-needed" | "not-started";
 
 type ProgressPeriodKey = "q1" | "q2" | "q3" | "q4";
 
@@ -412,10 +413,52 @@ const getGoatTotal = (goats: any): number => {
   return 0;
 };
 
-const getProgressStatus = (progressPercentage: number): ProgressStatus => {
-  if (progressPercentage >= 100) return "target-met";
-  if (progressPercentage >= 50) return "on-track";
-  return "needs-attention";
+const getProgressStatus = (
+  progressPercentage: number,
+  options: { allowOnTrack?: boolean; allowTargetMet?: boolean } = {},
+): ProgressStatus => {
+  if (options.allowTargetMet && progressPercentage >= 100) return "target-met";
+  if (options.allowOnTrack !== false && progressPercentage >= 70) return "on-track";
+  if (progressPercentage >= 50) return "above-average";
+  if (progressPercentage >= 30) return "below-average";
+  return "action-needed";
+};
+
+const getProgressStatusLabel = (status: ProgressStatus): string => {
+  if (status === "target-met") return "Target met";
+  if (status === "on-track") return "On track";
+  if (status === "above-average") return "Above Average";
+  if (status === "below-average") return "Below Average";
+  if (status === "not-started") return "Not started";
+  return "Action Needed";
+};
+
+const getProgressBarClass = (status: ProgressStatus): string => {
+  if (status === "target-met") return "bg-green-500";
+  if (status === "on-track") return "bg-blue-500";
+  if (status === "above-average") return "bg-emerald-500";
+  if (status === "below-average") return "bg-amber-400";
+  if (status === "not-started") return "bg-slate-300";
+  return "bg-red-400";
+};
+
+const getProgressTextClass = (status: ProgressStatus): string => {
+  if (status === "target-met") return "text-green-700";
+  if (status === "on-track") return "text-blue-700";
+  if (status === "above-average") return "text-emerald-700";
+  if (status === "below-average") return "text-amber-700";
+  if (status === "not-started") return "text-slate-600";
+  return "text-red-700";
+};
+
+const isCompletedQuarter = (periodEnd: Date, analysisYear: number): boolean => {
+  const today = getToday();
+  const currentYear = today.getFullYear();
+  if (analysisYear < currentYear) return true;
+  if (analysisYear > currentYear) return false;
+  const normalizedEnd = new Date(periodEnd);
+  normalizedEnd.setHours(23, 59, 59, 999);
+  return today > normalizedEnd;
 };
 
 const getAnalysisYearFromDateRange = (
@@ -476,14 +519,14 @@ const buildQuarterTargets = (year: number) => [
     label: `Q1 ${year}`,
     start: new Date(year, 0, 1),
     end: new Date(year, 2, 31),
-    target: QUARTER_TARGET_MILESTONES[0],
+    target: QUARTER_TARGET,
   },
   {
     key: "q2" as const,
     label: `Q2 ${year}`,
     start: new Date(year, 3, 1),
     end: new Date(year, 5, 30),
-    target: QUARTER_TARGET_MILESTONES[1],
+    target: QUARTER_TARGET,
   },
   {
     key: "q3" as const,
@@ -974,8 +1017,11 @@ const LivestockFarmersAnalytics = () => {
         const periods = quarterTargets.map((period) => {
           const count = quarterData.periods[period.key];
           const upcoming = isUpcomingQuarter(period.start, quarterYear);
+          const completed = isCompletedQuarter(period.end, quarterYear);
           const progressPercentage = period.target > 0 ? (count / period.target) * 100 : 0;
-          const status = upcoming ? "not-started" : getProgressStatus(progressPercentage);
+          const status = upcoming
+            ? "not-started"
+            : getProgressStatus(progressPercentage, { allowOnTrack: !completed, allowTargetMet: completed });
           return {
             key: period.key,
             label: period.label,
@@ -1008,7 +1054,7 @@ const LivestockFarmersAnalytics = () => {
     () => {
       const rawProgressData = USE_REMOTE_ANALYTICS ? (analyticsQuery.data as any)?.userProgressData || [] : localUserProgressData;
       return rawProgressData.map((user: any) => {
-        const periods = Array.isArray(user.periods) && user.periods.length > 0 ?
+        const periods = (Array.isArray(user.periods) && user.periods.length > 0 ?
           user.periods :
           quarterTargets.map((period) => ({
             key: period.key,
@@ -1016,10 +1062,28 @@ const LivestockFarmersAnalytics = () => {
             count: 0,
             target: period.target,
             progressPercentage: 0,
-            status: (isUpcomingQuarter(period.start, quarterYear) ? "not-started" : "needs-attention") as ProgressStatus,
+            status: (isUpcomingQuarter(period.start, quarterYear) ? "not-started" : "action-needed") as ProgressStatus,
             met: false,
             upcoming: isUpcomingQuarter(period.start, quarterYear),
-          }));
+          }))).map((period: any) => {
+            const fallbackQuarter = quarterTargets.find((entry) => entry.key === period.key);
+            const target = Number(fallbackQuarter?.target || period.target || QUARTER_TARGET);
+            const count = Number(period.count || 0);
+            const progressPercentage = target > 0 ? (count / target) * 100 : 0;
+            const upcoming = fallbackQuarter ? isUpcomingQuarter(fallbackQuarter.start, quarterYear) : Boolean(period.upcoming);
+            const completed = fallbackQuarter ? isCompletedQuarter(fallbackQuarter.end, quarterYear) : false;
+            return {
+              ...period,
+              target,
+              count,
+              progressPercentage,
+              status: upcoming
+                ? "not-started"
+                : getProgressStatus(progressPercentage, { allowOnTrack: !completed, allowTargetMet: completed }),
+              met: !upcoming && count >= target,
+              upcoming,
+            };
+          });
         const farmersRegistered = Number(user.farmersRegistered || 0);
         const target = Number(effectiveTarget || user.target || TARGETS.yearly);
         const progressPercentage = target > 0 ? (farmersRegistered / target) * 100 : 0;
@@ -1373,12 +1437,7 @@ const LivestockFarmersAnalytics = () => {
                 </thead>
                 <tbody>
                   {userProgressData.map((user) => {
-                    const statusLabel =
-                      user.status === "target-met"
-                        ? "Target met"
-                        : user.status === "on-track"
-                          ? "On track"
-                          : "Action Needed";
+                    const statusLabel = getProgressStatusLabel(user.status);
                     return (
                       <tr key={user.id} className="border-b border-slate-100 transition-colors hover:bg-blue-50/40">
                         <td className="px-4 py-2 font-medium text-slate-900">
@@ -1395,11 +1454,7 @@ const LivestockFarmersAnalytics = () => {
                           <div className="flex items-center gap-3">
                             <div className="h-2 w-28 rounded-full bg-slate-100">
                               <div
-                                className={`h-2 rounded-full transition-all duration-500 ${
-                                  user.status === "target-met" ? "bg-green-500" :
-                                  user.status === "on-track" ? "bg-blue-500" :
-                                  "bg-red-400"
-                                }`}
+                                className={`h-2 rounded-full transition-all duration-500 ${getProgressBarClass(user.status)}`}
                                 style={{ width: `${Math.min(user.progressPercentage, 100)}%` }}
                               />
                             </div>
@@ -1409,11 +1464,7 @@ const LivestockFarmersAnalytics = () => {
                           </div>
                         </td>
                         <td className="px-4 py-2">
-                          <span className={`text-sm font-semibold ${
-                            user.status === "target-met" ? "text-green-700" :
-                            user.status === "on-track" ? "text-blue-700" :
-                            "text-red-700"
-                          }`}>
+                          <span className={`text-sm font-semibold ${getProgressTextClass(user.status)}`}>
                             {statusLabel}
                           </span>
                         </td>
@@ -1470,16 +1521,8 @@ const LivestockFarmersAnalytics = () => {
                 </div>
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
                   <p className="text-xs uppercase tracking-wide text-slate-500">Target Result</p>
-                  <p className={`mt-1 text-sm font-semibold ${
-                    selectedOfficer.farmersRegistered >= selectedOfficer.target ? "text-green-700" :
-                    selectedOfficer.farmersRegistered / Math.max(1, selectedOfficer.target) >= 0.5 ? "text-blue-700" :
-                    "text-red-700"
-                  }`}>
-                    {selectedOfficer.farmersRegistered >= selectedOfficer.target
-                      ? "Target met"
-                      : selectedOfficer.farmersRegistered / Math.max(1, selectedOfficer.target) >= 0.5
-                        ? "On track"
-                        : "Action Needed"}
+                  <p className={`mt-1 text-sm font-semibold ${getProgressTextClass(selectedOfficer.status)}`}>
+                    {getProgressStatusLabel(selectedOfficer.status)}
                   </p>
                 </div>
               </div>
@@ -1509,12 +1552,7 @@ const LivestockFarmersAnalytics = () => {
                             <div className="flex items-center gap-3">
                               <div className="h-2 w-28 rounded-full bg-slate-100">
                                 <div
-                                className={`h-2 rounded-full transition-all duration-500 ${
-                                  period.status === "target-met" ? "bg-green-500" :
-                                  period.status === "on-track" ? "bg-blue-500" :
-                                  period.status === "not-started" ? "bg-slate-300" :
-                                  "bg-red-400"
-                                }`}
+                                className={`h-2 rounded-full transition-all duration-500 ${getProgressBarClass(period.status)}`}
                                 style={{ width: `${progressPercent}%` }}
                               />
                             </div>
@@ -1524,16 +1562,8 @@ const LivestockFarmersAnalytics = () => {
                             </div>
                           </td>
                           <td className="px-4 py-4">
-                            <span className={`text-sm font-semibold ${
-                              period.status === "target-met" ? "text-green-700" :
-                              period.status === "on-track" ? "text-blue-700" :
-                              period.status === "not-started" ? "text-slate-600" :
-                              "text-red-700"
-                            }`}>
-                              {period.status === "target-met" ? "Target met" :
-                                period.status === "on-track" ? "On track" :
-                                period.status === "not-started" ? "Not started" :
-                                "Action Needed"}
+                            <span className={`text-sm font-semibold ${getProgressTextClass(period.status)}`}>
+                              {getProgressStatusLabel(period.status)}
                             </span>
                           </td>
                         </tr>

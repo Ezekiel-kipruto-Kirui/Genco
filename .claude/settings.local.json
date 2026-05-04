@@ -12,7 +12,9 @@
       "Bash(git rm *)",
       "Bash(git commit -m 'Remove committed .vercel/output artifacts and exclude via .gitignore *)",
       "Bash(node -e ' *)",
-      "PowerShell(& \"C:\\\\Users\\\\Ezekiel Kirui\\\\AppData\\\\Roaming\\\\npm\\\\firebase.cmd\" deploy --only database)"
+      "PowerShell(& \"C:\\\\Users\\\\Ezekiel Kirui\\\\AppData\\\\Roaming\\\\npm\\\\firebase.cmd\" deploy --only database)",
+      "Bash(xargs grep *)",
+      "Bash(git reset *)"
     ]
   }
 }

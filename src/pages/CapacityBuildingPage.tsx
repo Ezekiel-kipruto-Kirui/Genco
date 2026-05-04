@@ -5,6 +5,7 @@ import { db } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ScrollableFilterBar } from "@/components/ScrollableFilterBar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
@@ -22,7 +23,7 @@ import { useSharedProgrammeSelection } from "@/hooks/use-shared-programme-select
 import { useToast } from "@/hooks/use-toast";
 import { canViewAllProgrammes, isChiefAdmin } from "@/contexts/authhelper";
 import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
-import { normalizeProgramme, resolveAccessibleProgrammes } from "@/lib/programme-access";
+import { matchesActiveProgramme, normalizeProgramme, resolveAccessibleProgrammes, resolveActiveProgramme } from "@/lib/programme-access";
 
 // ──────────────────────────────────────────────
 // Utility: Format large numbers
@@ -1363,8 +1364,8 @@ const CapacityBuildingPage = () => {
       {/* ─── Filters ─── */}
       <Card className="shadow-lg bg-white">
         <CardContent className="pt-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            <div className="space-y-2">
+          <ScrollableFilterBar ariaLabel="Capacity building filters" contentClassName="sm:grid-cols-2 lg:grid-cols-3">
+            <div className="w-[240px] shrink-0 space-y-2 sm:w-auto">
               <Label>Search</Label>
               <Input
                 placeholder="Topic, county, officer, report ID..."
@@ -1372,7 +1373,7 @@ const CapacityBuildingPage = () => {
                 onChange={(e) => handleSearch(e.target.value)}
               />
             </div>
-            <div className="space-y-2">
+            <div className="w-[190px] shrink-0 space-y-2 sm:w-auto">
               <Label>County</Label>
               <Select
                 value={filters.region}
@@ -1391,7 +1392,14 @@ const CapacityBuildingPage = () => {
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-2">
+            {/* <div className="space-y-2">
+              <Label>Module/Topic</Label>
+              <Select value={filters.modules} onValueChange={(v) => handleFilterChange("modules", v)}>
+                <SelectTrigger><SelectValue placeholder="Select Module" /></SelectTrigger>
+                <SelectContent><SelectItem value="all">All Modules</SelectItem>{uniqueModules.slice(0, 20).map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent>
+              </Select>
+            </div> */}
+            <div className="w-[280px] shrink-0 space-y-2 sm:w-auto">
               <Label>Date Range</Label>
               <div className="flex gap-2">
                 <Input
@@ -1412,7 +1420,7 @@ const CapacityBuildingPage = () => {
                 />
               </div>
             </div>
-          </div>
+          </ScrollableFilterBar>
         </CardContent>
       </Card>
 

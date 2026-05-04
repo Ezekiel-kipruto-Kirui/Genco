@@ -201,6 +201,21 @@ export const canAccessProgrammeRecord = (
   return accessibleProgrammes.includes(normalizedProgramme);
 };
 
+export const matchesActiveProgramme = (
+  recordProgramme: unknown,
+  activeProgramme: string | null | undefined
+): boolean => {
+  const normalizedActiveProgramme = normalizeProgramme(activeProgramme);
+  if (!normalizedActiveProgramme) return false;
+  return normalizeProgramme(recordProgramme) === normalizedActiveProgramme;
+};
+
+export const filterRecordsByActiveProgramme = <T>(
+  records: readonly T[],
+  getProgramme: (record: T) => unknown,
+  activeProgramme: string | null | undefined
+): T[] => records.filter((record) => matchesActiveProgramme(getProgramme(record), activeProgramme));
+
 export const filterByAccessibleProgrammes = <T>(
   records: T[],
   getProgramme: (record: T) => unknown,
