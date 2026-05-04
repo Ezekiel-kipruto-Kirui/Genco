@@ -22,7 +22,7 @@ import { useSharedProgrammeSelection } from "@/hooks/use-shared-programme-select
 import { useToast } from "@/hooks/use-toast";
 import { canViewAllProgrammes, isChiefAdmin } from "@/contexts/authhelper";
 import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
-import { resolveAccessibleProgrammes } from "@/lib/programme-access";
+import { normalizeProgramme, resolveAccessibleProgrammes } from "@/lib/programme-access";
 
 // ──────────────────────────────────────────────
 // Utility: Format large numbers
@@ -78,6 +78,7 @@ interface TrainingRecord {
   createdAt?: string;
   rawTimestamp?: number;
   programme?: string;
+  Programme?: string;
   username?: string;
   fieldOfficer?: string;
 
@@ -586,8 +587,8 @@ const CapacityBuildingPage = () => {
       const isWeeklyReport =
         record.recordType === "weeklyCapacityReport";
       if (!isWeeklyReport) {
-        const recProg = (record.programme || "").trim();
-        const targetProg = activeProgram.trim();
+        const recProg = normalizeProgramme(record.programme || record.Programme);
+        const targetProg = normalizeProgramme(activeProgram);
         if (recProg && targetProg && recProg !== targetProg) return false;
       }
 
@@ -713,6 +714,19 @@ const CapacityBuildingPage = () => {
     setPagination((prev) => ({ ...prev, page: 1 }));
   };
 
+  const getSelectedProgramme = () => {
+    const selectedProgramme = normalizeProgramme(activeProgram);
+    if (!selectedProgramme) {
+      toast({
+        title: "Programme required",
+        description: "Select a valid programme before saving capacity building data.",
+        variant: "destructive",
+      });
+      return "";
+    }
+    return selectedProgramme;
+  };
+
   const handleFilterChange = (key: keyof Filters, value: string) => {
     setFilters((prev) => ({ ...prev, [key]: value }));
     setPagination((prev) => ({ ...prev, page: 1 }));
@@ -807,6 +821,8 @@ const CapacityBuildingPage = () => {
   const handleEditSubmit = async () => {
     if (!requireChiefAdmin()) return;
     if (!editingRecord) return;
+    const selectedProgramme = normalizeProgramme(editForm.programme) || getSelectedProgramme();
+    if (!selectedProgramme) return;
     try {
       await update(ref(db, `capacityBuilding/${editingRecord.id}`), {
         username: editForm.Name,
@@ -816,7 +832,8 @@ const CapacityBuildingPage = () => {
         startDate: editForm.startDate,
         endDate: editForm.endDate,
         totalFarmers: Number(editForm.totalFarmers),
-        programme: editForm.programme,
+        programme: selectedProgramme,
+        Programme: selectedProgramme,
         numberOfTrainers: Number(editForm.numberOfTrainers),
         numberOfSubCounties: Number(editForm.numberOfSubCounties),
       });
@@ -927,6 +944,8 @@ const CapacityBuildingPage = () => {
   const handleUpload = async () => {
     if (!requireChiefAdmin()) return;
     if (!uploadFile) return;
+    const selectedProgramme = getSelectedProgramme();
+    if (!selectedProgramme) return;
     setUploadLoading(true);
     try {
       const text = await uploadFile.text();
@@ -1019,7 +1038,8 @@ const CapacityBuildingPage = () => {
       for (const item of parsedData) {
         await push(collectionRef, {
           ...item,
-          programme: activeProgram,
+          programme: selectedProgramme,
+          Programme: selectedProgramme,
           createdAt: new Date().toISOString(),
           rawTimestamp: Date.now(),
         });
@@ -1028,7 +1048,7 @@ const CapacityBuildingPage = () => {
 
       toast({
         title: "Success",
-        description: `Uploaded ${count} records to ${activeProgram}.`,
+        description: `Uploaded ${count} records to ${selectedProgramme}.`,
       });
       removeCachedValue(trainingCacheKey);
       setIsUploadDialogOpen(false);
