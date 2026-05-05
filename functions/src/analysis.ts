@@ -4,7 +4,7 @@ import {onCall, HttpsError} from "firebase-functions/v2/https";
 
 const PROGRAMME_OPTIONS = ["KPMD", "RANGE", "MTLDK"] as const;
 const CACHE_TTL_MS = 2 * 60 * 1000;
-const ANALYSIS_CACHE_VERSION = "v9";
+const ANALYSIS_CACHE_VERSION = "v10";
 const QUARTER_TARGET = 351;
 const QUARTER_TARGET_MILESTONES = [352, 702, 1053, 1404];
 const CHART_COLORS = {
@@ -1494,6 +1494,7 @@ const createLivestockAnalytics = async (
   const activeTarget = hasDateRange ?
     Math.max(1, Math.round(target ?? 1404)) :
     Math.max(1, (coverageYears.count || 1) * 1404);
+  const fieldOfficerTarget = Math.max(1, Math.round(Number(activeTarget) || 1404));
 
   const filteredFarmers = filterRecordsByDateRange(
     farmers,
@@ -1523,28 +1524,28 @@ const createLivestockAnalytics = async (
       label: `Q1 ${analysisYear}`,
       start: new Date(analysisYear, 0, 1),
       end: new Date(analysisYear, 2, 31),
-      target: QUARTER_TARGET,
+      target: QUARTER_TARGET_MILESTONES[0] || QUARTER_TARGET,
     },
     {
       key: "q2" as const,
       label: `Q2 ${analysisYear}`,
       start: new Date(analysisYear, 3, 1),
       end: new Date(analysisYear, 5, 30),
-      target: QUARTER_TARGET,
+      target: QUARTER_TARGET_MILESTONES[1] || QUARTER_TARGET,
     },
     {
       key: "q3" as const,
       label: `Q3 ${analysisYear}`,
       start: new Date(analysisYear, 6, 1),
       end: new Date(analysisYear, 8, 30),
-      target: QUARTER_TARGET,
+      target: QUARTER_TARGET_MILESTONES[2] || QUARTER_TARGET,
     },
     {
       key: "q4" as const,
       label: `Q4 ${analysisYear}`,
       start: new Date(analysisYear, 9, 1),
       end: new Date(analysisYear, 11, 31),
-      target: QUARTER_TARGET,
+      target: QUARTER_TARGET_MILESTONES[3] || QUARTER_TARGET,
     },
   ];
   const quarterCountingCutoff = getQuarterCountingCutoff(analysisYear);
@@ -1640,7 +1641,7 @@ const createLivestockAnalytics = async (
         };
       });
       const registeredCount = data.currentCount;
-      const targetValue = activeTarget;
+      const targetValue = fieldOfficerTarget;
       const progressPercentage = targetValue > 0 ? (registeredCount / targetValue) * 100 : 0;
       const status = getProgressStatus(progressPercentage);
       const counties = [...data.counties];
@@ -1672,7 +1673,7 @@ const createLivestockAnalytics = async (
     weeklyPerformanceData,
     subcountyPerformanceData,
     userProgressData,
-    activeTarget,
+    activeTarget: fieldOfficerTarget,
     coverageStartYear: coverageYears.startYear,
     coverageEndYear: coverageYears.endYear,
     coverageYears: coverageYears.count,
