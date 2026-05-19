@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, useMemo, useRef, ChangeEvent } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import { ref, set, update, remove, push, onValue } from "firebase/database";
+// FIX: Added query, orderByChild, equalTo for DB-level programme filtering
+import { ref, set, update, remove, push, onValue, query, orderByChild, equalTo } from "firebase/database";
+import type { Unsubscribe } from "firebase/database";
 import { db } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -147,14 +149,6 @@ interface Stats {
   totalParticipants: number;
   totalTrainers: number;
   totalSubCounties: number;
-}
-
-interface Pagination {
-  page: number;
-  limit: number;
-  totalPages: number;
-  hasNext: boolean;
-  hasPrev: boolean;
 }
 
 interface EditForm {
@@ -375,14 +369,14 @@ const normalizeGeneratedDate = (
 };
 
 // ──────────────────────────────────────────────
-// Normalisation: weekly capacity report → flat
+// Normalisation: weekly capacity report -> flat
 // ──────────────────────────────────────────────
 
 /**
  * Takes a raw Firebase snapshot value and returns a normalised TrainingRecord.
  * Handles both:
- *  - Legacy flat training records (programme, topicTrained, …)
- *  - Weekly capacity reports (recordType, entries[], pdfUrl, …)
+ *  - Legacy flat training records (programme, topicTrained, ...)
+ *  - Weekly capacity reports (recordType, entries[], pdfUrl, ...)
  */
 const normalizeRecord = (
   id: string,
@@ -400,7 +394,6 @@ const normalizeRecord = (
 
     return {
       id,
-      // ── Normalised from first entry ──
       county: getStringField(raw, ["county", "County", "region", "Region"]) || (first.county as string) || "",
       subcounty: getStringField(raw, ["subcounty", "subCounty", "Subcounty", "Sub County"]) || (first.subcounty as string) || "",
       location: getStringField(raw, ["ward", "Ward", "location", "Location", "village", "Village"]) || (first.location as string) || "",
@@ -413,7 +406,6 @@ const normalizeRecord = (
       createdAt: normalizeGeneratedDate(raw, first.createdAt),
       rawTimestamp: Number(raw.generatedAt) || 0,
 
-      // ── Weekly report metadata ──
       recordType,
       reportId: (raw.reportId as string) || "",
       entries,
@@ -438,8 +430,8 @@ const normalizeRecord = (
       generatedAt: Number(raw.generatedAt) || 0,
       uploadedAtISO: getStringField(raw, ["uploadedAtISO", "uploadedAt"]),
 
-      // programme is not set on weekly reports – leave empty
-      programme: (raw.programme as string) || "",
+      // FIX: Also check for "Programme" (legacy capital-P field) on weekly reports
+      programme: (raw.programme as string) || (raw.Programme as string) || "",
     };
   }
 
@@ -450,6 +442,45 @@ const normalizeRecord = (
   } as TrainingRecord;
 };
 
+// ──────────────────────────────────────────────────────────────────────────────
+// FIX: StatsCard moved OUTSIDE CapacityBuildingPage to prevent re-creation
+// on every render. Previously defined inline, causing unnecessary re-renders.
+// ──────────────────────────────────────────────────────────────────────────────
+const StatsCard = ({
+  title,
+  value,
+  icon: Icon,
+  description,
+}: {
+  title: string;
+  value: string | number;
+  icon: React.ElementType;
+  description?: string;
+  children?: React.ReactNode;
+}) => (
+  <Card className="bg-white text-slate-900 shadow-lg border border-gray-200 relative overflow-hidden">
+    <div className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-blue-500 to-purple-600" />
+    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 pt-4 pl-6">
+      <CardTitle className="text-sm font-medium text-gray-500">
+        {title}
+      </CardTitle>
+    </CardHeader>
+    <CardContent className="pl-6 pb-4 flex flex-row">
+      <div className="mr-2 rounded-full">
+        <Icon className="h-8 w-8 text-blue-600" />
+      </div>
+      <div>
+        <div className="text-2xl font-bold text-slate-900 mb-2">{value}</div>
+        {description && (
+          <p className="text-xs text-slate-600 mt-2 bg-slate-50 px-2 py-1 rounded border border-slate-100">
+            {description}
+          </p>
+        )}
+      </div>
+    </CardContent>
+  </Card>
+);
+
 // ──────────────────────────────────────────────
 // Main Component
 // ──────────────────────────────────────────────
@@ -458,9 +489,34 @@ const CapacityBuildingPage = () => {
   const { user, userRole, userAttribute, allowedProgrammes } = useAuth();
   const { toast } = useToast();
 
+  // ── FIX: Stable toast ref to avoid stale closures in useEffect ──
+  const toastRef = useRef(toast);
+  toastRef.current = toast;
+
+  // ── FIX: Refs for memory-leak-safe cleanup ──
+  const unsubscribeRef = useRef<Unsubscribe | null>(null);
+  const mountedRef = useRef(true);
+
+  // ── FIX: Refs for two-query merge strategy ──
+  // Tracks records from both "programme" and "Programme" (legacy) queries,
+  // merging them into a single deduplicated set.
+  const mergedRecordsRef = useRef<Map<string, TrainingRecord>>(new Map());
+  const q1IdsRef = useRef<Set<string>>(new Set());
+  const q2IdsRef = useRef<Set<string>>(new Set());
+
+  // ── FIX: Retry state for error recovery ──
+  const [retryTrigger, setRetryTrigger] = useState(0);
+  const retryCountRef = useRef(0);
+  const MAX_RETRIES = 3;
+
+  // ── FIX: Error state for meaningful per-programme error display ──
+  const [fetchError, setFetchError] = useState<string | null>(null);
+
   // ── State ──
   const [allRecords, setAllRecords] = useState<TrainingRecord[]>([]);
-  const [filteredRecords, setFilteredRecords] = useState<TrainingRecord[]>([]);
+
+  // NOTE: filteredRecords is now derived via useMemo (see below), no longer useState
+  // NOTE: stats is now derived via useMemo (see below), no longer useState
 
   const [loading, setLoading] = useState(true);
   const [exportLoading, setExportLoading] = useState(false);
@@ -479,6 +535,9 @@ const CapacityBuildingPage = () => {
   const [editingRecord, setEditingRecord] = useState<TrainingRecord | null>(null);
   const [pdfRecord, setPdfRecord] = useState<TrainingRecord | null>(null);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
+
+  // FIX: Simplified pagination — only page number is state; rest is derived via useMemo
+  const [page, setPage] = useState(1);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -503,16 +562,16 @@ const CapacityBuildingPage = () => {
 
   const availablePrograms = accessibleProgrammes;
 
-  const requireChiefAdmin = () => {
+  const requireChiefAdmin = useCallback(() => {
     if (userIsChiefAdmin) return true;
-    toast({
+    toastRef.current({
       title: "Access denied",
       description:
         "Only chief admin can create, edit, or delete records on this page.",
       variant: "destructive",
     });
     return false;
-  };
+  }, [userIsChiefAdmin]);
 
   const trainingCacheKey = useMemo(
     () => cacheKey("admin-page", "capacity-building", activeProgram),
@@ -531,20 +590,6 @@ const CapacityBuildingPage = () => {
     region: "all",
   });
 
-  const [stats, setStats] = useState<Stats>({
-    totalParticipants: 0,
-    totalTrainers: 0,
-    totalSubCounties: 0,
-  });
-
-  const [pagination, setPagination] = useState<Pagination>({
-    page: 1,
-    limit: PAGE_LIMIT,
-    totalPages: 1,
-    hasNext: false,
-    hasPrev: false,
-  });
-
   const [editForm, setEditForm] = useState<EditForm>({
     Name: "",
     topicTrained: "",
@@ -558,211 +603,380 @@ const CapacityBuildingPage = () => {
     numberOfSubCounties: 0,
   });
 
-  // ────────────────────────────────────────────
-  // Data Fetching — full collection scan
-  // ────────────────────────────────────────────
+  // ────────────────────────────────────────────────────────────────────
+  // FIX [CRITICAL]: Data Fetching — DB-level programme filtering
+  // ────────────────────────────────────────────────────────────────────
+  // PREVIOUS: Fetched the ENTIRE capacityBuilding collection with
+  //   const dbRef = ref(db, "capacityBuilding");
+  //   onValue(dbRef, ...)  ← no filter, loads ALL records
+  //
+  // NOW: Two parallel Firebase queries filter at the database level:
+  //   Query 1: orderByChild("programme").equalTo(activeProgram)
+  //   Query 2: orderByChild("Programme").equalTo(activeProgram)  (legacy field)
+  //
+  // Results are merged and deduplicated by record ID.
+  // When programme changes: old listener unsubscribed → records cleared →
+  // loading state shown → new queries fire → results displayed.
+  //
+  // NOTE: Firebase Realtime Database requires .indexOn rules for these
+  // queries to be efficient. Add to your database rules:
+  //   { "rules": { "capacityBuilding": { ".indexOn": ["programme", "Programme"] } } }
+  //
+  // NOTE: Weekly capacity reports that have neither "programme" nor "Programme"
+  // field will NOT appear in filtered results. Ensure all weekly reports have
+  // the programme field set at creation/upload time.
+  // ────────────────────────────────────────────────────────────────────
 
   useEffect(() => {
+    // Track component mount status to prevent state updates after unmount
+    mountedRef.current = true;
+
+    // Reset merge tracking refs
+    mergedRecordsRef.current.clear();
+    q1IdsRef.current.clear();
+    q2IdsRef.current.clear();
+
+    // ── Cleanup previous listener before setting up new one ──
+    if (unsubscribeRef.current) {
+      unsubscribeRef.current();
+      unsubscribeRef.current = null;
+    }
+
+    // Handle empty programme gracefully
     if (!activeProgram) {
       setAllRecords([]);
       setLoading(false);
+      setFetchError(null);
       return;
     }
 
-    const cachedRecords =
-      readCachedValue<TrainingRecord[]>(trainingCacheKey);
-    if (cachedRecords) {
-      setAllRecords(sortTrainingByLatest(cachedRecords));
+    // ── Clear records immediately for responsive UI ──
+    setAllRecords([]);
+    setLoading(true);
+    setFetchError(null);
+    retryCountRef.current = 0;
+
+    // ── Check cache for instant display ──
+    const cached = readCachedValue<TrainingRecord[]>(trainingCacheKey);
+    const hasCache = !!cached;
+
+    if (hasCache && cached) {
+      setAllRecords(sortTrainingByLatest(cached));
       setLoading(false);
-    } else {
-      setLoading(true);
     }
 
-    // Fetch the ENTIRE capacityBuilding collection (no query filter)
-    // so that weekly reports without a "programme" field are also loaded.
+    // ── Set up the DB-level filtered queries ──
     const dbRef = ref(db, "capacityBuilding");
 
-    const unsubscribe = onValue(
-      dbRef,
-      (snapshot) => {
-        const data = snapshot.val();
+    // Track how many of the 2 queries have completed their initial load
+    let initialLoadCount = 0;
+    const TOTAL_QUERIES = 2;
 
-        if (!data) {
-          setAllRecords([]);
-          removeCachedValue(trainingCacheKey);
-          setLoading(false);
-          return;
+    const trySetLoadingDone = () => {
+      initialLoadCount++;
+      if (!hasCache && initialLoadCount >= TOTAL_QUERIES && mountedRef.current) {
+        setLoading(false);
+      }
+    };
+
+    const handleQueryError = (queryLabel: string) => (error: Error) => {
+      console.error(`Error fetching data (${queryLabel}):`, error);
+
+      if (!mountedRef.current) return;
+
+      // FIX: Retry logic with exponential backoff
+      if (retryCountRef.current < MAX_RETRIES) {
+        retryCountRef.current++;
+        const delay = Math.pow(2, retryCountRef.current) * 1000; // 2s, 4s, 8s
+        console.warn(`Retrying ${queryLabel} query in ${delay}ms (attempt ${retryCountRef.current}/${MAX_RETRIES})`);
+        // Re-trigger the effect by bumping retryTrigger
+        setTimeout(() => {
+          if (mountedRef.current) {
+            setRetryTrigger((prev) => prev + 1);
+          }
+        }, delay);
+      } else {
+        setFetchError(`Failed to load ${activeProgram} training records after ${MAX_RETRIES} attempts. Please check your connection and try again.`);
+        setLoading(false);
+        toastRef.current({
+          title: "Error",
+          description: `Failed to load ${activeProgram} training records.`,
+          variant: "destructive",
+        });
+      }
+    };
+
+    // ── Query 1: Filter by "programme" field (lowercase, primary) ──
+    const q1 = query(dbRef, orderByChild("programme"), equalTo(activeProgram));
+
+    const unsub1 = onValue(
+      q1,
+      (snapshot) => {
+        if (!mountedRef.current) return;
+
+        const data = snapshot.val();
+        const newQ1Ids = new Set<string>();
+
+        if (data && typeof data === "object") {
+          Object.keys(data).forEach((key) => {
+            newQ1Ids.add(key);
+            mergedRecordsRef.current.set(
+              key,
+              normalizeRecord(key, data[key] as Record<string, unknown>),
+            );
+          });
         }
 
-        const records: TrainingRecord[] = Object.keys(data).map((key) =>
-          normalizeRecord(key, data[key] as Record<string, unknown>),
-        );
+        // Remove old q1 records that are no longer in the result
+        // (but keep if they're from q2 / legacy query)
+        for (const oldId of q1IdsRef.current) {
+          if (!newQ1Ids.has(oldId) && !q2IdsRef.current.has(oldId)) {
+            mergedRecordsRef.current.delete(oldId);
+          }
+        }
+        q1IdsRef.current = newQ1Ids;
 
+        // Update state from merged results
+        const records = Array.from(mergedRecordsRef.current.values());
         const sorted = sortTrainingByLatest(records);
         setAllRecords(sorted);
         writeCachedValue(trainingCacheKey, sorted);
-        setLoading(false);
+
+        trySetLoadingDone();
       },
-      (error) => {
-        console.error("Error fetching data:", error);
-        toast({
-          title: "Error",
-          description: "Failed to load training records.",
-          variant: "destructive",
-        });
-        setLoading(false);
-      },
+      handleQueryError("programme"),
     );
 
-    return () => {
-      if (typeof unsubscribe === "function") unsubscribe();
+    // ── Query 2: Filter by "Programme" field (capital P, legacy) ──
+    const q2 = query(dbRef, orderByChild("Programme"), equalTo(activeProgram));
+
+    const unsub2 = onValue(
+      q2,
+      (snapshot) => {
+        if (!mountedRef.current) return;
+
+        const data = snapshot.val();
+        const newQ2Ids = new Set<string>();
+
+        if (data && typeof data === "object") {
+          Object.keys(data).forEach((key) => {
+            newQ2Ids.add(key);
+            // Only add if not already present from q1 (avoid overwriting)
+            if (!mergedRecordsRef.current.has(key)) {
+              mergedRecordsRef.current.set(
+                key,
+                normalizeRecord(key, data[key] as Record<string, unknown>),
+              );
+            }
+          });
+        }
+
+        // Remove old q2 records that are no longer in the result
+        // (but keep if they're from q1 / primary query)
+        for (const oldId of q2IdsRef.current) {
+          if (!newQ2Ids.has(oldId) && !q1IdsRef.current.has(oldId)) {
+            mergedRecordsRef.current.delete(oldId);
+          }
+        }
+        q2IdsRef.current = newQ2Ids;
+
+        // Update state from merged results
+        const records = Array.from(mergedRecordsRef.current.values());
+        const sorted = sortTrainingByLatest(records);
+        setAllRecords(sorted);
+        writeCachedValue(trainingCacheKey, sorted);
+
+        trySetLoadingDone();
+      },
+      handleQueryError("Programme"),
+    );
+
+    // Store combined unsubscribe function
+    unsubscribeRef.current = () => {
+      unsub1();
+      unsub2();
     };
-  }, [activeProgram, toast, trainingCacheKey]);
 
-  // ────────────────────────────────────────────
-  // Filtering Logic & Stats Calculation
-  // ────────────────────────────────────────────
+    return () => {
+      mountedRef.current = false;
+      if (unsubscribeRef.current) {
+        unsubscribeRef.current();
+        unsubscribeRef.current = null;
+      }
+    };
+  }, [activeProgram, trainingCacheKey, retryTrigger]);
 
-  useEffect(() => {
-    if (allRecords.length === 0) {
-      setFilteredRecords([]);
-      setStats({ totalParticipants: 0, totalTrainers: 0, totalSubCounties: 0 });
-      return;
-    }
+  // ────────────────────────────────────────────────────────────────────
+  // FIX: filteredRecords derived via useMemo (was useState + useEffect)
+  // Since data is now pre-filtered at DB level by programme, the client-side
+  // filter only needs to handle: search, date range, region, and module.
+  // The redundant programme check has been removed.
+  // ────────────────────────────────────────────────────────────────────
+  const filteredRecords = useMemo(() => {
+    if (allRecords.length === 0) return [];
 
-    const filtered = allRecords.filter((record) => {
-      // ── Programme filter ──
-      // Include records that match the active programme OR weekly reports
-      // (which don't carry a programme field).
-      const isWeeklyReport =
-        record.recordType === "weeklyCapacityReport";
-      if (!isWeeklyReport) {
+    return sortTrainingByLatest(
+      allRecords.filter((record) => {
+        // FIX: Programme check removed — data is already filtered at DB level.
+        // Keeping this as a safety net for edge cases (e.g., cached data
+        // from before the fix, or records that appear via legacy field only).
+        // This is a no-op in the common case since the DB query handles it.
         const recProg = normalizeProgramme(record.programme || record.Programme);
         const targetProg = normalizeProgramme(activeProgram);
         if (recProg && targetProg && recProg !== targetProg) return false;
-      }
 
-      // ── Region / county filter ──
-      const recordRegion = record.county || record.region;
-      if (
-        filters.region !== "all" &&
-        recordRegion?.toLowerCase() !== filters.region.toLowerCase()
-      ) {
-        return false;
-      }
-
-      // ── Module / topic filter ──
-      const recordModules = record.topicTrained || record.Modules;
-      if (
-        filters.modules !== "all" &&
-        recordModules?.toLowerCase() !== filters.modules.toLowerCase()
-      ) {
-        return false;
-      }
-
-      // ── Date range filter ──
-      const recordDate = parseDate(getRecordCreationDate(record));
-
-      if (filters.startDate || filters.endDate) {
-        if (recordDate) {
-          const recordDateOnly = new Date(recordDate);
-          recordDateOnly.setHours(0, 0, 0, 0);
-
-          const startDate = filters.startDate
-            ? new Date(filters.startDate)
-            : null;
-          const endDate = filters.endDate ? new Date(filters.endDate) : null;
-          if (startDate) startDate.setHours(0, 0, 0, 0);
-          if (endDate) endDate.setHours(23, 59, 59, 999);
-
-          if (startDate && recordDateOnly < startDate) return false;
-          if (endDate && recordDateOnly > endDate) return false;
-        } else {
+        // ── Region / county filter ──
+        const recordRegion = record.county || record.region;
+        if (
+          filters.region !== "all" &&
+          recordRegion?.toLowerCase() !== filters.region.toLowerCase()
+        ) {
           return false;
         }
-      }
 
-      // ── Search filter ──
-      if (debouncedSearch) {
-        const lowerTerm = debouncedSearch.toLowerCase();
-        const searchable = [
-          record.topicTrained,
-          record.county,
-          record.subcounty,
-          record.fieldOfficer,
-          record.username,
-          record.location,
-          record.reportId,
-        ]
-          .filter(Boolean)
-          .join(" ")
-          .toLowerCase();
+        // ── Module / topic filter ──
+        const recordModules = record.topicTrained || record.Modules;
+        if (
+          filters.modules !== "all" &&
+          recordModules?.toLowerCase() !== filters.modules.toLowerCase()
+        ) {
+          return false;
+        }
 
-        if (!searchable.includes(lowerTerm)) return false;
-      }
+        // ── Date range filter ──
+        const recordDate = parseDate(getRecordCreationDate(record));
 
-      return true;
-    });
+        if (filters.startDate || filters.endDate) {
+          if (recordDate) {
+            const recordDateOnly = new Date(recordDate);
+            recordDateOnly.setHours(0, 0, 0, 0);
 
-    const sortedFiltered = sortTrainingByLatest(filtered);
-    setFilteredRecords(sortedFiltered);
+            const startDate = filters.startDate
+              ? new Date(filters.startDate)
+              : null;
+            const endDate = filters.endDate ? new Date(filters.endDate) : null;
+            if (startDate) startDate.setHours(0, 0, 0, 0);
+            if (endDate) endDate.setHours(23, 59, 59, 999);
 
-    // Stats Calculation
-    const totalParticipants = sortedFiltered.reduce(
+            if (startDate && recordDateOnly < startDate) return false;
+            if (endDate && recordDateOnly > endDate) return false;
+          } else {
+            return false;
+          }
+        }
+
+        // ── Search filter ──
+        if (debouncedSearch) {
+          const lowerTerm = debouncedSearch.toLowerCase();
+          const searchable = [
+            record.topicTrained,
+            record.county,
+            record.subcounty,
+            record.fieldOfficer,
+            record.username,
+            record.location,
+            record.reportId,
+          ]
+            .filter(Boolean)
+            .join(" ")
+            .toLowerCase();
+
+          if (!searchable.includes(lowerTerm)) return false;
+        }
+
+        return true;
+      }),
+    );
+  }, [allRecords, filters, debouncedSearch, activeProgram]);
+
+  // ────────────────────────────────────────────────────────────────────
+  // FIX: Stats derived via useMemo (was useState + useEffect)
+  // Previously calculated inside a filter useEffect causing double renders.
+  // Now derived directly from filteredRecords with no state overhead.
+  // ────────────────────────────────────────────────────────────────────
+  const stats = useMemo((): Stats => {
+    if (filteredRecords.length === 0) {
+      return { totalParticipants: 0, totalTrainers: 0, totalSubCounties: 0 };
+    }
+
+    const totalParticipants = filteredRecords.reduce(
       (sum, r) => sum + (Number(r.totalFarmers) || 0),
       0,
     );
 
-    const allOfficers = sortedFiltered
-      .map((r) => r.fieldOfficer || r.username)
-      .filter(Boolean);
-    const uniqueOfficersSet = new Set(allOfficers);
-    const totalTrainers = uniqueOfficersSet.size;
+    const totalTrainers = new Set(
+      filteredRecords
+        .map((r) => r.fieldOfficer || r.username)
+        .filter(Boolean),
+    ).size;
 
-    const allSubCounties = sortedFiltered
-      .map((r) => r.subcounty)
-      .filter(Boolean);
-    const uniqueSubCountiesSet = new Set(allSubCounties);
-    const totalSubCounties = uniqueSubCountiesSet.size;
+    const totalSubCounties = new Set(
+      filteredRecords.map((r) => r.subcounty).filter(Boolean),
+    ).size;
 
-    setStats({ totalParticipants, totalTrainers, totalSubCounties });
+    return { totalParticipants, totalTrainers, totalSubCounties };
+  }, [filteredRecords]);
 
-    const totalPages = Math.ceil(sortedFiltered.length / pagination.limit);
-    setPagination((prev) => ({
-      ...prev,
+  // ────────────────────────────────────────────────────────────────────
+  // FIX: Pagination derived with useMemo (was full object in useState)
+  // totalPages, hasNext, hasPrev are now computed, not stored in state.
+  // ────────────────────────────────────────────────────────────────────
+  const totalPages = useMemo(
+    () => Math.max(1, Math.ceil(filteredRecords.length / PAGE_LIMIT)),
+    [filteredRecords.length],
+  );
+
+  const pagination = useMemo(() => {
+    const safePage = Math.min(page, totalPages);
+    return {
+      page: safePage,
+      limit: PAGE_LIMIT,
       totalPages,
-      hasNext: prev.page < totalPages,
-      hasPrev: prev.page > 1,
-    }));
-  }, [allRecords, filters, debouncedSearch, pagination.limit, pagination.page, activeProgram]);
+      hasNext: safePage < totalPages,
+      hasPrev: safePage > 1,
+    };
+  }, [page, totalPages]);
+
+  // ────────────────────────────────────────────────────────────────────
+  // FIX: currentPageRecords with correct useMemo pattern
+  // Previously broken: useMemo(getCurrentPageRecords, [...]) — passed the
+  // function reference directly instead of a factory function.
+  // ────────────────────────────────────────────────────────────────────
+  const currentPageRecords = useMemo(() => {
+    const start = (pagination.page - 1) * pagination.limit;
+    return filteredRecords.slice(start, start + pagination.limit);
+  }, [filteredRecords, pagination.page, pagination.limit]);
 
   // ────────────────────────────────────────────
-  // Handlers
+  // FIX: Handlers wrapped in useCallback
+  // Prevents re-creation on every render.
   // ────────────────────────────────────────────
 
-  const handleProgramChange = (program: string) => {
+  const handleProgramChange = useCallback((program: string) => {
     setActiveProgram(program);
-    setFilters((prev) => ({
-      ...prev,
+    setFilters({
       search: "",
       startDate: currentMonth.startDate,
       endDate: currentMonth.endDate,
       modules: "all",
       region: "all",
-    }));
-    setPagination((prev) => ({ ...prev, page: 1 }));
+    });
+    // FIX: Reset to page 1 when programme changes
+    setPage(1);
     setSelectedRecords([]);
-  };
+    setFetchError(null);
+  }, [setActiveProgram, currentMonth.startDate, currentMonth.endDate]);
 
-  const handleSearch = (value: string) => {
+  const handleSearch = useCallback((value: string) => {
     setSearchValue(value);
-    setPagination((prev) => ({ ...prev, page: 1 }));
-  };
+    // FIX: Reset to page 1 when search changes
+    setPage(1);
+  }, []);
 
-  const getSelectedProgramme = () => {
+  const getSelectedProgramme = useCallback(() => {
     const selectedProgramme = normalizeProgramme(activeProgram);
     if (!selectedProgramme) {
-      toast({
+      toastRef.current({
         title: "Programme required",
         description: "Select a valid programme before saving capacity building data.",
         variant: "destructive",
@@ -770,56 +984,47 @@ const CapacityBuildingPage = () => {
       return "";
     }
     return selectedProgramme;
-  };
+  }, [activeProgram]);
 
-  const handleFilterChange = (key: keyof Filters, value: string) => {
+  const handleFilterChange = useCallback((key: keyof Filters, value: string) => {
     setFilters((prev) => ({ ...prev, [key]: value }));
-    setPagination((prev) => ({ ...prev, page: 1 }));
-  };
+    // FIX: Reset to page 1 when any filter changes
+    setPage(1);
+  }, []);
 
-  const handleSelectRecord = (id: string) => {
+  const handleSelectRecord = useCallback((id: string) => {
     setSelectedRecords((prev) =>
       prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id],
     );
-  };
+  }, []);
 
-  const handleSelectAll = () => {
-    const currentPageIds = getCurrentPageRecords().map((r) => r.id);
+  // FIX: handleSelectAll now uses currentPageRecords from useMemo instead
+  // of calling a function reference
+  const handleSelectAll = useCallback(() => {
+    const currentPageIds = currentPageRecords.map((r) => r.id);
     setSelectedRecords((prev) =>
       prev.length === currentPageIds.length && currentPageIds.length > 0
         ? []
         : currentPageIds,
     );
-  };
+  }, [currentPageRecords]);
 
-  const handlePageChange = (newPage: number) => {
-    setPagination((prev) => {
-      const totalPages = Math.ceil(filteredRecords.length / prev.limit);
+  const handlePageChange = useCallback(
+    (newPage: number) => {
       const safePage = Math.max(1, Math.min(newPage, totalPages));
-      return {
-        ...prev,
-        page: safePage,
-        hasNext: safePage < totalPages,
-        hasPrev: safePage > 1,
-      };
-    });
-  };
+      setPage(safePage);
+    },
+    [totalPages],
+  );
 
-  const getCurrentPageRecords = () => {
-    const start = (pagination.page - 1) * pagination.limit;
-    return filteredRecords.slice(start, start + pagination.limit);
-  };
-
-  // ── Dialog openers ──
-
-  const openViewDialog = (record: TrainingRecord) => {
+  const openViewDialog = useCallback((record: TrainingRecord) => {
     setViewingRecord(record);
     setIsViewDialogOpen(true);
-  };
+  }, []);
 
-  const openPdfDialog = (record: TrainingRecord) => {
+  const openPdfDialog = useCallback((record: TrainingRecord) => {
     if (!getRecordPdfUrl(record)) {
-      toast({
+      toastRef.current({
         title: "No PDF",
         description: "This record does not have an associated validation document PDF.",
         variant: "destructive",
@@ -828,45 +1033,51 @@ const CapacityBuildingPage = () => {
     }
     setPdfRecord(record);
     setIsPdfDialogOpen(true);
-  };
+  }, []);
 
-  const handleDownloadPdf = (record: TrainingRecord | null = pdfRecord) => {
-    const pdfUrl = getRecordPdfUrl(record);
-    if (!pdfUrl) {
-      toast({
-        title: "No PDF",
-        description: "This record does not have an associated validation document PDF.",
-        variant: "destructive",
+  const handleDownloadPdf = useCallback(
+    (record: TrainingRecord | null = null) => {
+      const targetRecord = record || pdfRecord;
+      const pdfUrl = getRecordPdfUrl(targetRecord);
+      if (!pdfUrl) {
+        toastRef.current({
+          title: "No PDF",
+          description: "This record does not have an associated validation document PDF.",
+          variant: "destructive",
+        });
+        return;
+      }
+      window.open(pdfUrl, "_blank", "noopener,noreferrer");
+    },
+    [pdfRecord],
+  );
+
+  const openEditDialog = useCallback(
+    (record: TrainingRecord) => {
+      if (!userIsChiefAdmin) return;
+      setEditingRecord(record);
+      setEditForm({
+        Name: record.username || record.Name || "",
+        topicTrained: record.topicTrained || record.Modules || "",
+        county: record.county || record.region || "",
+        subcounty: record.subcounty || record.location || "",
+        startDate: record.startDate || "",
+        endDate: record.endDate || "",
+        totalFarmers: record.totalFarmers || 0,
+        programme: record.programme || activeProgram,
+        numberOfTrainers: record.numberOfTrainers || 0,
+        numberOfSubCounties: record.numberOfSubCounties || 0,
       });
-      return;
-    }
-    // Open the Firebase Storage URL in a new tab — the browser will
-    // either display or download the PDF depending on its settings.
-    window.open(pdfUrl, "_blank", "noopener,noreferrer");
-  };
+      setIsEditDialogOpen(true);
+    },
+    [userIsChiefAdmin, activeProgram],
+  );
 
-  const openEditDialog = (record: TrainingRecord) => {
-    if (!userIsChiefAdmin) return;
-    setEditingRecord(record);
-    setEditForm({
-      Name: record.username || record.Name || "",
-      topicTrained: record.topicTrained || record.Modules || "",
-      county: record.county || record.region || "",
-      subcounty: record.subcounty || record.location || "",
-      startDate: record.startDate || "",
-      endDate: record.endDate || "",
-      totalFarmers: record.totalFarmers || 0,
-      programme: record.programme || activeProgram,
-      numberOfTrainers: record.numberOfTrainers || 0,
-      numberOfSubCounties: record.numberOfSubCounties || 0,
-    });
-    setIsEditDialogOpen(true);
-  };
-
-  const handleEditSubmit = async () => {
+  const handleEditSubmit = useCallback(async () => {
     if (!requireChiefAdmin()) return;
     if (!editingRecord) return;
-    const selectedProgramme = normalizeProgramme(editForm.programme) || getSelectedProgramme();
+    const selectedProgramme =
+      normalizeProgramme(editForm.programme) || getSelectedProgramme();
     if (!selectedProgramme) return;
     try {
       await update(ref(db, `capacityBuilding/${editingRecord.id}`), {
@@ -883,24 +1094,24 @@ const CapacityBuildingPage = () => {
         numberOfSubCounties: Number(editForm.numberOfSubCounties),
       });
 
-      toast({ title: "Success", description: "Record updated." });
+      toastRef.current({ title: "Success", description: "Record updated." });
       removeCachedValue(trainingCacheKey);
       setIsEditDialogOpen(false);
       setEditingRecord(null);
     } catch (error) {
       console.error(error);
-      toast({
+      toastRef.current({
         title: "Error",
         description: "Failed to update.",
         variant: "destructive",
       });
     }
-  };
+  }, [requireChiefAdmin, editingRecord, editForm, getSelectedProgramme, trainingCacheKey]);
 
-  const openDeleteConfirm = () => {
+  const openDeleteConfirm = useCallback(() => {
     if (!requireChiefAdmin()) return;
     if (selectedRecords.length === 0) {
-      toast({
+      toastRef.current({
         title: "Warning",
         description: "No records selected",
         variant: "destructive",
@@ -908,9 +1119,9 @@ const CapacityBuildingPage = () => {
       return;
     }
     setIsDeleteConfirmOpen(true);
-  };
+  }, [requireChiefAdmin, selectedRecords.length]);
 
-  const handleDeleteMultiple = async () => {
+  const handleDeleteMultiple = useCallback(async () => {
     if (!requireChiefAdmin()) return;
     try {
       setDeleteLoading(true);
@@ -921,7 +1132,7 @@ const CapacityBuildingPage = () => {
 
       await update(ref(db), updates);
 
-      toast({
+      toastRef.current({
         title: "Success",
         description: `Deleted ${selectedRecords.length} records.`,
       });
@@ -930,7 +1141,7 @@ const CapacityBuildingPage = () => {
       setIsDeleteConfirmOpen(false);
     } catch (error) {
       console.error(error);
-      toast({
+      toastRef.current({
         title: "Error",
         description: "Failed to delete.",
         variant: "destructive",
@@ -938,23 +1149,33 @@ const CapacityBuildingPage = () => {
     } finally {
       setDeleteLoading(false);
     }
-  };
+  }, [requireChiefAdmin, selectedRecords, trainingCacheKey]);
 
-  const handleDeleteSingle = async (id: string) => {
-    if (!requireChiefAdmin()) return;
-    try {
-      await remove(ref(db, `capacityBuilding/${id}`));
-      toast({ title: "Success", description: "Record deleted." });
-      removeCachedValue(trainingCacheKey);
-    } catch (error) {
-      console.error(error);
-      toast({
-        title: "Error",
-        description: "Failed to delete.",
-        variant: "destructive",
-      });
-    }
-  };
+  const handleDeleteSingle = useCallback(
+    async (id: string) => {
+      if (!requireChiefAdmin()) return;
+      try {
+        await remove(ref(db, `capacityBuilding/${id}`));
+        toastRef.current({ title: "Success", description: "Record deleted." });
+        removeCachedValue(trainingCacheKey);
+      } catch (error) {
+        console.error(error);
+        toastRef.current({
+          title: "Error",
+          description: "Failed to delete.",
+          variant: "destructive",
+        });
+      }
+    },
+    [requireChiefAdmin, trainingCacheKey],
+  );
+
+  // ── FIX: Handle retry from error state ──
+  const handleRetry = useCallback(() => {
+    setFetchError(null);
+    retryCountRef.current = 0;
+    setRetryTrigger((prev) => prev + 1);
+  }, []);
 
   // ── CSV parsing helpers ──
 
@@ -982,11 +1203,11 @@ const CapacityBuildingPage = () => {
     return result;
   };
 
-  const handleFileSelect = (e: ChangeEvent<HTMLInputElement>) => {
+  const handleFileSelect = useCallback((e: ChangeEvent<HTMLInputElement>) => {
     if (e.target.files?.[0]) setUploadFile(e.target.files[0]);
-  };
+  }, []);
 
-  const handleUpload = async () => {
+  const handleUpload = useCallback(async () => {
     if (!requireChiefAdmin()) return;
     if (!uploadFile) return;
     const selectedProgramme = getSelectedProgramme();
@@ -1102,7 +1323,7 @@ const CapacityBuildingPage = () => {
         count++;
       }
 
-      toast({
+      toastRef.current({
         title: "Success",
         description: `Uploaded ${count} records to ${selectedProgramme}.`,
       });
@@ -1112,7 +1333,7 @@ const CapacityBuildingPage = () => {
       if (fileInputRef.current) fileInputRef.current.value = "";
     } catch (error) {
       console.error(error);
-      toast({
+      toastRef.current({
         title: "Error",
         description: "Invalid file format",
         variant: "destructive",
@@ -1120,11 +1341,11 @@ const CapacityBuildingPage = () => {
     } finally {
       setUploadLoading(false);
     }
-  };
+  }, [requireChiefAdmin, uploadFile, getSelectedProgramme, trainingCacheKey]);
 
   // ── Export ──
 
-  const handleExport = async () => {
+  const handleExport = useCallback(async () => {
     try {
       setExportLoading(true);
       if (filteredRecords.length === 0) return;
@@ -1171,7 +1392,7 @@ const CapacityBuildingPage = () => {
       URL.revokeObjectURL(url);
     } catch (error) {
       console.error(error);
-      toast({
+      toastRef.current({
         title: "Error",
         description: "Export failed",
         variant: "destructive",
@@ -1179,7 +1400,7 @@ const CapacityBuildingPage = () => {
     } finally {
       setExportLoading(false);
     }
-  };
+  }, [filteredRecords, activeProgram]);
 
   // ── Derived values ──
 
@@ -1198,46 +1419,6 @@ const CapacityBuildingPage = () => {
       ),
     ],
     [allRecords],
-  );
-  const currentPageRecords = useMemo(
-    getCurrentPageRecords,
-    [filteredRecords, pagination.page, pagination.limit],
-  );
-
-  // ── Inline StatsCard component ──
-  const StatsCard = ({
-    title,
-    value,
-    icon: Icon,
-    description,
-  }: {
-    title: string;
-    value: string | number;
-    icon: React.ElementType;
-    description?: string;
-    children?: React.ReactNode;
-  }) => (
-    <Card className="bg-white text-slate-900 shadow-lg border border-gray-200 relative overflow-hidden">
-      <div className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-blue-500 to-purple-600" />
-      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 pt-4 pl-6">
-        <CardTitle className="text-sm font-medium text-gray-500">
-          {title}
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="pl-6 pb-4 flex flex-row">
-        <div className="mr-2 rounded-full">
-          <Icon className="h-8 w-8 text-blue-600" />
-        </div>
-        <div>
-          <div className="text-2xl font-bold text-slate-900 mb-2">{value}</div>
-          {description && (
-            <p className="text-xs text-slate-600 mt-2 bg-slate-50 px-2 py-1 rounded border border-slate-100">
-              {description}
-            </p>
-          )}
-        </div>
-      </CardContent>
-    </Card>
   );
 
   // ────────────────────────────────────────────
@@ -1284,7 +1465,8 @@ const CapacityBuildingPage = () => {
                 modules: "all",
                 region: "all",
               });
-              setPagination({ ...pagination, page: 1 });
+              // FIX: Reset page when clearing filters
+              setPage(1);
             }}
           >
             Clear Filters
@@ -1293,7 +1475,8 @@ const CapacityBuildingPage = () => {
             variant="outline"
             size="sm"
             onClick={() => {
-              setFilters({ ...filters, ...currentMonth });
+              setFilters((prev) => ({ ...prev, ...currentMonth }));
+              setPage(1);
             }}
           >
             This Month
@@ -1392,13 +1575,6 @@ const CapacityBuildingPage = () => {
                 </SelectContent>
               </Select>
             </div>
-            {/* <div className="space-y-2">
-              <Label>Module/Topic</Label>
-              <Select value={filters.modules} onValueChange={(v) => handleFilterChange("modules", v)}>
-                <SelectTrigger><SelectValue placeholder="Select Module" /></SelectTrigger>
-                <SelectContent><SelectItem value="all">All Modules</SelectItem>{uniqueModules.slice(0, 20).map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent>
-              </Select>
-            </div> */}
             <div className="w-[280px] shrink-0 space-y-2 sm:w-auto">
               <Label>Date Range</Label>
               <div className="flex gap-2">
@@ -1427,14 +1603,28 @@ const CapacityBuildingPage = () => {
       {/* ─── Data Table ─── */}
       <Card className="shadow-lg bg-white">
         <CardContent className="p-0">
-          {loading ? (
+          {/* FIX: Error state with retry option */}
+          {fetchError ? (
+            <div className="text-center py-12 px-4">
+              <div className="text-red-500 mb-4">
+                <FileText className="h-10 w-10 mx-auto mb-3 opacity-50" />
+                <p className="text-sm font-medium text-red-700">{fetchError}</p>
+              </div>
+              <Button variant="outline" size="sm" onClick={handleRetry}>
+                Retry
+              </Button>
+            </div>
+          ) : loading ? (
             <div className="text-center py-12">
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto" />
+              <p className="text-sm text-muted-foreground mt-3">
+                Loading {activeProgram} records...
+              </p>
             </div>
           ) : currentPageRecords.length === 0 ? (
             <div className="text-center py-12 text-muted-foreground">
               {activeProgram
-                ? "No records found"
+                ? "No records found for this programme"
                 : "You do not have access to any programme data."}
             </div>
           ) : (
