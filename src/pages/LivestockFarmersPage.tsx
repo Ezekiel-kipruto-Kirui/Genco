@@ -26,7 +26,6 @@ import { useToast } from "@/hooks/use-toast";
 import { canViewAllProgrammes, isAdmin } from "@/contexts/authhelper";
 import {
   matchesActiveProgramme, normalizeProgramme,
-  getProgrammeQueryValues,
   resolveAccessibleProgrammes, resolveActiveProgramme
 } from "@/lib/programme-access";
 
@@ -464,63 +463,43 @@ const LivestockFarmersPage = () => {
     const cacheKey = `farmers_cache_${activeProgram}`;
     localStorage.removeItem(cacheKey);
 
-    const queryValues = getProgrammeQueryValues(activeProgram);
-    if (queryValues.length === 0) {
+    const programmeValue = normalizeProgramme(activeProgram);
+    if (!programmeValue) {
       setAllFarmers([]);
       setLoading(false);
       return;
     }
 
-    const querySnapshots = new Map<string, Map<string, FarmerData>>();
-    const mergeSnapshots = () => {
-      const mergedRecords = new Map<string, FarmerData>();
-      querySnapshots.forEach((records) => {
-        records.forEach((record, id) => mergedRecords.set(id, record));
-      });
-      const records = sortFarmersByLatest(Array.from(mergedRecords.values()));
-      setAllFarmers(records);
-      setLoading(false);
-    };
+    const farmersQuery = query(
+      ref(db, "farmers"),
+      orderByChild("programme"),
+      equalTo(programmeValue)
+    );
 
-    const unsubscribers = ["programme", "Programme"].flatMap((fieldName) =>
-      queryValues.map((programmeValue) => {
-        const farmersQuery = query(
-          ref(db, "farmers"),
-          orderByChild(fieldName),
-          equalTo(programmeValue)
-        );
-        const queryKey = `${fieldName}:${programmeValue}`;
-        return onValue(
-          farmersQuery,
-          (snapshot) => {
+    const unsubscribe = onValue(
+      farmersQuery,
+      (snapshot) => {
         const data = snapshot.val();
         const records = data && typeof data === "object"
-          ? new Map(
-              Object.entries(data).map(([key, item]) => [
-                key,
-                processFarmerRecord(key, item, activeProgram),
-              ])
-            )
-          : new Map<string, FarmerData>();
+          ? Object.entries(data).map(([key, item]) => processFarmerRecord(key, item, programmeValue))
+          : [];
 
-            querySnapshots.set(queryKey, records);
-            mergeSnapshots();
-          },
-          (error) => {
-            console.error("Error loading livestock farmers:", error);
-            toast({
-              title: "Error",
-              description: "Failed to load livestock farmers.",
-              variant: "destructive",
-            });
-            setLoading(false);
-          }
-        );
-      })
+        setAllFarmers(sortFarmersByLatest(records));
+        setLoading(false);
+      },
+      (error) => {
+        console.error("Error loading livestock farmers:", error);
+        toast({
+          title: "Error",
+          description: "Failed to load livestock farmers.",
+          variant: "destructive",
+        });
+        setLoading(false);
+      }
     );
 
     return () => {
-      unsubscribers.forEach((unsubscribe) => unsubscribe());
+      unsubscribe();
     };
   }, [activeProgram, toast]);
 
@@ -536,48 +515,29 @@ const LivestockFarmersPage = () => {
     const cacheKey = `training_cache_${activeProgram}`;
     localStorage.removeItem(cacheKey);
 
-    const queryValues = getProgrammeQueryValues(activeProgram);
-    if (queryValues.length === 0) {
+    const programmeValue = normalizeProgramme(activeProgram);
+    if (!programmeValue) {
       setTrainingRecords([]);
       return;
     }
 
-    const querySnapshots = new Map<string, Map<string, TrainingData>>();
-    const mergeSnapshots = () => {
-      const mergedRecords = new Map<string, TrainingData>();
-      querySnapshots.forEach((records) => {
-        records.forEach((record, id) => mergedRecords.set(id, record));
-      });
-      setTrainingRecords(Array.from(mergedRecords.values()));
-    };
-
-    const unsubscribers = ["programme", "Programme"].flatMap((fieldName) =>
-      queryValues.map((programmeValue) => {
-        const trainingQuery = query(
-          ref(db, "capacityBuilding"),
-          orderByChild(fieldName),
-          equalTo(programmeValue)
-        );
-        const queryKey = `${fieldName}:${programmeValue}`;
-        return onValue(trainingQuery, (snapshot) => {
-          const data = snapshot.val();
-          const records = data && typeof data === "object"
-            ? new Map(
-                Object.entries(data).map(([key, item]) => [
-                  key,
-                  processTrainingRecord(key, item, activeProgram),
-                ])
-              )
-            : new Map<string, TrainingData>();
-
-          querySnapshots.set(queryKey, records);
-          mergeSnapshots();
-        });
-      })
+    const trainingQuery = query(
+      ref(db, "capacityBuilding"),
+      orderByChild("programme"),
+      equalTo(programmeValue)
     );
 
+    const unsubscribe = onValue(trainingQuery, (snapshot) => {
+      const data = snapshot.val();
+      const records = data && typeof data === "object"
+        ? Object.entries(data).map(([key, item]) => processTrainingRecord(key, item, programmeValue))
+        : [];
+
+      setTrainingRecords(records);
+    });
+
     return () => {
-      unsubscribers.forEach((unsubscribe) => unsubscribe());
+      unsubscribe();
     };
   }, [activeProgram]);
 
@@ -1207,10 +1167,6 @@ const LivestockFarmersPage = () => {
     () => [...new Set(allFarmers.map((f) => f.gender).filter(Boolean))],
     [allFarmers]
   );
-  const duplicateKeyCounts = useMemo(
-    () => getDuplicateKeyCounts(allFarmers),
-    [allFarmers]
-  );
   const currentPageRecords = useMemo(getCurrentPageRecords, [getCurrentPageRecords]);
 
   // =========================================================================
@@ -1549,7 +1505,6 @@ const LivestockFarmersPage = () => {
                         />
                       </th>
                       <th className="py-3 px-3 font-semibold text-gray-700">Date</th>
-                      <th className="py-3 px-3 font-semibold text-gray-700">Registration</th>
                       <th className="py-3 px-3 font-semibold text-gray-700">Farmer Name</th>
                       <th className="py-3 px-3 font-semibold text-gray-700">Gender</th>
                       <th className="py-3 px-3 font-semibold text-gray-700">Phone</th>
@@ -1567,9 +1522,7 @@ const LivestockFarmersPage = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {currentPageRecords.map((record) => {
-                      const duplicateCount = duplicateKeyCounts.get(getFarmerDuplicateKey(record)) || 1;
-                      return (
+                    {currentPageRecords.map((record) => (
                       <tr key={record.id} className="border-b hover:bg-blue-50 transition-colors group">
                         <td className="py-2 px-3">
                           <Checkbox
@@ -1578,15 +1531,6 @@ const LivestockFarmersPage = () => {
                           />
                         </td>
                         <td className="py-2 px-3 text-xs text-gray-500">{formatDate(record.createdAt)}</td>
-                        <td className="py-2 px-3">
-                          {duplicateCount > 1 ? (
-                            <Badge className="bg-amber-100 text-amber-800 hover:bg-amber-100 text-[10px]">
-                              Repeat x{duplicateCount}
-                            </Badge>
-                          ) : (
-                            <Badge variant="outline" className="text-gray-500 text-[10px]">Unique</Badge>
-                          )}
-                        </td>
                         <td className="py-2 px-3 font-medium text-sm">{record.name}</td>
                         <td className="py-2 px-3">
                           <Badge variant={record.gender === "Female" ? "secondary" : "outline"} className="text-xs">
@@ -1647,8 +1591,7 @@ const LivestockFarmersPage = () => {
                           </div>
                         </td>
                       </tr>
-                      );
-                    })}
+                    ))}
                   </tbody>
                 </table>
               </div>

@@ -18,7 +18,6 @@ import { useSharedProgrammeSelection } from "@/hooks/use-shared-programme-select
 import { canViewAllProgrammes, isAdmin } from "@/contexts/authhelper";
 import {
   ALL_PROGRAMMES_VALUE,
-  getProgrammeQueryValues,
   normalizeProgramme as normalizeProg,
   resolveAccessibleProgrammes,
 } from "@/lib/programme-access";
@@ -747,39 +746,26 @@ const LivestockFarmersAnalytics = () => {
       return () => { if (typeof unsubscribe === "function") unsubscribe(); };
     }
 
-    const queryValues = getProgrammeQueryValues(activeProgram);
-    if (queryValues.length === 0) {
+    const programmeValue = normalizeProgramme(activeProgram);
+    if (!programmeValue) {
       setAllFarmers([]);
       setLoading(false);
       return;
     }
 
-    const querySnapshots = new Map<string, Record<string, any>>();
-    const mergeSnapshots = () => {
-      const merged: Record<string, any> = {};
-      querySnapshots.forEach((records) => Object.assign(merged, records));
-      setAllFarmers(mapFarmers(merged));
-      setLoading(false);
-    };
-
-    const unsubscribers = ["programme", "Programme"].flatMap((fieldName) =>
-      queryValues.map((programmeValue) => {
-        const queryKey = `${fieldName}:${programmeValue}`;
-        return onValue(
-          query(ref(db, "farmers"), orderByChild(fieldName), equalTo(programmeValue)),
-          (snapshot) => {
-            querySnapshots.set(queryKey, snapshot.val() || {});
-            mergeSnapshots();
-          },
-          (error) => {
-            console.error("Error fetching farmers data:", error);
-            setLoading(false);
-          },
-        );
-      }),
+    const unsubscribe = onValue(
+      query(ref(db, "farmers"), orderByChild("programme"), equalTo(programmeValue)),
+      (snapshot) => {
+        setAllFarmers(mapFarmers(snapshot.val()));
+        setLoading(false);
+      },
+      (error) => {
+        console.error("Error fetching farmers data:", error);
+        setLoading(false);
+      },
     );
 
-    return () => { unsubscribers.forEach((unsubscribe) => unsubscribe()); };
+    return () => { unsubscribe(); };
   }, [activeProgram]);
 
   // --- 3. Data Fetching (Capacity Building) ---
@@ -817,36 +803,23 @@ const LivestockFarmersAnalytics = () => {
       return () => { if (typeof unsubscribe === "function") unsubscribe(); };
     }
 
-    const queryValues = getProgrammeQueryValues(activeProgram);
-    if (queryValues.length === 0) {
+    const programmeValue = normalizeProgramme(activeProgram);
+    if (!programmeValue) {
       setTrainingRecords([]);
       return;
     }
 
-    const querySnapshots = new Map<string, Record<string, any>>();
-    const mergeSnapshots = () => {
-      const merged: Record<string, any> = {};
-      querySnapshots.forEach((records) => Object.assign(merged, records));
-      setTrainingRecords(mapTraining(merged));
-    };
-
-    const unsubscribers = ["programme", "Programme"].flatMap((fieldName) =>
-      queryValues.map((programmeValue) => {
-        const queryKey = `${fieldName}:${programmeValue}`;
-        return onValue(
-          query(ref(db, "capacityBuilding"), orderByChild(fieldName), equalTo(programmeValue)),
-          (snapshot) => {
-            querySnapshots.set(queryKey, snapshot.val() || {});
-            mergeSnapshots();
-          },
-          (error) => {
-            console.error("Error fetching training data:", error);
-          },
-        );
-      }),
+    const unsubscribe = onValue(
+      query(ref(db, "capacityBuilding"), orderByChild("programme"), equalTo(programmeValue)),
+      (snapshot) => {
+        setTrainingRecords(mapTraining(snapshot.val()));
+      },
+      (error) => {
+        console.error("Error fetching training data:", error);
+      },
     );
 
-    return () => { unsubscribers.forEach((unsubscribe) => unsubscribe()); };
+    return () => { unsubscribe(); };
   }, [activeProgram]);
 
   // --- 4. Filtering & Analytics Logic ---
