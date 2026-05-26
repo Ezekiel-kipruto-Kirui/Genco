@@ -1059,6 +1059,14 @@ const PerformanceReport = () => {
     allowAll: canViewAllReportProgrammes,
     fallbackToAll: accessibleProgrammes.length > 1,
   });
+  const appliedDefaultProgrammeRef = useRef(false);
+
+  useEffect(() => {
+    if (appliedDefaultProgrammeRef.current || accessibleProgrammes.length <= 1) return;
+    appliedDefaultProgrammeRef.current = true;
+    setActiveProgram(ALL_PROGRAMMES_VALUE);
+  }, [accessibleProgrammes.length, setActiveProgram]);
+
   const filterStripRef = useRef<HTMLDivElement | null>(null);
   
   const selectedYearNum = useMemo(() => {

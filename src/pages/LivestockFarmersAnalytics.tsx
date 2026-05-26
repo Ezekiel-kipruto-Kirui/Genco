@@ -15,7 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useSharedProgrammeSelection } from "@/hooks/use-shared-programme-selection";
-import { canViewAllProgrammes, isChiefAdmin } from "@/contexts/authhelper";
+import { canViewAllProgrammes, isAdmin } from "@/contexts/authhelper";
 import { ALL_PROGRAMMES_VALUE, resolveAccessibleProgrammes } from "@/lib/programme-access";
 
 // --- Constants ---
@@ -601,7 +601,7 @@ const LivestockFarmersAnalytics = () => {
     () => canViewAllProgrammes(userRole, userAttribute, allowedProgrammes),
     [allowedProgrammes, userRole, userAttribute]
   );
-  const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
+  const userIsAdmin = useMemo(() => isAdmin(userRole), [userRole]);
   const analysisYear = useMemo(
     () => {
       const parsedSelectedYear = Number.parseInt(selectedYear, 10);
@@ -1776,3 +1776,4 @@ const LivestockFarmersAnalytics = () => {
 };
 
 export default LivestockFarmersAnalytics;
+

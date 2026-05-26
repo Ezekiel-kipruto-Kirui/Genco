@@ -23,7 +23,7 @@ import {
 } from "lucide-react";
 import { useSharedProgrammeSelection } from "@/hooks/use-shared-programme-selection";
 import { useToast } from "@/hooks/use-toast";
-import { canViewAllProgrammes, isChiefAdmin } from "@/contexts/authhelper";
+import { canViewAllProgrammes, isAdmin } from "@/contexts/authhelper";
 import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
 import { matchesActiveProgramme, normalizeProgramme, resolveAccessibleProgrammes, resolveActiveProgramme } from "@/lib/programme-access";
 
@@ -541,8 +541,8 @@ const CapacityBuildingPage = () => {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const userIsChiefAdmin = useMemo(
-    () => isChiefAdmin(userRole),
+  const userIsAdmin = useMemo(
+    () => isAdmin(userRole),
     [userRole],
   );
   const userCanViewAllProgrammeData = useMemo(
@@ -562,16 +562,16 @@ const CapacityBuildingPage = () => {
 
   const availablePrograms = accessibleProgrammes;
 
-  const requireChiefAdmin = useCallback(() => {
-    if (userIsChiefAdmin) return true;
+  const requireAdmin = useCallback(() => {
+    if (userIsAdmin) return true;
     toastRef.current({
       title: "Access denied",
       description:
-        "Only chief admin can create, edit, or delete records on this page.",
+        "Only Admin can create, edit, or delete records on this page.",
       variant: "destructive",
     });
     return false;
-  }, [userIsChiefAdmin]);
+  }, [userIsAdmin]);
 
   const trainingCacheKey = useMemo(
     () => cacheKey("admin-page", "capacity-building", activeProgram),
@@ -1054,7 +1054,7 @@ const CapacityBuildingPage = () => {
 
   const openEditDialog = useCallback(
     (record: TrainingRecord) => {
-      if (!userIsChiefAdmin) return;
+      if (!userIsAdmin) return;
       setEditingRecord(record);
       setEditForm({
         Name: record.username || record.Name || "",
@@ -1070,11 +1070,11 @@ const CapacityBuildingPage = () => {
       });
       setIsEditDialogOpen(true);
     },
-    [userIsChiefAdmin, activeProgram],
+    [userIsAdmin, activeProgram],
   );
 
   const handleEditSubmit = useCallback(async () => {
-    if (!requireChiefAdmin()) return;
+    if (!requireAdmin()) return;
     if (!editingRecord) return;
     const selectedProgramme =
       normalizeProgramme(editForm.programme) || getSelectedProgramme();
@@ -1106,10 +1106,10 @@ const CapacityBuildingPage = () => {
         variant: "destructive",
       });
     }
-  }, [requireChiefAdmin, editingRecord, editForm, getSelectedProgramme, trainingCacheKey]);
+  }, [requireAdmin, editingRecord, editForm, getSelectedProgramme, trainingCacheKey]);
 
   const openDeleteConfirm = useCallback(() => {
-    if (!requireChiefAdmin()) return;
+    if (!requireAdmin()) return;
     if (selectedRecords.length === 0) {
       toastRef.current({
         title: "Warning",
@@ -1119,10 +1119,10 @@ const CapacityBuildingPage = () => {
       return;
     }
     setIsDeleteConfirmOpen(true);
-  }, [requireChiefAdmin, selectedRecords.length]);
+  }, [requireAdmin, selectedRecords.length]);
 
   const handleDeleteMultiple = useCallback(async () => {
-    if (!requireChiefAdmin()) return;
+    if (!requireAdmin()) return;
     try {
       setDeleteLoading(true);
       const updates: { [key: string]: null } = {};
@@ -1149,11 +1149,11 @@ const CapacityBuildingPage = () => {
     } finally {
       setDeleteLoading(false);
     }
-  }, [requireChiefAdmin, selectedRecords, trainingCacheKey]);
+  }, [requireAdmin, selectedRecords, trainingCacheKey]);
 
   const handleDeleteSingle = useCallback(
     async (id: string) => {
-      if (!requireChiefAdmin()) return;
+      if (!requireAdmin()) return;
       try {
         await remove(ref(db, `capacityBuilding/${id}`));
         toastRef.current({ title: "Success", description: "Record deleted." });
@@ -1167,7 +1167,7 @@ const CapacityBuildingPage = () => {
         });
       }
     },
-    [requireChiefAdmin, trainingCacheKey],
+    [requireAdmin, trainingCacheKey],
   );
 
   // ── FIX: Handle retry from error state ──
@@ -1208,7 +1208,7 @@ const CapacityBuildingPage = () => {
   }, []);
 
   const handleUpload = useCallback(async () => {
-    if (!requireChiefAdmin()) return;
+    if (!requireAdmin()) return;
     if (!uploadFile) return;
     const selectedProgramme = getSelectedProgramme();
     if (!selectedProgramme) return;
@@ -1341,7 +1341,7 @@ const CapacityBuildingPage = () => {
     } finally {
       setUploadLoading(false);
     }
-  }, [requireChiefAdmin, uploadFile, getSelectedProgramme, trainingCacheKey]);
+  }, [requireAdmin, uploadFile, getSelectedProgramme, trainingCacheKey]);
 
   // ── Export ──
 
@@ -1444,7 +1444,7 @@ const CapacityBuildingPage = () => {
         </div>
 
         <div className="flex flex-wrap gap-2">
-          {selectedRecords.length > 0 && userIsChiefAdmin && (
+          {selectedRecords.length > 0 && userIsAdmin && (
             <Button
               variant="destructive"
               size="sm"
@@ -1500,7 +1500,7 @@ const CapacityBuildingPage = () => {
               </Select>
             </div>
           )}
-          {userIsChiefAdmin && (
+          {userIsAdmin && (
             <>
               <Button
                 variant="outline"
@@ -1733,7 +1733,7 @@ const CapacityBuildingPage = () => {
                                 </DropdownMenuItem>
                               )}
 
-                              {userIsChiefAdmin && (
+                              {userIsAdmin && (
                                 <>
                                   <DropdownMenuSeparator />
                                   <DropdownMenuItem
@@ -2188,7 +2188,7 @@ const CapacityBuildingPage = () => {
                 }
               />
             </div>
-            {userIsChiefAdmin && (
+            {userIsAdmin && (
               <div>
                 <Label>Programme</Label>
                 <Select
@@ -2305,3 +2305,5 @@ const CapacityBuildingPage = () => {
 };
 
 export default CapacityBuildingPage;
+
+

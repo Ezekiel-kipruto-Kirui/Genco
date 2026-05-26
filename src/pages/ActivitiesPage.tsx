@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { canViewAllProgrammes, isChiefAdmin } from "@/contexts/authhelper";
+import { canViewAllProgrammes, isAdmin } from "@/contexts/authhelper";
 import { includesProgramme, normalizeProgramme, resolveAccessibleProgrammes } from "@/lib/programme-access";
 
 import { 
@@ -116,7 +116,7 @@ const ActivitiesPage = () => {
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [activityForm, setActivityForm] = useState<ActivityForm>(() => buildEmptyActivityForm());
   const { user, userRole, userAttribute, allowedProgrammes } = useAuth();
-  const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
+  const userIsAdmin = useMemo(() => isAdmin(userRole), [userRole]);
   const userCanViewAllProgrammeData = useMemo(
     () => canViewAllProgrammes(userRole, userAttribute, allowedProgrammes),
     [allowedProgrammes, userRole, userAttribute]
@@ -143,11 +143,11 @@ const ActivitiesPage = () => {
   const [searchTerm, setSearchTerm] = useState("");
   const { toast } = useToast();
 
-  const requireChiefAdmin = () => {
-    if (userIsChiefAdmin) return true;
+  const requireAdmin = () => {
+    if (userIsAdmin) return true;
     toast({
       title: "Access denied",
-      description: "Only chief admin can create, edit, or delete records on this page.",
+      description: "Only Admin can create, edit, or delete records on this page.",
       variant: "destructive",
     });
     return false;
@@ -253,7 +253,7 @@ const ActivitiesPage = () => {
 
   // --- REALTIME DATABASE ADD FUNCTION ---
   const handleAddActivity = async () => {
-    if (!requireChiefAdmin()) return;
+    if (!requireAdmin()) return;
 
     if (participants.length === 0) {
       toast({
@@ -304,7 +304,7 @@ const ActivitiesPage = () => {
 
   // --- REALTIME DATABASE UPDATE FUNCTION ---
   const handleEditActivity = async () => {
-    if (!requireChiefAdmin()) return;
+    if (!requireAdmin()) return;
     if (!editingActivity) return;
 
     try {
@@ -337,7 +337,7 @@ const ActivitiesPage = () => {
 
   // --- REALTIME DATABASE DELETE FUNCTION ---
   const handleDeleteActivity = async (activityId: string) => {
-    if (!requireChiefAdmin()) return;
+    if (!requireAdmin()) return;
     try {
       await remove(ref(db, "Recent Activities/" + activityId));
       toast({
@@ -358,7 +358,7 @@ const ActivitiesPage = () => {
   };
 
   const handleStatusChange = async (activityId: string, newStatus: Activity['status']) => {
-    if (!requireChiefAdmin()) return;
+    if (!requireAdmin()) return;
     try {
       await update(ref(db, "Recent Activities/" + activityId), {
         status: newStatus
@@ -381,7 +381,7 @@ const ActivitiesPage = () => {
   };
 
   const openEditDialog = (activity: Activity) => {
-    if (!userIsChiefAdmin) return;
+    if (!userIsAdmin) return;
     const activityProgramme = normalizeProgramme(activity.programme);
     setEditingActivity(activity);
     setActivityForm({
@@ -456,7 +456,7 @@ const ActivitiesPage = () => {
           </div>
           <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
             <DialogTrigger asChild>
-              {userIsChiefAdmin ? (<Button className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white">
+              {userIsAdmin ? (<Button className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white">
                 <Plus className="h-4 w-4 mr-2" />
                 Schedule Activity
               </Button>) : <span className="hidden" />}
@@ -681,7 +681,7 @@ const ActivitiesPage = () => {
               />
             </div>
           </div>
-          {userIsChiefAdmin && hasProgrammeAccess && (
+          {userIsAdmin && hasProgrammeAccess && (
             <Select value={filterProgramme} onValueChange={setFilterProgramme}>
               <SelectTrigger
                 className="w-full md:w-44 bg-white rounded-xl"
@@ -766,7 +766,7 @@ const ActivitiesPage = () => {
                         </td>
                         <td className="py-2 px-3">{getStatusBadge(activity.status)}</td>
                         <td className="py-2 px-3">
-                          {userIsChiefAdmin ? (
+                          {userIsAdmin ? (
                             <div className="flex gap-1">
                               <Button
                                 size="icon"
@@ -840,7 +840,7 @@ const ActivitiesPage = () => {
                 ) : hasProgrammeAccess ? (
                   <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
                     <DialogTrigger asChild>
-                      {userIsChiefAdmin ? <Button className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white">
+                      {userIsAdmin ? <Button className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white">
                         <Plus className="h-4 w-4 mr-2" />
                         Schedule Your First Activity
                       </Button> : <span className="hidden" />}
@@ -1054,3 +1054,5 @@ const ActivitiesPage = () => {
 };
 
 export default ActivitiesPage;
+
+

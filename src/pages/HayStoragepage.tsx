@@ -484,11 +484,11 @@ const HayStoragePage = () => {
     () => cacheKey("admin-page", "hay-storage", activeProgram || "no-program"),
     [activeProgram]
   );
-  const requireChiefAdmin = () => {
+  const requireAdmin = () => {
     if (canManageRecords) return true;
     toast({
       title: "Access denied",
-      description: "Only chief admin can create, edit, or delete records on this page.",
+      description: "Only Admin can create, edit, or delete records on this page.",
       variant: "destructive",
     });
     return false;
@@ -724,7 +724,7 @@ const HayStoragePage = () => {
 
   // --- REALTIME DATABASE ADD FUNCTION (NO TOP UP LOGIC) ---
   const handleAddRecord = async () => {
-    if (!requireChiefAdmin()) return;
+    if (!requireAdmin()) return;
     if (!addingRecord.date_planted || !addingRecord.location || !addingRecord.county || !addingRecord.subcounty || !addingRecord.land_ownership) {
       toast({
         title: "Validation Error",
@@ -854,7 +854,7 @@ const HayStoragePage = () => {
   };
 
   const handleSaveEdit = async () => {
-    if (!requireChiefAdmin()) return;
+    if (!requireAdmin()) return;
     if (!editingRecord) return;
     try {
       setSaving(true);
@@ -890,7 +890,7 @@ const HayStoragePage = () => {
   };
 
   const handleDeleteSelected = async () => {
-    if (!requireChiefAdmin()) return;
+    if (!requireAdmin()) return;
     if (selectedRecords.length === 0) return;
     try {
       setDeleteLoading(true);
@@ -924,7 +924,7 @@ const HayStoragePage = () => {
   };
 
   const handleUpload = async () => {
-    if (!requireChiefAdmin()) return;
+    if (!requireAdmin()) return;
     if (!uploadFile) return;
     try {
       setUploadLoading(true);
@@ -958,7 +958,7 @@ const HayStoragePage = () => {
 
   // Export Function
   const handleExport = async () => {
-    if (!requireChiefAdmin()) return;
+    if (!requireAdmin()) return;
     try {
       setExportLoading(true);
       if (rawFilteredHayStorage.length === 0) {
@@ -1013,7 +1013,7 @@ const HayStoragePage = () => {
 
   const resetToCurrentMonth = () => setFilters(prev => ({ ...prev, ...currentMonth }));
   const openAddDialog = useCallback(() => {
-    if (!requireChiefAdmin()) return;
+    if (!requireAdmin()) return;
     setAddingRecord((prev) => ({
       ...prev,
       programme: getProgrammeValue(activeProgram) || normalizeProgramme(prev.programme),
@@ -1495,4 +1495,6 @@ const HayStoragePage = () => {
 };
 
 export default HayStoragePage;
+
+
 

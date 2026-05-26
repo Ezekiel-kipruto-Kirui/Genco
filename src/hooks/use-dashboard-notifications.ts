@@ -5,7 +5,6 @@ import { useAuth } from "@/contexts/AuthContext";
 import {
   canViewAllProgrammes,
   isAdmin,
-  isChiefAdmin,
   isFinance,
   isFullAccessAttribute,
   isMonitoringAndEvaluationOfficer,
@@ -395,7 +394,7 @@ export const useDashboardNotifications = (): DashboardNotificationState => {
       };
     }
 
-    if (isAdmin(principal) || isChiefAdmin(principal) || isFullAccessAttribute(principal)) {
+    if (isAdmin(principal) || isFullAccessAttribute(principal)) {
       return {
         count: openCount,
         label: "Requisitions",
@@ -465,3 +464,4 @@ export const useDashboardNotifications = (): DashboardNotificationState => {
     markSeen,
   };
 };
+

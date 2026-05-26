@@ -142,15 +142,15 @@ export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
 
   const resolveBlockedAccessMessage = (profile: UserProfile): string => {
     if (isMobileUser(profile.role, profile.userAttribute)) {
-      return "Mobile users can submit data only and cannot access the web dashboard.";
+      return "Field Officers can submit data only and cannot access the web dashboard.";
     }
 
     if (!isActiveUserStatus(profile.status)) {
-      return "Your account has been deactivated or disabled. Contact a chief admin for help.";
+      return "Your account has been deactivated or disabled. Contact an admin for help.";
     }
 
     if (getAccessibleProgrammesForProfile(profile).length === 0) {
-      return "Your account is not assigned to any programme. Contact a chief admin for help.";
+      return "Your account is not assigned to any programme. Contact an admin for help.";
     }
 
     return "Your account is not authorized to access the web dashboard.";
@@ -390,3 +390,4 @@ export const AuthProvider: FC<{ children: ReactNode }> = ({ children }) => {
     </AuthContext.Provider>
   );
 };
+

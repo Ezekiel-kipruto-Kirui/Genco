@@ -39,7 +39,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSharedProgrammeSelection } from "@/hooks/use-shared-programme-selection";
 import * as XLSX from 'xlsx';
-import { canViewAllProgrammes, isChiefAdmin } from "@/contexts/authhelper";
+import { canViewAllProgrammes, isAdmin } from "@/contexts/authhelper";
 import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
 import {
   normalizeProgramme,
@@ -191,7 +191,7 @@ const StatsCard = ({ title, value, icon: Icon, description }: StatsCardProps) =>
 interface OnboardingCardProps {
   record: OnboardingData;
   isSelected: boolean;
-  userIsChiefAdmin: boolean;
+  userIsAdmin: boolean;
   onSelectRecord: (id: string) => void;
   onView: (record: OnboardingData) => void;
   onEdit: (record: OnboardingData) => void;
@@ -201,7 +201,7 @@ interface OnboardingCardProps {
 const OnboardingCard = ({ 
   record, 
   isSelected, 
-  userIsChiefAdmin, 
+  userIsAdmin, 
   onSelectRecord, 
   onView, 
   onEdit, 
@@ -243,7 +243,7 @@ const OnboardingCard = ({
               {getStatusBadge(record.status)}
             </div>
           </div>
-          {userIsChiefAdmin && (
+          {userIsAdmin && (
             <div className="flex items-center">
               <input
                 type="checkbox"
@@ -330,7 +330,7 @@ const OnboardingCard = ({
             <Eye className="h-3 w-3 mr-1" />
             View Details
           </Button>
-          {userIsChiefAdmin && (
+          {userIsAdmin && (
             <>
               <Button
                 variant="outline"
@@ -394,7 +394,7 @@ const OnboardingPage = () => {
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
 
-  const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
+  const userIsAdmin = useMemo(() => isAdmin(userRole), [userRole]);
   const userCanViewAllProgrammeData = useMemo(
     () => canViewAllProgrammes(userRole, userAttribute, allowedProgrammes),
     [allowedProgrammes, userRole, userAttribute]
@@ -420,11 +420,11 @@ const OnboardingPage = () => {
     },
     [availablePrograms],
   );
-  const requireChiefAdmin = () => {
-    if (userIsChiefAdmin) return true;
+  const requireAdmin = () => {
+    if (userIsAdmin) return true;
     toast({
       title: "Access denied",
-      description: "Only chief admin can create, edit, or delete records on this page.",
+      description: "Only Admin can create, edit, or delete records on this page.",
       variant: "destructive",
     });
     return false;
@@ -677,7 +677,7 @@ const OnboardingPage = () => {
   };
 
   const handleBulkDelete = async () => {
-    if (!requireChiefAdmin()) return;
+    if (!requireAdmin()) return;
     if (selectedRecords.length === 0) return;
     try {
       setLoading(true);
@@ -699,7 +699,7 @@ const OnboardingPage = () => {
   };
 
   const handleAddOnboarding = async () => {
-    if (!requireChiefAdmin()) return;
+    if (!requireAdmin()) return;
     try {
       const selectedProgramme = resolveAssignableProgramme(onboardingForm.programme);
       if (!onboardingForm.topic || !onboardingForm.date || !selectedProgramme) {
@@ -759,7 +759,7 @@ const OnboardingPage = () => {
   };
 
   const handleDeleteConfirm = async () => {
-    if (!requireChiefAdmin()) return;
+    if (!requireAdmin()) return;
     if (!selectedRecord?.id) return;
     try {
       setLoading(true);
@@ -891,15 +891,15 @@ const OnboardingPage = () => {
 
         <div className="flex flex-col md:flex-row lg:flex-row">
           <div className="flex flex-row justify-between p-1 gap-8">
-          {userIsChiefAdmin && selectedRecords.length > 0 && (
+          {userIsAdmin && selectedRecords.length > 0 && (
             <Button variant="destructive" onClick={() => setIsBulkDeleteDialogOpen(true)}>
               <Trash2 className="w-4 h-4 mr-2" /> Delete Selected ({selectedRecords.length})
             </Button>
           )}
           <Button variant="outline" size="sm" onClick={clearAllFilters}>Clear Filters</Button>
           <Button variant="outline" size="sm" onClick={resetToCurrentMonth}>This Month</Button>
-           {/* Programme Selector - Visible to Chief Admin or if user has multiple programmes */}
-          {userIsChiefAdmin && (
+           {/* Programme Selector - Visible to Admin or if user has multiple programmes */}
+          {userIsAdmin && (
              <div className="flex justify-end">
                 <Select value={activeProgram} onValueChange={handleProgramChange}>
                     <SelectTrigger className="w-full sm:w-[200px] border-gray-300 focus:border-blue-500 bg-white">
@@ -915,7 +915,7 @@ const OnboardingPage = () => {
           )}
           </div>
 <div className="flex flex-row justify-between p-1 gap-8">
-          {userIsChiefAdmin && (
+          {userIsAdmin && (
              <Button onClick={handleExport} disabled={exportLoading || filteredOnboarding.length === 0}>
               <Download className="w-4 h-4 mr-2" />
               {exportLoading ? "Exporting..." : `Export (${filteredOnboarding.flatMap(r => r.farmers).length})`}
@@ -923,7 +923,7 @@ const OnboardingPage = () => {
           )}
           
          
-          {userIsChiefAdmin && (
+          {userIsAdmin && (
             <Button onClick={() => { resetForm(); setIsDialogOpen(true); }}>
               <Plus className="w-4 h-4 mr-2" /> Add Training
             </Button>
@@ -978,7 +978,7 @@ const OnboardingPage = () => {
         <CardHeader className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div className="flex items-center gap-4">
             <CardTitle>Additional Training Records</CardTitle>
-            {userIsChiefAdmin && displayedOnboarding.length > 0 && (
+            {userIsAdmin && displayedOnboarding.length > 0 && (
               <div className="flex items-center gap-2">
                 <input type="checkbox" checked={selectedRecords.length === displayedOnboarding.filter(r => r.id).length} onChange={handleSelectAllOnPage} className="h-4 w-4 text-blue-600 border-gray-300 rounded" />
                 <Label className="text-sm text-gray-600">Select all on page</Label>
@@ -1007,11 +1007,11 @@ const OnboardingPage = () => {
                   key={record.id} 
                   record={record} 
                   isSelected={!!record.id && selectedRecords.includes(record.id)}
-                  userIsChiefAdmin={userIsChiefAdmin}
+                  userIsAdmin={userIsAdmin}
                   onSelectRecord={handleSelectRecord}
                   onView={handleViewDetails} 
                   onEdit={() => { 
-                      if (!userIsChiefAdmin) return;
+                      if (!userIsAdmin) return;
                       const localDate = `${record.date.getFullYear()}-${String(record.date.getMonth() + 1).padStart(2, "0")}-${String(record.date.getDate()).padStart(2, "0")}`;
                       setOnboardingForm({
                         id: record.id || "",
@@ -1026,7 +1026,7 @@ const OnboardingPage = () => {
                       setIsDialogOpen(true);
                   }}
                   onDeleteClick={() => {
-                    if (!userIsChiefAdmin) return;
+                    if (!userIsAdmin) return;
                     setSelectedRecord(record);
                     setIsDeleteDialogOpen(true);
                   }}
@@ -1038,7 +1038,7 @@ const OnboardingPage = () => {
       </Card>
 
       {/* Dialogs */}
-      {userIsChiefAdmin && (
+      {userIsAdmin && (
         <>
           {/* Add/Edit Dialog */}
           <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
@@ -1284,4 +1284,6 @@ const OnboardingPage = () => {
 };
 
 export default OnboardingPage;
+
+
 

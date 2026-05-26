@@ -1,10 +1,13 @@
 /* eslint-disable max-len */
 import * as admin from "firebase-admin";
+import {onValueWritten} from "firebase-functions/v2/database";
 import {onCall, HttpsError} from "firebase-functions/v2/https";
 
 const PROGRAMME_OPTIONS = ["KPMD", "RANGE", "MTLDK"] as const;
 const CACHE_TTL_MS = 2 * 60 * 1000;
-const ANALYSIS_CACHE_VERSION = "v10";
+const PERSISTENT_CACHE_TTL_MS = 15 * 60 * 1000;
+const ANALYSIS_CACHE_VERSION = "v11";
+const ANALYTICS_CACHE_ROOT = "__analyticsCache";
 const QUARTER_TARGET = 351;
 const QUARTER_TARGET_MILESTONES = [352, 702, 1053, 1404];
 const CHART_COLORS = {
@@ -31,7 +34,6 @@ const SALES_TREND_SERIES_COLORS = [
   "#f59e0b",
   "#9ca3af",
 ] as const;
-const CHIEF_ADMIN_IDENTIFIERS = new Set(["chief-admin", "chief admin"]);
 const ADMIN_IDENTIFIERS = new Set(["admin"]);
 const HR_IDENTIFIERS = new Set([
   "humman resource manager",
@@ -43,7 +45,7 @@ const HR_IDENTIFIERS = new Set([
 const PROJECT_MANAGER_IDENTIFIERS = new Set(["project manager", "project officer"]);
 const FINANCE_IDENTIFIERS = new Set(["finance"]);
 const OFFTAKE_IDENTIFIERS = new Set(["offtake officer"]);
-const MOBILE_IDENTIFIERS = new Set(["mobile", "mobile user"]);
+const FIELD_OFFICER_IDENTIFIERS = new Set(["field officer", "fieldofficer", "mobile", "mobile user"]);
 const FULL_ACCESS_ATTRIBUTE_IDENTIFIERS = new Set([
   "ceo",
   "chief executive officer",
@@ -195,9 +197,6 @@ const getPermissionTokens = (
 ): string[] =>
   Array.from(new Set([role, userAttribute, userAttribute || role].filter(Boolean)));
 
-const isChiefAdminToken = (value: string): boolean =>
-  CHIEF_ADMIN_IDENTIFIERS.has(normalize(value));
-
 const isAdminToken = (value: string): boolean =>
   ADMIN_IDENTIFIERS.has(normalize(value));
 
@@ -213,8 +212,8 @@ const isHrToken = (value: string): boolean =>
 const isOfftakeToken = (value: string): boolean =>
   OFFTAKE_IDENTIFIERS.has(normalize(value));
 
-const isMobileToken = (value: string): boolean =>
-  MOBILE_IDENTIFIERS.has(normalize(value));
+const isFieldOfficerToken = (value: string): boolean =>
+  FIELD_OFFICER_IDENTIFIERS.has(normalize(value));
 
 const isFullAccessAttributeToken = (value: string): boolean =>
   FULL_ACCESS_ATTRIBUTE_IDENTIFIERS.has(normalize(value));
@@ -231,7 +230,6 @@ const canAccessAnalyticsScope = (
     tokens.some((token) => predicate(token));
 
   const fullAccess =
-    matches(isChiefAdminToken) ||
     matches(isAdminToken) ||
     matches(isFullAccessAttributeToken);
 
@@ -952,6 +950,191 @@ const snapshotToArray = (snapshot: admin.database.DataSnapshot): any[] => {
   }));
 };
 
+const encodeCacheSegment = (value: string): string =>
+  Buffer.from(value, "utf8")
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+
+const getCollectionCacheRef = (collectionPath: string) =>
+  admin.database().ref(`${ANALYTICS_CACHE_ROOT}/collections/${encodeCacheSegment(collectionPath)}`);
+
+const getAnalysisResultCacheRef = (key: string) =>
+  admin.database().ref(`${ANALYTICS_CACHE_ROOT}/results/${encodeCacheSegment(key)}`);
+
+const getCachedRecordsFromSnapshot = (snapshot: admin.database.DataSnapshot): any[] => {
+  if (!snapshot.exists()) return [];
+  const value = snapshot.val();
+  if (!value || typeof value !== "object") return [];
+  return Object.entries(value as Record<string, any>).map(([id, record]) => ({
+    id,
+    ...(record as Record<string, any>),
+  }));
+};
+
+const readPersistentCollectionCache = async (collectionPath: string): Promise<any[] | null> => {
+  const cacheRef = getCollectionCacheRef(collectionPath);
+  const metaSnapshot = await cacheRef.child("meta").get();
+  const meta = metaSnapshot.exists() ? metaSnapshot.val() as Record<string, unknown> : null;
+  if (!meta?.hydratedAt) return null;
+
+  const recordsSnapshot = await cacheRef.child("records").get();
+  return getCachedRecordsFromSnapshot(recordsSnapshot);
+};
+
+const writePersistentCollectionCache = async (
+  collectionPath: string,
+  records: any[],
+): Promise<void> => {
+  const recordsById = records.reduce<Record<string, any>>((accumulator, record) => {
+    if (!record?.id) return accumulator;
+    const {id, ...recordWithoutId} = record;
+    accumulator[String(id)] = recordWithoutId;
+    return accumulator;
+  }, {});
+  const now = Date.now();
+
+  await getCollectionCacheRef(collectionPath).set({
+    meta: {
+      count: Object.keys(recordsById).length,
+      hydratedAt: now,
+      updatedAt: now,
+      version: now,
+    },
+    records: recordsById,
+  });
+};
+
+const getSourceCollectionRecords = async (collectionPath: string): Promise<any[]> => {
+  const snapshot = await admin.database().ref(collectionPath).get();
+  return snapshotToArray(snapshot);
+};
+
+const getPersistentCollectionVersion = async (collectionPath: string): Promise<number> => {
+  const snapshot = await getCollectionCacheRef(collectionPath).child("meta/version").get();
+  const value = snapshot.val();
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+};
+
+const getScopeDependencyCollections = (scope: AnalysisScope): string[] => {
+  switch (scope) {
+  case "overview":
+    return [
+      "farmers",
+      "Recent Activities",
+      "capacityBuilding",
+      "offtakes",
+      "AnimalHealthActivities",
+      "BoreholeStorage",
+    ];
+  case "livestock-analytics":
+    return ["farmers", "capacityBuilding"];
+  case "performance-report":
+    return ["farmers", "capacityBuilding", "AnimalHealthActivities", "offtakes", "hrStaffMarks"];
+  case "sales-report":
+    return ["offtakes", "orders", "requisitions"];
+  default:
+    return [];
+  }
+};
+
+const getDependencyVersions = async (scope: AnalysisScope): Promise<Record<string, number>> => {
+  const entries = await Promise.all(
+    getScopeDependencyCollections(scope).map(async (collectionPath) =>
+      [collectionPath, await getPersistentCollectionVersion(collectionPath)] as const),
+  );
+  return entries.reduce<Record<string, number>>((accumulator, [collectionPath, version]) => {
+    accumulator[collectionPath] = version;
+    return accumulator;
+  }, {});
+};
+
+const getDependencyVersionKey = (versions: Record<string, number>): string =>
+  Object.entries(versions)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([collectionPath, version]) => `${collectionPath}:${version}`)
+    .join("|");
+
+const dependencyVersionsMatch = (
+  currentVersions: Record<string, number>,
+  cachedVersions?: Record<string, unknown>,
+): boolean => {
+  if (!cachedVersions || typeof cachedVersions !== "object") return false;
+  return Object.entries(currentVersions).every(([collectionPath, version]) =>
+    cachedVersions[collectionPath] === version,
+  );
+};
+
+const readPersistentAnalysisResult = async (
+  key: string,
+  dependencyVersions: Record<string, number>,
+): Promise<any | null> => {
+  const snapshot = await getAnalysisResultCacheRef(key).get();
+  if (!snapshot.exists()) return null;
+
+  const cached = snapshot.val() as {
+    dependencyVersions?: Record<string, unknown>;
+    dependencyVersionKey?: string;
+    expiresAt?: number;
+    value?: any;
+  } | null;
+
+  if (!cached?.value) return null;
+  if (!dependencyVersionsMatch(dependencyVersions, cached.dependencyVersions)) return null;
+  if (typeof cached.expiresAt !== "number" || cached.expiresAt <= Date.now()) {
+    await getAnalysisResultCacheRef(key).remove();
+    return null;
+  }
+
+  return cached.value;
+};
+
+const writePersistentAnalysisResult = async (
+  key: string,
+  dependencyVersions: Record<string, number>,
+  value: any,
+): Promise<void> => {
+  const now = Date.now();
+  await getAnalysisResultCacheRef(key).set({
+    dependencyVersionKey: getDependencyVersionKey(dependencyVersions),
+    dependencyVersions,
+    expiresAt: now + PERSISTENT_CACHE_TTL_MS,
+    storedAt: now,
+    value,
+  });
+};
+
+const syncAnalysisCollectionCache = (collectionPath: string) =>
+  onValueWritten(`/${collectionPath}/{recordId}`, async (event): Promise<void> => {
+    const cacheRef = getCollectionCacheRef(collectionPath);
+    const metaSnapshot = await cacheRef.child("meta/hydratedAt").get();
+    const now = Date.now();
+
+    if (!metaSnapshot.exists()) {
+      await cacheRef.child("meta").update({
+        lastSourceChangeAt: now,
+        version: now,
+      });
+      return;
+    }
+
+    const recordId = String(event.params.recordId);
+    const after = event.data.after.val();
+    const updates: Record<string, unknown> = {
+      "meta/updatedAt": now,
+      "meta/version": now,
+    };
+
+    if (after && typeof after === "object") {
+      updates[`records/${recordId}`] = after;
+    } else {
+      updates[`records/${recordId}`] = null;
+    }
+
+    await cacheRef.update(updates);
+  });
+
 const fetchCollectionByProgrammes = async (
   collectionPath: string,
   programmes: string[],
@@ -1002,7 +1185,6 @@ const canViewAllProgrammes = (user: any): boolean => {
   const role = normalize(user?.role);
   const userAttribute = extractUserAttribute(user);
   return getPermissionTokens(role, userAttribute).some((token) =>
-    isChiefAdminToken(token) ||
     isAdminToken(token) ||
     isFullAccessAttributeToken(token) ||
     isOfftakeToken(token),
@@ -1040,7 +1222,7 @@ const loadProfile = async (uid: string): Promise<AnalysisProfile | null> => {
 
   if (
     isBlockedUserStatus(profile.status) ||
-    getPermissionTokens(profile.role, profile.userAttribute).some((token) => isMobileToken(token))
+    getPermissionTokens(profile.role, profile.userAttribute).some((token) => isFieldOfficerToken(token))
   ) {
     return null;
   }
@@ -1131,8 +1313,12 @@ const getCollectionRecords = async (collectionPath: string): Promise<any[]> => {
   const cachedRecords = getCached(key);
   if (cachedRecords) return cachedRecords as any[];
 
-  const snapshot = await admin.database().ref(collectionPath).get();
-  const records = snapshotToArray(snapshot);
+  let records = await readPersistentCollectionCache(collectionPath);
+  if (!records) {
+    records = await getSourceCollectionRecords(collectionPath);
+    await writePersistentCollectionCache(collectionPath, records);
+  }
+
   setCached(key, records);
   return records;
 };
@@ -1146,6 +1332,13 @@ const getCollectionRecordsByChildValue = async (
   const cachedRecords = getCached(key);
   if (cachedRecords) return cachedRecords as any[];
 
+  const collectionRecords = await readPersistentCollectionCache(collectionPath);
+  if (collectionRecords) {
+    const records = collectionRecords.filter((record) => record?.[childKey] === childValue);
+    setCached(key, records);
+    return records;
+  }
+
   const snapshot = await admin
     .database()
     .ref(collectionPath)
@@ -1153,6 +1346,15 @@ const getCollectionRecordsByChildValue = async (
     .equalTo(childValue)
     .get();
   const records = snapshotToArray(snapshot);
+
+  const fullCollectionKey = collectionCacheKey(collectionPath);
+  const fullCollectionCached = getCached(fullCollectionKey);
+  if (!fullCollectionCached) {
+    const fullRecords = await getSourceCollectionRecords(collectionPath);
+    await writePersistentCollectionCache(collectionPath, fullRecords);
+    setCached(fullCollectionKey, fullRecords);
+  }
+
   setCached(key, records);
   return records;
 };
@@ -2240,9 +2442,19 @@ export const getAnalysisSummary = onCall(async (request) => {
     throw new HttpsError("permission-denied", "Your role or attribute is not allowed to access this analytics view.");
   }
 
+  const scopeName = scope as AnalysisScope;
+  const dependencyVersions = await getDependencyVersions(scopeName);
+  const dependencyVersionKey = getDependencyVersionKey(dependencyVersions);
   const key = cacheKey(uid, payload);
-  const cached = getCached(key);
+  const runtimeKey = `${key}|deps:${dependencyVersionKey}`;
+  const cached = getCached(runtimeKey);
   if (cached) return cached;
+
+  const persistentCached = await readPersistentAnalysisResult(key, dependencyVersions);
+  if (persistentCached) {
+    setCached(runtimeKey, persistentCached);
+    return persistentCached;
+  }
 
   let response: any;
   switch (scope) {
@@ -2268,6 +2480,17 @@ export const getAnalysisSummary = onCall(async (request) => {
     throw new HttpsError("invalid-argument", "Unsupported analysis scope.");
   }
 
-  setCached(key, response);
+  setCached(runtimeKey, response);
+  await writePersistentAnalysisResult(key, dependencyVersions, response);
   return response;
 });
+
+export const syncFarmersAnalysisCache = syncAnalysisCollectionCache("farmers");
+export const syncRecentActivitiesAnalysisCache = syncAnalysisCollectionCache("Recent Activities");
+export const syncCapacityBuildingAnalysisCache = syncAnalysisCollectionCache("capacityBuilding");
+export const syncOfftakesAnalysisCache = syncAnalysisCollectionCache("offtakes");
+export const syncAnimalHealthAnalysisCache = syncAnalysisCollectionCache("AnimalHealthActivities");
+export const syncBoreholeAnalysisCache = syncAnalysisCollectionCache("BoreholeStorage");
+export const syncHrStaffMarksAnalysisCache = syncAnalysisCollectionCache("hrStaffMarks");
+export const syncOrdersAnalysisCache = syncAnalysisCollectionCache("orders");
+export const syncRequisitionsAnalysisCache = syncAnalysisCollectionCache("requisitions");

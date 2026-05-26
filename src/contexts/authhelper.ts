@@ -7,7 +7,8 @@ const normalizeText = (value: string) => {
     .replace(/[-_]+/g, " ")
     .replace(/\s+/g, " ");
 
-  if (normalized === "chief admin") return "chief-admin";
+  if (normalized === "chief admin" || normalized === "chief-admin") return "admin";
+  if (normalized === "mobile user" || normalized === "mobile") return "field officer";
   return normalized;
 };
 
@@ -22,7 +23,7 @@ const HR_IDENTIFIERS = new Set([
 const PROJECT_MANAGER_IDENTIFIERS = new Set(["project manager", "project officer"]);
 const FINANCE_IDENTIFIERS = new Set(["finance"]);
 const OFFTAKE_IDENTIFIERS = new Set(["offtake officer"]);
-const MOBILE_IDENTIFIERS = new Set(["mobile", "mobile user"]);
+const FIELD_OFFICER_IDENTIFIERS = new Set(["field officer", "fieldofficer", "mobile", "mobile user"]);
 const BLOCKED_STATUS_IDENTIFIERS = new Set([
   "inactive",
   "disabled",
@@ -55,9 +56,10 @@ const FULL_ACCESS_ATTRIBUTE_IDENTIFIERS = new Set([
 ]);
 const DISPLAY_NAME_MAP = new Map<string, string>([
   ["admin", "Admin"],
-  ["chief-admin", "Chief Admin"],
-  ["chief admin", "Chief Admin"],
-  ["mobile", "Mobile User"],
+  ["field officer", "Field Officer"],
+  ["fieldofficer", "Field Officer"],
+  ["mobile", "Field Officer"],
+  ["mobile user", "Field Officer"],
   ["user", "User"],
   ["ceo", "Chief Executive Officer"],
   ["cio", "Chief Executive Officer"],
@@ -133,8 +135,6 @@ export const resolvePermissionPrincipal = (
   return normalizeRole(userRole);
 };
 
-export const isChiefAdmin = (value: string | null | undefined): boolean => normalizeRole(value) === "chief-admin";
-
 export const isAdmin = (value: string | null | undefined): boolean => normalizeRole(value) === "admin";
 
 export const isProjectManager = (value: string | null | undefined): boolean => {
@@ -166,11 +166,13 @@ export const isMobileUser = (
   const principal = resolvePermissionPrincipal(userRole, userAttribute);
 
   return (
-    MOBILE_IDENTIFIERS.has(normalizedRole) ||
-    MOBILE_IDENTIFIERS.has(normalizedAttribute) ||
-    MOBILE_IDENTIFIERS.has(principal)
+    FIELD_OFFICER_IDENTIFIERS.has(normalizedRole) ||
+    FIELD_OFFICER_IDENTIFIERS.has(normalizedAttribute) ||
+    FIELD_OFFICER_IDENTIFIERS.has(principal)
   );
 };
+
+export const isFieldOfficer = isMobileUser;
 
 export const isMonitoringAndEvaluationOfficer = (
   value: string | null | undefined
@@ -189,7 +191,7 @@ export const canViewAllProgrammes = (
 ): boolean => {
   if (isMobileUser(userRole, userAttribute)) return false;
   const principal = resolvePermissionPrincipal(userRole, userAttribute);
-  if (isChiefAdmin(userRole) || isChiefAdmin(principal) || isAdmin(userRole) || isAdmin(principal)) {
+  if (isAdmin(userRole) || isAdmin(principal)) {
     return true;
   }
 
@@ -206,7 +208,6 @@ export const canAccessDashboard = (
   if (isMobileUser(userRole, userAttribute)) return false;
   const principal = resolvePermissionPrincipal(userRole, userAttribute);
   return (
-    isChiefAdmin(principal) ||
     isAdmin(principal) ||
     isFinance(principal) ||
     isProjectManager(principal) ||
@@ -231,7 +232,6 @@ export const canAccessReports = (
   }
 
   return (
-    isChiefAdmin(principal) ||
     isAdmin(principal) ||
     isFullAccessAttribute(principal) ||
     isProjectManager(principal) ||
@@ -255,7 +255,7 @@ export const canAccessSiteManagement = (
     return false;
   }
 
-  return isChiefAdmin(principal) || isAdmin(principal) || isFullAccessAttribute(principal);
+  return isAdmin(userRole);
 };
 
 export const canAccessUserManagement = (
@@ -263,7 +263,7 @@ export const canAccessUserManagement = (
   userAttribute?: string | null
 ): boolean => {
   if (isMobileUser(userRole, userAttribute)) return false;
-  return isChiefAdmin(userRole) || isChiefAdmin(userAttribute);
+  return isAdmin(userRole);
 };
 
 export const canAccessFarmerData = (
@@ -273,7 +273,6 @@ export const canAccessFarmerData = (
   if (isMobileUser(userRole, userAttribute)) return false;
   const principal = resolvePermissionPrincipal(userRole, userAttribute);
   return (
-    isChiefAdmin(principal) ||
     isAdmin(principal) ||
     isFullAccessAttribute(principal) ||
     isProjectManager(principal) ||
@@ -296,7 +295,7 @@ export const canManageInfrastructureRecords = (
 ): boolean => {
   if (isMobileUser(userRole, userAttribute)) return false;
   const principal = resolvePermissionPrincipal(userRole, userAttribute);
-  return isChiefAdmin(principal);
+  return isAdmin(principal);
 };
 
 export const canAccessFieldActivities = (
@@ -306,7 +305,6 @@ export const canAccessFieldActivities = (
   if (isMobileUser(userRole, userAttribute)) return false;
   const principal = resolvePermissionPrincipal(userRole, userAttribute);
   return (
-    isChiefAdmin(principal) ||
     isAdmin(principal) ||
     isFullAccessAttribute(principal) ||
     isProjectManager(principal) ||
@@ -324,7 +322,6 @@ export const canAccessProjectManagerSection = (
   const principal = resolvePermissionPrincipal(userRole, userAttribute);
   return (
     isProjectManager(principal) ||
-    isChiefAdmin(principal) ||
     isAdmin(principal) ||
     isFullAccessAttribute(principal) ||
     isMonitoringAndEvaluationOfficer(principal)
@@ -339,7 +336,6 @@ export const canAccessHrManagement = (
   const principal = resolvePermissionPrincipal(userRole, userAttribute);
   return (
     isHummanResourceManager(principal) ||
-    isChiefAdmin(principal) ||
     isAdmin(principal) ||
     isFullAccessAttribute(principal)
   );
@@ -353,7 +349,6 @@ export const canAccessFinanceSection = (
   const principal = resolvePermissionPrincipal(userRole, userAttribute);
   return (
     isFinance(principal) ||
-    isChiefAdmin(principal) ||
     isAdmin(principal) ||
     isFullAccessAttribute(principal)
   );
@@ -366,7 +361,6 @@ export const canAccessRequisition = (
   if (isMobileUser(userRole, userAttribute)) return false;
   const principal = resolvePermissionPrincipal(userRole, userAttribute);
   return (
-    isChiefAdmin(principal) ||
     isAdmin(principal) ||
     isFullAccessAttribute(principal) ||
     isProjectManager(principal) ||
@@ -383,7 +377,6 @@ export const canAccessOrdersSection = (
   const principal = resolvePermissionPrincipal(userRole, userAttribute);
   return (
     isOfftakeOfficer(principal) ||
-    isChiefAdmin(principal) ||
     isAdmin(principal) ||
     isFullAccessAttribute(principal)
   );
@@ -437,3 +430,5 @@ export const getRoleDisplayName = (
   if (!role) return "User";
   return formatDisplayName(role);
 };
+
+

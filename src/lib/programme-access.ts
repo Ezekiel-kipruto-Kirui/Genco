@@ -7,13 +7,13 @@ export type ProgrammeSelection = ProgrammeOption | typeof ALL_PROGRAMMES_VALUE |
 // ---------------------------------------------------------------------------
 // Roles that bypass programme-level restrictions entirely
 // ---------------------------------------------------------------------------
-const PROGRAMME_ACCESS_BYPASS_ROLES = ["admin", "chief-admin"] as const;
+const PROGRAMME_ACCESS_BYPASS_ROLES = ["admin", "admin"] as const;
 export type BypassRole = (typeof PROGRAMME_ACCESS_BYPASS_ROLES)[number];
 
 /**
  * Determines whether a user's role grants unrestricted access to all
- * programmes. Only admin and chief-admin roles bypass the restriction.
- * Mobile users are ALWAYS scoped to their allowedProgrammes.
+ * programmes. Only admin and admin roles bypass the restriction.
+ * Field Officers are ALWAYS scoped to their allowedProgrammes.
  */
 export const hasAllProgrammeAccess = (role: string | null | undefined): boolean =>
   !!role && (PROGRAMME_ACCESS_BYPASS_ROLES as readonly string[]).includes(role);
@@ -52,7 +52,7 @@ export const isAllProgrammesSelection = (value: unknown): boolean =>
 /**
  * Matches a record's programme against the user's selection.
  *
- * For users with all-programme access (admin/chief-admin), the record is
+ * For users with all-programme access (admin/admin), the record is
  * always included regardless of its programme — the selection filter is
  * purely a UI convenience for them.
  *
@@ -64,7 +64,7 @@ export const matchesProgrammeSelection = (
   selectedProgramme: unknown,
   canViewAllProgrammeData: boolean
 ): boolean => {
-  // Admin/chief-admin: always accessible, just honour the selection filter
+  // Admin/admin: always accessible, just honour the selection filter
   if (canViewAllProgrammeData) {
     const normalizedRecord = normalizeProgramme(recordProgramme);
     const normalizedSelection = normalizeProgrammeSelection(selectedProgramme);
@@ -124,7 +124,7 @@ export const getAssignedProgrammes = (
 /**
  * Resolves which programmes a user can access.
  *
- * - admin / chief-admin → ALL programmes (bypass).
+ * - admin / admin → ALL programmes (bypass).
  * - mobile → only programmes explicitly marked `true` in allowedProgrammes.
  */
 export const resolveAccessibleProgrammes = (
@@ -154,7 +154,7 @@ export const resolveActiveProgramme = (
  * Resolves the current programme selection for the UI.
  *
  * - `allowAll`:       lets the selection be "ALL" (meaningful for admins
- *                      who truly see all programmes, and for mobile users
+ *                      who truly see all programmes, and for Field Officers
  *                      whose "ALL" means "all of my assigned programmes").
  * - `fallbackToAll`:  if the stored selection is no longer valid, fall back
  *                      to "ALL" instead of the first individual programme.
@@ -225,3 +225,4 @@ export const filterByAccessibleProgrammes = <T>(
   records.filter((record) =>
     canAccessProgrammeRecord(getProgramme(record), accessibleProgrammes, canViewAllProgrammeData)
   );
+

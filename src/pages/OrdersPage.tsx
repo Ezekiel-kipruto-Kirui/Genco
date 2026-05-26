@@ -3,7 +3,7 @@ import * as XLSX from "xlsx";
 import { useAuth } from "@/contexts/AuthContext";
 import { onValue, ref, remove, update, push, set, get } from "firebase/database";
 import { db, fetchCollection } from "@/lib/firebase";
-import { canViewAllProgrammes, isChiefAdmin, isOfftakeOfficer, resolvePermissionPrincipal } from "@/contexts/authhelper";
+import { canViewAllProgrammes, isAdmin, isOfftakeOfficer, resolvePermissionPrincipal } from "@/contexts/authhelper";
 import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
 import { useToast } from "@/hooks/use-toast";
 import { matchesActiveProgramme, resolveAccessibleProgrammes } from "@/lib/programme-access";
@@ -852,7 +852,7 @@ const isMobileUserRecord = (record: FieldOfficerRecord): boolean =>
   getRoleTokens(record).some(
     (token) =>
       token === "mobile" ||
-      token === "mobile user" ||
+      token === "field officer" ||
       token === "field officer" ||
       token === "fieldofficer"
   );
@@ -1216,7 +1216,7 @@ const BATCH_REFERENCE_KEYS: readonly (keyof OrderRecord)[] = [
 interface OrderTableRowProps {
   row: BatchOrderRow;
   userCanEditOrders: boolean;
-  userIsChiefAdmin: boolean;
+  userIsAdmin: boolean;
   onView: (batchId: string) => void;
   onEdit: (batchId: string) => void;
   onOpenTeam: (batchId: string) => void;
@@ -1225,7 +1225,7 @@ interface OrderTableRowProps {
 }
 
 const OrderTableRow = memo(function OrderTableRow({
-  row, userCanEditOrders, userIsChiefAdmin, onView, onEdit, onOpenTeam, onMarkComplete, onDelete,
+  row, userCanEditOrders, userIsAdmin, onView, onEdit, onOpenTeam, onMarkComplete, onDelete,
 }: OrderTableRowProps) {
   return (
     <tr className="border-b hover:bg-blue-50 transition-colors group">
@@ -1263,7 +1263,7 @@ const OrderTableRow = memo(function OrderTableRow({
               <Users className="h-3.5 w-3.5" />
             </Button>
           )}
-          {userIsChiefAdmin && (
+          {userIsAdmin && (
             <Button variant="ghost" size="icon" onClick={() => onDelete(row)} className="h-7 w-7 text-red-600 hover:bg-red-50" title="Delete">
               <Trash2 className="h-3.5 w-3.5" />
             </Button>
@@ -1355,13 +1355,13 @@ const OrdersPage = () => {
   );
   const [activeProgram, setActiveProgram] = useSharedProgrammeSelection(accessibleProgrammes);
   const availablePrograms = accessibleProgrammes;
-  const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
+  const userIsAdmin = useMemo(() => isAdmin(userRole), [userRole]);
   const userCanCreateOrders = useMemo(
-    () => isChiefAdmin(userRole) || isOfftakeOfficer(userRole) || isOfftakeOfficer(userAttribute),
+    () => isAdmin(userRole) || isOfftakeOfficer(userRole) || isOfftakeOfficer(userAttribute),
     [userRole, userAttribute]
   );
   const userCanEditOrders = useMemo(
-    () => isChiefAdmin(userRole) || isOfftakeOfficer(userRole) || isOfftakeOfficer(userAttribute),
+    () => isAdmin(userRole) || isOfftakeOfficer(userRole) || isOfftakeOfficer(userAttribute),
     [userRole, userAttribute]
   );
   const permissionPrincipal = useMemo(
@@ -1375,21 +1375,21 @@ const OrdersPage = () => {
 
   const ensureOrderCreateAccess = useCallback(() => {
     if (userCanCreateOrders) return true;
-    toast({ title: "Unauthorized", description: "Only offtake officer or chief admin can create orders.", variant: "destructive" });
+    toast({ title: "Unauthorized", description: "Only offtake officer or Admin can create orders.", variant: "destructive" });
     return false;
   }, [userCanCreateOrders, toast]);
 
   const ensureOrderEditAccess = useCallback(() => {
     if (userCanEditOrders) return true;
-    toast({ title: "Unauthorized", description: "Only offtake officer or chief admin can edit orders.", variant: "destructive" });
+    toast({ title: "Unauthorized", description: "Only offtake officer or Admin can edit orders.", variant: "destructive" });
     return false;
   }, [userCanEditOrders, toast]);
 
   const ensureBatchDeleteAccess = useCallback(() => {
-    if (userIsChiefAdmin) return true;
-    toast({ title: "Unauthorized", description: "Only chief admin can delete batches.", variant: "destructive" });
+    if (userIsAdmin) return true;
+    toast({ title: "Unauthorized", description: "Only Admin can delete batches.", variant: "destructive" });
     return false;
-  }, [userIsChiefAdmin, toast]);
+  }, [userIsAdmin, toast]);
 
   /* ---------------------------------------------------------------- */
   /* Firebase listener — delta-aware                                   */
@@ -1551,7 +1551,7 @@ const OrdersPage = () => {
         if (!cancelled) {
           setFieldOfficers([]);
           setOfftakeTeam([]);
-          toast({ title: "Error", description: "Failed to load mobile users.", variant: "destructive" });
+          toast({ title: "Error", description: "Failed to load Field Officers.", variant: "destructive" });
         }
       } finally {
         if (!cancelled) setFieldOfficersLoading(false);
@@ -2767,7 +2767,7 @@ const OrdersPage = () => {
                 </SelectContent>
               </Select>
             </div>
-            {userIsChiefAdmin && (
+            {userIsAdmin && (
               <div className="w-[138px] shrink-0 space-y-1.5 sm:w-auto">
                 <Label className="text-xs font-medium text-slate-600">Programme</Label>
                 <Select value={activeProgram} onValueChange={setActiveProgram} disabled={availablePrograms.length === 0}>
@@ -2827,7 +2827,7 @@ const OrdersPage = () => {
                         key={row.batchId}
                         row={row}
                         userCanEditOrders={userCanEditOrders}
-                        userIsChiefAdmin={userIsChiefAdmin}
+                        userIsAdmin={userIsAdmin}
                         onView={openOrdersViewDialog}
                         onEdit={openOrdersEditDialog}
                         onOpenTeam={openOrdersOfftakeTeamDialog}
@@ -2943,7 +2943,7 @@ const OrdersPage = () => {
                 </DropdownMenuContent>
               </DropdownMenu>
               {!fieldOfficersLoading && countyOptions.length === 0 && (
-                <p className="text-[11px] text-slate-500">No counties found on mobile users in site management.</p>
+                <p className="text-[11px] text-slate-500">No counties found on Field Officers in site management.</p>
               )}
               {newOrder.counties.length > 0 && (
                 <p className="text-[11px] text-slate-500">{formatSelectedCounties(newOrder.counties)}</p>
@@ -3428,3 +3428,5 @@ const OrdersPage = () => {
 };
 
 export default OrdersPage;
+
+

@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useCallback, useMemo, useRef, memo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, memo } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { getAuth } from "firebase/auth";
 import { ref, set, update, remove, onValue, push } from "firebase/database";
@@ -17,7 +17,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Download, Users, MapPin, Eye, Calendar, Scale, Phone, CreditCard, Edit, Trash2, Weight, Upload, Loader2 } from "lucide-react";
 import { useSharedProgrammeSelection } from "@/hooks/use-shared-programme-selection";
 import { toast, useToast } from "@/hooks/use-toast";
-import { canViewAllProgrammes, isChiefAdmin } from "@/contexts/authhelper";
+import { canViewAllProgrammes, isAdmin } from "@/contexts/authhelper";
 import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
 import { matchesActiveProgramme, PROGRAMME_OPTIONS, resolveAccessibleProgrammes, resolveActiveProgramme } from "@/lib/programme-access";
 
@@ -264,6 +264,58 @@ const calculateTotal = (data: number[]): number => {
   return data.reduce((acc, val) => acc + (Number(val) || 0), 0);
 };
 
+const isMissingFarmerId = (value: unknown): boolean => {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  return (
+    !normalized ||
+    normalized === "0" ||
+    normalized === "0.0" ||
+    normalized === "n/a" ||
+    normalized === "na" ||
+    normalized === "/a" ||
+    normalized === "a" ||
+    normalized === "null" ||
+    normalized === "undefined"
+  );
+};
+
+const sanitizeGeneratedIdSegment = (value: unknown): string =>
+  String(value ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "")
+    .slice(0, 6);
+
+const generateFarmerId = (
+  seed: string,
+  record?: Partial<Pick<OfftakeData, "farmerName" | "phoneNumber" | "location">> & {
+    name?: string;
+    phone?: string;
+  },
+): string => {
+  const nameSegment = sanitizeGeneratedIdSegment(record?.farmerName || record?.name || "FARMER") || "FARMER";
+  const phoneSegment = sanitizeGeneratedIdSegment(record?.phoneNumber || record?.phone || "");
+  const locationSegment = sanitizeGeneratedIdSegment(record?.location || "");
+  const seedValue = `${seed}|${nameSegment}|${phoneSegment}|${locationSegment}`;
+  let hash = 0;
+
+  for (let index = 0; index < seedValue.length; index += 1) {
+    hash = (hash * 31 + seedValue.charCodeAt(index)) >>> 0;
+  }
+
+  const suffix = hash.toString(36).toUpperCase().padStart(6, "0").slice(-6);
+  return `GEN-${nameSegment.slice(0, 4)}-${suffix}`;
+};
+
+const resolveFarmerId = (
+  value: unknown,
+  seed: string,
+  record?: Partial<Pick<OfftakeData, "farmerName" | "phoneNumber" | "location">> & {
+    name?: string;
+    phone?: string;
+  },
+): string => (isMissingFarmerId(value) ? generateFarmerId(seed, record) : String(value).trim());
+
 const getFarmerPhoneFromRecord = (record: Record<string, unknown>): string => {
   const candidates = [
     record.phone,
@@ -372,7 +424,7 @@ const LivestockOfftakePage = () => {
     prices: []
   });
 
-  const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
+  const userIsAdmin = useMemo(() => isAdmin(userRole), [userRole]);
   const userCanViewAllProgrammeData = useMemo(
     () => canViewAllProgrammes(userRole, userAttribute, allowedProgrammes),
     [allowedProgrammes, userRole, userAttribute]
@@ -382,11 +434,11 @@ const LivestockOfftakePage = () => {
     [allowedProgrammes, userAttribute]
   );
   const [activeProgram, setActiveProgram] = useSharedProgrammeSelection(accessibleProgrammes);
-  const requireChiefAdmin = () => {
-    if (userIsChiefAdmin) return true;
+  const requireAdmin = () => {
+    if (userIsAdmin) return true;
     toast({
       title: "Access denied",
-      description: "Only chief admin can create, edit, or delete records on this page.",
+      description: "Only Admin can create, edit, or delete records on this page.",
       variant: "destructive",
     });
     return false;
@@ -428,13 +480,13 @@ const LivestockOfftakePage = () => {
   };
 
   // =========================================================================
-  // UPDATED CSV PARSER — Handles row-spanning format:
-  //   • Header row: Date, Farmer Name, Gender, ID Number, Programme,
+  // UPDATED CSV PARSER � Handles row-spanning format:
+  //   � Header row: Date, Farmer Name, Gender, ID Number, Programme,
   //     Region (County), Subcounty, Location, Phone Number, Total Animals,
   //     Live Weight (kg), Carcass Weight (kg), Price per Animal (KES), Total Price (KES)
-  //   • Continuation rows: only Live Weight, Carcass Weight, Price per Animal
-  //   • Blank rows separate farmer sessions
-  //   • GRAND TOTALS row at the end (auto-skipped)
+  //   � Continuation rows: only Live Weight, Carcass Weight, Price per Animal
+  //   � Blank rows separate farmer sessions
+  //   � GRAND TOTALS row at the end (auto-skipped)
   // =========================================================================
   const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
     const reader = new FileReader();
@@ -526,16 +578,6 @@ const LivestockOfftakePage = () => {
       const animalColumnIndices = Array.from(animalColumnMap.keys()).sort((a, b) => a - b);
       const hasMultiAnimalColumns = animalColumnIndices.length > 0;
 
-      if (idxId === -1) {
-        toast({
-          title: "CSV Error",
-          description: "ID Number column is missing.",
-          variant: "destructive"
-        });
-        resolve([]);
-        return;
-      }
-
       const transactionsMap = new Map<string, any>();
       let lastTransactionKey: string | null = null;
 
@@ -606,7 +648,11 @@ const LivestockOfftakePage = () => {
           date: formattedDate,
           name: (cols[idxName] || '').trim(),
           gender: (cols[idxGender] || '').trim(),
-          idNumber: id,
+          idNumber: resolveFarmerId(id, uniqueKey, {
+            name: (cols[idxName] || '').trim(),
+            phone: rawPhone,
+            location: loc,
+          }),
           phone: rawPhone,
           county: (cols[idxCounty] || '').trim(),
           subcounty: (cols[idxSub] || '').trim(),
@@ -634,15 +680,23 @@ const LivestockOfftakePage = () => {
         const firstColVal = (cols[0] || '').trim().toUpperCase();
         if (firstColVal.startsWith('GRAND TOTAL') || firstColVal === 'TOTAL') continue;
 
-        const id = cols[idxId]?.trim();
+        const rawId = idxId !== -1 ? cols[idxId]?.trim() : '';
         const rawDate = cols[idxDate]?.trim() || '';
+        const hasFarmerDetails = [idxName, idxPhone, idxCounty, idxSub, idxLoc, idxProg]
+          .some((idx) => idx !== -1 && Boolean(cols[idx]?.trim()));
 
         // A "header row" has both ID and Date populated.
         // Continuation rows have only animal-weight columns filled.
-        const isHeaderRow = !!(id && rawDate);
+        const isHeaderRow = !!(rawDate && (!isMissingFarmerId(rawId) || hasFarmerDetails));
 
         // Build unique key: header rows get id_date, continuation rows inherit
         // the last-seen transaction key so their animal data is appended there.
+        const generatedSeed = `${rawDate}_${cols[idxName] || ''}_${cols[idxPhone] || ''}_${i}`;
+        const id = resolveFarmerId(rawId, generatedSeed, {
+          name: (cols[idxName] || '').trim(),
+          phone: (cols[idxPhone] || '').trim(),
+          location: (cols[idxLoc] || cols[idxCounty] || '').trim(),
+        });
         const uniqueKey = isHeaderRow ? `${id}_${rawDate}` : (lastTransactionKey || '');
 
         if (!uniqueKey) continue;
@@ -719,6 +773,7 @@ const LivestockOfftakePage = () => {
         return;
       }
 
+      const missingIdUpdates: Record<string, string> = {};
       const offtakeList = Object.keys(data).map((key) => {
         const item = data[key];
         
@@ -733,12 +788,22 @@ const LivestockOfftakePage = () => {
         const carcassWeights = (item.goats || []).map((g: any) => parseFloat(g.carcass) || 0);
         const prices = (item.goats || []).map((g: any) => parseFloat(g.price) || 0);
 
+        const resolvedIdNumber = resolveFarmerId(item.idNumber, key, {
+          name: item.name || item.farmerName || '',
+          phone: item.phone || item.phoneNumber || '',
+          location: item.location || item.county || '',
+        });
+
+        if (isMissingFarmerId(item.idNumber)) {
+          missingIdUpdates[`offtakes/${key}/idNumber`] = resolvedIdNumber;
+        }
+
         return {
           id: key,
           date: dateValue,
           farmerName: item.name || '', 
           gender: item.gender || '',
-          idNumber: item.idNumber || '',
+          idNumber: resolvedIdNumber,
           liveWeight: liveWeights,
           carcassWeight: carcassWeights,
           location: item.location || '',
@@ -754,6 +819,12 @@ const LivestockOfftakePage = () => {
           createdAt: item.createdAt || Date.now()
         };
       }).filter((record) => matchesActiveProgramme(record.programme, activeProgram));
+
+      if (Object.keys(missingIdUpdates).length > 0) {
+        update(ref(db), missingIdUpdates).catch((error) => {
+          console.error("Failed to assign generated farmer IDs:", error);
+        });
+      }
 
       const sortedOfftakeList = sortOfftakeByLatest(offtakeList);
       setAllOfftake(sortedOfftakeList);
@@ -999,7 +1070,7 @@ const LivestockOfftakePage = () => {
       const link = document.createElement('a');
       link.href = url;
       
-      const programLabel = userIsChiefAdmin ? activeProgram : "ASSIGNED_PROGRAMS";
+      const programLabel = userIsAdmin ? activeProgram : "ASSIGNED_PROGRAMS";
       let filename = `livestock-offtake-${programLabel}`;
       if (filters.startDate || filters.endDate) {
         filename += `_${filters.startDate || 'start'}_to_${filters.endDate || 'end'}`;
@@ -1173,7 +1244,7 @@ const LivestockOfftakePage = () => {
       const link = document.createElement('a');
       link.href = url;
 
-      const programLabel = userIsChiefAdmin ? activeProgram : "ASSIGNED_PROGRAMS";
+      const programLabel = userIsAdmin ? activeProgram : "ASSIGNED_PROGRAMS";
       let filename = `livestock-offtake-aggregated-${programLabel}`;
       if (filters.startDate || filters.endDate) {
         filename += `_${filters.startDate || 'start'}_to_${filters.endDate || 'end'}`;
@@ -1202,6 +1273,134 @@ const LivestockOfftakePage = () => {
     }
   };
 
+  const handleExportFarmerOfftakeSummary = async () => {
+    try {
+      setExportLoading(true);
+
+      if (filteredOfftake.length === 0) {
+        toast({
+          title: "No Data to Export",
+          description: "There are no records matching your current filters",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      type FarmerOfftakeSummary = {
+        farmerName: string;
+        totalCarcassWeight: number;
+        totalLiveWeight: number;
+        totalAnimals: number;
+        totalAmount: number;
+      };
+
+      const summaries = new Map<string, FarmerOfftakeSummary>();
+
+      filteredOfftake.forEach((record) => {
+        const farmerName = record.farmerName?.trim() || "N/A";
+        const key = farmerName.toLowerCase();
+        const liveWeightSum = calculateTotal(
+          Array.isArray(record.liveWeight) ? record.liveWeight : [Number(record.liveWeight) || 0],
+        );
+        const carcassWeightSum = calculateTotal(
+          Array.isArray(record.carcassWeight) ? record.carcassWeight : [Number(record.carcassWeight) || 0],
+        );
+        const existing = summaries.get(key);
+
+        if (!existing) {
+          summaries.set(key, {
+            farmerName,
+            totalCarcassWeight: carcassWeightSum,
+            totalLiveWeight: liveWeightSum,
+            totalAnimals: Number(record.noSheepGoats) || 0,
+            totalAmount: Number(record.totalprice) || 0,
+          });
+          return;
+        }
+
+        existing.totalCarcassWeight += carcassWeightSum;
+        existing.totalLiveWeight += liveWeightSum;
+        existing.totalAnimals += Number(record.noSheepGoats) || 0;
+        existing.totalAmount += Number(record.totalprice) || 0;
+      });
+
+      const summaryRows = Array.from(summaries.values()).sort((left, right) =>
+        left.farmerName.localeCompare(right.farmerName),
+      );
+
+      const headers = [
+        "Farmer Name",
+        "Total Carcass Weight (kg)",
+        "Total Live Weight (kg)",
+        "Total Animals",
+        "Total Amount (KES)",
+      ];
+
+      const rows = summaryRows.map((summary) => [
+        summary.farmerName,
+        summary.totalCarcassWeight.toFixed(2),
+        summary.totalLiveWeight.toFixed(1),
+        summary.totalAnimals.toString(),
+        summary.totalAmount.toFixed(2),
+      ]);
+
+      const totals = summaryRows.reduce(
+        (acc, summary) => {
+          acc.carcassWeight += summary.totalCarcassWeight;
+          acc.liveWeight += summary.totalLiveWeight;
+          acc.animals += summary.totalAnimals;
+          acc.amount += summary.totalAmount;
+          return acc;
+        },
+        { carcassWeight: 0, liveWeight: 0, animals: 0, amount: 0 },
+      );
+
+      const grandTotalRow = [
+        `GRAND TOTALS (${summaryRows.length} Farmers)`,
+        totals.carcassWeight.toFixed(2),
+        totals.liveWeight.toFixed(1),
+        totals.animals.toString(),
+        totals.amount.toFixed(2),
+      ];
+
+      const csvContent = [headers, ...rows, grandTotalRow]
+        .map((row) => row.map((field) => `"${String(field).replace(/"/g, '""')}"`).join(","))
+        .join("\n");
+
+      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+
+      const programLabel = userIsAdmin ? activeProgram : "ASSIGNED_PROGRAMS";
+      let filename = `livestock-offtake-farmer-summary-${programLabel}`;
+      if (filters.startDate || filters.endDate) {
+        filename += `_${filters.startDate || "start"}_to_${filters.endDate || "end"}`;
+      }
+      filename += `_${new Date().toISOString().split("T")[0]}.csv`;
+
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+
+      toast({
+        title: "Export Successful",
+        description: `Exported farmer summary for ${summaryRows.length} farmers`,
+      });
+    } catch (error) {
+      console.error("Error exporting farmer summary:", error);
+      toast({
+        title: "Export Failed",
+        description: "Failed to export farmer summary. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setExportLoading(false);
+    }
+  };
+
   const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files || []);
     if (files.length === 0) return;
@@ -1217,7 +1416,7 @@ const LivestockOfftakePage = () => {
 
   // --- OPTIMIZED BULK UPLOAD HANDLER (Non-blocking) ---
   const handleUpload = async () => {
-    if (!requireChiefAdmin()) return;
+    if (!requireAdmin()) return;
     if (uploadPreview.length === 0) {
       toast({ title: "Error", description: "No data to upload", variant: "destructive" });
       return;
@@ -1339,7 +1538,7 @@ const LivestockOfftakePage = () => {
   }, []);
 
   const openEditDialog = useCallback((record: OfftakeData) => {
-    if (!userIsChiefAdmin) return;
+    if (!userIsAdmin) return;
     setEditingRecord(record);
     setEditForm({
       date: formatDateForInput(record.date),
@@ -1351,10 +1550,10 @@ const LivestockOfftakePage = () => {
       location: record.location || ""
     });
     setIsEditDialogOpen(true);
-  }, [userIsChiefAdmin]);
+  }, [userIsAdmin]);
 
   const openWeightEditDialog = useCallback((record: OfftakeData) => {
-    if (!userIsChiefAdmin) return;
+    if (!userIsAdmin) return;
     setEditingRecord(record);
     
     const liveWeights = Array.isArray(record.liveWeight) ? record.liveWeight : [record.liveWeight || 0];
@@ -1378,10 +1577,10 @@ const LivestockOfftakePage = () => {
     });
     
     setIsWeightEditDialogOpen(true);
-  }, [userIsChiefAdmin]);
+  }, [userIsAdmin]);
 
   const handleSingleDelete = async () => {
-    if (!requireChiefAdmin()) return;
+    if (!requireAdmin()) return;
     if (!recordToDelete) return;
     try {
       setDeleteLoading(true);
@@ -1410,13 +1609,13 @@ const LivestockOfftakePage = () => {
   };
 
   const openSingleDeleteConfirm = useCallback((record: OfftakeData) => {
-    if (!userIsChiefAdmin) return;
+    if (!userIsAdmin) return;
     setRecordToDelete(record);
     setIsSingleDeleteDialogOpen(true);
-  }, [userIsChiefAdmin]);
+  }, [userIsAdmin]);
 
   const openBulkDeleteConfirm = () => {
-    if (!requireChiefAdmin()) return;
+    if (!requireAdmin()) return;
     if (selectedRecords.length === 0) {
       toast({
         title: "No Records Selected",
@@ -1429,7 +1628,7 @@ const LivestockOfftakePage = () => {
   };
 
   const handleDeleteMultiple = async () => {
-    if (!requireChiefAdmin()) return;
+    if (!requireAdmin()) return;
     if (selectedRecords.length === 0) return;
     try {
       setDeleteLoading(true);
@@ -1544,7 +1743,7 @@ const LivestockOfftakePage = () => {
   };
 
   const handleEditSubmit = async () => {
-    if (!requireChiefAdmin()) return;
+    if (!requireAdmin()) return;
     if (!editingRecord) return;
 
     try {
@@ -1569,7 +1768,7 @@ const LivestockOfftakePage = () => {
   };
 
   const handleWeightEditSubmit = async () => {
-    if (!requireChiefAdmin()) return;
+    if (!requireAdmin()) return;
     if (!editingRecord) return;
 
     try {
@@ -1701,7 +1900,7 @@ const LivestockOfftakePage = () => {
             <Button variant="outline" size="sm" onClick={() => openViewDialog(record)} className="h-8 w-8 p-0 hover:bg-green-100 hover:text-green-600 border-green-200">
               <Eye className="h-4 w-4 text-green-500" />
             </Button>
-            {isChiefAdmin(userRole) && (
+            {isAdmin(userRole) && (
               <>
                 <Button variant="outline" size="sm" onClick={() => openEditDialog(record)} className="h-8 w-8 p-0 hover:bg-yellow-100 border-white">
                   <Edit className="h-4 w-4 text-orange-500" />
@@ -1747,7 +1946,7 @@ const LivestockOfftakePage = () => {
                 </div>
             )}
 
-          {selectedRecords.length > 0 && isChiefAdmin(userRole) && (
+          {selectedRecords.length > 0 && isAdmin(userRole) && (
             <Button variant="destructive" size="sm" onClick={openBulkDeleteConfirm} disabled={deleteLoading} className="text-xs">
               <Trash2 className="h-4 w-4 mr-2" />
               Delete ({selectedRecords.length})
@@ -1777,7 +1976,7 @@ const LivestockOfftakePage = () => {
             Upload Data
           </Button>
 
-          {isChiefAdmin(userRole) && (
+          {isAdmin(userRole) && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button disabled={exportLoading || filteredOfftake.length === 0} className="bg-gradient-to-r from-blue-800 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white shadow-md text-xs">
@@ -1793,6 +1992,10 @@ const LivestockOfftakePage = () => {
                 <DropdownMenuItem onSelect={() => handleExportAggregatedByFarmer()} disabled={exportLoading}>
                   <Users className="h-4 w-4 mr-2" />
                   Export Summed by Farmer ID
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => handleExportFarmerOfftakeSummary()} disabled={exportLoading}>
+                  <Users className="h-4 w-4 mr-2" />
+                  Export Farmer Summary
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -1863,7 +2066,7 @@ const LivestockOfftakePage = () => {
               </div>
               <div className="flex items-center justify-between p-4 border-t bg-gray-50">
                 <div className="text-sm text-muted-foreground">
-                  {filteredOfftake.length} total records • Page {pagination.page} of {pagination.totalPages}
+                  {filteredOfftake.length} total records � Page {pagination.page} of {pagination.totalPages}
                 </div>
                 <div className="flex gap-2">
                   <Button variant="outline" size="sm" disabled={!pagination.hasPrev} onClick={() => handlePageChange(pagination.page - 1)}>Previous</Button>
@@ -1892,7 +2095,7 @@ const LivestockOfftakePage = () => {
                     <Weight className="h-4 w-4" />
                     Animal Details Table
                   </h3>
-                  {isChiefAdmin(userRole) && (
+                  {isAdmin(userRole) && (
                     <Button variant="outline" size="sm" onClick={() => openWeightEditDialog(viewingRecord)}>
                       <Edit className="h-4 w-4 mr-2" /> Edit Weights
                     </Button>
@@ -2255,3 +2458,5 @@ const LivestockOfftakePage = () => {
   );
 };
 export default LivestockOfftakePage;
+
+

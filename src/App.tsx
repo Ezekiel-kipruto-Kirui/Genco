@@ -45,7 +45,7 @@ const queryClient = new QueryClient({
     },
   },
 });
-const FULL_ACCESS_IDENTITIES = ["admin", "chief-admin", "ceo", "chief executive officer", "chief operations manager", "chief operational manager", "chief operational officer", "mne officer", "m&e officer", "me officer", "monitoring and evaluation officer", "monitoring & evaluation officer"];
+const FULL_ACCESS_IDENTITIES = ["admin", "ceo", "chief executive officer", "chief operations manager", "chief operational manager", "chief operational officer", "mne officer", "m&e officer", "me officer", "monitoring and evaluation officer", "monitoring & evaluation officer"];
 const PROJECT_MANAGER_IDENTITIES = ["project manager", "project officer"];
 const FINANCE_IDENTITIES = ["finance"];
 const HR_IDENTITIES = [
@@ -69,8 +69,8 @@ const LIVESTOCK_ANALYTICS_ALLOWED_IDENTITIES = [...FULL_ACCESS_IDENTITIES, ...PR
 const SALES_REPORT_ALLOWED_IDENTITIES = [...FULL_ACCESS_IDENTITIES, ...FINANCE_IDENTITIES];
 const FIELD_ACTIVITIES_ALLOWED_IDENTITIES = [...FULL_ACCESS_IDENTITIES, ...PROJECT_MANAGER_IDENTITIES, ...HR_IDENTITIES, ...FINANCE_IDENTITIES];
 const INFRASTRUCTURE_ALLOWED_IDENTITIES = [...FULL_ACCESS_IDENTITIES, ...PROJECT_MANAGER_IDENTITIES, ...HR_IDENTITIES];
-const SITE_MANAGEMENT_ALLOWED_IDENTITIES = [...FULL_ACCESS_IDENTITIES];
-const USER_MANAGEMENT_ALLOWED_IDENTITIES = ["chief-admin"];
+const SITE_MANAGEMENT_ALLOWED_IDENTITIES = ["admin"];
+const USER_MANAGEMENT_ALLOWED_IDENTITIES = ["admin"];
 const REQUISITION_ALLOWED_IDENTITIES = [
   ...FULL_ACCESS_IDENTITIES,
   ...PROJECT_MANAGER_IDENTITIES,

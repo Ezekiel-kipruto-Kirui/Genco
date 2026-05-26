@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 // REALTIME DATABASE IMPORTS
 import { ref, push, remove, update } from "firebase/database";
 import { db, fetchCollection, fetchCollectionByProgrammes } from "@/lib/firebase";
@@ -11,7 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import {
   canViewAllProgrammes,
-  isChiefAdmin,
+  isAdmin,
 } from "@/contexts/authhelper";
 import { includesProgramme, normalizeProgramme as normalizeProg, resolveAccessibleProgrammes } from "@/lib/programme-access";
 import { 
@@ -41,9 +41,9 @@ import { Checkbox } from "@/components/ui/checkbox";
 import * as XLSX from 'xlsx'; 
 import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
 
-// ──────────────────────────────────────────────
-// Utility: Format large numbers (e.g. 1,200 → 1.2K, 1,500,000 → 1.5M)
-// ──────────────────────────────────────────────
+// ----------------------------------------------
+// Utility: Format large numbers (e.g. 1,200 ? 1.2K, 1,500,000 ? 1.5M)
+// ----------------------------------------------
 const formatNumber = (num: number): string => {
   if (num == null || !Number.isFinite(num)) return "0";
   const abs = Math.abs(num);
@@ -53,9 +53,9 @@ const formatNumber = (num: number): string => {
   return num.toLocaleString();
 };
 
-// ──────────────────────────────────────────────
+// ----------------------------------------------
 // Types
-// ──────────────────────────────────────────────
+// ----------------------------------------------
 interface FieldOfficer {
   name: string;
   role: string;
@@ -108,9 +108,9 @@ interface AnimalHealthActivity {
   status: 'completed';
 }
 
-// ──────────────────────────────────────────────
+// ----------------------------------------------
 // Helpers
-// ──────────────────────────────────────────────
+// ----------------------------------------------
 const safeParseDate = (value: string | number | undefined | null): number => {
   if (!value) return 0;
   const ts = new Date(value).getTime();
@@ -226,9 +226,9 @@ const formatDate = (d: string): string => {
   });
 };
 
-// ──────────────────────────────────────────────
+// ----------------------------------------------
 // Component
-// ──────────────────────────────────────────────
+// ----------------------------------------------
 const AnimalHealthPage = () => {
   const [activities, setActivities] = useState<AnimalHealthActivity[]>([]);
   const [loading, setLoading] = useState(true);
@@ -285,8 +285,8 @@ const AnimalHealthPage = () => {
   const [selectedActivities, setSelectedActivities] = useState<string[]>([]);
   const [isSelecting, setIsSelecting] = useState(false);
 
-  // ── Auth / access ──
-  const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
+  // -- Auth / access --
+  const userIsAdmin = useMemo(() => isAdmin(userRole), [userRole]);
   const userCanViewAllProgrammeData = useMemo(
     () => canViewAllProgrammes(userRole, userAttribute, allowedProgrammes),
     [allowedProgrammes, userRole, userAttribute],
@@ -313,18 +313,18 @@ const AnimalHealthPage = () => {
     [accessibleProgrammes, user?.uid, userCanReadAllAnimalHealthProgrammes],
   );
 
-  // ── Helpers ──
-  const requireChiefAdmin = () => {
-    if (userIsChiefAdmin) return true;
+  // -- Helpers --
+  const requireAdmin = () => {
+    if (userIsAdmin) return true;
     toast({
       title: "Access denied",
-      description: "Only chief admin can create, edit, or delete records on this page.",
+      description: "Only Admin can create, edit, or delete records on this page.",
       variant: "destructive",
     });
     return false;
   };
 
-  // ── Auto-sync beneficiary counts (only when NOT manually overridden) ──
+  // -- Auto-sync beneficiary counts (only when NOT manually overridden) --
   useEffect(() => {
     if (manualCountOverride.current) return;
     const maleCount = beneficiaries.filter((b) => b.gender === "Male").length;
@@ -358,7 +358,7 @@ const AnimalHealthPage = () => {
     });
   }, [accessibleProgrammes, defaultActivityProgramme]);
 
-  // ── Fetch activities ──
+  // -- Fetch activities --
   const fetchActivities = useCallback(async () => {
     try {
       if (!hasProgrammeAccess) {
@@ -455,7 +455,7 @@ const AnimalHealthPage = () => {
     void fetchActivities();
   }, [fetchActivities]);
 
-  // ── Beneficiary handlers ──
+  // -- Beneficiary handlers --
   const handleAddBeneficiary = () => {
     if (!beneficiaryForm.name || !beneficiaryForm.nationalId) {
       toast({ title: "Missing Info", description: "Please provide Name and National ID.", variant: "destructive" });
@@ -550,7 +550,7 @@ const AnimalHealthPage = () => {
     if (e.target) e.target.value = "";
   };
 
-  // ── Issue handlers ──
+  // -- Issue handlers --
   const handleAddIssue = () => {
     if (!issueForm.name || !issueForm.raisedBy || !issueForm.description) {
       toast({
@@ -578,7 +578,7 @@ const AnimalHealthPage = () => {
   const handleRemoveIssue = (issueId: string) =>
     setIssues((prev) => prev.filter((i) => i.id !== issueId));
 
-  // ── Field Officer handlers ──
+  // -- Field Officer handlers --
   const handleAddFieldOfficer = () => {
     if (fieldOfficerForm.name.trim() && fieldOfficerForm.role.trim()) {
       setFieldOfficers((prev) => [
@@ -591,7 +591,7 @@ const AnimalHealthPage = () => {
   const removeFieldOfficer = (index: number) =>
     setFieldOfficers((prev) => prev.filter((_, i) => i !== index));
 
-  // ── Vaccine helpers ──
+  // -- Vaccine helpers --
   const handleVaccineSelection = (vaccineType: string) => {
     setSelectedVaccines((prev) =>
       prev.includes(vaccineType) ? prev.filter((v) => v !== vaccineType) : [...prev, vaccineType],
@@ -609,7 +609,7 @@ const AnimalHealthPage = () => {
     }));
   };
 
-  // ── Form reset ──
+  // -- Form reset --
   const resetForms = () => {
     setActivityForm({
       date: "", county: "", subcounty: "", location: "",
@@ -627,9 +627,9 @@ const AnimalHealthPage = () => {
     manualCountOverride.current = false;
   };
 
-  // ── CRUD operations ──
+  // -- CRUD operations --
   const handleAddActivity = async () => {
-    if (!requireChiefAdmin()) return;
+    if (!requireAdmin()) return;
     if (fieldOfficers.length === 0) {
       toast({ title: "Error", description: "Add at least one field officer", variant: "destructive" });
       return;
@@ -678,7 +678,7 @@ const AnimalHealthPage = () => {
   };
 
   const handleEditActivity = async () => {
-    if (!requireChiefAdmin()) return;
+    if (!requireAdmin()) return;
     if (!editingActivity) return;
     try {
       const vaccines = getVaccinesFromSelection();
@@ -708,7 +708,7 @@ const AnimalHealthPage = () => {
   };
 
   const handleDeleteActivity = async (activityId: string) => {
-    if (!requireChiefAdmin()) return;
+    if (!requireAdmin()) return;
     try {
       await remove(ref(db, `AnimalHealthActivities/${activityId}`));
       toast({ title: "Success", description: "Deleted." });
@@ -720,7 +720,7 @@ const AnimalHealthPage = () => {
   };
 
   const handleDeleteMultipleActivities = async () => {
-    if (!requireChiefAdmin()) return;
+    if (!requireAdmin()) return;
     if (selectedActivities.length === 0) return;
     try {
       await Promise.all(
@@ -736,7 +736,7 @@ const AnimalHealthPage = () => {
     }
   };
 
-  // ── Selection ──
+  // -- Selection --
   const toggleActivitySelection = (activityId: string) => {
     setSelectedActivities((prev) =>
       prev.includes(activityId) ? prev.filter((id) => id !== activityId) : [...prev, activityId],
@@ -748,7 +748,7 @@ const AnimalHealthPage = () => {
     );
   };
 
-  // ── Dialog openers ──
+  // -- Dialog openers --
   const openViewDialog = (activity: AnimalHealthActivity) => {
     setViewingActivity(activity);
     setViewFarmersPage(1);
@@ -764,9 +764,9 @@ const AnimalHealthPage = () => {
     if (open) resetForms();
   };
 
-  // ════════════════════════════════════════════
+  // --------------------------------------------
   // CALCULATIONS FOR STATS
-  // ════════════════════════════════════════════
+  // --------------------------------------------
   const statsActivities = useMemo(() => {
     if (programmeView === "ALL") return activities;
     return activities.filter((a) => a.programme === programmeView);
@@ -836,7 +836,7 @@ const AnimalHealthPage = () => {
     };
   }, [statsActivities]);
 
-  // ── Filtering ──
+  // -- Filtering --
   const filteredActivities = useMemo(
     () =>
       activities.filter((activity) => {
@@ -879,9 +879,9 @@ const AnimalHealthPage = () => {
     setSelectedActivities((prev) => prev.filter((id) => visibleIds.has(id)));
   }, [displayedActivities]);
 
-  // ── Edit dialog ──
+  // -- Edit dialog --
   const openEditDialog = (activity: AnimalHealthActivity) => {
-    if (!userIsChiefAdmin) return;
+    if (!userIsAdmin) return;
     setEditingActivity(activity);
     setActivityForm({
       date: activity.date || "",
@@ -902,11 +902,11 @@ const AnimalHealthPage = () => {
     setIssues(activity.issues || []);
     setBeneficiaries(activity.beneficiaries || []);
     setShowIssueForm(false);
-    manualCountOverride.current = true; // Editing – don't auto-sync until user adds/removes
+    manualCountOverride.current = true; // Editing � don't auto-sync until user adds/removes
     setIsEditDialogOpen(true);
   };
 
-  // ── Export ──
+  // -- Export --
   const exportToCSV = () => {
     try {
       const headers = [
@@ -944,7 +944,7 @@ const AnimalHealthPage = () => {
     }
   };
 
-  // ── Render helpers ──
+  // -- Render helpers --
   const renderVaccinesInTable = (activity: AnimalHealthActivity) => {
     const v = getActivityVaccines(activity);
     if (v.length === 0) return "None";
@@ -962,7 +962,7 @@ const AnimalHealthPage = () => {
     !activityForm.location ||
     !includesProgramme(accessibleProgrammes, activityForm.programme);
 
-  // ── View dialog pagination ──
+  // -- View dialog pagination --
   const viewingFarmers = viewingActivity?.beneficiaries || [];
   const totalViewFarmerPages = Math.max(1, Math.ceil(viewingFarmers.length / FARMERS_PER_PAGE));
   const safeViewFarmersPage = Math.min(viewFarmersPage, totalViewFarmerPages);
@@ -975,18 +975,18 @@ const AnimalHealthPage = () => {
   const baseColCount = 5; // Date, Location, Doses, Team, Actions
   const tableColSpan = isSelecting ? baseColCount + 1 : baseColCount;
 
-  // ════════════════════════════════════════════
+  // --------------------------------------------
   // RENDER
-  // ════════════════════════════════════════════
+  // --------------------------------------------
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100/80 p-4 sm:p-6">
       <div className="max-w-7xl mx-auto space-y-6">
-        {/* ─── Header ─── */}
+        {/* --- Header --- */}
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <h1 className="text-xl font-bold text-slate-900">Animal Health Management</h1>
           <Dialog open={isAddDialogOpen} onOpenChange={handleAddDialogOpenChange}>
             <DialogTrigger asChild>
-              {userIsChiefAdmin && (
+              {userIsAdmin && (
                 <Button className="bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white">
                   <Plus className="h-4 w-4 mr-2" /> Record Vaccination
                 </Button>
@@ -1353,7 +1353,7 @@ const AnimalHealthPage = () => {
           </Dialog>
         </div>
 
-        {/* ─── Stats Overview ─── */}
+        {/* --- Stats Overview --- */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {/* Card 1: Regional Coverage */}
           <Card className="bg-white shadow-sm border-slate-200">
@@ -1464,7 +1464,7 @@ const AnimalHealthPage = () => {
           </Card>
         </div>
 
-        {/* ─── Action Buttons & Search ─── */}
+        {/* --- Action Buttons & Search --- */}
         <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 space-y-4">
           <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_280px] lg:items-end">
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 min-w-0">
@@ -1532,7 +1532,7 @@ const AnimalHealthPage = () => {
 
           <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
             <div className="flex flex-wrap items-center gap-2">
-              {userIsChiefAdmin && isSelecting && selectedActivities.length > 0 && (
+              {userIsAdmin && isSelecting && selectedActivities.length > 0 && (
                 <Button
                   variant="destructive"
                   size="sm"
@@ -1541,7 +1541,7 @@ const AnimalHealthPage = () => {
                   <Trash2 className="h-4 w-4 mr-1" /> Delete Selected ({selectedActivities.length})
                 </Button>
               )}
-              {userIsChiefAdmin && (
+              {userIsAdmin && (
                 <Button
                   variant="outline"
                   size="sm"
@@ -1560,7 +1560,7 @@ const AnimalHealthPage = () => {
                 </Button>
               )}
             </div>
-            {userIsChiefAdmin && (
+            {userIsAdmin && (
               <div className="flex items-center gap-2 sm:justify-end">
                 <Button
                   variant="outline"
@@ -1575,7 +1575,7 @@ const AnimalHealthPage = () => {
           </div>
         </div>
 
-        {/* ─── Activities Table ─── */}
+        {/* --- Activities Table --- */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 px-1">
           <h2 className="text-sm font-semibold text-slate-700">
             {programmeView === "ALL"
@@ -1681,7 +1681,7 @@ const AnimalHealthPage = () => {
                           >
                             <Eye className="h-4 w-4" />
                           </Button>
-                          {userIsChiefAdmin && (
+                          {userIsAdmin && (
                             <>
                               <Button
                                 variant="ghost"
@@ -1711,7 +1711,7 @@ const AnimalHealthPage = () => {
           </div>
         </div>
 
-        {/* ─── EDIT DIALOG ─── */}
+        {/* --- EDIT DIALOG --- */}
         <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
           <DialogContent className="sm:max-w-[900px] bg-white rounded-2xl border-0 shadow-2xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
@@ -2041,7 +2041,7 @@ const AnimalHealthPage = () => {
           </DialogContent>
         </Dialog>
 
-        {/* ─── VIEW DIALOG ─── */}
+        {/* --- VIEW DIALOG --- */}
         <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
           <DialogContent className="sm:max-w-[800px] bg-white rounded-2xl max-h-[90vh] overflow-y-auto">
             {viewingActivity && (
@@ -2126,7 +2126,7 @@ const AnimalHealthPage = () => {
                             className="flex justify-between items-center bg-orange-50 border border-orange-100 p-2 rounded text-xs"
                           >
                             <div>
-                              <span className="font-semibold">{iss.name}</span> — raised by{" "}
+                              <span className="font-semibold">{iss.name}</span> � raised by{" "}
                               {iss.raisedBy}
                               <p className="text-slate-500 mt-0.5">{iss.description}</p>
                             </div>
@@ -2271,7 +2271,7 @@ const AnimalHealthPage = () => {
           </DialogContent>
         </Dialog>
 
-        {/* ─── FIELD OFFICERS DIALOG ─── */}
+        {/* --- FIELD OFFICERS DIALOG --- */}
         <Dialog open={isFieldOfficersDialogOpen} onOpenChange={setIsFieldOfficersDialogOpen}>
           <DialogContent className="sm:max-w-[400px] bg-white">
             <DialogHeader>
@@ -2303,3 +2303,5 @@ const AnimalHealthPage = () => {
 };
 
 export default AnimalHealthPage;
+
+

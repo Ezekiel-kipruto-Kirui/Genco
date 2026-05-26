@@ -437,11 +437,11 @@ const BoreholePage = () => {
     () => cacheKey("admin-page", "borehole-storage", activeProgram || "no-program"),
     [activeProgram]
   );
-  const requireChiefAdmin = () => {
+  const requireAdmin = () => {
     if (canManageRecords) return true;
     toast({
       title: "Access denied",
-      description: "Only chief admin can create, edit, or delete records on this page.",
+      description: "Only Admin can create, edit, or delete records on this page.",
       variant: "destructive",
     });
     return false;
@@ -664,7 +664,7 @@ const BoreholePage = () => {
 
   // Create functionality
   const handleCreateBorehole = async () => {
-    if (!requireChiefAdmin()) return;
+    if (!requireAdmin()) return;
     try {
       setCreateLoading(true);
 
@@ -757,7 +757,7 @@ const BoreholePage = () => {
 
   // Edit functionality
   const handleEditBorehole = async () => {
-    if (!requireChiefAdmin()) return;
+    if (!requireAdmin()) return;
     if (!editingRecord) return;
 
     try {
@@ -838,7 +838,7 @@ const BoreholePage = () => {
 
   // Delete functionality
   const handleDeleteSelected = async () => {
-    if (!requireChiefAdmin()) return;
+    if (!requireAdmin()) return;
     if (selectedRecords.length === 0) {
       toast({
         title: "No Records Selected",
@@ -899,7 +899,7 @@ const BoreholePage = () => {
   };
 
   const handleUpload = async () => {
-    if (!requireChiefAdmin()) return;
+    if (!requireAdmin()) return;
     if (!uploadFile) {
       toast({
         title: "No File Selected",
@@ -970,7 +970,7 @@ const BoreholePage = () => {
   };
 
   const handleExport = async () => {
-    if (!requireChiefAdmin()) return;
+    if (!requireAdmin()) return;
     try {
       setExportLoading(true);
       
@@ -2110,4 +2110,6 @@ const BoreholePage = () => {
 };
 
 export default BoreholePage;
+
+
 

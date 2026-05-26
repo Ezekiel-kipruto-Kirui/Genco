@@ -14,7 +14,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { Download, Users, Eye, Globe, LayoutGrid, Edit, Trash2, Upload, FileJson, FileSpreadsheet } from "lucide-react";
 import { useSharedProgrammeSelection } from "@/hooks/use-shared-programme-selection";
 import { useToast } from "@/hooks/use-toast";
-import { canViewAllProgrammes, isChiefAdmin } from "@/contexts/authhelper";
+import { canViewAllProgrammes, isAdmin } from "@/contexts/authhelper";
 import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
 import { matchesActiveProgramme, normalizeProgramme, resolveAccessibleProgrammes, resolveActiveProgramme } from "@/lib/programme-access";
 
@@ -174,7 +174,7 @@ const FodderFarmersPage = () => {
     hasPrev: false
   });
 
-  const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
+  const userIsAdmin = useMemo(() => isAdmin(userRole), [userRole]);
   const userCanViewAllProgrammeData = useMemo(
     () => canViewAllProgrammes(userRole, userAttribute, allowedProgrammes),
     [allowedProgrammes, userRole, userAttribute]
@@ -184,11 +184,11 @@ const FodderFarmersPage = () => {
     [allowedProgrammes, userCanViewAllProgrammeData]
   );
   const [activeProgram, setActiveProgram] = useSharedProgrammeSelection(accessibleProgrammes);
-  const requireChiefAdmin = () => {
-    if (userIsChiefAdmin) return true;
+  const requireAdmin = () => {
+    if (userIsAdmin) return true;
     toast({
       title: "Access denied",
-      description: "Only chief admin can create, edit, or delete records on this page.",
+      description: "Only Admin can create, edit, or delete records on this page.",
       variant: "destructive",
     });
     return false;
@@ -393,19 +393,19 @@ const FodderFarmersPage = () => {
   };
 
   const handleEdit = (record: FodderFarmer) => {
-    if (!requireChiefAdmin()) return;
+    if (!requireAdmin()) return;
     console.log("Edit record:", record);
     toast({ title: "Edit Feature", description: "Edit functionality will be implemented soon" });
   };
 
   const handleDelete = (record: FodderFarmer) => {
-    if (!requireChiefAdmin()) return;
+    if (!requireAdmin()) return;
     console.log("Delete record:", record);
     toast({ title: "Delete Feature", description: "Delete functionality will be implemented soon", variant: "destructive" });
   };
 
   const handleDeleteMultiple = async () => {
-    if (!requireChiefAdmin()) return;
+    if (!requireAdmin()) return;
     if (selectedRecords.length === 0) return;
     try {
       setDeleteLoading(true);
@@ -422,7 +422,7 @@ const FodderFarmersPage = () => {
   };
 
   const openDeleteConfirm = () => {
-    if (!requireChiefAdmin()) return;
+    if (!requireAdmin()) return;
     if (selectedRecords.length === 0) return;
     setIsDeleteConfirmOpen(true);
   };
@@ -485,7 +485,7 @@ const FodderFarmersPage = () => {
   };
 
   const handleUpload = async () => {
-    if (!requireChiefAdmin()) return;
+    if (!requireAdmin()) return;
     if (!uploadFile) return;
     setUploadLoading(true);
     try {
@@ -696,7 +696,7 @@ const FodderFarmersPage = () => {
         <td className="py-3 px-4">
           <div className="flex gap-2">
             <Button variant="outline" size="sm" onClick={() => openViewDialog(record)} className="h-8 w-8 p-0 hover:bg-green-50 hover:text-green-600 border-green-200"><Eye className="h-4 w-4 text-green-500" /></Button>
-            {userIsChiefAdmin && (
+            {userIsAdmin && (
               <>
                 <Button variant="outline" size="sm" onClick={() => handleEdit(record)} className="h-8 w-8 p-0 hover:bg-blue-50 hover:text-blue-600 border-blue-200"><Edit className="h-4 w-4 text-blue-500" /></Button>
                 <Button variant="outline" size="sm" onClick={() => handleDelete(record)} className="h-8 w-8 p-0 hover:bg-red-50 hover:text-red-600 border-red-200"><Trash2 className="h-4 w-4 text-red-500" /></Button>
@@ -706,7 +706,7 @@ const FodderFarmersPage = () => {
         </td>
       </tr>
     );
-  }, [selectedRecords, handleSelectRecord, openViewDialog, handleEdit, handleDelete, userIsChiefAdmin]);
+  }, [selectedRecords, handleSelectRecord, openViewDialog, handleEdit, handleDelete, userIsAdmin]);
 
   return (
     <div className="space-y-6">
@@ -720,7 +720,7 @@ const FodderFarmersPage = () => {
         </div>
 
         <div className="flex flex-wrap gap-2 w-full xl:w-auto">
-          {selectedRecords.length > 0 && userIsChiefAdmin && (
+          {selectedRecords.length > 0 && userIsAdmin && (
             <Button variant="destructive" size="sm" onClick={openDeleteConfirm} disabled={deleteLoading} className="text-xs">
               <Trash2 className="h-4 w-4 mr-2" /> Delete ({selectedRecords.length})
             </Button>
@@ -738,7 +738,7 @@ const FodderFarmersPage = () => {
              </div>
           ) : <div className="hidden sm:block sm:w-[200px]"></div>}
 
-          {userIsChiefAdmin && (
+          {userIsAdmin && (
             <>
               <Button variant="outline" size="sm" onClick={() => setIsUploadDialogOpen(true)} className="text-xs border-green-300 hover:bg-green-50 text-green-700"><Upload className="h-4 w-4 mr-2" /> Upload Data</Button>
               <Button onClick={handleExport} disabled={exportLoading || filteredFodder.length === 0} className="bg-gradient-to-r from-green-600 to-emerald-700 hover:from-green-700 hover:to-emerald-800 text-white shadow-md text-xs"><Download className="h-4 w-4 mr-2" /> {exportLoading ? "Exporting..." : `Export (${filteredFodder.length})`}</Button>
@@ -976,4 +976,6 @@ const FodderFarmersPage = () => {
 };
 
 export default FodderFarmersPage;
+
+
 

@@ -36,6 +36,7 @@ import { fetchAnalysisSummary } from "@/lib/analysis";
 import { cacheKey, readCachedValue, writeCachedValue } from "@/lib/data-cache";
 import { fetchCollectionByProgramme, fetchCollectionByProgrammes } from "@/lib/firebase";
 import {
+  ALL_PROGRAMMES_VALUE,
   PROGRAMME_OPTIONS,
   isAllProgrammesSelection,
   resolveAccessibleProgrammes,
@@ -1675,9 +1676,16 @@ const DashboardOverview = () => {
   const canSwitchProgrammes = accessibleProgrammes.length > 1;
 
   const [selectedProgramme, setSelectedProgramme] = useSharedProgrammeSelection(accessibleProgrammes, {
-    allowAll: userCanViewAllProgrammeData,
+    allowAll: accessibleProgrammes.length > 1,
     fallbackToAll: accessibleProgrammes.length > 1,
   });
+  const appliedDefaultProgrammeRef = useRef(false);
+
+  useEffect(() => {
+    if (appliedDefaultProgrammeRef.current || accessibleProgrammes.length <= 1) return;
+    appliedDefaultProgrammeRef.current = true;
+    setSelectedProgramme(ALL_PROGRAMMES_VALUE);
+  }, [accessibleProgrammes.length, setSelectedProgramme]);
 
   // -- Local overview state -----------------------------------------------
   const [localOverviewState, setLocalOverviewState] = useState<{

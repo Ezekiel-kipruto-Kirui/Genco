@@ -18,7 +18,7 @@ import { useToast } from "@/hooks/use-toast";
 import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
 import {
   isFinance,
-  isChiefAdmin,
+  isAdmin,
   isHummanResourceManager,
   isOfftakeOfficer,
   isProjectManager,
@@ -65,8 +65,7 @@ interface Stats {
   totalUsers: number;
   activeUsers: number;
   adminUsers: number;
-  chiefAdminUsers: number;
-  mobileUsers: number;
+  fieldOfficerUsers: number;
   hrUsers: number;
   projectManagerUsers: number;
   financeUsers: number;
@@ -129,6 +128,7 @@ const AVAILABLE_PROGRAMMES = [
   "MTLDK",
 ];
 const USER_ATTRIBUTE_OPTIONS = [
+  "Field Officer",
   "Chief Executive Officer",
   "Chief Operations Officer",
   "Project Officer",
@@ -139,14 +139,18 @@ const USER_ATTRIBUTE_OPTIONS = [
 ] as const;
 const NO_ATTRIBUTE_VALUE = "__none__";
 const ROLE_OPTIONS = [
-  { value: "user", label: "User" },
   { value: "admin", label: "Admin" },
-  { value: "chief-admin", label: "Chief Admin" },
-  { value: "mobile", label: "Mobile User" },
+  ...USER_ATTRIBUTE_OPTIONS.map((attribute) => ({ value: attribute, label: attribute })),
 ] as const;
-type SystemRole = (typeof ROLE_OPTIONS)[number]["value"];
-const SYSTEM_ROLE_VALUES: ReadonlySet<string> = new Set(ROLE_OPTIONS.map((option) => option.value));
+type RoleSelection = (typeof ROLE_OPTIONS)[number]["value"];
+type SystemRole = "admin" | "user";
 const LEGACY_ROLE_ATTRIBUTE_MAP: Record<string, string> = {
+  "mobile": "Field Officer",
+  "mobile user": "Field Officer",
+  "field officer": "Field Officer",
+  "fieldofficer": "Field Officer",
+  "chief-admin": "",
+  "chief admin": "",
   "humman resource manager": "Human Resource Manager",
   "human resource manager": "Human Resource Manager",
   "humman resource manger": "Human Resource Manager",
@@ -250,20 +254,27 @@ const getCustomAttributeText = (accessControl?: AccessControl): string => {
 const normalizeSelectableAttribute = (attribute: string) =>
   USER_ATTRIBUTE_OPTIONS.includes(attribute as typeof USER_ATTRIBUTE_OPTIONS[number]) ? attribute : "";
 
-const formatRoleLabel = (role: string): string =>
-  role
+const formatRoleLabel = (role: string): string => {
+  const normalized = normalizeRole(role);
+  if (normalized === "admin") return "Admin";
+  if (normalized === "field officer") return "Field Officer";
+  return role
     .split("-")
+    .join(" ")
+    .split(" ")
+    .filter(Boolean)
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(" ");
+};
 
 const normalizeSystemRole = (role: string | null | undefined): SystemRole => {
   const normalized = normalizeRole(role);
-  if (SYSTEM_ROLE_VALUES.has(normalized)) return normalized as SystemRole;
+  if (normalized === "admin") return "admin";
   return "user";
 };
 
-const isMobileSystemRole = (role: string | null | undefined): boolean =>
-  normalizeSystemRole(role) === "mobile";
+const isFieldOfficerSelection = (role: string | null | undefined): boolean =>
+  normalizeRole(role) === "field officer";
 
 const getAttributeFromLegacyRole = (
   role: string | null | undefined,
@@ -283,11 +294,14 @@ const getEffectiveAttribute = (record: UserRecord): string => {
 const getEffectiveRole = (record: UserRecord): string =>
   normalizeSystemRole(record.role);
 
+const getDisplayRole = (record: UserRecord): string =>
+  getEffectiveRole(record) === "admin" ? "Admin" : getEffectiveAttribute(record) || "User";
+
+const getRoleSelectionFromRecord = (record: UserRecord): string =>
+  getEffectiveRole(record) === "admin" ? "admin" : getEffectiveAttribute(record) || "user";
+
 const getRecordPermissionPrincipal = (record: UserRecord): string =>
-  resolvePermissionPrincipal(
-    getEffectiveRole(record),
-    getEffectiveAttribute(record),
-  );
+  resolvePermissionPrincipal(getEffectiveRole(record), getEffectiveAttribute(record));
 
 const parseDate = (date: any): Date | null => {
   if (!date) return null;  
@@ -417,7 +431,7 @@ const FilterSection = ({ searchValue, filters, uniqueRoles, uniqueStatuses, onSe
     </div>
 
     <div className="space-y-1.5">
-      <Label htmlFor="role" className="text-xs font-semibold text-gray-600 uppercase tracking-wide">System Role</Label>
+      <Label htmlFor="role" className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Role</Label>
       <Select value={filters.role} onValueChange={(value) => onFilterChange("role", value)}>
         <SelectTrigger className="border-gray-200 focus:border-blue-500 focus:ring-blue-500 bg-white text-sm h-9">
           <SelectValue placeholder="Select role" />
@@ -498,11 +512,12 @@ interface TableRowProps {
   onView: (record: UserRecord) => void;
   onEdit: (record: UserRecord) => void;
   onDeleteClick: (record: UserRecord) => void;
-  userIsChiefAdmin: boolean;
+  userIsAdmin: boolean;
 }
 
-const TableRow = ({ record, selectedRecords, onSelectRecord, onView, onEdit, onDeleteClick, userIsChiefAdmin }: TableRowProps) => {
+const TableRow = ({ record, selectedRecords, onSelectRecord, onView, onEdit, onDeleteClick, userIsAdmin }: TableRowProps) => {
   const effectiveRole = getEffectiveRole(record);
+  const displayRole = getDisplayRole(record);
   const attribute = getEffectiveAttribute(record);
   const principal = getRecordPermissionPrincipal(record);
 
@@ -520,13 +535,12 @@ const TableRow = ({ record, selectedRecords, onSelectRecord, onView, onEdit, onD
         <Badge
           variant="secondary"
           className={
-            effectiveRole === "chief-admin" ? "bg-purple-100 text-purple-800" :
             effectiveRole === "admin" ? "bg-blue-100 text-blue-800" :
-            effectiveRole === "mobile" ? "bg-green-100 text-green-800" :
+            displayRole === "Field Officer" ? "bg-green-100 text-green-800" :
             "bg-gray-100 text-gray-800"
           }
         >
-          {formatRoleLabel(effectiveRole)}
+          {displayRole}
         </Badge>
       </td>
       <td className="py-3 px-4 text-sm">
@@ -567,7 +581,7 @@ const TableRow = ({ record, selectedRecords, onSelectRecord, onView, onEdit, onD
           >
             <Eye className="h-3.5 w-3.5" />
           </Button>
-          {userIsChiefAdmin && (
+          {userIsAdmin && (
             <>
               <Button
                 variant="ghost"
@@ -600,16 +614,16 @@ const TableRow = ({ record, selectedRecords, onSelectRecord, onView, onEdit, onD
 const UserManagementPage = () => {
   const { userRole, userAttribute } = useAuth();
   const { toast } = useToast();
-  const userIsChiefAdmin = isChiefAdmin(userRole) || isChiefAdmin(userAttribute);
-  const requireChiefAdmin = useCallback(() => {
-    if (userIsChiefAdmin) return true;
+  const userIsAdmin = isAdmin(userRole);
+  const requireAdmin = useCallback(() => {
+    if (userIsAdmin) return true;
     toast({
       title: "Access denied",
-      description: "Only chief admin can create, edit, or delete records on this page.",
+      description: "Only admin can create, edit, or delete records on this page.",
       variant: "destructive",
     });
     return false;
-  }, [userIsChiefAdmin, toast]);
+  }, [userIsAdmin, toast]);
   
   // State
   const [allRecords, setAllRecords] = useState<UserRecord[]>([]);
@@ -649,8 +663,7 @@ const UserManagementPage = () => {
     totalUsers: 0,
     activeUsers: 0,
     adminUsers: 0,
-    chiefAdminUsers: 0,
-    mobileUsers: 0,
+    fieldOfficerUsers: 0,
     hrUsers: 0,
     projectManagerUsers: 0,
     financeUsers: 0,
@@ -691,8 +704,8 @@ const UserManagementPage = () => {
     customAttribute: "",
     allowedProgrammes: initialProgrammes
   });
-  const addFormIsMobile = isMobileSystemRole(addForm.role);
-  const editFormIsMobile = isMobileSystemRole(editForm.role);
+  const addFormIsFieldOfficer = isFieldOfficerSelection(addForm.role);
+  const editFormIsFieldOfficer = isFieldOfficerSelection(editForm.role);
 
   const fetchKenyaAreas = useCallback(async () => {
     const cachedAreas = readCachedValue<KenyaAreasResponse>(
@@ -778,8 +791,8 @@ const UserManagementPage = () => {
     setter((prev) => ({
       ...prev,
       role: value,
-      county: isMobileSystemRole(value) ? prev.county : "",
-      subcounty: isMobileSystemRole(value) ? prev.subcounty : "",
+      county: isFieldOfficerSelection(value) ? prev.county : "",
+      subcounty: isFieldOfficerSelection(value) ? prev.subcounty : "",
     }));
   };
 
@@ -835,9 +848,10 @@ const UserManagementPage = () => {
   const filterAndProcessData = useCallback((records: UserRecord[], searchTerm: string, filterParams: Omit<Filters, 'search'>) => {
     const filtered = records.filter(record => {
       const effectiveRole = getEffectiveRole(record);
+      const displayRole = getDisplayRole(record);
       const attributeSearchText = getEffectiveAttribute(record);
 
-      if (filterParams.role !== "all" && effectiveRole !== filterParams.role.toLowerCase()) {
+      if (filterParams.role !== "all" && displayRole !== filterParams.role) {
         return false;
       }
 
@@ -874,7 +888,7 @@ const UserManagementPage = () => {
           record.email,
           record.phoneNumber,
           record.phone,
-          effectiveRole,
+          displayRole,
           attributeSearchText,
         ].some(field => field?.toLowerCase().includes(searchTermLower));
         if (!searchMatch) return false;
@@ -887,8 +901,7 @@ const UserManagementPage = () => {
 
     const activeUsers = sortedFiltered.filter(r => r.status?.toLowerCase() === 'active').length;
     const adminUsers = sortedFiltered.filter((r) => getEffectiveRole(r) === "admin").length;
-    const chiefAdminUsers = sortedFiltered.filter((r) => getEffectiveRole(r) === "chief-admin").length;
-    const mobileUsers = sortedFiltered.filter((r) => getEffectiveRole(r) === "mobile").length;
+    const fieldOfficerUsers = sortedFiltered.filter((r) => getDisplayRole(r) === "Field Officer").length;
     const hrUsers = sortedFiltered.filter((r) => isHummanResourceManager(getRecordPermissionPrincipal(r))).length;
     const projectManagerUsers = sortedFiltered.filter((r) => isProjectManager(getRecordPermissionPrincipal(r))).length;
     const financeUsers = sortedFiltered.filter((r) => isFinance(getRecordPermissionPrincipal(r))).length;
@@ -898,8 +911,7 @@ const UserManagementPage = () => {
       totalUsers: sortedFiltered.length,
       activeUsers,
       adminUsers,
-      chiefAdminUsers,
-      mobileUsers,
+      fieldOfficerUsers,
       hrUsers,
       projectManagerUsers,
       financeUsers,
@@ -965,7 +977,7 @@ const UserManagementPage = () => {
         record.name || "N/A",
         record.email || "N/A",
         record.phoneNumber || record.phone || "N/A",
-        formatRoleLabel(getEffectiveRole(record)),
+        getDisplayRole(record),
         getEffectiveAttribute(record) || "N/A",
         record.status || "N/A",
         formatDate(record.createdAt),
@@ -1037,7 +1049,7 @@ const UserManagementPage = () => {
   }, [getCurrentPageRecords]);
 
   const openEditDialog = useCallback((record: UserRecord) => {
-    if (!userIsChiefAdmin) return;
+    if (!userIsAdmin) return;
     setEditingRecord(record);
     
     const existingProgs = record.allowedProgrammes || {};
@@ -1052,13 +1064,13 @@ const UserManagementPage = () => {
       phoneNumber: record.phoneNumber || record.phone || "",
       county: record.county || "",
       subcounty: record.subcounty || "",
-      role: getEffectiveRole(record),
+      role: getRoleSelectionFromRecord(record),
       status: record.status || "active",
       customAttribute: getEffectiveAttribute(record),
       allowedProgrammes: mergedProgs
     });
     setIsEditDialogOpen(true);
-  }, [userIsChiefAdmin]);
+  }, [userIsAdmin]);
 
   const openViewDialog = useCallback((record: UserRecord) => {
     setViewingRecord(record);
@@ -1066,7 +1078,7 @@ const UserManagementPage = () => {
   }, []);
 
   const openAddDialog = useCallback(() => {
-    if (!userIsChiefAdmin) return;
+    if (!userIsAdmin) return;
     setAddForm({
       name: "",
       email: "",
@@ -1080,30 +1092,32 @@ const UserManagementPage = () => {
       allowedProgrammes: initialProgrammes
     });
     setIsAddDialogOpen(true);
-  }, [initialProgrammes, userIsChiefAdmin]);
+  }, [initialProgrammes, userIsAdmin]);
 
   const openDeleteDialog = useCallback((record: UserRecord) => {
-    if (!userIsChiefAdmin) return;
+    if (!userIsAdmin) return;
     setRecordToDelete(record);
     setIsDeleteDialogOpen(true);
-  }, [userIsChiefAdmin]);
+  }, [userIsAdmin]);
 
   const openBulkDeleteDialog = useCallback(() => {
-    if (!userIsChiefAdmin) return;
+    if (!userIsAdmin) return;
     if (selectedRecords.length === 0) return;
     setIsBulkDeleteDialogOpen(true);
-  }, [selectedRecords, userIsChiefAdmin]);
+  }, [selectedRecords, userIsAdmin]);
 
   const handleEditSubmit = useCallback(async () => {
-    if (!requireChiefAdmin()) return;
+    if (!requireAdmin()) return;
     if (!editingRecord) return;
 
     try {
       const normalizedRole = normalizeSystemRole(editForm.role);
-      if (normalizedRole === "mobile" && (!editForm.county.trim() || !editForm.subcounty.trim())) {
+      const selectedAttribute = normalizedRole === "admin" ? "" : editForm.role;
+      const isFieldOfficer = isFieldOfficerSelection(editForm.role);
+      if (isFieldOfficer && (!editForm.county.trim() || !editForm.subcounty.trim())) {
         toast({
           title: "Missing location",
-          description: "County and subcounty are required for mobile users.",
+          description: "County and subcounty are required for Field Officers.",
           variant: "destructive",
         });
         return;
@@ -1113,11 +1127,11 @@ const UserManagementPage = () => {
         name: editForm.name,
         email: editForm.email,
         phoneNumber: editForm.phoneNumber.trim(),
-        county: normalizedRole === "mobile" ? editForm.county.trim() : "",
-        subcounty: normalizedRole === "mobile" ? editForm.subcounty.trim() : "",
+        county: isFieldOfficer ? editForm.county.trim() : "",
+        subcounty: isFieldOfficer ? editForm.subcounty.trim() : "",
         role: normalizedRole,
         status: editForm.status,
-        accessControl: buildAccessControl(editForm.customAttribute),
+        accessControl: buildAccessControl(selectedAttribute),
         allowedProgrammes: editForm.allowedProgrammes,
         updatedAt: serverTimestamp()
       });
@@ -1140,10 +1154,10 @@ const UserManagementPage = () => {
         variant: "destructive",
       });
     }
-  }, [editingRecord, editForm, fetchAllData, toast, requireChiefAdmin]);
+  }, [editingRecord, editForm, fetchAllData, toast, requireAdmin]);
 
   const handleAddUser = useCallback(async () => {
-    if (!requireChiefAdmin()) return;
+    if (!requireAdmin()) return;
     if (!addForm.name || !addForm.email || !addForm.password) {
       toast({ title: "Error", description: "Please fill in all required fields", variant: "destructive" });
       return;
@@ -1157,10 +1171,12 @@ const UserManagementPage = () => {
     try {
       setAddLoading(true);
       const normalizedRole = normalizeSystemRole(addForm.role);
-      if (normalizedRole === "mobile" && (!addForm.county.trim() || !addForm.subcounty.trim())) {
+      const selectedAttribute = normalizedRole === "admin" ? "" : addForm.role;
+      const isFieldOfficer = isFieldOfficerSelection(addForm.role);
+      if (isFieldOfficer && (!addForm.county.trim() || !addForm.subcounty.trim())) {
         toast({
           title: "Missing location",
-          description: "County and subcounty are required for mobile users.",
+          description: "County and subcounty are required for Field Officers.",
           variant: "destructive",
         });
         return;
@@ -1179,11 +1195,11 @@ const UserManagementPage = () => {
         name: addForm.name,
         email: addForm.email,
         phoneNumber: addForm.phoneNumber.trim(),
-        county: normalizedRole === "mobile" ? addForm.county.trim() : "",
-        subcounty: normalizedRole === "mobile" ? addForm.subcounty.trim() : "",
+        county: isFieldOfficer ? addForm.county.trim() : "",
+        subcounty: isFieldOfficer ? addForm.subcounty.trim() : "",
         role: normalizedRole,
         status: "active",
-        accessControl: buildAccessControl(addForm.customAttribute),
+        accessControl: buildAccessControl(selectedAttribute),
         allowedProgrammes: addForm.allowedProgrammes,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
@@ -1221,10 +1237,10 @@ const UserManagementPage = () => {
     } finally {
       setAddLoading(false);
     }
-  }, [addForm, toast, fetchAllData, initialProgrammes, requireChiefAdmin]);
+  }, [addForm, toast, fetchAllData, initialProgrammes, requireAdmin]);
 
   const handleDeleteSingle = useCallback(async () => {
-    if (!requireChiefAdmin()) return;
+    if (!requireAdmin()) return;
     if (!recordToDelete) return;
 
     try {
@@ -1261,10 +1277,10 @@ const UserManagementPage = () => {
     } finally {
       setDeleteLoading(false);
     }
-  }, [recordToDelete, fetchAllData, toast, requireChiefAdmin]);
+  }, [recordToDelete, fetchAllData, toast, requireAdmin]);
 
   const handleDeleteSelected = useCallback(async () => {
-    if (!requireChiefAdmin()) return;
+    if (!requireAdmin()) return;
     if (selectedRecords.length === 0) return;
 
     try {
@@ -1294,7 +1310,7 @@ const UserManagementPage = () => {
     } finally {
       setDeleteLoading(false);
     }
-  }, [selectedRecords, fetchAllData, toast, requireChiefAdmin]);
+  }, [selectedRecords, fetchAllData, toast, requireAdmin]);
 
   const uniqueRoles = useMemo(
     () => ROLE_OPTIONS.map((option) => option.value),
@@ -1354,7 +1370,7 @@ const UserManagementPage = () => {
           <Button variant="outline" size="sm" onClick={resetToCurrentMonth} className="text-sm border-gray-200 hover:bg-gray-50 hover:text-gray-900">
             This Month
           </Button>
-          {userIsChiefAdmin && (
+          {userIsAdmin && (
             <>
               <Button onClick={openAddDialog} className="bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white shadow-sm text-sm">
                 <Plus className="h-4 w-4 mr-2" />
@@ -1385,8 +1401,8 @@ const UserManagementPage = () => {
         </StatsCard>
 
         <StatsCard title="Admin Users" value={stats.adminUsers} icon={Shield} description="Administrative users" />
-        <StatsCard title="Chief Admins" value={stats.chiefAdminUsers} icon={User} description="Chief administrators" />
-        <StatsCard title="Other Users" value={stats.mobileUsers+stats.hrUsers} icon={Users} description="Mobile, HR & others" />
+        <StatsCard title="Field Officers" value={stats.fieldOfficerUsers} icon={User} description="Field data users" />
+        <StatsCard title="Attribute Roles" value={stats.hrUsers + stats.projectManagerUsers + stats.financeUsers + stats.offtakeOfficerUsers} icon={Users} description="Assigned attribute roles" />
 
       </div>
 
@@ -1439,7 +1455,7 @@ const UserManagementPage = () => {
                         />
                       </th>
                       <th className="text-left py-3.5 px-4 font-semibold text-white/95">Name</th>
-                      <th className="text-left py-3.5 px-4 font-semibold text-white/95">System Role</th>
+                      <th className="text-left py-3.5 px-4 font-semibold text-white/95">Role</th>
                       <th className="text-left py-3.5 px-4 font-semibold text-white/95">Status</th>
                       <th className="text-left py-3.5 px-4 font-semibold text-white/95">Attribute</th>
                       <th className="text-left py-3.5 px-4 font-semibold text-white/95">Created</th>
@@ -1456,7 +1472,7 @@ const UserManagementPage = () => {
                         onView={openViewDialog}
                         onEdit={openEditDialog}
                         onDeleteClick={openDeleteDialog}
-                        userIsChiefAdmin={userIsChiefAdmin}
+                        userIsAdmin={userIsAdmin}
                       />
                     ))}
                   </tbody>
@@ -1534,14 +1550,13 @@ const UserManagementPage = () => {
                     <p className="text-slate-900 font-medium mt-1">{viewingRecord.phoneNumber || viewingRecord.phone || 'N/A'}</p>
                   </div>
                   <div>
-                    <Label className="text-xs font-medium text-slate-500 uppercase tracking-wide">System Role</Label>
+                    <Label className="text-xs font-medium text-slate-500 uppercase tracking-wide">Role</Label>
                     <Badge variant="secondary" className={
-                      getEffectiveRole(viewingRecord) === 'chief-admin' ? 'bg-purple-100 text-purple-800' :
                       getEffectiveRole(viewingRecord) === 'admin' ? 'bg-blue-100 text-blue-800' :
-                      getEffectiveRole(viewingRecord) === 'mobile' ? 'bg-green-100 text-green-800' :
+                      getDisplayRole(viewingRecord) === 'Field Officer' ? 'bg-green-100 text-green-800' :
                       'bg-gray-100 text-gray-800'
                     }>
-                      {formatRoleLabel(getEffectiveRole(viewingRecord))}
+                      {getDisplayRole(viewingRecord)}
                     </Badge>
                   </div>
                   <div>
@@ -1625,7 +1640,7 @@ const UserManagementPage = () => {
       </Dialog>
 
       {/* Add User Dialog */}
-      {userIsChiefAdmin &&  
+      {userIsAdmin &&  
       (
         <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
           <DialogContent className="sm:max-w-2xl bg-white rounded-2xl">
@@ -1652,7 +1667,7 @@ const UserManagementPage = () => {
               </div>              
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label htmlFor="add-role" className="text-sm font-medium text-slate-700">System Role *</Label>
+                  <Label htmlFor="add-role" className="text-sm font-medium text-slate-700">Role *</Label>
                   <Select value={addForm.role} onValueChange={(value) => handleRoleFormChange(value, false)}>
                     <SelectTrigger className="bg-white border-slate-300"><SelectValue placeholder="Select role" /></SelectTrigger>
                     <SelectContent>
@@ -1664,30 +1679,9 @@ const UserManagementPage = () => {
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="add-custom-attribute" className="text-sm font-medium text-slate-700">Attribute (Position)</Label>
-                  <Select
-                    value={addForm.customAttribute || NO_ATTRIBUTE_VALUE}
-                    onValueChange={(value) =>
-                      setAddForm((prev) => ({ ...prev, customAttribute: value === NO_ATTRIBUTE_VALUE ? "" : value }))
-                    }
-                  >
-                    <SelectTrigger id="add-custom-attribute" className="bg-white border-slate-300">
-                      <SelectValue placeholder="No attribute (optional)" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value={NO_ATTRIBUTE_VALUE}>No attribute</SelectItem>
-                      {USER_ATTRIBUTE_OPTIONS.map((attribute) => (
-                        <SelectItem key={attribute} value={attribute}>
-                          {attribute}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
               </div>
 
-              {addFormIsMobile && (
+              {addFormIsFieldOfficer && (
                 <div className="space-y-2">
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="space-y-2">
@@ -1796,7 +1790,7 @@ const UserManagementPage = () => {
        )} 
 
       {/* Edit Dialog */}
-      {userIsChiefAdmin && (
+      {userIsAdmin && (
         <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
           <DialogContent className="sm:max-w-2xl bg-white rounded-2xl">
             <DialogHeader>
@@ -1822,7 +1816,7 @@ const UserManagementPage = () => {
               </div>              
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label htmlFor="edit-role" className="text-sm font-medium text-slate-700">System Role</Label>
+                  <Label htmlFor="edit-role" className="text-sm font-medium text-slate-700">Role</Label>
                   <Select value={editForm.role} onValueChange={(value) => handleRoleFormChange(value, true)}>
                     <SelectTrigger className="bg-white border-slate-300"><SelectValue placeholder="Select role" /></SelectTrigger>
                     <SelectContent>
@@ -1844,30 +1838,9 @@ const UserManagementPage = () => {
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="edit-custom-attribute" className="text-sm font-medium text-slate-700">Attribute (Position)</Label>
-                  <Select
-                    value={editForm.customAttribute || NO_ATTRIBUTE_VALUE}
-                    onValueChange={(value) =>
-                      setEditForm((prev) => ({ ...prev, customAttribute: value === NO_ATTRIBUTE_VALUE ? "" : value }))
-                    }
-                  >
-                    <SelectTrigger id="edit-custom-attribute" className="bg-white border-slate-300">
-                      <SelectValue placeholder="No attribute (optional)" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value={NO_ATTRIBUTE_VALUE}>No attribute</SelectItem>
-                      {USER_ATTRIBUTE_OPTIONS.map((attribute) => (
-                        <SelectItem key={attribute} value={attribute}>
-                          {attribute}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
               </div>
 
-              {editFormIsMobile && (
+              {editFormIsFieldOfficer && (
                 <div className="space-y-2">
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="space-y-2">
@@ -2012,4 +1985,5 @@ const UserManagementPage = () => {
 };
 
 export default UserManagementPage;
+
 

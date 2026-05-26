@@ -14,7 +14,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { Download, Users, MapPin, Eye, Calendar, Sprout, Globe, LayoutGrid, Edit, Trash2, Upload, UserCircle } from "lucide-react";
 import { useSharedProgrammeSelection } from "@/hooks/use-shared-programme-selection";
 import { useToast } from "@/hooks/use-toast";
-import { canViewAllProgrammes, isChiefAdmin } from "@/contexts/authhelper";
+import { canViewAllProgrammes, isAdmin } from "@/contexts/authhelper";
 import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
 import { matchesActiveProgramme, resolveAccessibleProgrammes, resolveActiveProgramme } from "@/lib/programme-access";
 
@@ -174,7 +174,7 @@ const FodderFarmersPage = () => {
     hasPrev: false
   });
 
-  const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
+  const userIsAdmin = useMemo(() => isAdmin(userRole), [userRole]);
   const userCanViewAllProgrammeData = useMemo(
     () => canViewAllProgrammes(userRole, userAttribute, allowedProgrammes),
     [allowedProgrammes, userRole, userAttribute]
@@ -185,11 +185,11 @@ const FodderFarmersPage = () => {
   );
   const [activeProgram, setActiveProgram] = useSharedProgrammeSelection(accessibleProgrammes);
   const availablePrograms = accessibleProgrammes;
-  const requireChiefAdmin = () => {
-    if (userIsChiefAdmin) return true;
+  const requireAdmin = () => {
+    if (userIsAdmin) return true;
     toast({
       title: "Access denied",
-      description: "Only chief admin can create, edit, or delete records on this page.",
+      description: "Only Admin can create, edit, or delete records on this page.",
       variant: "destructive",
     });
     return false;
@@ -403,19 +403,19 @@ const FodderFarmersPage = () => {
   };
 
   const handleEdit = (record: FodderFarmer) => {
-    if (!requireChiefAdmin()) return;
+    if (!requireAdmin()) return;
     console.log("Edit record:", record);
     toast({ title: "Edit Feature", description: "Edit functionality will be implemented soon" });
   };
 
   const handleDelete = (record: FodderFarmer) => {
-    if (!requireChiefAdmin()) return;
+    if (!requireAdmin()) return;
     console.log("Delete record:", record);
     toast({ title: "Delete Feature", description: "Delete functionality will be implemented soon", variant: "destructive" });
   };
 
   const handleDeleteMultiple = async () => {
-    if (!requireChiefAdmin()) return;
+    if (!requireAdmin()) return;
     if (selectedRecords.length === 0) return;
     try {
       setDeleteLoading(true);
@@ -432,7 +432,7 @@ const FodderFarmersPage = () => {
   };
 
   const openDeleteConfirm = () => {
-    if (!requireChiefAdmin()) return;
+    if (!requireAdmin()) return;
     if (selectedRecords.length === 0) return;
     setIsDeleteConfirmOpen(true);
   };
@@ -483,7 +483,7 @@ const FodderFarmersPage = () => {
   };
 
   const handleUpload = async () => {
-    if (!requireChiefAdmin()) return;
+    if (!requireAdmin()) return;
     if (!uploadFile) return;
     setUploadLoading(true);
     try {
@@ -692,7 +692,7 @@ const FodderFarmersPage = () => {
             >
               <Eye className="h-4 w-4 text-green-500" />
             </Button>
-            {userIsChiefAdmin && (
+            {userIsAdmin && (
               <>
                 <Button
                   variant="outline"
@@ -716,7 +716,7 @@ const FodderFarmersPage = () => {
         </td>
       </tr>
     );
-  }, [selectedRecords, handleSelectRecord, openViewDialog, handleEdit, handleDelete, userIsChiefAdmin]);
+  }, [selectedRecords, handleSelectRecord, openViewDialog, handleEdit, handleDelete, userIsAdmin]);
 
   return (
     <div className="space-y-6">
@@ -732,7 +732,7 @@ const FodderFarmersPage = () => {
         </div>
 
         <div className="flex flex-wrap gap-2 w-full xl:w-auto">
-          {selectedRecords.length > 0 && userIsChiefAdmin && (
+          {selectedRecords.length > 0 && userIsAdmin && (
             <Button 
               variant="destructive" 
               size="sm" 
@@ -779,7 +779,7 @@ const FodderFarmersPage = () => {
             <div className="hidden sm:block sm:w-[200px]"></div>
           )}
 
-          {userIsChiefAdmin && (
+          {userIsAdmin && (
             <>
               <Button 
                 variant="outline" 
@@ -1178,4 +1178,6 @@ const FodderFarmersPage = () => {
 };
 
 export default FodderFarmersPage;
+
+
 

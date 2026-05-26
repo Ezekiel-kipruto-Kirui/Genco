@@ -1,6 +1,10 @@
 import { useState, useEffect, useCallback, useMemo, useRef, ChangeEvent, memo } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import { ref, set, update, remove, push, onValue } from "firebase/database";
+import {
+  ref, set, update, remove, push,
+  onValue,
+  query, orderByChild, equalTo,
+} from "firebase/database";
 import { db } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,11 +16,18 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
-import { Download, Users, MapPin, Eye, Calendar, Scale, Phone, CreditCard, Edit, Trash2, ShieldCheck, Activity, ChevronRight, Upload, GraduationCap } from "lucide-react";
+import {
+  Download, Users, MapPin, Eye, Calendar, Scale, Phone,
+  CreditCard, Edit, Trash2, ShieldCheck, Activity,
+  ChevronRight, Upload, GraduationCap
+} from "lucide-react";
 import { useSharedProgrammeSelection } from "@/hooks/use-shared-programme-selection";
 import { useToast } from "@/hooks/use-toast";
-import { canViewAllProgrammes, isChiefAdmin } from "@/contexts/authhelper";
-import { matchesActiveProgramme, normalizeProgramme, resolveAccessibleProgrammes, resolveActiveProgramme } from "@/lib/programme-access";
+import { canViewAllProgrammes, isAdmin } from "@/contexts/authhelper";
+import {
+  matchesActiveProgramme, normalizeProgramme,
+  resolveAccessibleProgrammes, resolveActiveProgramme
+} from "@/lib/programme-access";
 
 // --- Types ---
 
@@ -30,7 +41,6 @@ interface GoatsData {
   female?: number;
   male?: number;
   total: number;
-
   idNumber?: string;
 }
 
@@ -46,14 +56,14 @@ interface FarmerData {
   subcounty: string;
   location: string;
   cattle: string | number;
-  goats: number | GoatsData; 
+  goats: number | GoatsData;
   sheep: string | number;
   vaccinated: boolean;
   traceability: boolean;
-  vaccines: string[]; 
+  vaccines: string[];
   ageDistribution?: AgeDistribution;
   registrationDate: string;
-  programme: string; 
+  programme: string;
   username?: string;
   aggregationGroup?: string;
   bucksServed?: string;
@@ -68,16 +78,16 @@ interface FarmerData {
 
 interface TrainingData {
   id: string;
-  county?: string; 
-  subcounty?: string; 
+  county?: string;
+  subcounty?: string;
   location?: string;
-  topicTrained?: string; 
-  totalFarmers?: number; 
+  topicTrained?: string;
+  totalFarmers?: number;
   startDate?: string;
   endDate?: string;
   createdAt?: string;
   rawTimestamp?: number;
-  programme?: string; 
+  programme?: string;
   username?: string;
   fieldOfficer?: string;
 }
@@ -89,7 +99,7 @@ interface Filters {
   county: string;
   subcounty: string;
   gender: string;
-  location: string; 
+  location: string;
 }
 
 interface Stats {
@@ -101,7 +111,7 @@ interface Stats {
   vaccinatedCount: number;
   maleFarmers: number;
   femaleFarmers: number;
-  totalTrainedFarmers: number; 
+  totalTrainedFarmers: number;
 }
 
 interface Pagination {
@@ -134,28 +144,32 @@ interface EditForm {
 
 const PAGE_LIMIT = 15;
 
+// --- Utility Functions ---
+
 const parseDate = (date: any): Date | null => {
   if (!date) return null;
   try {
     if (date instanceof Date) return date;
-    if (typeof date === 'number') return new Date(date);
-    if (typeof date === 'string') {
+    if (typeof date === "number") return new Date(date);
+    if (typeof date === "string") {
       const parsed = new Date(date);
       return isNaN(parsed.getTime()) ? null : parsed;
     }
   } catch (error) {
-    console.error('Error parsing date:', error, date);
+    console.error("Error parsing date:", error, date);
   }
   return null;
 };
 
 const formatDate = (date: any): string => {
   const parsedDate = parseDate(date);
-  return parsedDate ? parsedDate.toLocaleDateString('en-US', {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric'
-  }) : 'N/A';
+  return parsedDate
+    ? parsedDate.toLocaleDateString("en-US", {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+      })
+    : "N/A";
 };
 
 const getFarmerTimestamp = (record: Partial<FarmerData> | null | undefined): number => {
@@ -170,7 +184,6 @@ const sortFarmersByLatest = (records: FarmerData[]): FarmerData[] =>
 const formatDateForExcel = (date: any): string => {
   const parsedDate = parseDate(date);
   if (!parsedDate) return "";
-
   const month = String(parsedDate.getMonth() + 1).padStart(2, "0");
   const day = String(parsedDate.getDate()).padStart(2, "0");
   const year = parsedDate.getFullYear();
@@ -185,19 +198,16 @@ const escapeCsvCell = (value: unknown): string => {
 const getCurrentMonthDates = () => {
   const now = new Date();
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-  const endOfMonth = new Date(now.getFullYear(), now.getMonth() +1, 0);
-  const formatDate = (date: Date) =>
+  const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+  const fmt = (date: Date) =>
     `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-  return {
-    startDate: formatDate(startOfMonth), 
-    endDate: formatDate(endOfMonth),
-  };
+  return { startDate: fmt(startOfMonth), endDate: fmt(endOfMonth) };
 };
 
 const getGoatTotal = (goats: any): number => {
-  if (typeof goats === 'number') return goats;
-  if (typeof goats === 'object' && goats !== null) {
-     return typeof goats.total === 'number' ? goats.total : 0;
+  if (typeof goats === "number") return goats;
+  if (typeof goats === "object" && goats !== null) {
+    return typeof goats.total === "number" ? goats.total : 0;
   }
   return 0;
 };
@@ -210,8 +220,8 @@ const getAcreTotal = (item: Record<string, any>): number => {
     item.landSize ??
     item.land_under_pasture ??
     item.landUnderPasture;
-
-  if (typeof rawAcreValue === "number") return Number.isFinite(rawAcreValue) ? rawAcreValue : 0;
+  if (typeof rawAcreValue === "number")
+    return Number.isFinite(rawAcreValue) ? rawAcreValue : 0;
   if (typeof rawAcreValue === "string") {
     const parsed = Number(rawAcreValue.replace(/,/g, "").trim());
     return Number.isFinite(parsed) ? parsed : 0;
@@ -219,10 +229,110 @@ const getAcreTotal = (item: Record<string, any>): number => {
   return 0;
 };
 
+// --- Extracted Record Processors ---
+// Eliminates duplicate mapping logic between initial load and real-time updates.
+
+const processFarmerRecord = (
+  key: string,
+  item: any,
+  fallbackProgramme?: string
+): FarmerData => {
+  let dateValue = item.createdAt;
+  if (typeof dateValue !== "number") {
+    dateValue = parseDate(item.registrationDate)?.getTime() || Date.now();
+  }
+
+  return {
+    id: key,
+    createdAt: dateValue,
+    farmerId: item.farmerId || "N/A",
+    name: item.name || "",
+    gender: item.gender || "",
+    idNumber: item.idNumber || "",
+    phone: item.phone || "",
+    county: item.county || "",
+    subcounty: item.subcounty || "",
+    location: item.location || item.subcounty || "",
+    cattle: item.cattle || "0",
+    goats: item.goats || 0,
+    sheep: item.sheep || "0",
+    vaccinated: !!item.vaccinated,
+    traceability: !!item.traceability,
+    vaccines: Array.isArray(item.vaccines) ? item.vaccines : [],
+    ageDistribution: item.ageDistribution || {},
+    registrationDate: item.registrationDate || formatDate(dateValue),
+    programme:
+      normalizeProgramme(item.programme ?? item.Programme) ||
+      fallbackProgramme ||
+      "",
+    username: item.username || "Unknown",
+    aggregationGroup: item.aggregationGroup || "",
+    bucksServed: item.bucksServed || "0",
+    femaleBreeds: item.femaleBreeds || "0",
+    maleBreeds: item.maleBreeds || "0",
+    tugNumber: item.tugNumber || item.tagNumber || "",
+    dewormed: !!item.dewormed,
+    dewormingDate: item.dewormingDate || null,
+    vaccinationDate: item.vaccinationDate || null,
+    acres: getAcreTotal(item),
+  };
+};
+
+const normalizeDuplicateToken = (value: unknown): string =>
+  String(value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+
+const isUsableIdentityValue = (value: unknown): boolean => {
+  const normalized = normalizeDuplicateToken(value);
+  return Boolean(normalized) && !["n/a", "na", "/a", "0", "0.0", "null", "undefined"].includes(normalized);
+};
+
+const getFarmerDuplicateKey = (record: FarmerData): string => {
+  if (isUsableIdentityValue(record.farmerId)) return `farmer:${normalizeDuplicateToken(record.farmerId)}`;
+  if (isUsableIdentityValue(record.idNumber)) return `id:${normalizeDuplicateToken(record.idNumber)}`;
+  if (isUsableIdentityValue(record.phone)) return `phone:${normalizeDuplicateToken(record.phone)}`;
+
+  return [
+    "profile",
+    normalizeDuplicateToken(record.name),
+    normalizeDuplicateToken(record.county),
+    normalizeDuplicateToken(record.subcounty),
+    normalizeDuplicateToken(record.location),
+    normalizeDuplicateToken(record.programme),
+  ].join(":");
+};
+
+const dedupeFarmers = (records: FarmerData[]): FarmerData[] => {
+  const uniqueRecords = new Map<string, FarmerData>();
+
+  sortFarmersByLatest(records).forEach((record) => {
+    const duplicateKey = getFarmerDuplicateKey(record);
+    if (!uniqueRecords.has(duplicateKey)) {
+      uniqueRecords.set(duplicateKey, record);
+    }
+  });
+
+  return sortFarmersByLatest(Array.from(uniqueRecords.values()));
+};
+
+const processTrainingRecord = (
+  key: string,
+  item: any,
+  fallbackProgramme?: string
+): TrainingData => ({
+  id: key,
+  ...item,
+  programme:
+    normalizeProgramme(item?.programme ?? item?.Programme) ||
+    fallbackProgramme ||
+    "",
+});
+
+// --- Component ---
+
 const LivestockFarmersPage = () => {
   const { user, userRole, userAttribute, userName, allowedProgrammes } = useAuth();
   const { toast } = useToast();
-  
+
   const [allFarmers, setAllFarmers] = useState<FarmerData[]>([]);
   const [filteredFarmers, setFilteredFarmers] = useState<FarmerData[]>([]);
   const [availablePrograms, setAvailablePrograms] = useState<string[]>([]);
@@ -247,7 +357,9 @@ const LivestockFarmersPage = () => {
   const [bulkSmsSending, setBulkSmsSending] = useState(false);
   const currentMonth = useMemo(getCurrentMonthDates, []);
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  
+
+  // Refs to prevent duplicate processing when cache + real-time listener both fire
+
   const [filters, setFilters] = useState<Filters>({
     search: "",
     startDate: currentMonth.startDate,
@@ -255,7 +367,7 @@ const LivestockFarmersPage = () => {
     county: "all",
     subcounty: "all",
     gender: "all",
-    location: "all" 
+    location: "all",
   });
 
   const [stats, setStats] = useState<Stats>({
@@ -267,15 +379,15 @@ const LivestockFarmersPage = () => {
     vaccinatedCount: 0,
     maleFarmers: 0,
     femaleFarmers: 0,
-    totalTrainedFarmers: 0
+    totalTrainedFarmers: 0,
   });
 
   const [pagination, setPagination] = useState<Pagination>({
-    page:1,
+    page: 1,
     limit: PAGE_LIMIT,
     totalPages: 1,
     hasNext: false,
-    hasPrev: false
+    hasPrev: false,
   });
 
   const [editForm, setEditForm] = useState<EditForm>({
@@ -295,10 +407,10 @@ const LivestockFarmersPage = () => {
     bucksServed: "",
     maleBreeds: "",
     femaleBreeds: "",
-    tugNumber: ""
+    tugNumber: "",
   });
 
-  const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
+  const userIsAdmin = useMemo(() => isAdmin(userRole), [userRole]);
   const userCanViewAllProgrammeData = useMemo(
     () => canViewAllProgrammes(userRole, userAttribute, allowedProgrammes),
     [allowedProgrammes, userRole, userAttribute]
@@ -308,11 +420,12 @@ const LivestockFarmersPage = () => {
     [allowedProgrammes, userCanViewAllProgrammeData]
   );
   const [activeProgram, setActiveProgram] = useSharedProgrammeSelection(accessibleProgrammes);
-  const requireChiefAdmin = () => {
-    if (userIsChiefAdmin) return true;
+
+  const requireAdmin = () => {
+    if (userIsAdmin) return true;
     toast({
       title: "Access denied",
-      description: "Only chief admin can create, edit, or delete records on this page.",
+      description: "Only Admin can create, edit, or delete records on this page.",
       variant: "destructive",
     });
     return false;
@@ -332,128 +445,146 @@ const LivestockFarmersPage = () => {
     setAvailablePrograms(accessibleProgrammes);
   }, [accessibleProgrammes]);
 
+  // =========================================================================
+  // OPTIMIZED: Farmers listener
+  // - Server-side query filters by programme at Firebase level
+  // - Batched snapshots avoid sorting/deduping once per child during initial load
+  // =========================================================================
   useEffect(() => {
     if (!activeProgram) {
-        setAllFarmers([]);
-        setLoading(false);
-        return;
+      setAllFarmers([]);
+      setLoading(false);
+      return;
     }
+
     setLoading(true);
+
     const cacheKey = `farmers_cache_${activeProgram}`;
     const cachedFarmers = getCachedData(cacheKey);
     if (cachedFarmers && cachedFarmers.length > 0) {
-      setAllFarmers(sortFarmersByLatest(cachedFarmers));
+      setAllFarmers(dedupeFarmers(cachedFarmers));
       setLoading(false);
     }
 
-    const farmersQuery = ref(db, 'farmers');
-    const unsubscribe = onValue(farmersQuery, (snapshot) => {
-      const data = snapshot.val();
-      if (!data) {
-        setAllFarmers([]);
+    const farmersQuery = query(
+      ref(db, "farmers"),
+      orderByChild("programme"),
+      equalTo(activeProgram)
+    );
+
+    const unsubscribe = onValue(
+      farmersQuery,
+      (snapshot) => {
+        const data = snapshot.val();
+        const records = data && typeof data === "object"
+          ? Object.entries(data).map(([key, item]) => processFarmerRecord(key, item, activeProgram))
+          : [];
+
+        setAllFarmers(dedupeFarmers(records));
+        localStorage.removeItem(cacheKey);
         setLoading(false);
-        localStorage.removeItem(cacheKey); 
-        return;
+      },
+      (error) => {
+        console.error("Error loading livestock farmers:", error);
+        toast({
+          title: "Error",
+          description: "Failed to load livestock farmers.",
+          variant: "destructive",
+        });
+        setLoading(false);
       }
+    );
 
-      const farmersList = Object.keys(data).map((key) => {
-        const item = data[key];
-        let dateValue = item.createdAt;
-        if (typeof dateValue !== 'number') {
-           dateValue = parseDate(item.registrationDate)?.getTime() || Date.now();
-        }
-        return {
-          id: key,
-          createdAt: dateValue,
-          farmerId: item.farmerId || 'N/A',
-          name: item.name || '',
-          gender: item.gender || '',
-          idNumber: item.idNumber || '',
-          phone: item.phone || '',
-          county: item.county || '',
-          subcounty: item.subcounty || '',
-          location: item.location || item.subcounty || '',
-          cattle: item.cattle || '0',
-          goats: item.goats || 0,
-          sheep: item.sheep || '0',
-          vaccinated: !!item.vaccinated,
-          traceability: !!item.traceability,
-          vaccines: Array.isArray(item.vaccines) ? item.vaccines : [],
-          ageDistribution: item.ageDistribution || {},
-          registrationDate: item.registrationDate || formatDate(dateValue),
-          programme: normalizeProgramme(item.programme ?? item.Programme) || "",
-          username: item.username || 'Unknown',
-          aggregationGroup: item.aggregationGroup || '',
-          bucksServed: item.bucksServed || '0',
-          femaleBreeds: item.femaleBreeds || '0',
-          maleBreeds: item.maleBreeds || '0',
-          tugNumber: item.tugNumber || item.tagNumber || '',
-          dewormed: !!item.dewormed,
-          dewormingDate: item.dewormingDate || null,
-          vaccinationDate: item.vaccinationDate || null,
-          acres: getAcreTotal(item)
-        };
-      }).filter((record) => matchesActiveProgramme(record.programme, activeProgram));
-
-      const sortedFarmersList = sortFarmersByLatest(farmersList);
-      setAllFarmers(sortedFarmersList);
-      setLoading(false);
-      try {
-        localStorage.setItem(cacheKey, JSON.stringify(sortedFarmersList));
-      } catch (e) {
-        console.warn("Cache write failed (likely full)", e);
-      }
-    }, (error) => {
-      console.error("Error fetching farmers data:", error);
-      toast({ title: "Error", description: "Failed to load farmers data", variant: "destructive" });
-      setLoading(false);
-    });
-    return () => { if(typeof unsubscribe === 'function') unsubscribe(); };
+    return () => {
+      unsubscribe();
+    };
   }, [activeProgram, toast]);
 
+  // =========================================================================
+  // OPTIMIZED: Training records - same server-side query + batched snapshot
+  // =========================================================================
   useEffect(() => {
     if (!activeProgram) {
-        setTrainingRecords([]);
-        return;
+      setTrainingRecords([]);
+      return;
     }
+
     const cacheKey = `training_cache_${activeProgram}`;
     const cachedTraining = getCachedData(cacheKey);
     if (cachedTraining && cachedTraining.length > 0) {
-        setTrainingRecords(cachedTraining);
+      setTrainingRecords(cachedTraining);
     }
-    const trainingQuery = ref(db, 'capacityBuilding');
+
+    const trainingQuery = query(
+      ref(db, "capacityBuilding"),
+      orderByChild("programme"),
+      equalTo(activeProgram)
+    );
+
     const unsubscribe = onValue(trainingQuery, (snapshot) => {
-        const data = snapshot.val();
-        if (!data) {
-            setTrainingRecords([]);
-            localStorage.removeItem(cacheKey);
-            return;
-        }
-        const records = Object.keys(data).map((key) => ({
-            id: key,
-            ...data[key],
-            programme: normalizeProgramme(data[key]?.programme ?? data[key]?.Programme) || "",
-        })).filter((record) => matchesActiveProgramme(record.programme, activeProgram));
-        setTrainingRecords(records);
-        try {
-            localStorage.setItem(cacheKey, JSON.stringify(records));
-        } catch (e) {
-            console.warn("Cache write failed", e);
-        }
-    }, (error) => {
-        console.error("Error fetching training data:", error);
+      const data = snapshot.val();
+      const records = data && typeof data === "object"
+        ? Object.entries(data).map(([key, item]) => processTrainingRecord(key, item, activeProgram))
+        : [];
+
+      setTrainingRecords(records);
+      localStorage.removeItem(cacheKey);
     });
-    return () => { if(typeof unsubscribe === 'function') unsubscribe(); };
+
+    return () => {
+      unsubscribe();
+    };
   }, [activeProgram]);
+
+  // =========================================================================
+  // Debounced cache persistence — avoids blocking main thread on rapid updates
+  // =========================================================================
+  useEffect(() => {
+    if (allFarmers.length === 0 || !activeProgram) return;
+
+    const cacheKey = `farmers_cache_${activeProgram}`;
+    const debounce = setTimeout(() => {
+      try {
+        localStorage.setItem(cacheKey, JSON.stringify(allFarmers));
+      } catch (e) {
+        console.warn("Cache write failed (likely full)", e);
+      }
+    }, 2000);
+
+    return () => clearTimeout(debounce);
+  }, [allFarmers, activeProgram]);
+
+  useEffect(() => {
+    if (trainingRecords.length === 0 || !activeProgram) return;
+
+    const cacheKey = `training_cache_${activeProgram}`;
+    const debounce = setTimeout(() => {
+      try {
+        localStorage.setItem(cacheKey, JSON.stringify(trainingRecords));
+      } catch (e) {
+        console.warn("Cache write failed", e);
+      }
+    }, 2000);
+
+    return () => clearTimeout(debounce);
+  }, [trainingRecords, activeProgram]);
+
+  // =========================================================================
+  // Filtering & Stats
+  // =========================================================================
 
   useEffect(() => {
     if (allFarmers.length === 0) {
       setFilteredFarmers([]);
-      setStats({ totalFarmers: 0, totalGoats: 0, totalSheep: 0, totalCattle: 0, totalAcres: 0, vaccinatedCount: 0, maleFarmers: 0, femaleFarmers: 0, totalTrainedFarmers: 0 });
+      setStats({
+        totalFarmers: 0, totalGoats: 0, totalSheep: 0, totalCattle: 0,
+        totalAcres: 0, vaccinatedCount: 0, maleFarmers: 0, femaleFarmers: 0,
+        totalTrainedFarmers: 0,
+      });
       return;
     }
 
-    const filteredFarmersList = allFarmers.filter(record => {
+    const filteredFarmersList = allFarmers.filter((record) => {
       if (filters.startDate || filters.endDate) {
         const recordDate = parseDate(record.createdAt);
         if (recordDate) {
@@ -474,31 +605,34 @@ const LivestockFarmersPage = () => {
       if (filters.search) {
         const searchTerm = filters.search.toLowerCase();
         const searchMatch = [
-          record.name, record.farmerId, record.location, record.county, record.idNumber, record.phone, record.username
-        ].some(field => field?.toLowerCase().includes(searchTerm));
+          record.name, record.farmerId, record.location,
+          record.county, record.idNumber, record.phone, record.username,
+        ].some((field) => field?.toLowerCase().includes(searchTerm));
         if (!searchMatch) return false;
       }
       return true;
     });
 
-    const sortedFilteredFarmers = sortFarmersByLatest(filteredFarmersList);
+    const sortedFilteredFarmers = dedupeFarmers(filteredFarmersList);
     setFilteredFarmers(sortedFilteredFarmers);
-    
-    const filteredTraining = trainingRecords.filter(record => {
-        if (filters.startDate || filters.endDate) {
-            const recordDate = parseDate(record.startDate || record.createdAt || record.rawTimestamp);
-            if (recordDate) {
-                const recordDateOnly = new Date(recordDate);
-                recordDateOnly.setHours(0, 0, 0, 0);
-                const startDate = filters.startDate ? new Date(filters.startDate) : null;
-                const endDate = filters.endDate ? new Date(filters.endDate) : null;
-                if (startDate) startDate.setHours(0, 0, 0, 0);
-                if (endDate) endDate.setHours(23, 59, 59, 999);
-                if (startDate && recordDateOnly < startDate) return false;
-                if (endDate && recordDateOnly > endDate) return false;
-            } else if (filters.startDate || filters.endDate) return false;
-        }
-        return true;
+
+    const filteredTraining = trainingRecords.filter((record) => {
+      if (filters.startDate || filters.endDate) {
+        const recordDate = parseDate(
+          record.startDate || record.createdAt || record.rawTimestamp
+        );
+        if (recordDate) {
+          const recordDateOnly = new Date(recordDate);
+          recordDateOnly.setHours(0, 0, 0, 0);
+          const startDate = filters.startDate ? new Date(filters.startDate) : null;
+          const endDate = filters.endDate ? new Date(filters.endDate) : null;
+          if (startDate) startDate.setHours(0, 0, 0, 0);
+          if (endDate) endDate.setHours(23, 59, 59, 999);
+          if (startDate && recordDateOnly < startDate) return false;
+          if (endDate && recordDateOnly > endDate) return false;
+        } else if (filters.startDate || filters.endDate) return false;
+      }
+      return true;
     });
 
     const totalFarmers = sortedFilteredFarmers.length;
@@ -506,64 +640,84 @@ const LivestockFarmersPage = () => {
     const totalSheep = sortedFilteredFarmers.reduce((sum, f) => sum + (Number(f.sheep) || 0), 0);
     const totalCattle = sortedFilteredFarmers.reduce((sum, f) => sum + (Number(f.cattle) || 0), 0);
     const totalAcres = sortedFilteredFarmers.reduce((sum, f) => sum + (Number(f.acres) || 0), 0);
-    const vaccinatedCount = sortedFilteredFarmers.filter(f => f.vaccinated).length;
-    const maleFarmers = sortedFilteredFarmers.filter(f => f.gender?.toLowerCase() === 'male').length;
-    const femaleFarmers = sortedFilteredFarmers.filter(f => f.gender?.toLowerCase() === 'female').length;
+    const vaccinatedCount = sortedFilteredFarmers.filter((f) => f.vaccinated).length;
+    const maleFarmers = sortedFilteredFarmers.filter((f) => f.gender?.toLowerCase() === "male").length;
+    const femaleFarmers = sortedFilteredFarmers.filter((f) => f.gender?.toLowerCase() === "female").length;
     const totalTrainedFarmers = filteredTraining.reduce((sum, t) => sum + (Number(t.totalFarmers) || 0), 0);
 
-    setStats({ totalFarmers, totalGoats, totalSheep, totalCattle, totalAcres, vaccinatedCount, maleFarmers, femaleFarmers, totalTrainedFarmers });
+    setStats({
+      totalFarmers, totalGoats, totalSheep, totalCattle, totalAcres,
+      vaccinatedCount, maleFarmers, femaleFarmers, totalTrainedFarmers,
+    });
 
     const totalPages = Math.ceil(sortedFilteredFarmers.length / pagination.limit);
     const currentPage = Math.min(pagination.page, Math.max(1, totalPages));
-    setPagination(prev => ({
-      ...prev, page: currentPage, totalPages, hasNext: currentPage < totalPages, hasPrev: currentPage > 1
+    setPagination((prev) => ({
+      ...prev,
+      page: currentPage,
+      totalPages,
+      hasNext: currentPage < totalPages,
+      hasPrev: currentPage > 1,
     }));
   }, [allFarmers, trainingRecords, filters, pagination.limit, pagination.page]);
 
+  // =========================================================================
+  // Handlers
+  // =========================================================================
+
   const handleProgramChange = (program: string) => {
     setActiveProgram(program);
-    setFilters(prev => ({ 
-        ...prev, 
-        search: "", 
-        startDate: currentMonth.startDate, 
-        endDate: currentMonth.endDate, 
-        county: "all", 
-        subcounty: "all", 
-        gender: "all",
-        location: "all" 
+    setFilters((prev) => ({
+      ...prev,
+      search: "",
+      startDate: currentMonth.startDate,
+      endDate: currentMonth.endDate,
+      county: "all",
+      subcounty: "all",
+      gender: "all",
+      location: "all",
     }));
     setSelectedRecords([]);
-    setPagination(prev => ({ ...prev, page: 1 }));
+    setPagination((prev) => ({ ...prev, page: 1 }));
   };
 
   const handleSearchChange = useCallback((value: string) => {
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
     searchTimeoutRef.current = setTimeout(() => {
-      setFilters(prev => ({ ...prev, search: value }));
-      setPagination(prev => ({ ...prev, page: 1 }));
+      setFilters((prev) => ({ ...prev, search: value }));
+      setPagination((prev) => ({ ...prev, page: 1 }));
     }, 300);
   }, []);
 
   const handleFilterChange = useCallback((key: keyof Filters, value: string) => {
-    setFilters(prev => ({ ...prev, [key]: value }));
-    setPagination(prev => ({ ...prev, page: 1 }));
+    setFilters((prev) => ({ ...prev, [key]: value }));
+    setPagination((prev) => ({ ...prev, page: 1 }));
   }, []);
 
   const handlePageChange = useCallback((newPage: number) => {
-    setPagination(prev => {
+    setPagination((prev) => {
       const totalPages = Math.ceil(filteredFarmers.length / prev.limit);
       const validatedPage = Math.max(1, Math.min(newPage, totalPages));
-      return { ...prev, page: validatedPage, hasNext: validatedPage < totalPages, hasPrev: validatedPage > 1 };
+      return {
+        ...prev,
+        page: validatedPage,
+        hasNext: validatedPage < totalPages,
+        hasPrev: validatedPage > 1,
+      };
     });
   }, [filteredFarmers.length]);
 
   const handleSelectRecord = useCallback((recordId: string) => {
-    setSelectedRecords(prev => prev.includes(recordId) ? prev.filter(id => id !== recordId) : [...prev, recordId]);
+    setSelectedRecords((prev) =>
+      prev.includes(recordId) ? prev.filter((id) => id !== recordId) : [...prev, recordId]
+    );
   }, []);
 
   const handleSelectAll = useCallback(() => {
-    const currentPageIds = getCurrentPageRecords().map(f => f.id);
-    setSelectedRecords(prev => prev.length === currentPageIds.length ? [] : currentPageIds);
+    const currentPageIds = getCurrentPageRecords().map((f) => f.id);
+    setSelectedRecords((prev) =>
+      prev.length === currentPageIds.length ? [] : currentPageIds
+    );
   }, [filteredFarmers, pagination]);
 
   const getCurrentPageRecords = useCallback(() => {
@@ -572,20 +726,23 @@ const LivestockFarmersPage = () => {
     return filteredFarmers.slice(startIndex, endIndex);
   }, [filteredFarmers, pagination.page, pagination.limit]);
 
-  const openViewDialog = useCallback((record: FarmerData) => { setViewingRecord(record); setIsViewDialogOpen(true); }, []);
-  
+  const openViewDialog = useCallback((record: FarmerData) => {
+    setViewingRecord(record);
+    setIsViewDialogOpen(true);
+  }, []);
+
   const openEditDialog = useCallback((record: FarmerData) => {
-    if (!userIsChiefAdmin) return;
+    if (!userIsAdmin) return;
     setEditingRecord(record);
-    const cattleVal = typeof record.cattle === 'number' ? record.cattle : parseInt(record.cattle as string) || 0;
-    const sheepVal = typeof record.sheep === 'number' ? record.sheep : parseInt(record.sheep as string) || 0;
+    const cattleVal = typeof record.cattle === "number" ? record.cattle : parseInt(record.cattle as string) || 0;
+    const sheepVal = typeof record.sheep === "number" ? record.sheep : parseInt(record.sheep as string) || 0;
     const goatsVal = getGoatTotal(record.goats);
 
     setEditForm({
       farmerId: record.farmerId,
       name: record.name,
       gender: record.gender,
-      idNumber: record.idNumber || '',
+      idNumber: record.idNumber || "",
       phone: record.phone,
       county: record.county,
       subcounty: record.subcounty,
@@ -598,23 +755,24 @@ const LivestockFarmersPage = () => {
       bucksServed: (record.bucksServed ?? "").toString(),
       maleBreeds: (record.maleBreeds ?? "").toString(),
       femaleBreeds: (record.femaleBreeds ?? "").toString(),
-      tugNumber: (record.tugNumber ?? "").toString()
+      tugNumber: (record.tugNumber ?? "").toString(),
     });
     setIsEditDialogOpen(true);
-  }, [userIsChiefAdmin]);
-  
+  }, [userIsAdmin]);
+
   const openSingleDeleteConfirm = useCallback((record: FarmerData) => {
-    if (!userIsChiefAdmin) return;
+    if (!userIsAdmin) return;
     setRecordToDelete(record);
     setIsSingleDeleteDialogOpen(true);
-  }, [userIsChiefAdmin]);
+  }, [userIsAdmin]);
+
   const openBulkDeleteConfirm = useCallback(() => {
-    if (!userIsChiefAdmin) return;
+    if (!userIsAdmin) return;
     setIsDeleteConfirmOpen(true);
-  }, [userIsChiefAdmin]);
+  }, [userIsAdmin]);
 
   const handleEditSubmit = async () => {
-    if (!requireChiefAdmin()) return;
+    if (!requireAdmin()) return;
     if (!editingRecord) return;
     try {
       await update(ref(db, `farmers/${editingRecord.id}`), {
@@ -634,7 +792,7 @@ const LivestockFarmersPage = () => {
         bucksServed: editForm.bucksServed,
         maleBreeds: editForm.maleBreeds,
         femaleBreeds: editForm.femaleBreeds,
-        tugNumber: editForm.tugNumber
+        tugNumber: editForm.tugNumber,
       });
       toast({ title: "Success", description: "Farmer record updated" });
       setIsEditDialogOpen(false);
@@ -645,7 +803,7 @@ const LivestockFarmersPage = () => {
   };
 
   const handleSingleDelete = async () => {
-    if (!requireChiefAdmin()) return;
+    if (!requireAdmin()) return;
     if (!recordToDelete) return;
     try {
       setDeleteLoading(true);
@@ -656,16 +814,18 @@ const LivestockFarmersPage = () => {
       setRecordToDelete(null);
     } catch (error) {
       toast({ title: "Error", description: "Deletion failed", variant: "destructive" });
-    } finally { setDeleteLoading(false); }
+    } finally {
+      setDeleteLoading(false);
+    }
   };
 
   const handleDeleteMultiple = async () => {
-    if (!requireChiefAdmin()) return;
+    if (!requireAdmin()) return;
     if (selectedRecords.length === 0) return;
     try {
       setDeleteLoading(true);
       const updates: { [key: string]: null } = {};
-      selectedRecords.forEach(id => updates[`farmers/${id}`] = null);
+      selectedRecords.forEach((id) => (updates[`farmers/${id}`] = null));
       await update(ref(db), updates);
       localStorage.removeItem(`farmers_cache_${activeProgram}`);
       toast({ title: "Success", description: `${selectedRecords.length} records deleted` });
@@ -673,7 +833,9 @@ const LivestockFarmersPage = () => {
       setIsDeleteConfirmOpen(false);
     } catch (error) {
       toast({ title: "Error", description: "Bulk delete failed", variant: "destructive" });
-    } finally { setDeleteLoading(false); }
+    } finally {
+      setDeleteLoading(false);
+    }
   };
 
   const openBulkSmsDialog = () => {
@@ -760,7 +922,7 @@ const LivestockFarmersPage = () => {
         } else {
           inQuotes = !inQuotes;
         }
-      } else if (char === ',' && !inQuotes) {
+      } else if (char === "," && !inQuotes) {
         result.push(current);
         current = "";
       } else {
@@ -776,113 +938,128 @@ const LivestockFarmersPage = () => {
   };
 
   const handleUpload = async () => {
-    if (!requireChiefAdmin()) return;
+    if (!requireAdmin()) return;
     if (!uploadFile) return;
     setUploadLoading(true);
     try {
       const text = await uploadFile.text();
-      const isJSON = uploadFile.name.endsWith('.json');
+      const isJSON = uploadFile.name.endsWith(".json");
       let parsedData: any[] = [];
 
       if (isJSON) {
         parsedData = JSON.parse(text);
       } else {
-        const lines = text.split(/\r?\n/).filter(l => l.trim());
+        const lines = text.split(/\r?\n/).filter((l) => l.trim());
         if (lines.length < 2) throw new Error("CSV file is empty or has no data rows");
 
         const rawHeaders = parseCSVLine(lines[0]);
-        const headers = rawHeaders.map(h =>
-          h.replace(/^\uFEFF/, '').trim().toLowerCase().replace(/\(.*?\)/g, '').replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ')
+        const headers = rawHeaders.map((h) =>
+          h
+            .replace(/^\uFEFF/, "")
+            .trim()
+            .toLowerCase()
+            .replace(/\(.*?\)/g, "")
+            .replace(/[^a-z0-9 ]/g, "")
+            .replace(/\s+/g, " ")
         );
 
-        const findIndex = (keys: string[]) => headers.findIndex(h => keys.some(k => h.includes(k)));
+        const findIndex = (keys: string[]) =>
+          headers.findIndex((h) => keys.some((k) => h.includes(k)));
 
-        const idxName = findIndex(['farmer name', 'name']);
-        const idxGender = findIndex(['gender']);
-        const idxCounty = findIndex(['county']);
-        const idxSub = findIndex(['subcounty', 'sub county']);
-        const idxLoc = findIndex(['location']);
-        const idxCattle = findIndex(['cattle']);
-        const idxSheep = findIndex(['sheep']);
-        const idxIdNumber = findIndex(['id number', 'idnumber']);
-        const idxPhone = findIndex(['phone']);
-        const idxFarmerId = findIndex(['farmer id']);
-        const idxRegDate = findIndex(['registration date', 'reg date', 'date']);
-        const idxVaccinated = findIndex(['vaccinated']);
-        const idxTrace = findIndex(['traceability']);
-        const idxVaccines = findIndex(['vaccine']);
-        const idxDewormed = findIndex(['dewormed']);
-        const idxDewormingDate = findIndex(['deworming date', 'deworm date']);
-        const idxAggregationGroup = findIndex(['aggregation group', 'group']);
-        const idxVaccinationDate = findIndex(['vaccination date', 'vaccine date', 'vax date']);
-        const idxFieldOfficer = findIndex(['field officer', 'officer', 'officer name', 'created by', 'username']);
+        const idxName = findIndex(["farmer name", "name"]);
+        const idxGender = findIndex(["gender"]);
+        const idxCounty = findIndex(["county"]);
+        const idxSub = findIndex(["subcounty", "sub county"]);
+        const idxLoc = findIndex(["location"]);
+        const idxCattle = findIndex(["cattle"]);
+        const idxSheep = findIndex(["sheep"]);
+        const idxIdNumber = findIndex(["id number", "idnumber"]);
+        const idxPhone = findIndex(["phone"]);
+        const idxFarmerId = findIndex(["farmer id"]);
+        const idxRegDate = findIndex(["registration date", "reg date", "date"]);
+        const idxVaccinated = findIndex(["vaccinated"]);
+        const idxTrace = findIndex(["traceability"]);
+        const idxVaccines = findIndex(["vaccine"]);
+        const idxDewormed = findIndex(["dewormed"]);
+        const idxDewormingDate = findIndex(["deworming date", "deworm date"]);
+        const idxAggregationGroup = findIndex(["aggregation group", "group"]);
+        const idxVaccinationDate = findIndex(["vaccination date", "vaccine date", "vax date"]);
+        const idxFieldOfficer = findIndex(["field officer", "officer", "officer name", "created by", "username"]);
 
-        const idxGoatsTotal = findIndex(['goats', 'goats total', 'total goats', 'no of goats', 'number of goats', 'goats number', 'goat count', 'total goat']);
-        const idxGoatsMale = findIndex(['male', 'male goats', 'male goat', 'goat male', 'goats m', 'm goats', 'goatsmale']);
-        const idxGoatsFemale = findIndex(['female', 'female goats', 'female goat', 'goat female', 'goats f', 'f goats', 'goatsfemale']);
+        const idxGoatsTotal = findIndex([
+          "goats", "goats total", "total goats", "no of goats",
+          "number of goats", "goats number", "goat count", "total goat",
+        ]);
+        const idxGoatsMale = findIndex([
+          "male", "male goats", "male goat", "goat male", "goats m", "m goats", "goatsmale",
+        ]);
+        const idxGoatsFemale = findIndex([
+          "female", "female goats", "female goat", "goat female", "goats f", "f goats", "goatsfemale",
+        ]);
 
         const parseBool = (val: string) => {
-          const v = (val || '').toLowerCase().trim();
-          return v === 'yes' || v === 'true' || v === '1';
+          const v = (val || "").toLowerCase().trim();
+          return v === "yes" || v === "true" || v === "1";
         };
 
-        const valAt = (values: string[], idx: number) => (idx >= 0 && idx < values.length ? values[idx] : '').trim();
+        const valAt = (values: string[], idx: number) =>
+          idx >= 0 && idx < values.length ? values[idx] : "";
 
         for (let i = 1; i < lines.length; i++) {
           const values = parseCSVLine(lines[i]);
-          if (!values.some(v => v.trim() !== '')) continue;
+          if (!values.some((v) => v.trim() !== "")) continue;
 
           const obj: any = {};
 
-          if (idxName !== -1) obj.name = valAt(values, idxName);
-          if (idxGender !== -1) obj.gender = valAt(values, idxGender);
-          if (idxCounty !== -1) obj.county = valAt(values, idxCounty);
-          if (idxSub !== -1) obj.subcounty = valAt(values, idxSub);
-          if (idxLoc !== -1) obj.location = valAt(values, idxLoc);
+          if (idxName !== -1) obj.name = valAt(values, idxName).trim();
+          if (idxGender !== -1) obj.gender = valAt(values, idxGender).trim();
+          if (idxCounty !== -1) obj.county = valAt(values, idxCounty).trim();
+          if (idxSub !== -1) obj.subcounty = valAt(values, idxSub).trim();
+          if (idxLoc !== -1) obj.location = valAt(values, idxLoc).trim();
           if (idxCattle !== -1) obj.cattle = Number(valAt(values, idxCattle)) || 0;
           if (idxSheep !== -1) obj.sheep = Number(valAt(values, idxSheep)) || 0;
-          if (idxIdNumber !== -1) obj.idNumber = valAt(values, idxIdNumber);
-          if (idxPhone !== -1) obj.phone = valAt(values, idxPhone);
-          if (idxFarmerId !== -1) obj.farmerId = valAt(values, idxFarmerId);
-          
+          if (idxIdNumber !== -1) obj.idNumber = valAt(values, idxIdNumber).trim();
+          if (idxPhone !== -1) obj.phone = valAt(values, idxPhone).trim();
+          if (idxFarmerId !== -1) obj.farmerId = valAt(values, idxFarmerId).trim();
+
           let createdAtTimestamp = Date.now();
 
           if (idxRegDate !== -1) {
-            const regDateStr = valAt(values, idxRegDate);
-            obj.registrationDate = regDateStr; 
+            const regDateStr = valAt(values, idxRegDate).trim();
+            obj.registrationDate = regDateStr;
             const dateObj = new Date(regDateStr);
             if (!isNaN(dateObj.getTime())) {
               createdAtTimestamp = dateObj.getTime();
             }
           }
-          obj.createdAt = createdAtTimestamp; 
+          obj.createdAt = createdAtTimestamp;
 
           if (idxVaccinated !== -1) obj.vaccinated = parseBool(valAt(values, idxVaccinated));
           if (idxTrace !== -1) obj.traceability = parseBool(valAt(values, idxTrace));
           if (idxVaccines !== -1) {
-            const raw = valAt(values, idxVaccines);
-            obj.vaccines = raw ? raw.split(';').map(s => s.trim()).filter(s => s) : [];
+            const raw = valAt(values, idxVaccines).trim();
+            obj.vaccines = raw ? raw.split(";").map((s) => s.trim()).filter((s) => s) : [];
           }
 
           if (idxDewormed !== -1) obj.dewormed = parseBool(valAt(values, idxDewormed));
-          if (idxDewormingDate !== -1) obj.dewormingDate = valAt(values, idxDewormingDate);
-          if (idxAggregationGroup !== -1) obj.aggregationGroup = valAt(values, idxAggregationGroup);
-          if (idxVaccinationDate !== -1) obj.vaccinationDate = valAt(values, idxVaccinationDate);
+          if (idxDewormingDate !== -1) obj.dewormingDate = valAt(values, idxDewormingDate).trim();
+          if (idxAggregationGroup !== -1) obj.aggregationGroup = valAt(values, idxAggregationGroup).trim();
+          if (idxVaccinationDate !== -1) obj.vaccinationDate = valAt(values, idxVaccinationDate).trim();
 
-          if (idxFieldOfficer !== -1) obj.username = valAt(values, idxFieldOfficer);
+          if (idxFieldOfficer !== -1) obj.username = valAt(values, idxFieldOfficer).trim();
 
           const foundGoatsMale = idxGoatsMale > -1;
           const foundGoatsFemale = idxGoatsFemale > -1;
           const foundGoatsTotal = idxGoatsTotal > -1;
 
           if (foundGoatsMale || foundGoatsFemale) {
-             const maleCount = foundGoatsMale ? (Number(valAt(values, idxGoatsMale)) || 0) : 0;
-             const femaleCount = foundGoatsFemale ? (Number(valAt(values, idxGoatsFemale)) || 0) : 0;
-             const totalGoats = foundGoatsTotal ? (Number(valAt(values, idxGoatsTotal)) || 0) : (maleCount + femaleCount);
-             obj.goats = { male: maleCount, female: femaleCount, total: totalGoats };
+            const maleCount = foundGoatsMale ? Number(valAt(values, idxGoatsMale)) || 0 : 0;
+            const femaleCount = foundGoatsFemale ? Number(valAt(values, idxGoatsFemale)) || 0 : 0;
+            const totalGoats = foundGoatsTotal ? Number(valAt(values, idxGoatsTotal)) || 0 : maleCount + femaleCount;
+            obj.goats = { male: maleCount, female: femaleCount, total: totalGoats };
           } else if (foundGoatsTotal) {
-             const totalGoats = Number(valAt(values, idxGoatsTotal)) || 0;
-             obj.goats = { total: totalGoats, male: 0, female: 0 };
+            const totalGoats = Number(valAt(values, idxGoatsTotal)) || 0;
+            obj.goats = { total: totalGoats, male: 0, female: 0 };
           }
           parsedData.push(obj);
         }
@@ -890,25 +1067,32 @@ const LivestockFarmersPage = () => {
 
       let count = 0;
       const collectionRef = ref(db, "farmers");
-      
+
       for (const item of parsedData) {
         await push(collectionRef, {
           ...item,
           programme: activeProgram,
-          username: item.username || "Unknown"
+          username: item.username || "Unknown",
         });
         count++;
       }
 
       localStorage.removeItem(`farmers_cache_${activeProgram}`);
 
-      toast({ title: "Success", description: `Uploaded ${count} records to ${activeProgram}.` });
+      toast({
+        title: "Success",
+        description: `Uploaded ${count} records to ${activeProgram}.`,
+      });
       setIsUploadDialogOpen(false);
       setUploadFile(null);
-      if (fileInputRef.current) fileInputRef.current.value = '';
+      if (fileInputRef.current) fileInputRef.current.value = "";
     } catch (error) {
       console.error(error);
-      toast({ title: "Error", description: "Upload failed. Please check file format.", variant: "destructive" });
+      toast({
+        title: "Error",
+        description: "Upload failed. Please check file format.",
+        variant: "destructive",
+      });
     } finally {
       setUploadLoading(false);
     }
@@ -920,55 +1104,58 @@ const LivestockFarmersPage = () => {
       if (filteredFarmers.length === 0) return;
 
       const headers = [
-        'Farmer ID', 'Name', 'Gender', 'Phone', 'ID Number', 
-        'County', 'Subcounty', 'Location', 
-        'Cattle', 'Goats (Total)', 'Goats (Male)', 'Goats (Female)', 'Sheep', 
-        'Vaccinated', 'Traceability', 'Vaccines', 
-        'Programme', 'Field Officer', 'Created By', 'Registration Date',
-        'Dewormed', 'Deworming Date', 'Vaccination Date',
-        'Aggregation Group', 'Bucks Served', 'Female Breeds', 'Male Breeds', 'Tag Number',
-        'Age 1-4', 'Age 5-8', 'Age 8+'
+        "Farmer ID", "Name", "Gender", "Phone", "ID Number",
+        "County", "Subcounty", "Location",
+        "Cattle", "Goats (Total)", "Goats (Male)", "Goats (Female)", "Sheep",
+        "Vaccinated", "Traceability", "Vaccines",
+        "Programme", "Field Officer", "Created By", "Registration Date",
+        "Dewormed", "Deworming Date", "Vaccination Date",
+        "Aggregation Group", "Bucks Served", "Female Breeds", "Male Breeds", "Tag Number",
+        "Age 1-4", "Age 5-8", "Age 8+",
       ];
 
-      const csvData = filteredFarmers.map(f => [
-        f.farmerId, f.name, f.gender, f.phone, f.idNumber, 
-        f.county, f.subcounty, f.location, 
-        f.cattle, getGoatTotal(f.goats), 
-        (typeof f.goats === 'object' && f.goats?.male) || 0,
-        (typeof f.goats === 'object' && f.goats?.female) || 0,
-        f.sheep, 
-        f.vaccinated ? 'Yes' : 'No', f.traceability ? 'Yes' : 'No',
-        f.vaccines.join('; '), 
-        f.programme, 
-        f.username, f.username, 
+      const csvData = filteredFarmers.map((f) => [
+        f.farmerId, f.name, f.gender, f.phone, f.idNumber,
+        f.county, f.subcounty, f.location,
+        f.cattle, getGoatTotal(f.goats),
+        (typeof f.goats === "object" && f.goats?.male) || 0,
+        (typeof f.goats === "object" && f.goats?.female) || 0,
+        f.sheep,
+        f.vaccinated ? "Yes" : "No",
+        f.traceability ? "Yes" : "No",
+        f.vaccines.join("; "),
+        f.programme, f.username, f.username,
         formatDateForExcel(f.createdAt),
-        f.dewormed ? 'Yes' : 'No',
+        f.dewormed ? "Yes" : "No",
         formatDateForExcel(f.dewormingDate),
         formatDateForExcel(f.vaccinationDate),
-        f.aggregationGroup || '',
-        f.bucksServed || '',
-        f.femaleBreeds || '',
-        f.maleBreeds || '',
-        f.tugNumber || '',
-        f.ageDistribution?.['1-4'] || '',
-        f.ageDistribution?.['5-8'] || '',
-        f.ageDistribution?.['8+'] || ''
+        f.aggregationGroup || "",
+        f.bucksServed || "",
+        f.femaleBreeds || "",
+        f.maleBreeds || "",
+        f.tugNumber || "",
+        f.ageDistribution?.["1-4"] || "",
+        f.ageDistribution?.["5-8"] || "",
+        f.ageDistribution?.["8+"] || "",
       ]);
 
       const dateColumns = new Set([19, 21, 22]);
       const csvContent = [
-        headers.map(escapeCsvCell).join(','),
-        ...csvData.map(row =>
+        headers.map(escapeCsvCell).join(","),
+        ...csvData.map((row) =>
           row
-            .map((cell, index) => (dateColumns.has(index) ? String(cell ?? "") : escapeCsvCell(cell)))
-            .join(',')
-        )
-      ].join('\n');
-      const blob = new Blob([`\uFEFF${csvContent}`], { type: 'text/csv;charset=utf-8;' });
+            .map((cell, index) =>
+              dateColumns.has(index) ? String(cell ?? "") : escapeCsvCell(cell)
+            )
+            .join(",")
+        ),
+      ].join("\n");
+
+      const blob = new Blob([`\uFEFF${csvContent}`], { type: "text/csv;charset=utf-8;" });
       const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
+      const link = document.createElement("a");
       link.href = url;
-      link.download = `farmers_export_${activeProgram}_${new Date().toISOString().split('T')[0]}.csv`;
+      link.download = `farmers_export_${activeProgram}_${new Date().toISOString().split("T")[0]}.csv`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -976,256 +1163,349 @@ const LivestockFarmersPage = () => {
       toast({ title: "Success", description: "Data exported successfully" });
     } catch (error) {
       toast({ title: "Error", description: "Export failed", variant: "destructive" });
-    } finally { setExportLoading(false); }
+    } finally {
+      setExportLoading(false);
+    }
   };
 
-  const uniqueCounties = useMemo(() => [...new Set(allFarmers.map(f => f.county).filter(Boolean))], [allFarmers]);
-  const uniqueSubcounties = useMemo(() => [...new Set(allFarmers.map(f => f.subcounty).filter(Boolean))], [allFarmers]);
-  const uniqueLocations = useMemo(() => [...new Set(allFarmers.map(f => f.location).filter(Boolean))], [allFarmers]);
-  const uniqueGenders = useMemo(() => [...new Set(allFarmers.map(f => f.gender).filter(Boolean))], [allFarmers]);
+  const uniqueCounties = useMemo(
+    () => [...new Set(allFarmers.map((f) => f.county).filter(Boolean))],
+    [allFarmers]
+  );
+  const uniqueSubcounties = useMemo(
+    () => [...new Set(allFarmers.map((f) => f.subcounty).filter(Boolean))],
+    [allFarmers]
+  );
+  const uniqueLocations = useMemo(
+    () => [...new Set(allFarmers.map((f) => f.location).filter(Boolean))],
+    [allFarmers]
+  );
+  const uniqueGenders = useMemo(
+    () => [...new Set(allFarmers.map((f) => f.gender).filter(Boolean))],
+    [allFarmers]
+  );
   const currentPageRecords = useMemo(getCurrentPageRecords, [getCurrentPageRecords]);
 
-  const StatsCard = memo(({ title, value, icon: Icon, description, color = "blue", children, maleCount, femaleCount, totalCount }: any) => (
-    <Card className="bg-white text-slate-900 shadow-lg border border-gray-200 relative overflow-hidden">
-      <div className={`absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-${color}-600 to-purple-800`}></div>
-      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 pt-4 pl-6">
-        <CardTitle className="text-sm font-medium text-gray-400">{title}</CardTitle>
-      </CardHeader>
-      <CardContent className="pl-6 pb-4 flex flex-col">
-        <div className="flex items-center gap-3 mb-1">
+  // =========================================================================
+  // UI
+  // =========================================================================
+
+  const StatsCard = memo(
+    ({ title, value, icon: Icon, description, color = "blue", children, maleCount, femaleCount, totalCount }: any) => (
+      <Card className="bg-white text-slate-900 shadow-lg border border-gray-200 relative overflow-hidden">
+        <div className={`absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-${color}-600 to-purple-800`}></div>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 pt-4 pl-6">
+          <CardTitle className="text-sm font-medium text-gray-400">{title}</CardTitle>
+        </CardHeader>
+        <CardContent className="pl-6 pb-4 flex flex-col">
+          <div className="flex items-center gap-3 mb-1">
             <div className="rounded-full bg-gray-50 p-2">
-                <Icon className={`h-5 w-5 text-${color}-600`} />
+              <Icon className={`h-5 w-5 text-${color}-600`} />
             </div>
             <div className="text-xl font-bold text-gray-800">{value}</div>
-        </div>
-        {(maleCount !== undefined && femaleCount !== undefined) ? (
-          <div className="mt-3 flex items-center justify-between w-full bg-gray-50 text-xs">
-             <div className="flex flex-row">
-                <span className="text-gray-500">Male</span>
-                <span className="font-bold text-blue-600 text-sm">{maleCount}  |  <span className="text-gray-400 font-normal">({totalCount > 0 ? Math.round((maleCount/totalCount)*100) : 0}%)</span></span>
-             </div>
-             <div className="h-8 w-[1px] bg-gray-100"></div>
-             <div className="flex flex-row text-right">
-                <span className="text-gray-500">Female</span> 
-                <span className="font-bold text-pink-600 text-sm">{femaleCount} |<span className="text-gray-400 font-normal">({totalCount > 0 ? Math.round((femaleCount/totalCount)*100) : 0}%)</span></span>
-             </div>
           </div>
-        ) : children ? (
+          {maleCount !== undefined && femaleCount !== undefined ? (
+            <div className="mt-3 flex items-center justify-between w-full bg-gray-50 text-xs">
+              <div className="flex flex-row">
+                <span className="text-gray-500">Male</span>
+                <span className="font-bold text-blue-600 text-sm">
+                  {maleCount} |{" "}
+                  <span className="text-gray-400 font-normal">
+                    ({totalCount > 0 ? Math.round((maleCount / totalCount) * 100) : 0}%)
+                  </span>
+                </span>
+              </div>
+              <div className="h-8 w-[1px] bg-gray-100"></div>
+              <div className="flex flex-row text-right">
+                <span className="text-gray-500">Female</span>
+                <span className="font-bold text-pink-600 text-sm">
+                  {femaleCount} |
+                  <span className="text-gray-400 font-normal">
+                    ({totalCount > 0 ? Math.round((femaleCount / totalCount) * 100) : 0}%)
+                  </span>
+                </span>
+              </div>
+            </div>
+          ) : children ? (
             children
-        ) : (
-            description && <p className="text-xs mt-2 bg-gray-50 px-2 py-1 rounded-md border border-slate-100">{description}</p>
-        )}
-      </CardContent>
-    </Card>
-  ));
+          ) : (
+            description && (
+              <p className="text-xs mt-2 bg-gray-50 px-2 py-1 rounded-md border border-slate-100">{description}</p>
+            )
+          )}
+        </CardContent>
+      </Card>
+    )
+  );
 
   return (
     <div className="space-y-6 px-2 sm:px-4 md:px-0">
+      {/* ── Header ── */}
       <div className="flex flex-col justify-between items-start gap-4">
         <div className="w-full md:w-auto">
           <h2 className="text-md font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
             Livestock Farmers
           </h2>
           <div className="flex items-center gap-2">
-                       <div className="bg-blue-50 text-blue-700 border-blue-200 text-xs w-fit">
-                          {activeProgram || "No Access"} PROJECT
-                       </div>
-                    </div>
+            <div className="bg-blue-50 text-blue-700 border-blue-200 text-xs w-fit">
+              {activeProgram || "No Access"} PROJECT
+            </div>
+          </div>
         </div>
-         
-         <div className="flex flex-col md:flex-row xl:flex-row lg:flex-row gap-2 w-full ">
-            {/* UPDATED DATE INPUTS SECTION */}
-            <div className="flex flex-col md:flex-row lg:flex-row gap-2 items-center">
-               
-                  
-                    <Input 
-                        id="startDate" 
-                        type="date" 
-                        value={filters.startDate} 
-                        onChange={(e) => handleFilterChange("startDate", e.target.value)} 
-                        className="border-gray-300 focus:border-blue-500 bg-white w-full text-sm pr-6 cursor-pointer appearance-auto" 
-                    />
-                
-                    
-                    <Input 
-                        id="endDate" 
-                        type="date" 
-                        value={filters.endDate} 
-                        onChange={(e) => handleFilterChange("endDate", e.target.value)} 
-                        className="border-gray-300 focus:border-blue-500 bg-white w-full text-sm pr-6 cursor-pointer appearance-auto " 
-                    />
-                
-            
-            
+
+        <div className="flex flex-col md:flex-row xl:flex-row lg:flex-row gap-2 w-full">
+          <div className="flex flex-col md:flex-row lg:flex-row gap-2 items-center">
+            <Input
+              id="startDate"
+              type="date"
+              value={filters.startDate}
+              onChange={(e) => handleFilterChange("startDate", e.target.value)}
+              className="border-gray-300 focus:border-blue-500 bg-white w-full text-sm pr-6 cursor-pointer appearance-auto"
+            />
+            <Input
+              id="endDate"
+              type="date"
+              value={filters.endDate}
+              onChange={(e) => handleFilterChange("endDate", e.target.value)}
+              className="border-gray-300 focus:border-blue-500 bg-white w-full text-sm pr-6 cursor-pointer appearance-auto"
+            />
             {availablePrograms.length > 1 ? (
-                <div className="space-y-2 w-full lg:w-[180px]">
-                    <Select value={activeProgram} onValueChange={handleProgramChange} disabled={availablePrograms.length === 0}>
-                        <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white h-10 font-bold w-full">
-                            <SelectValue placeholder="Select Programme" />
-                        </SelectTrigger>
-                        <SelectContent>
-                            {availablePrograms.map(p => (
-                                <SelectItem key={p} value={p}>{p}</SelectItem>
-                            ))}
-                        </SelectContent>
-                    </Select>
-                </div>
+              <div className="space-y-2 w-full lg:w-[180px]">
+                <Select value={activeProgram} onValueChange={handleProgramChange} disabled={availablePrograms.length === 0}>
+                  <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white h-10 font-bold w-full">
+                    <SelectValue placeholder="Select Programme" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {availablePrograms.map((p) => (
+                      <SelectItem key={p} value={p}>{p}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             ) : (
-                <div className="hidden lg:block w-[180px]"></div>
+              <div className="hidden lg:block w-[180px]"></div>
             )}
-</div>
-            <div className="flex flex-row xl:flex-row gap-2 items-center">
-                <Button variant="outline" size="sm" onClick={() => setFilters({ ...filters, search: "", startDate: "", endDate: "", county: "all", subcounty: "all", gender: "all", location: "all" })} className="h-10 px-6 w-full xl:w-auto">
-                    Clear Filters
-                </Button>
-            
-          
-            {selectedRecords.length > 0 && userIsChiefAdmin && (
-            <Button variant="destructive" size="sm" onClick={openBulkDeleteConfirm} disabled={deleteLoading} className="text-xs h-10">
-              <Trash2 className="h-4 w-4 mr-2" /> Delete ({selectedRecords.length})
-            </Button>
-          )}
-          {selectedRecords.length > 0 && (
+          </div>
+
+          <div className="flex flex-row xl:flex-row gap-2 items-center">
             <Button
               variant="outline"
               size="sm"
-              onClick={openBulkSmsDialog}
-              className="border-green-300 text-green-700 h-10 hover:bg-green-50"
+              onClick={() =>
+                setFilters({
+                  ...filters,
+                  search: "",
+                  startDate: "",
+                  endDate: "",
+                  county: "all",
+                  subcounty: "all",
+                  gender: "all",
+                  location: "all",
+                })
+              }
+              className="h-10 px-6 w-full xl:w-auto"
             >
-              <Phone className="h-4 w-4 mr-2" /> Send SMS ({selectedRecords.length})
+              Clear Filters
             </Button>
-          )}
-          {userIsChiefAdmin && (
-             <>
-                <Button variant="outline" size="sm" onClick={() => setIsUploadDialogOpen(true)} className="border-green-300 text-green-700 h-10">
-                    <Upload className="h-4 w-4 mr-2" /> Upload
+
+            {selectedRecords.length > 0 && userIsAdmin && (
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={openBulkDeleteConfirm}
+                disabled={deleteLoading}
+                className="text-xs h-10"
+              >
+                <Trash2 className="h-4 w-4 mr-2" /> Delete ({selectedRecords.length})
+              </Button>
+            )}
+            {selectedRecords.length > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={openBulkSmsDialog}
+                className="border-green-300 text-green-700 h-10 hover:bg-green-50"
+              >
+                <Phone className="h-4 w-4 mr-2" /> Send SMS ({selectedRecords.length})
+              </Button>
+            )}
+            {userIsAdmin && (
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setIsUploadDialogOpen(true)}
+                  className="border-green-300 text-green-700 h-10"
+                >
+                  <Upload className="h-4 w-4 mr-2" /> Upload
                 </Button>
-                <Button onClick={handleExport} disabled={exportLoading || filteredFarmers.length === 0} className="bg-gradient-to-r from-blue-800 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white shadow-md text-xs h-10">
-                <Download className="h-4 w-4 mr-2" /> Export ({filteredFarmers.length})
+                <Button
+                  onClick={handleExport}
+                  disabled={exportLoading || filteredFarmers.length === 0}
+                  className="bg-gradient-to-r from-blue-800 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white shadow-md text-xs h-10"
+                >
+                  <Download className="h-4 w-4 mr-2" /> Export ({filteredFarmers.length})
                 </Button>
-             </>
-          )}
-        </div>
+              </>
+            )}
+          </div>
         </div>
       </div>
 
+      {/* ── Stats Cards ── */}
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-3 gap-4">
-        <StatsCard 
-            title="FARMERS REGISTERED" 
-            value={stats.totalFarmers.toLocaleString()} 
-            icon={Users} 
-            color="blue"
-            maleCount={stats.maleFarmers}
-            femaleCount={stats.femaleFarmers}
-            totalCount={stats.totalFarmers}
+        <StatsCard
+          title="FARMERS REGISTERED"
+          value={stats.totalFarmers.toLocaleString()}
+          icon={Users}
+          color="blue"
+          maleCount={stats.maleFarmers}
+          femaleCount={stats.femaleFarmers}
+          totalCount={stats.totalFarmers}
         />
-        <StatsCard 
-            title="ANIMAL CENSUS" 
-            value={(stats.totalSheep+stats.totalGoats).toLocaleString()} 
-            icon={Activity} 
-            color="blue"
+        <StatsCard
+          title="ANIMAL CENSUS"
+          value={(stats.totalSheep + stats.totalGoats).toLocaleString()}
+          icon={Activity}
+          color="blue"
         >
-            <div className="flex items-center justify-between w-full mt-3 text-xs border-t border-gray-100 pt-2">
-                 <div className="flex flex-row text-left">
-                    <span className="text-gray-500 font-medium">Goats</span>
-                    <span className="font-bold text-purple-600">
-                        {stats.totalGoats} |
-                        <span className="text-gray-400 font-normal ml-1">
-                            {(stats.totalSheep+stats.totalGoats) > 0 ? Math.round((stats.totalGoats/(stats.totalSheep+stats.totalGoats))*100) : 0}%
-                        </span>
-                    </span>
-                 </div>
-                 <div className="flex flex-row text-right">
-                    <span className="text-gray-500 font-medium">Sheep</span>
-                    <span className="font-bold text-indigo-600">
-                        {stats.totalSheep} |
-                        <span className="text-gray-400 font-normal ml-1">
-                            {(stats.totalSheep+stats.totalGoats) > 0 ? Math.round((stats.totalSheep/(stats.totalSheep+stats.totalGoats))*100) : 0}%
-                        </span>
-                    </span>
-                 </div>
+          <div className="flex items-center justify-between w-full mt-3 text-xs border-t border-gray-100 pt-2">
+            <div className="flex flex-row text-left">
+              <span className="text-gray-500 font-medium">Goats</span>
+              <span className="font-bold text-purple-600">
+                {stats.totalGoats} |
+                <span className="text-gray-400 font-normal ml-1">
+                  {stats.totalSheep + stats.totalGoats > 0
+                    ? Math.round((stats.totalGoats / (stats.totalSheep + stats.totalGoats)) * 100)
+                    : 0}
+                  %
+                </span>
+              </span>
             </div>
+            <div className="flex flex-row text-right">
+              <span className="text-gray-500 font-medium">Sheep</span>
+              <span className="font-bold text-indigo-600">
+                {stats.totalSheep} |
+                <span className="text-gray-400 font-normal ml-1">
+                  {stats.totalSheep + stats.totalGoats > 0
+                    ? Math.round((stats.totalSheep / (stats.totalSheep + stats.totalGoats)) * 100)
+                    : 0}
+                  %
+                </span>
+              </span>
+            </div>
+          </div>
         </StatsCard>
-        <StatsCard 
-            title="TRAINED FARMERS" 
-            value={stats.totalTrainedFarmers.toLocaleString()} 
-            icon={GraduationCap} 
-            color="blue"
-            description="Participants in training sessions"
+        <StatsCard
+          title="TRAINED FARMERS"
+          value={stats.totalTrainedFarmers.toLocaleString()}
+          icon={GraduationCap}
+          color="blue"
+          description="Participants in training sessions"
         />
       </div>
 
+      {/* ── Filters ── */}
       <Card className="shadow-lg border-0 bg-white">
         <CardContent className="space-y-6 pt-6">
-          <ScrollableFilterBar
-            ariaLabel="Livestock farmer filters"
-            contentClassName="sm:grid-cols-2 lg:grid-cols-5"
-          >
+          <ScrollableFilterBar ariaLabel="Livestock farmer filters" contentClassName="sm:grid-cols-2 lg:grid-cols-5">
             <div className="w-[190px] shrink-0 space-y-2 sm:w-auto">
-                <Label className="font-semibold text-gray-700 text-xs uppercase">County</Label>
-                <Select value={filters.county} onValueChange={(value) => handleFilterChange("county", value)}>
-                    <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white h-9"><SelectValue placeholder="All Counties" /></SelectTrigger>
-                    <SelectContent>
-                        <SelectItem value="all">All Counties</SelectItem>
-                        {uniqueCounties.map(county => <SelectItem key={county} value={county}>{county}</SelectItem>)}
-                    </SelectContent>
-                </Select>
+              <Label className="font-semibold text-gray-700 text-xs uppercase">County</Label>
+              <Select value={filters.county} onValueChange={(value) => handleFilterChange("county", value)}>
+                <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white h-9">
+                  <SelectValue placeholder="All Counties" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Counties</SelectItem>
+                  {uniqueCounties.map((county) => (
+                    <SelectItem key={county} value={county}>{county}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
             <div className="w-[190px] shrink-0 space-y-2 sm:w-auto">
-                <Label className="font-semibold text-gray-700 text-xs uppercase">Subcounty</Label>
-                <Select value={filters.subcounty} onValueChange={(value) => handleFilterChange("subcounty", value)}>
-                    <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white h-9"><SelectValue placeholder="All Subcounties" /></SelectTrigger>
-                    <SelectContent>
-                        <SelectItem value="all">All Subcounties</SelectItem>
-                        {uniqueSubcounties.map(sub => <SelectItem key={sub} value={sub}>{sub}</SelectItem>)}
-                    </SelectContent>
-                </Select>
+              <Label className="font-semibold text-gray-700 text-xs uppercase">Subcounty</Label>
+              <Select value={filters.subcounty} onValueChange={(value) => handleFilterChange("subcounty", value)}>
+                <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white h-9">
+                  <SelectValue placeholder="All Subcounties" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Subcounties</SelectItem>
+                  {uniqueSubcounties.map((sub) => (
+                    <SelectItem key={sub} value={sub}>{sub}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
             <div className="w-[190px] shrink-0 space-y-2 sm:w-auto">
-                <Label className="font-semibold text-gray-700 text-xs uppercase">Location</Label>
-                <Select value={filters.location} onValueChange={(value) => handleFilterChange("location", value)}>
-                    <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white h-9"><SelectValue placeholder="All Locations" /></SelectTrigger>
-                    <SelectContent>
-                        <SelectItem value="all">All Locations</SelectItem>
-                        {uniqueLocations.map(loc => <SelectItem key={loc} value={loc}>{loc}</SelectItem>)}
-                    </SelectContent>
-                </Select>
+              <Label className="font-semibold text-gray-700 text-xs uppercase">Location</Label>
+              <Select value={filters.location} onValueChange={(value) => handleFilterChange("location", value)}>
+                <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white h-9">
+                  <SelectValue placeholder="All Locations" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Locations</SelectItem>
+                  {uniqueLocations.map((loc) => (
+                    <SelectItem key={loc} value={loc}>{loc}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
             <div className="w-[190px] shrink-0 space-y-2 sm:w-auto">
-                <Label className="font-semibold text-gray-700 text-xs uppercase">Gender</Label>
-                <Select value={filters.gender} onValueChange={(value) => handleFilterChange("gender", value)}>
-                    <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white h-9"><SelectValue placeholder="All Genders" /></SelectTrigger>
-                    <SelectContent>
-                        <SelectItem value="all">All Genders</SelectItem>
-                        {uniqueGenders.map(g => <SelectItem key={g} value={g}>{g}</SelectItem>)}
-                    </SelectContent>
-                </Select>
+              <Label className="font-semibold text-gray-700 text-xs uppercase">Gender</Label>
+              <Select value={filters.gender} onValueChange={(value) => handleFilterChange("gender", value)}>
+                <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white h-9">
+                  <SelectValue placeholder="All Genders" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Genders</SelectItem>
+                  {uniqueGenders.map((g) => (
+                    <SelectItem key={g} value={g}>{g}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
             <div className="w-[240px] shrink-0 space-y-2 sm:w-auto">
-                <Label className="font-semibold text-gray-700 text-xs uppercase">Search</Label>
-                <Input placeholder="Name, ID, Phone, Officer..." defaultValue={filters.search} onChange={(e) => handleSearchChange(e.target.value)} className="border-gray-300 focus:border-blue-500 bg-white h-9" />
+              <Label className="font-semibold text-gray-700 text-xs uppercase">Search</Label>
+              <Input
+                placeholder="Name, ID, Phone, Officer..."
+                defaultValue={filters.search}
+                onChange={(e) => handleSearchChange(e.target.value)}
+                className="border-gray-300 focus:border-blue-500 bg-white h-9"
+              />
             </div>
           </ScrollableFilterBar>
         </CardContent>
       </Card>
 
+      {/* ── Table ── */}
       <Card className="shadow-lg border-0 bg-white">
         <CardContent className="p-0">
           {loading ? (
-            <div className="text-center py-12"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div><p className="text-muted-foreground mt-2">Loading farmers registry...</p></div>
+            <div className="text-center py-12">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
+              <p className="text-muted-foreground mt-2">Loading farmers registry...</p>
+            </div>
           ) : currentPageRecords.length === 0 ? (
-            <div className="text-center py-12 text-muted-foreground">{activeProgram ? "No records found matching your criteria" : "You do not have access to any programme data."}</div>
+            <div className="text-center py-12 text-muted-foreground">
+              {activeProgram ? "No records found matching your criteria" : "You do not have access to any programme data."}
+            </div>
           ) : (
             <>
               <div className="w-full overflow-x-auto rounded-md">
                 <table className="w-full border-collapse border border-gray-300 text-sm text-left whitespace-nowrap">
                   <thead>
                     <tr className="bg-blue-50 text-xs">
-                      <th className="py-3 px-3"><Checkbox checked={selectedRecords.length === currentPageRecords.length && currentPageRecords.length > 0} onCheckedChange={handleSelectAll} /></th>
+                      <th className="py-3 px-3">
+                        <Checkbox
+                          checked={selectedRecords.length === currentPageRecords.length && currentPageRecords.length > 0}
+                          onCheckedChange={handleSelectAll}
+                        />
+                      </th>
                       <th className="py-3 px-3 font-semibold text-gray-700">Date</th>
                       <th className="py-3 px-3 font-semibold text-gray-700">Farmer Name</th>
                       <th className="py-3 px-3 font-semibold text-gray-700">Gender</th>
@@ -1246,10 +1526,19 @@ const LivestockFarmersPage = () => {
                   <tbody>
                     {currentPageRecords.map((record) => (
                       <tr key={record.id} className="border-b hover:bg-blue-50 transition-colors group">
-                        <td className="py-2 px-3"><Checkbox checked={selectedRecords.includes(record.id)} onCheckedChange={() => handleSelectRecord(record.id)} /></td>
+                        <td className="py-2 px-3">
+                          <Checkbox
+                            checked={selectedRecords.includes(record.id)}
+                            onCheckedChange={() => handleSelectRecord(record.id)}
+                          />
+                        </td>
                         <td className="py-2 px-3 text-xs text-gray-500">{formatDate(record.createdAt)}</td>
                         <td className="py-2 px-3 font-medium text-sm">{record.name}</td>
-                        <td className="py-2 px-3"><Badge variant={record.gender === 'Female' ? 'secondary' : 'outline'} className="text-xs">{record.gender}</Badge></td>
+                        <td className="py-2 px-3">
+                          <Badge variant={record.gender === "Female" ? "secondary" : "outline"} className="text-xs">
+                            {record.gender}
+                          </Badge>
+                        </td>
                         <td className="py-2 px-3 text-xs">{record.phone}</td>
                         <td className="py-2 px-3 text-xs font-mono hidden sm:table-cell">{record.idNumber}</td>
                         <td className="py-2 px-3 text-xs">{record.county}</td>
@@ -1259,19 +1548,46 @@ const LivestockFarmersPage = () => {
                         <td className="py-2 px-3 text-xs font-semibold text-green-700">{getGoatTotal(record.goats)}</td>
                         <td className="py-2 px-3 text-xs font-semibold text-purple-700">{record.sheep}</td>
                         <td className="py-2 px-3">
-                          {record.vaccinated ? <Badge className="bg-green-100 text-green-800 hover:bg-green-100 text-[10px]">Yes</Badge> : <Badge variant="outline" className="text-gray-400 text-[10px]">No</Badge>}
+                          {record.vaccinated ? (
+                            <Badge className="bg-green-100 text-green-800 hover:bg-green-100 text-[10px]">Yes</Badge>
+                          ) : (
+                            <Badge variant="outline" className="text-gray-400 text-[10px]">No</Badge>
+                          )}
                         </td>
                         <td className="py-2 px-3">
-                            <Badge variant="outline" className="border-blue-200 text-blue-700 text-[10px]">{record.programme || activeProgram}</Badge>
+                          <Badge variant="outline" className="border-blue-200 text-blue-700 text-[10px]">
+                            {record.programme || activeProgram}
+                          </Badge>
                         </td>
-                         <td className="py-2 px-3 text-xs italic text-gray-500 hidden sm:table-cell">{record.username}</td>
+                        <td className="py-2 px-3 text-xs italic text-gray-500 hidden sm:table-cell">{record.username}</td>
                         <td className="py-2 px-3">
                           <div className="flex gap-1">
-                            <Button variant="ghost" size="icon" className="h-7 w-7 text-green-600 hover:bg-green-50" onClick={() => openViewDialog(record)}><Eye className="h-3.5 w-3.5" /></Button>
-                            {userIsChiefAdmin && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 text-green-600 hover:bg-green-50"
+                              onClick={() => openViewDialog(record)}
+                            >
+                              <Eye className="h-3.5 w-3.5" />
+                            </Button>
+                            {userIsAdmin && (
                               <>
-                                <Button variant="ghost" size="icon" className="h-7 w-7 text-blue-600 hover:bg-blue-50" onClick={() => openEditDialog(record)}><Edit className="h-3.5 w-3.5" /></Button>
-                                <Button variant="ghost" size="icon" className="h-7 w-7 text-red-600 hover:bg-red-50" onClick={() => openSingleDeleteConfirm(record)}><Trash2 className="h-3.5 w-3.5" /></Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7 text-blue-600 hover:bg-blue-50"
+                                  onClick={() => openEditDialog(record)}
+                                >
+                                  <Edit className="h-3.5 w-3.5" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7 text-red-600 hover:bg-red-50"
+                                  onClick={() => openSingleDeleteConfirm(record)}
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </Button>
                               </>
                             )}
                           </div>
@@ -1283,10 +1599,16 @@ const LivestockFarmersPage = () => {
               </div>
 
               <div className="flex flex-col sm:flex-row items-center justify-between p-4 border-t bg-gray-50 gap-4">
-                <div className="text-sm text-muted-foreground">{filteredFarmers.length} total records â€¢ Page {pagination.page} of {pagination.totalPages}</div>
+                <div className="text-sm text-muted-foreground">
+                  {filteredFarmers.length} total records &bull; Page {pagination.page} of {pagination.totalPages}
+                </div>
                 <div className="flex gap-2">
-                  <Button variant="outline" size="sm" disabled={!pagination.hasPrev} onClick={() => handlePageChange(pagination.page - 1)}>Previous</Button>
-                  <Button variant="outline" size="sm" disabled={!pagination.hasNext} onClick={() => handlePageChange(pagination.page + 1)}>Next</Button>
+                  <Button variant="outline" size="sm" disabled={!pagination.hasPrev} onClick={() => handlePageChange(pagination.page - 1)}>
+                    Previous
+                  </Button>
+                  <Button variant="outline" size="sm" disabled={!pagination.hasNext} onClick={() => handlePageChange(pagination.page + 1)}>
+                    Next
+                  </Button>
                 </div>
               </div>
             </>
@@ -1294,6 +1616,7 @@ const LivestockFarmersPage = () => {
         </CardContent>
       </Card>
 
+      {/* ── View Dialog ── */}
       <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
         <DialogContent className="sm:max-w-3xl bg-white rounded-2xl max-h-[90vh] overflow-y-auto w-[95vw] sm:w-full">
           <DialogHeader>
@@ -1303,188 +1626,199 @@ const LivestockFarmersPage = () => {
           {viewingRecord && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 py-4">
               <div className="col-span-1 sm:col-span-2 bg-blue-50 p-4 rounded-lg flex flex-col sm:flex-row items-center justify-between gap-4">
-                 <div className="flex items-center gap-4">
-                    <div className="bg-blue-100 p-3 rounded-full"><Users className="h-6 w-6 text-blue-600" /></div>
-                    <div>
-                       <h3 className="font-bold text-lg">{viewingRecord.name}</h3>
-                       <p className="text-sm text-gray-600">{viewingRecord.farmerId} â€¢ {viewingRecord.programme}</p>
-                    </div>
-                 </div>
-                 <div className="text-right">
-                    <p className="text-xs text-gray-500 uppercase font-bold">Created By</p>
-                    <p className="text-sm font-medium">{viewingRecord.username}</p>
-                 </div>
+                <div className="flex items-center gap-4">
+                  <div className="bg-blue-100 p-3 rounded-full"><Users className="h-6 w-6 text-blue-600" /></div>
+                  <div>
+                    <h3 className="font-bold text-lg">{viewingRecord.name}</h3>
+                    <p className="text-sm text-gray-600">{viewingRecord.farmerId} &bull; {viewingRecord.programme}</p>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <p className="text-xs text-gray-500 uppercase font-bold">Created By</p>
+                  <p className="text-sm font-medium">{viewingRecord.username}</p>
+                </div>
               </div>
               <DetailRow label="County" value={viewingRecord.county} />
               <DetailRow label="Subcounty" value={viewingRecord.subcounty} />
               <DetailRow label="Location" value={viewingRecord.location} />
               <DetailRow label="Phone" value={viewingRecord.phone} />
               <DetailRow label="Gender" value={viewingRecord.gender} />
-              <DetailRow label="ID Number" value={viewingRecord.idNumber || 'N/A'} />
+              <DetailRow label="ID Number" value={viewingRecord.idNumber || "N/A"} />
               <DetailRow label="Registration Date" value={viewingRecord.registrationDate} />
               <div className="col-span-1 sm:col-span-2 border-t pt-4 mt-2">
-                <h4 className="font-semibold text-gray-700 mb-3 flex items-center gap-2"><Scale className="h-4 w-4"/>Livestock Ownership</h4>
+                <h4 className="font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                  <Scale className="h-4 w-4" />Livestock Ownership
+                </h4>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm">
-                   <div className="bg-gray-50 p-4 rounded text-center border">
-                        <span className="block font-bold text-2xl text-orange-600">{viewingRecord.cattle}</span>
-                        <span className="text-xs text-gray-500 uppercase">Cattle</span>
-                   </div>
-                   <div className="bg-gray-50 p-4 rounded text-center border">
-                        <span className="block font-bold text-2xl text-green-600">{getGoatTotal(viewingRecord.goats)}</span>
-                        <span className="text-xs text-gray-500 uppercase">Goats</span>
-                   </div>
-                   <div className="bg-gray-50 p-4 rounded text-center border">
-                        <span className="block font-bold text-2xl text-purple-600">{viewingRecord.sheep}</span>
-                        <span className="text-xs text-gray-500 uppercase">Sheep</span>
-                   </div>
+                  <div className="bg-gray-50 p-4 rounded text-center border">
+                    <span className="block font-bold text-2xl text-orange-600">{viewingRecord.cattle}</span>
+                    <span className="text-xs text-gray-500 uppercase">Cattle</span>
+                  </div>
+                  <div className="bg-gray-50 p-4 rounded text-center border">
+                    <span className="block font-bold text-2xl text-green-600">{getGoatTotal(viewingRecord.goats)}</span>
+                    <span className="text-xs text-gray-500 uppercase">Goats</span>
+                  </div>
+                  <div className="bg-gray-50 p-4 rounded text-center border">
+                    <span className="block font-bold text-2xl text-purple-600">{viewingRecord.sheep}</span>
+                    <span className="text-xs text-gray-500 uppercase">Sheep</span>
+                  </div>
                 </div>
               </div>
               <div className="col-span-1 sm:col-span-2 border-t pt-4">
-                <h4 className="font-semibold text-gray-700 mb-3 flex items-center gap-2"><Activity className="h-4 w-4"/>Health Status</h4>
+                <h4 className="font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                  <Activity className="h-4 w-4" />Health Status
+                </h4>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="p-4 border rounded flex items-center justify-between">
-                        <div>
-                            <p className="text-xs text-gray-500 font-bold uppercase">Vaccinated</p>
-                            <p className="font-medium">{viewingRecord.vaccinated ? 'Yes' : 'No'}</p>
-                        </div>
-                        <ShieldCheck className={`h-5 w-5 ${viewingRecord.vaccinated ? 'text-green-600' : 'text-gray-300'}`} />
+                  <div className="p-4 border rounded flex items-center justify-between">
+                    <div>
+                      <p className="text-xs text-gray-500 font-bold uppercase">Vaccinated</p>
+                      <p className="font-medium">{viewingRecord.vaccinated ? "Yes" : "No"}</p>
                     </div>
-                    {viewingRecord.vaccinationDate && (
-                         <div className="p-4 border rounded">
-                            <p className="text-xs text-gray-500 font-bold uppercase">Vaccination Date</p>
-                            <p className="font-medium">{viewingRecord.vaccinationDate}</p>
-                        </div>
-                    )}
-                    <div className="p-4 border rounded flex items-center justify-between">
-                        <div>
-                            <p className="text-xs text-gray-500 font-bold uppercase">Dewormed</p>
-                            <p className="font-medium">{viewingRecord.dewormed ? 'Yes' : 'No'}</p>
-                        </div>
-                        <ShieldCheck className={`h-5 w-5 ${viewingRecord.dewormed ? 'text-blue-600' : 'text-gray-300'}`} />
+                    <ShieldCheck className={`h-5 w-5 ${viewingRecord.vaccinated ? "text-green-600" : "text-gray-300"}`} />
+                  </div>
+                  {viewingRecord.vaccinationDate && (
+                    <div className="p-4 border rounded">
+                      <p className="text-xs text-gray-500 font-bold uppercase">Vaccination Date</p>
+                      <p className="font-medium">{viewingRecord.vaccinationDate}</p>
                     </div>
-                    {viewingRecord.dewormingDate && (
-                        <div className="p-4 border rounded">
-                            <p className="text-xs text-gray-500 font-bold uppercase">Deworming Date</p>
-                            <p className="font-medium">{viewingRecord.dewormingDate}</p>
-                        </div>
-                    )}
+                  )}
+                  <div className="p-4 border rounded flex items-center justify-between">
+                    <div>
+                      <p className="text-xs text-gray-500 font-bold uppercase">Dewormed</p>
+                      <p className="font-medium">{viewingRecord.dewormed ? "Yes" : "No"}</p>
+                    </div>
+                    <ShieldCheck className={`h-5 w-5 ${viewingRecord.dewormed ? "text-blue-600" : "text-gray-300"}`} />
+                  </div>
+                  {viewingRecord.dewormingDate && (
+                    <div className="p-4 border rounded">
+                      <p className="text-xs text-gray-500 font-bold uppercase">Deworming Date</p>
+                      <p className="font-medium">{viewingRecord.dewormingDate}</p>
+                    </div>
+                  )}
                 </div>
               </div>
               <div className="col-span-1 sm:col-span-2 border-t pt-4">
-                <h4 className="font-semibold text-gray-700 mb-3 flex items-center gap-2"><Scale className="h-4 w-4"/>Breeding</h4>
+                <h4 className="font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                  <Scale className="h-4 w-4" />Breeding
+                </h4>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <DetailRow label="Bucks Served" value={viewingRecord.bucksServed || 'N/A'} />
-                    <DetailRow label="Male Breeds" value={viewingRecord.maleBreeds || 'N/A'} />
-                    <DetailRow label="Female Breeds" value={viewingRecord.femaleBreeds || 'N/A'} />
-                    <DetailRow label="Tag Number" value={viewingRecord.tugNumber || 'N/A'} />
+                  <DetailRow label="Bucks Served" value={viewingRecord.bucksServed || "N/A"} />
+                  <DetailRow label="Male Breeds" value={viewingRecord.maleBreeds || "N/A"} />
+                  <DetailRow label="Female Breeds" value={viewingRecord.femaleBreeds || "N/A"} />
+                  <DetailRow label="Tag Number" value={viewingRecord.tugNumber || "N/A"} />
                 </div>
               </div>
               <div className="col-span-1 sm:col-span-2 border-t pt-4">
-                 <div className="p-4 border rounded flex items-center gap-3">
-                   <Activity className={`h-5 w-5 ${viewingRecord.traceability ? 'text-blue-600' : 'text-gray-300'}`} />
-                   <div>
-                     <p className="text-xs text-gray-500 font-bold uppercase">Traceability</p>
-                     <p className="font-medium">{viewingRecord.traceability ? 'Enabled' : 'Disabled'}</p>
-                   </div>
+                <div className="p-4 border rounded flex items-center gap-3">
+                  <Activity className={`h-5 w-5 ${viewingRecord.traceability ? "text-blue-600" : "text-gray-300"}`} />
+                  <div>
+                    <p className="text-xs text-gray-500 font-bold uppercase">Traceability</p>
+                    <p className="font-medium">{viewingRecord.traceability ? "Enabled" : "Disabled"}</p>
+                  </div>
                 </div>
               </div>
             </div>
           )}
-          <DialogFooter><Button onClick={() => setIsViewDialogOpen(false)}>Close</Button></DialogFooter>
+          <DialogFooter>
+            <Button onClick={() => setIsViewDialogOpen(false)}>Close</Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
+      {/* ── Edit Dialog ── */}
       <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
         <DialogContent className="sm:max-w-2xl bg-white rounded-2xl w-[95vw] sm:w-full max-h-[90vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Edit Farmer Details</DialogTitle></DialogHeader>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 py-4">
             <div className="space-y-2">
-                <Label>Farmer ID</Label>
-                <Input value={editForm.farmerId} onChange={e => setEditForm({...editForm, farmerId: e.target.value})} />
+              <Label>Farmer ID</Label>
+              <Input value={editForm.farmerId} onChange={(e) => setEditForm({ ...editForm, farmerId: e.target.value })} />
             </div>
             <div className="space-y-2">
-                <Label>Name</Label>
-                <Input value={editForm.name} onChange={e => setEditForm({...editForm, name: e.target.value})} />
+              <Label>Name</Label>
+              <Input value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} />
             </div>
             <div className="space-y-2">
-                <Label>Gender</Label>
-                <Select value={editForm.gender} onValueChange={(val) => setEditForm({...editForm, gender: val})}>
-                    <SelectTrigger><SelectValue placeholder="Select Gender" /></SelectTrigger>
-                    <SelectContent>
-                        <SelectItem value="Male">Male</SelectItem>
-                        <SelectItem value="Female">Female</SelectItem>
-                    </SelectContent>
-                </Select>
+              <Label>Gender</Label>
+              <Select value={editForm.gender} onValueChange={(val) => setEditForm({ ...editForm, gender: val })}>
+                <SelectTrigger><SelectValue placeholder="Select Gender" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Male">Male</SelectItem>
+                  <SelectItem value="Female">Female</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-2">
-                <Label>Phone</Label>
-                <Input value={editForm.phone} onChange={e => setEditForm({...editForm, phone: e.target.value})} />
+              <Label>Phone</Label>
+              <Input value={editForm.phone} onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })} />
             </div>
             <div className="space-y-2 sm:col-span-2">
-                <Label>ID Number</Label>
-                <Input value={editForm.idNumber} onChange={e => setEditForm({...editForm, idNumber: e.target.value})} />
+              <Label>ID Number</Label>
+              <Input value={editForm.idNumber} onChange={(e) => setEditForm({ ...editForm, idNumber: e.target.value })} />
             </div>
             <div className="space-y-2">
-                <Label>County</Label>
-                <Input value={editForm.county} onChange={e => setEditForm({...editForm, county: e.target.value})} />
+              <Label>County</Label>
+              <Input value={editForm.county} onChange={(e) => setEditForm({ ...editForm, county: e.target.value })} />
             </div>
             <div className="space-y-2">
-                <Label>Subcounty</Label>
-                <Input value={editForm.subcounty} onChange={e => setEditForm({...editForm, subcounty: e.target.value})} />
+              <Label>Subcounty</Label>
+              <Input value={editForm.subcounty} onChange={(e) => setEditForm({ ...editForm, subcounty: e.target.value })} />
             </div>
             <div className="space-y-2 sm:col-span-2">
-                <Label>Location</Label>
-                <Input value={editForm.location} onChange={e => setEditForm({...editForm, location: e.target.value})} />
+              <Label>Location</Label>
+              <Input value={editForm.location} onChange={(e) => setEditForm({ ...editForm, location: e.target.value })} />
             </div>
             <div className="col-span-1 sm:col-span-2 my-2 border-t pt-2">
-                <h4 className="text-sm font-semibold text-gray-500 uppercase">Livestock Counts</h4>
+              <h4 className="text-sm font-semibold text-gray-500 uppercase">Livestock Counts</h4>
             </div>
             <div className="space-y-2">
-                <Label>Cattle</Label>
-                <Input type="number" value={editForm.cattle} onChange={e => setEditForm({...editForm, cattle: parseInt(e.target.value) || 0})} />
+              <Label>Cattle</Label>
+              <Input type="number" value={editForm.cattle} onChange={(e) => setEditForm({ ...editForm, cattle: parseInt(e.target.value) || 0 })} />
             </div>
             <div className="space-y-2">
-                <Label>Goats</Label>
-                <Input type="number" value={editForm.goats} onChange={e => setEditForm({...editForm, goats: parseInt(e.target.value) || 0})} />
+              <Label>Goats</Label>
+              <Input type="number" value={editForm.goats} onChange={(e) => setEditForm({ ...editForm, goats: parseInt(e.target.value) || 0 })} />
             </div>
             <div className="space-y-2">
-                <Label>Sheep</Label>
-                <Input type="number" value={editForm.sheep} onChange={e => setEditForm({...editForm, sheep: parseInt(e.target.value) || 0})} />
+              <Label>Sheep</Label>
+              <Input type="number" value={editForm.sheep} onChange={(e) => setEditForm({ ...editForm, sheep: parseInt(e.target.value) || 0 })} />
             </div>
             <div className="col-span-1 sm:col-span-2 my-2 border-t pt-2">
-                <h4 className="text-sm font-semibold text-gray-500 uppercase">Breeding</h4>
+              <h4 className="text-sm font-semibold text-gray-500 uppercase">Breeding</h4>
             </div>
             <div className="space-y-2">
-                <Label>Bucks Served</Label>
-                <Input type="number" value={editForm.bucksServed} onChange={e => setEditForm({...editForm, bucksServed: e.target.value})} />
+              <Label>Bucks Served</Label>
+              <Input type="number" value={editForm.bucksServed} onChange={(e) => setEditForm({ ...editForm, bucksServed: e.target.value })} />
             </div>
             <div className="space-y-2">
-                <Label>Male Breeds</Label>
-                <Input type="number" value={editForm.maleBreeds} onChange={e => setEditForm({...editForm, maleBreeds: e.target.value})} />
+              <Label>Male Breeds</Label>
+              <Input type="number" value={editForm.maleBreeds} onChange={(e) => setEditForm({ ...editForm, maleBreeds: e.target.value })} />
             </div>
             <div className="space-y-2">
-                <Label>Female Breeds</Label>
-                <Input type="number" value={editForm.femaleBreeds} onChange={e => setEditForm({...editForm, femaleBreeds: e.target.value})} />
+              <Label>Female Breeds</Label>
+              <Input type="number" value={editForm.femaleBreeds} onChange={(e) => setEditForm({ ...editForm, femaleBreeds: e.target.value })} />
             </div>
             <div className="space-y-2">
-                <Label>Tag Number</Label>
-                <Input value={editForm.tugNumber} onChange={e => setEditForm({...editForm, tugNumber: e.target.value})} />
+              <Label>Tag Number</Label>
+              <Input value={editForm.tugNumber} onChange={(e) => setEditForm({ ...editForm, tugNumber: e.target.value })} />
             </div>
             <div className="col-span-1 sm:col-span-2 my-2 border-t pt-2">
-                <h4 className="text-sm font-semibold text-gray-500 uppercase">Status & PROJECT</h4>
+              <h4 className="text-sm font-semibold text-gray-500 uppercase">Status & PROJECT</h4>
             </div>
             <div className="space-y-2">
-                <Label>PROJECT</Label>
-                <Select value={editForm.programme} onValueChange={(val) => setEditForm({...editForm, programme: val})}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                        {availablePrograms.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
-                    </SelectContent>
-                </Select>
+              <Label>PROJECT</Label>
+              <Select value={editForm.programme} onValueChange={(val) => setEditForm({ ...editForm, programme: val })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {availablePrograms.map((p) => (
+                    <SelectItem key={p} value={p}>{p}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div className="flex items-center gap-2 border p-3 rounded h-fit mt-6">
-                <Checkbox checked={editForm.vaccinated} onCheckedChange={(c) => setEditForm({...editForm, vaccinated: !!c})} id="edit-vaccinated" />
-                <Label htmlFor="edit-vaccinated" className="cursor-pointer">Vaccinated</Label>
+              <Checkbox checked={editForm.vaccinated} onCheckedChange={(c) => setEditForm({ ...editForm, vaccinated: !!c })} id="edit-vaccinated" />
+              <Label htmlFor="edit-vaccinated" className="cursor-pointer">Vaccinated</Label>
             </div>
           </div>
           <DialogFooter>
@@ -1494,6 +1828,7 @@ const LivestockFarmersPage = () => {
         </DialogContent>
       </Dialog>
 
+      {/* ── Upload Dialog ── */}
       <Dialog open={isUploadDialogOpen} onOpenChange={setIsUploadDialogOpen}>
         <DialogContent className="sm:max-w-md w-[95vw] sm:w-full">
           <DialogHeader>
@@ -1507,7 +1842,7 @@ const LivestockFarmersPage = () => {
             {uploadFile && <p className="text-sm text-gray-600">Selected: {uploadFile.name}</p>}
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => {setIsUploadDialogOpen(false); setUploadFile(null);}}>Cancel</Button>
+            <Button variant="outline" onClick={() => { setIsUploadDialogOpen(false); setUploadFile(null); }}>Cancel</Button>
             <Button onClick={handleUpload} disabled={!uploadFile || uploadLoading}>
               {uploadLoading ? "Uploading..." : "Upload Data"}
             </Button>
@@ -1515,6 +1850,7 @@ const LivestockFarmersPage = () => {
         </DialogContent>
       </Dialog>
 
+      {/* ── Single Delete Dialog ── */}
       <Dialog open={isSingleDeleteDialogOpen} onOpenChange={setIsSingleDeleteDialogOpen}>
         <DialogContent className="sm:max-w-md w-[95vw] sm:w-full">
           <DialogHeader><DialogTitle>Confirm Deletion</DialogTitle></DialogHeader>
@@ -1526,6 +1862,7 @@ const LivestockFarmersPage = () => {
         </DialogContent>
       </Dialog>
 
+      {/* ── Bulk Delete Dialog ── */}
       <Dialog open={isDeleteConfirmOpen} onOpenChange={setIsDeleteConfirmOpen}>
         <DialogContent className="sm:max-w-md w-[95vw] sm:w-full">
           <DialogHeader><DialogTitle>Bulk Delete</DialogTitle></DialogHeader>
@@ -1537,6 +1874,7 @@ const LivestockFarmersPage = () => {
         </DialogContent>
       </Dialog>
 
+      {/* ── Bulk SMS Dialog ── */}
       <Dialog
         open={isBulkSmsDialogOpen}
         onOpenChange={(open) => {
@@ -1562,11 +1900,7 @@ const LivestockFarmersPage = () => {
             />
           </div>
           <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setIsBulkSmsDialogOpen(false)}
-              disabled={bulkSmsSending}
-            >
+            <Button variant="outline" onClick={() => setIsBulkSmsDialogOpen(false)} disabled={bulkSmsSending}>
               Cancel
             </Button>
             <Button onClick={handleSendBulkSms} disabled={bulkSmsSending}>
@@ -1579,11 +1913,13 @@ const LivestockFarmersPage = () => {
   );
 };
 
-const DetailRow = ({ label, value }: { label: string, value: string }) => (
+const DetailRow = ({ label, value }: { label: string; value: string }) => (
   <div className="flex flex-col">
     <span className="text-xs text-gray-500 font-bold uppercase">{label}</span>
-    <span className="text-sm font-medium text-gray-900">{value || 'N/A'}</span>
+    <span className="text-sm font-medium text-gray-900">{value || "N/A"}</span>
   </div>
 );
 
 export default LivestockFarmersPage;
+
+

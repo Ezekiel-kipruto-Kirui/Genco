@@ -17,7 +17,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Download, Eye, Calendar, Edit, Trash2, Car, Wallet, CheckCircle, XCircle, MapPin, Printer, Plus, Minus, Save, FileImage, ExternalLink, MoreHorizontal, History, Clock, ChevronDown, FileText } from "lucide-react"; 
 import { useSharedProgrammeSelection } from "@/hooks/use-shared-programme-selection";
 import { useToast } from "@/hooks/use-toast";
-import { canViewAllProgrammes, isAdmin, isChiefAdmin, isFinance, isHummanResourceManager, isMonitoringAndEvaluationOfficer, isProjectManager, resolvePermissionPrincipal } from "@/contexts/authhelper";
+import { canViewAllProgrammes, isAdmin, isFinance, isHummanResourceManager, isMonitoringAndEvaluationOfficer, isProjectManager, resolvePermissionPrincipal } from "@/contexts/authhelper";
 import html2canvas from "html2canvas";
 import { jsPDF } from "jspdf";
 import { millify } from "millify";
@@ -399,7 +399,7 @@ const RequisitionsPage = () => {
     () => resolvePermissionPrincipal(userRole, userAttribute),
     [allowedProgrammes, userRole, userAttribute]
   );
-  const userIsChiefAdmin = useMemo(() => isChiefAdmin(userRole), [userRole]);
+  const userIsAdmin = useMemo(() => isAdmin(userRole), [userRole]);
   const userHasProjectManagerRights = useMemo(() => isProjectManager(permissionPrincipal), [permissionPrincipal]);
   const userHasHummanResourceRights = useMemo(
     () => isHummanResourceManager(permissionPrincipal),
@@ -433,14 +433,13 @@ const RequisitionsPage = () => {
   const showProgrammeSelector = accessibleProgrammes.length > 1;
   const canApproveRequisition =
     isAdmin(permissionPrincipal) ||
-    isChiefAdmin(permissionPrincipal) ||
     userHasProjectManagerRights ||
     userHasMerRights;
   const canAuthorizeRequisition = userHasHummanResourceRights;
   const canCompleteTransaction = userHasFinanceRights;
   const canSendRequisitionSms = useMemo(
-    () => userIsChiefAdmin,
-    [userIsChiefAdmin]
+    () => userIsAdmin,
+    [userIsAdmin]
   );
   const canRejectRequisition = useMemo(
     () => canAuthorizeRequisition || canSendRequisitionSms,
@@ -464,16 +463,16 @@ const RequisitionsPage = () => {
     ]
   );
   const canDeleteRequisition = useMemo(
-    () => userIsChiefAdmin,
-    [userIsChiefAdmin]
+    () => userIsAdmin,
+    [userIsAdmin]
   );
   const canManageImages = useMemo(
     () =>
       canApproveRequisition ||
       canAuthorizeRequisition ||
       canCompleteTransaction ||
-      userIsChiefAdmin,
-    [canApproveRequisition, canAuthorizeRequisition, canCompleteTransaction, userIsChiefAdmin]
+      userIsAdmin,
+    [canApproveRequisition, canAuthorizeRequisition, canCompleteTransaction, userIsAdmin]
   );
   const approvalActorAttribute = useMemo(() => {
     if (typeof userAttribute === "string" && userAttribute.trim()) return userAttribute.trim();
@@ -889,10 +888,10 @@ const RequisitionsPage = () => {
   };
 
   const openEditDialog = useCallback((record: RequisitionData) => {
-    if (!userIsChiefAdmin) {
+    if (!userIsAdmin) {
       toast({
         title: "Unauthorized",
-        description: "Only chief admin can edit requisitions.",
+        description: "Only Admin can edit requisitions.",
         variant: "destructive",
       });
       return;
@@ -903,7 +902,7 @@ const RequisitionsPage = () => {
       items: record.items ? [...record.items] : []
     });
     setIsEditDialogOpen(true);
-  }, [toast, userIsChiefAdmin]);
+  }, [toast, userIsAdmin]);
 
   const handleEditFieldChange = (field: keyof RequisitionData, value: any) => {
     setEditFormData(prev => ({ ...prev, [field]: value }));
@@ -937,10 +936,10 @@ const RequisitionsPage = () => {
   };
 
   const saveEdit = async () => {
-    if (!userIsChiefAdmin) {
+    if (!userIsAdmin) {
       toast({
         title: "Unauthorized",
-        description: "Only chief admin can edit requisitions.",
+        description: "Only Admin can edit requisitions.",
         variant: "destructive",
       });
       return;
@@ -962,7 +961,7 @@ const RequisitionsPage = () => {
 
       if (statusChanged && nextStatus === 'approved') {
         if (!canApproveRequisition) {
-          toast({ title: "Unauthorized", description: "Only Project Manager, M&E Officer, Admin and Chief Admin can approve requisitions.", variant: "destructive" });
+          toast({ title: "Unauthorized", description: "Only Project Manager, M&E Officer, Admin and Admin can approve requisitions.", variant: "destructive" });
           return;
         }
         updatePayload.approvedBy = actorName;
@@ -999,7 +998,7 @@ const RequisitionsPage = () => {
       }
 
       if (statusChanged && nextStatus === "rejected" && !canRejectRequisition) {
-        toast({ title: "Unauthorized", description: "Only HR or Chief Admin can reject requisitions.", variant: "destructive" });
+        toast({ title: "Unauthorized", description: "Only HR or Admin can reject requisitions.", variant: "destructive" });
         return;
       }
 
@@ -1046,7 +1045,7 @@ const RequisitionsPage = () => {
     if (!canDeleteRequisition) {
       toast({
         title: "Unauthorized",
-        description: "Only chief admin can delete requisitions.",
+        description: "Only Admin can delete requisitions.",
         variant: "destructive",
       });
       return;
@@ -1059,7 +1058,7 @@ const RequisitionsPage = () => {
     if (!canDeleteRequisition) {
       toast({
         title: "Unauthorized",
-        description: "Only chief admin can delete requisitions.",
+        description: "Only Admin can delete requisitions.",
         variant: "destructive",
       });
       return;
@@ -1082,7 +1081,7 @@ const RequisitionsPage = () => {
   const handleApprove = async () => {
     if (!viewingRecord) return;
     if (!canApproveRequisition) {
-      toast({ title: "Unauthorized", description: "Only Project Manager, M&E Officer, Admin and Chief Admin can approve requisitions.", variant: "destructive" });
+      toast({ title: "Unauthorized", description: "Only Project Manager, M&E Officer, Admin and Admin can approve requisitions.", variant: "destructive" });
       return;
     }
     try {
@@ -1185,7 +1184,7 @@ const RequisitionsPage = () => {
 
     if (decision === "reject") {
       if (!canRejectRequisition) {
-        toast({ title: "Unauthorized", description: "Only HR or Chief Admin can reject requisitions.", variant: "destructive" });
+        toast({ title: "Unauthorized", description: "Only HR or Admin can reject requisitions.", variant: "destructive" });
         setHrDecisionAction("");
         return;
       }
@@ -1206,7 +1205,7 @@ const RequisitionsPage = () => {
       return;
     }
     if (status === "approved" && !canRejectRequisition) {
-      toast({ title: "Unauthorized", description: "Only HR or Chief Admin can reject approved requisitions.", variant: "destructive" });
+      toast({ title: "Unauthorized", description: "Only HR or Admin can reject approved requisitions.", variant: "destructive" });
       return;
     }
 
@@ -1446,7 +1445,7 @@ const RequisitionsPage = () => {
 
   const handleBulkReject = async () => {
     if (!canRejectRequisition) {
-      toast({ title: "Unauthorized", description: "Only HR or Chief Admin can reject requisitions.", variant: "destructive" });
+      toast({ title: "Unauthorized", description: "Only HR or Admin can reject requisitions.", variant: "destructive" });
       return;
     }
 
@@ -2358,9 +2357,9 @@ const RequisitionsPage = () => {
                                     <Printer className="mr-2 h-4 w-4 text-indigo-700" /> <span className="text-gray-700">Print Images</span>
                                 </DropdownMenuItem>
 
-                                {userIsChiefAdmin && <DropdownMenuSeparator />}
+                                {userIsAdmin && <DropdownMenuSeparator />}
 
-                                {userIsChiefAdmin && (
+                                {userIsAdmin && (
                                     <DropdownMenuItem onClick={() => openEditDialog(record)}>
                                         <Edit className="mr-2 h-4 w-4 text-gray-600" /> <span className="text-gray-700">Edit</span>
                                     </DropdownMenuItem>
@@ -2690,7 +2689,7 @@ const RequisitionsPage = () => {
             <DialogTitle>Reject Selected Requisitions</DialogTitle>
             <DialogDescription>
               Enter one SMS message to apply to all selected approved
-              requisitions. Only HR or Chief Admin can perform this action.
+              requisitions. Only HR or Admin can perform this action.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
@@ -2992,3 +2991,6 @@ const RequisitionsPage = () => {
 };
 
 export default RequisitionsPage;
+
+
+
