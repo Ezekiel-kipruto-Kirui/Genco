@@ -23,6 +23,8 @@ const HR_IDENTIFIERS = new Set([
 const PROJECT_MANAGER_IDENTIFIERS = new Set(["project manager", "project officer"]);
 const FINANCE_IDENTIFIERS = new Set(["finance"]);
 const OFFTAKE_IDENTIFIERS = new Set(["offtake officer"]);
+const EXECUTIVE_ASSISTANT_IDENTIFIERS = new Set(["executive assistant", "executive assitant"]);
+const STAFF_IDENTIFIERS = new Set(["staff"]);
 const FIELD_OFFICER_IDENTIFIERS = new Set(["field officer", "fieldofficer", "mobile", "mobile user"]);
 const BLOCKED_STATUS_IDENTIFIERS = new Set([
   "inactive",
@@ -72,6 +74,9 @@ const DISPLAY_NAME_MAP = new Map<string, string>([
   ["human resource manger", "Human Resource Manager"],
   ["finance", "Finance"],
   ["offtake officer", "Offtake Officer"],
+  ["executive assistant", "Executive Assistant"],
+  ["executive assitant", "Executive Assistant"],
+  ["staff", "Staff"],
   ["chief operations manager", "Chief Operations Officer"],
   ["chief operational manager", "Chief Operations Officer"],
   ["chief operations officer", "Chief Operations Officer"],
@@ -156,6 +161,19 @@ export const isOfftakeOfficer = (value: string | null | undefined): boolean => {
   const normalized = normalizeAttribute(value) || normalizeRole(value);
   return OFFTAKE_IDENTIFIERS.has(normalized);
 };
+
+export const isExecutiveAssistant = (value: string | null | undefined): boolean => {
+  const normalized = normalizeAttribute(value) || normalizeRole(value);
+  return EXECUTIVE_ASSISTANT_IDENTIFIERS.has(normalized);
+};
+
+export const isStaff = (value: string | null | undefined): boolean => {
+  const normalized = normalizeAttribute(value) || normalizeRole(value);
+  return STAFF_IDENTIFIERS.has(normalized);
+};
+
+export const isOrdersOnlyRole = (value: string | null | undefined): boolean =>
+  isExecutiveAssistant(value) || isStaff(value);
 
 export const isMobileUser = (
   userRole: string | null | undefined,
@@ -376,6 +394,7 @@ export const canAccessOrdersSection = (
   if (isMobileUser(userRole, userAttribute)) return false;
   const principal = resolvePermissionPrincipal(userRole, userAttribute);
   return (
+    isOrdersOnlyRole(principal) ||
     isOfftakeOfficer(principal) ||
     isAdmin(principal) ||
     isFullAccessAttribute(principal)
@@ -389,6 +408,7 @@ export const getLandingRouteForRole = (
   if (isMobileUser(userRole, userAttribute)) return "/auth";
   const principal = resolvePermissionPrincipal(userRole, userAttribute);
 
+  if (isOrdersOnlyRole(principal)) return "/orders";
   if (isOfftakeOfficer(principal)) return "/orders";
   if (canAccessDashboard(userRole, userAttribute)) return "/dashboard";
   return "/auth";
@@ -414,6 +434,8 @@ export const hasAnyRole = (
       if (PROJECT_MANAGER_IDENTIFIERS.has(allowedRole)) return permissionTokens.some((token) => isProjectManager(token));
       if (FINANCE_IDENTIFIERS.has(allowedRole)) return permissionTokens.some((token) => isFinance(token));
       if (OFFTAKE_IDENTIFIERS.has(allowedRole)) return permissionTokens.some((token) => isOfftakeOfficer(token));
+      if (EXECUTIVE_ASSISTANT_IDENTIFIERS.has(allowedRole)) return permissionTokens.some((token) => isExecutiveAssistant(token));
+      if (STAFF_IDENTIFIERS.has(allowedRole)) return permissionTokens.some((token) => isStaff(token));
       if (FULL_ACCESS_ATTRIBUTE_IDENTIFIERS.has(allowedRole)) return permissionTokens.some((token) => isFullAccessAttribute(token));
       return permissionTokens.includes(allowedRole);
     });

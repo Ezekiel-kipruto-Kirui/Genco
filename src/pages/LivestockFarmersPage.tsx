@@ -26,6 +26,7 @@ import { useToast } from "@/hooks/use-toast";
 import { canViewAllProgrammes, isAdmin } from "@/contexts/authhelper";
 import {
   matchesActiveProgramme, normalizeProgramme,
+  getProgrammeQueryValues,
   resolveAccessibleProgrammes, resolveActiveProgramme
 } from "@/lib/programme-access";
 
@@ -100,6 +101,7 @@ interface Filters {
   subcounty: string;
   gender: string;
   location: string;
+  duplicateStatus: "unique" | "repeated" | "all";
 }
 
 interface Stats {
@@ -314,6 +316,15 @@ const dedupeFarmers = (records: FarmerData[]): FarmerData[] => {
   return sortFarmersByLatest(Array.from(uniqueRecords.values()));
 };
 
+const getDuplicateKeyCounts = (records: FarmerData[]): Map<string, number> => {
+  const counts = new Map<string, number>();
+  records.forEach((record) => {
+    const key = getFarmerDuplicateKey(record);
+    counts.set(key, (counts.get(key) || 0) + 1);
+  });
+  return counts;
+};
+
 const processTrainingRecord = (
   key: string,
   item: any,
@@ -368,6 +379,7 @@ const LivestockFarmersPage = () => {
     subcounty: "all",
     gender: "all",
     location: "all",
+    duplicateStatus: "unique",
   });
 
   const [stats, setStats] = useState<Stats>({
@@ -431,16 +443,6 @@ const LivestockFarmersPage = () => {
     return false;
   };
 
-  const getCachedData = (key: string) => {
-    try {
-      const cached = localStorage.getItem(key);
-      if (cached) return JSON.parse(cached);
-    } catch (e) {
-      console.error("Cache read error", e);
-    }
-    return null;
-  };
-
   useEffect(() => {
     setAvailablePrograms(accessibleProgrammes);
   }, [accessibleProgrammes]);
@@ -460,43 +462,65 @@ const LivestockFarmersPage = () => {
     setLoading(true);
 
     const cacheKey = `farmers_cache_${activeProgram}`;
-    const cachedFarmers = getCachedData(cacheKey);
-    if (cachedFarmers && cachedFarmers.length > 0) {
-      setAllFarmers(dedupeFarmers(cachedFarmers));
+    localStorage.removeItem(cacheKey);
+
+    const queryValues = getProgrammeQueryValues(activeProgram);
+    if (queryValues.length === 0) {
+      setAllFarmers([]);
       setLoading(false);
+      return;
     }
 
-    const farmersQuery = query(
-      ref(db, "farmers"),
-      orderByChild("programme"),
-      equalTo(activeProgram)
-    );
+    const querySnapshots = new Map<string, Map<string, FarmerData>>();
+    const mergeSnapshots = () => {
+      const mergedRecords = new Map<string, FarmerData>();
+      querySnapshots.forEach((records) => {
+        records.forEach((record, id) => mergedRecords.set(id, record));
+      });
+      const records = sortFarmersByLatest(Array.from(mergedRecords.values()));
+      setAllFarmers(records);
+      setLoading(false);
+    };
 
-    const unsubscribe = onValue(
-      farmersQuery,
-      (snapshot) => {
+    const unsubscribers = ["programme", "Programme"].flatMap((fieldName) =>
+      queryValues.map((programmeValue) => {
+        const farmersQuery = query(
+          ref(db, "farmers"),
+          orderByChild(fieldName),
+          equalTo(programmeValue)
+        );
+        const queryKey = `${fieldName}:${programmeValue}`;
+        return onValue(
+          farmersQuery,
+          (snapshot) => {
         const data = snapshot.val();
         const records = data && typeof data === "object"
-          ? Object.entries(data).map(([key, item]) => processFarmerRecord(key, item, activeProgram))
-          : [];
+          ? new Map(
+              Object.entries(data).map(([key, item]) => [
+                key,
+                processFarmerRecord(key, item, activeProgram),
+              ])
+            )
+          : new Map<string, FarmerData>();
 
-        setAllFarmers(dedupeFarmers(records));
-        localStorage.removeItem(cacheKey);
-        setLoading(false);
-      },
-      (error) => {
-        console.error("Error loading livestock farmers:", error);
-        toast({
-          title: "Error",
-          description: "Failed to load livestock farmers.",
-          variant: "destructive",
-        });
-        setLoading(false);
-      }
+            querySnapshots.set(queryKey, records);
+            mergeSnapshots();
+          },
+          (error) => {
+            console.error("Error loading livestock farmers:", error);
+            toast({
+              title: "Error",
+              description: "Failed to load livestock farmers.",
+              variant: "destructive",
+            });
+            setLoading(false);
+          }
+        );
+      })
     );
 
     return () => {
-      unsubscribe();
+      unsubscribers.forEach((unsubscribe) => unsubscribe());
     };
   }, [activeProgram, toast]);
 
@@ -510,64 +534,52 @@ const LivestockFarmersPage = () => {
     }
 
     const cacheKey = `training_cache_${activeProgram}`;
-    const cachedTraining = getCachedData(cacheKey);
-    if (cachedTraining && cachedTraining.length > 0) {
-      setTrainingRecords(cachedTraining);
+    localStorage.removeItem(cacheKey);
+
+    const queryValues = getProgrammeQueryValues(activeProgram);
+    if (queryValues.length === 0) {
+      setTrainingRecords([]);
+      return;
     }
 
-    const trainingQuery = query(
-      ref(db, "capacityBuilding"),
-      orderByChild("programme"),
-      equalTo(activeProgram)
+    const querySnapshots = new Map<string, Map<string, TrainingData>>();
+    const mergeSnapshots = () => {
+      const mergedRecords = new Map<string, TrainingData>();
+      querySnapshots.forEach((records) => {
+        records.forEach((record, id) => mergedRecords.set(id, record));
+      });
+      setTrainingRecords(Array.from(mergedRecords.values()));
+    };
+
+    const unsubscribers = ["programme", "Programme"].flatMap((fieldName) =>
+      queryValues.map((programmeValue) => {
+        const trainingQuery = query(
+          ref(db, "capacityBuilding"),
+          orderByChild(fieldName),
+          equalTo(programmeValue)
+        );
+        const queryKey = `${fieldName}:${programmeValue}`;
+        return onValue(trainingQuery, (snapshot) => {
+          const data = snapshot.val();
+          const records = data && typeof data === "object"
+            ? new Map(
+                Object.entries(data).map(([key, item]) => [
+                  key,
+                  processTrainingRecord(key, item, activeProgram),
+                ])
+              )
+            : new Map<string, TrainingData>();
+
+          querySnapshots.set(queryKey, records);
+          mergeSnapshots();
+        });
+      })
     );
 
-    const unsubscribe = onValue(trainingQuery, (snapshot) => {
-      const data = snapshot.val();
-      const records = data && typeof data === "object"
-        ? Object.entries(data).map(([key, item]) => processTrainingRecord(key, item, activeProgram))
-        : [];
-
-      setTrainingRecords(records);
-      localStorage.removeItem(cacheKey);
-    });
-
     return () => {
-      unsubscribe();
+      unsubscribers.forEach((unsubscribe) => unsubscribe());
     };
   }, [activeProgram]);
-
-  // =========================================================================
-  // Debounced cache persistence — avoids blocking main thread on rapid updates
-  // =========================================================================
-  useEffect(() => {
-    if (allFarmers.length === 0 || !activeProgram) return;
-
-    const cacheKey = `farmers_cache_${activeProgram}`;
-    const debounce = setTimeout(() => {
-      try {
-        localStorage.setItem(cacheKey, JSON.stringify(allFarmers));
-      } catch (e) {
-        console.warn("Cache write failed (likely full)", e);
-      }
-    }, 2000);
-
-    return () => clearTimeout(debounce);
-  }, [allFarmers, activeProgram]);
-
-  useEffect(() => {
-    if (trainingRecords.length === 0 || !activeProgram) return;
-
-    const cacheKey = `training_cache_${activeProgram}`;
-    const debounce = setTimeout(() => {
-      try {
-        localStorage.setItem(cacheKey, JSON.stringify(trainingRecords));
-      } catch (e) {
-        console.warn("Cache write failed", e);
-      }
-    }, 2000);
-
-    return () => clearTimeout(debounce);
-  }, [trainingRecords, activeProgram]);
 
   // =========================================================================
   // Filtering & Stats
@@ -613,7 +625,17 @@ const LivestockFarmersPage = () => {
       return true;
     });
 
-    const sortedFilteredFarmers = dedupeFarmers(filteredFarmersList);
+    const duplicateKeyCounts = getDuplicateKeyCounts(filteredFarmersList);
+    const sortedFilteredFarmers =
+      filters.duplicateStatus === "repeated"
+        ? sortFarmersByLatest(
+            filteredFarmersList.filter(
+              (record) => (duplicateKeyCounts.get(getFarmerDuplicateKey(record)) || 0) > 1
+            )
+          )
+        : filters.duplicateStatus === "all"
+          ? sortFarmersByLatest(filteredFarmersList)
+          : dedupeFarmers(filteredFarmersList);
     setFilteredFarmers(sortedFilteredFarmers);
 
     const filteredTraining = trainingRecords.filter((record) => {
@@ -676,6 +698,7 @@ const LivestockFarmersPage = () => {
       subcounty: "all",
       gender: "all",
       location: "all",
+      duplicateStatus: "unique",
     }));
     setSelectedRecords([]);
     setPagination((prev) => ({ ...prev, page: 1 }));
@@ -689,7 +712,7 @@ const LivestockFarmersPage = () => {
     }, 300);
   }, []);
 
-  const handleFilterChange = useCallback((key: keyof Filters, value: string) => {
+  const handleFilterChange = useCallback(<K extends keyof Filters>(key: K, value: Filters[K]) => {
     setFilters((prev) => ({ ...prev, [key]: value }));
     setPagination((prev) => ({ ...prev, page: 1 }));
   }, []);
@@ -1184,6 +1207,10 @@ const LivestockFarmersPage = () => {
     () => [...new Set(allFarmers.map((f) => f.gender).filter(Boolean))],
     [allFarmers]
   );
+  const duplicateKeyCounts = useMemo(
+    () => getDuplicateKeyCounts(allFarmers),
+    [allFarmers]
+  );
   const currentPageRecords = useMemo(getCurrentPageRecords, [getCurrentPageRecords]);
 
   // =========================================================================
@@ -1301,6 +1328,7 @@ const LivestockFarmersPage = () => {
                   subcounty: "all",
                   gender: "all",
                   location: "all",
+                  duplicateStatus: "unique",
                 })
               }
               className="h-10 px-6 w-full xl:w-auto"
@@ -1408,7 +1436,7 @@ const LivestockFarmersPage = () => {
       {/* ── Filters ── */}
       <Card className="shadow-lg border-0 bg-white">
         <CardContent className="space-y-6 pt-6">
-          <ScrollableFilterBar ariaLabel="Livestock farmer filters" contentClassName="sm:grid-cols-2 lg:grid-cols-5">
+          <ScrollableFilterBar ariaLabel="Livestock farmer filters" contentClassName="sm:grid-cols-2 lg:grid-cols-6">
             <div className="w-[190px] shrink-0 space-y-2 sm:w-auto">
               <Label className="font-semibold text-gray-700 text-xs uppercase">County</Label>
               <Select value={filters.county} onValueChange={(value) => handleFilterChange("county", value)}>
@@ -1469,6 +1497,20 @@ const LivestockFarmersPage = () => {
               </Select>
             </div>
 
+            <div className="w-[210px] shrink-0 space-y-2 sm:w-auto">
+              <Label className="font-semibold text-gray-700 text-xs uppercase">Registration Repetition</Label>
+              <Select value={filters.duplicateStatus} onValueChange={(value) => handleFilterChange("duplicateStatus", value as Filters["duplicateStatus"])}>
+                <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white h-9">
+                  <SelectValue placeholder="Unique Farmers" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="unique">Unique Farmers</SelectItem>
+                  <SelectItem value="repeated">Repeated Registrations</SelectItem>
+                  <SelectItem value="all">All Registrations</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
             <div className="w-[240px] shrink-0 space-y-2 sm:w-auto">
               <Label className="font-semibold text-gray-700 text-xs uppercase">Search</Label>
               <Input
@@ -1507,6 +1549,7 @@ const LivestockFarmersPage = () => {
                         />
                       </th>
                       <th className="py-3 px-3 font-semibold text-gray-700">Date</th>
+                      <th className="py-3 px-3 font-semibold text-gray-700">Registration</th>
                       <th className="py-3 px-3 font-semibold text-gray-700">Farmer Name</th>
                       <th className="py-3 px-3 font-semibold text-gray-700">Gender</th>
                       <th className="py-3 px-3 font-semibold text-gray-700">Phone</th>
@@ -1524,7 +1567,9 @@ const LivestockFarmersPage = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {currentPageRecords.map((record) => (
+                    {currentPageRecords.map((record) => {
+                      const duplicateCount = duplicateKeyCounts.get(getFarmerDuplicateKey(record)) || 1;
+                      return (
                       <tr key={record.id} className="border-b hover:bg-blue-50 transition-colors group">
                         <td className="py-2 px-3">
                           <Checkbox
@@ -1533,6 +1578,15 @@ const LivestockFarmersPage = () => {
                           />
                         </td>
                         <td className="py-2 px-3 text-xs text-gray-500">{formatDate(record.createdAt)}</td>
+                        <td className="py-2 px-3">
+                          {duplicateCount > 1 ? (
+                            <Badge className="bg-amber-100 text-amber-800 hover:bg-amber-100 text-[10px]">
+                              Repeat x{duplicateCount}
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" className="text-gray-500 text-[10px]">Unique</Badge>
+                          )}
+                        </td>
                         <td className="py-2 px-3 font-medium text-sm">{record.name}</td>
                         <td className="py-2 px-3">
                           <Badge variant={record.gender === "Female" ? "secondary" : "outline"} className="text-xs">
@@ -1593,7 +1647,8 @@ const LivestockFarmersPage = () => {
                           </div>
                         </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

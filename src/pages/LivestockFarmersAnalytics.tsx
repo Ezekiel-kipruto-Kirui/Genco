@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { ref, onValue } from "firebase/database";
+import { ref, onValue, query, orderByChild, equalTo } from "firebase/database";
 import { db } from "@/lib/firebase"; // Ensure this is getDatabase()
 import { useAuth } from "@/contexts/AuthContext";
 import { useQuery } from "@tanstack/react-query";
@@ -16,7 +16,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useSharedProgrammeSelection } from "@/hooks/use-shared-programme-selection";
 import { canViewAllProgrammes, isAdmin } from "@/contexts/authhelper";
-import { ALL_PROGRAMMES_VALUE, resolveAccessibleProgrammes } from "@/lib/programme-access";
+import {
+  ALL_PROGRAMMES_VALUE,
+  getProgrammeQueryValues,
+  normalizeProgramme as normalizeProg,
+  resolveAccessibleProgrammes,
+} from "@/lib/programme-access";
 
 // --- Constants ---
 const COLORS = {
@@ -145,16 +150,6 @@ const normalizePieChartData = (
     }));
 
 // --- Helper Functions ---
-
-const getCachedData = (key: string) => {
-  try {
-    const cached = localStorage.getItem(key);
-    if (cached) return JSON.parse(cached);
-  } catch (e) {
-    console.error("Cache read error", e);
-  }
-  return null;
-};
 
 const parseDate = (date: any): Date | null => {
   if (!date) return null;
@@ -386,8 +381,7 @@ const calculateActiveTarget = (
   return calculateDurationBasedTarget(start, end);
 };
 
-const normalizeProgramme = (value: unknown): string =>
-  typeof value === "string" ? value.trim().toUpperCase() : "";
+const normalizeProgramme = (value: unknown): string => normalizeProg(value);
 
 const parseNumericValue = (value: unknown): number => {
   if (typeof value === "number") {
@@ -707,28 +701,12 @@ const LivestockFarmersAnalytics = () => {
         return;
     }
     setLoading(true);
-    
-    const cacheKey = `farmers_cache_${activeProgram}`;
-    const cachedFarmers = getCachedData(cacheKey);
-    if (cachedFarmers && cachedFarmers.length > 0) {
-      setAllFarmers(cachedFarmers);
-      setLoading(false);
-    }
 
-    const farmersRef = ref(db, 'farmers');
-    const unsubscribe = onValue(farmersRef, (snapshot) => {
-      const data = snapshot.val();
-      if (!data) {
-        setAllFarmers([]);
-        setLoading(false);
-        localStorage.removeItem(cacheKey); 
-        return;
-      }
-
-      const normalizedActiveProgram = normalizeProgramme(activeProgram);
-      const farmersList = Object.keys(data)
+    const normalizedActiveProgram = normalizeProgramme(activeProgram);
+    const mapFarmers = (data: Record<string, any> | null | undefined): FarmerData[] =>
+      Object.keys(data || {})
         .map<FarmerData | null>((key) => {
-          const item = data[key] || {};
+          const item = data?.[key] || {};
           const programme = normalizeProgramme(item.programme ?? item.Programme);
           if (normalizedActiveProgram && normalizedActiveProgram !== "ALL" && programme !== normalizedActiveProgram) {
             return null;
@@ -755,22 +733,53 @@ const LivestockFarmersAnalytics = () => {
             username: item.username || item.created_by || item.createdBy || item.fieldOfficer || item.officer || 'Unknown User'
           };
         })
-        .filter((item): item is FarmerData => item !== null);
-      farmersList.sort((a, b) => getDateTimestamp(b.createdAt) - getDateTimestamp(a.createdAt));
-      setAllFarmers(farmersList);
+        .filter((item): item is FarmerData => item !== null)
+        .sort((a, b) => getDateTimestamp(b.createdAt) - getDateTimestamp(a.createdAt));
+
+    if (activeProgram === ALL_PROGRAMMES_VALUE) {
+      const unsubscribe = onValue(ref(db, "farmers"), (snapshot) => {
+        setAllFarmers(mapFarmers(snapshot.val()));
+        setLoading(false);
+      }, (error) => {
+        console.error("Error fetching farmers data:", error);
+        setLoading(false);
+      });
+      return () => { if (typeof unsubscribe === "function") unsubscribe(); };
+    }
+
+    const queryValues = getProgrammeQueryValues(activeProgram);
+    if (queryValues.length === 0) {
+      setAllFarmers([]);
       setLoading(false);
-      if (normalizedActiveProgram !== "ALL") {
-        try {
-          localStorage.setItem(cacheKey, JSON.stringify(farmersList));
-        } catch (e) {
-          console.warn("Cache write failed", e);
-        }
-      }
-    }, (error) => {
-      console.error("Error fetching farmers data:", error);
+      return;
+    }
+
+    const querySnapshots = new Map<string, Record<string, any>>();
+    const mergeSnapshots = () => {
+      const merged: Record<string, any> = {};
+      querySnapshots.forEach((records) => Object.assign(merged, records));
+      setAllFarmers(mapFarmers(merged));
       setLoading(false);
-    });
-    return () => { if(typeof unsubscribe === 'function') unsubscribe(); };
+    };
+
+    const unsubscribers = ["programme", "Programme"].flatMap((fieldName) =>
+      queryValues.map((programmeValue) => {
+        const queryKey = `${fieldName}:${programmeValue}`;
+        return onValue(
+          query(ref(db, "farmers"), orderByChild(fieldName), equalTo(programmeValue)),
+          (snapshot) => {
+            querySnapshots.set(queryKey, snapshot.val() || {});
+            mergeSnapshots();
+          },
+          (error) => {
+            console.error("Error fetching farmers data:", error);
+            setLoading(false);
+          },
+        );
+      }),
+    );
+
+    return () => { unsubscribers.forEach((unsubscribe) => unsubscribe()); };
   }, [activeProgram]);
 
   // --- 3. Data Fetching (Capacity Building) ---
@@ -780,48 +789,64 @@ const LivestockFarmersAnalytics = () => {
         setTrainingRecords([]);
         return;
     }
-    const cacheKey = `training_cache_${activeProgram}`;
-    const cachedTraining = getCachedData(cacheKey);
-    if (cachedTraining && cachedTraining.length > 0) {
-        setTrainingRecords(cachedTraining);
-    }
-    const trainingRef = ref(db, 'capacityBuilding');
-    const unsubscribe = onValue(trainingRef, (snapshot) => {
-        const data = snapshot.val();
-        if (!data) {
-            setTrainingRecords([]);
-            localStorage.removeItem(cacheKey);
-            return;
-        }
-        const normalizedActiveProgram = normalizeProgramme(activeProgram);
-        const records = Object.keys(data)
-          .map((key) => {
-            const item = data[key] || {};
-            const programme = normalizeProgramme(item.programme ?? item.Programme);
-            if (normalizedActiveProgram && normalizedActiveProgram !== "ALL" && programme !== normalizedActiveProgram) {
-              return null;
-            }
-            return {
-              id: key,
-              ...item,
-              programme,
-              startDate: item.startDate || item.start_date || item.date || item.Date,
-              createdAt: item.createdAt ?? item.created_at ?? item.startDate ?? item.start_date ?? item.date ?? item.Date,
-            };
-          })
-          .filter((item): item is TrainingData => item !== null);
-        setTrainingRecords(records);
-        if (normalizedActiveProgram !== "ALL") {
-          try {
-            localStorage.setItem(cacheKey, JSON.stringify(records));
-          } catch (e) {
-            console.warn("Cache write failed", e);
+    const normalizedActiveProgram = normalizeProgramme(activeProgram);
+    const mapTraining = (data: Record<string, any> | null | undefined): TrainingData[] =>
+      Object.keys(data || {})
+        .map((key) => {
+          const item = data?.[key] || {};
+          const programme = normalizeProgramme(item.programme ?? item.Programme);
+          if (normalizedActiveProgram && normalizedActiveProgram !== "ALL" && programme !== normalizedActiveProgram) {
+            return null;
           }
-        }
-    }, (error) => {
+          return {
+            id: key,
+            ...item,
+            programme,
+            startDate: item.startDate || item.start_date || item.date || item.Date,
+            createdAt: item.createdAt ?? item.created_at ?? item.startDate ?? item.start_date ?? item.date ?? item.Date,
+          };
+        })
+        .filter((item): item is TrainingData => item !== null);
+
+    if (activeProgram === ALL_PROGRAMMES_VALUE) {
+      const unsubscribe = onValue(ref(db, "capacityBuilding"), (snapshot) => {
+        setTrainingRecords(mapTraining(snapshot.val()));
+      }, (error) => {
         console.error("Error fetching training data:", error);
-    });
-    return () => { if(typeof unsubscribe === 'function') unsubscribe(); };
+      });
+      return () => { if (typeof unsubscribe === "function") unsubscribe(); };
+    }
+
+    const queryValues = getProgrammeQueryValues(activeProgram);
+    if (queryValues.length === 0) {
+      setTrainingRecords([]);
+      return;
+    }
+
+    const querySnapshots = new Map<string, Record<string, any>>();
+    const mergeSnapshots = () => {
+      const merged: Record<string, any> = {};
+      querySnapshots.forEach((records) => Object.assign(merged, records));
+      setTrainingRecords(mapTraining(merged));
+    };
+
+    const unsubscribers = ["programme", "Programme"].flatMap((fieldName) =>
+      queryValues.map((programmeValue) => {
+        const queryKey = `${fieldName}:${programmeValue}`;
+        return onValue(
+          query(ref(db, "capacityBuilding"), orderByChild(fieldName), equalTo(programmeValue)),
+          (snapshot) => {
+            querySnapshots.set(queryKey, snapshot.val() || {});
+            mergeSnapshots();
+          },
+          (error) => {
+            console.error("Error fetching training data:", error);
+          },
+        );
+      }),
+    );
+
+    return () => { unsubscribers.forEach((unsubscribe) => unsubscribe()); };
   }, [activeProgram]);
 
   // --- 4. Filtering & Analytics Logic ---

@@ -13,7 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { Download, Users, User, Edit, Trash2, Mail, Shield, Calendar, Eye, Phone, Plus, AlertTriangle, Briefcase, ChevronLeft, ChevronRight } from "lucide-react";
+import { Download, Users, User, Edit, Trash2, Mail, Shield, Calendar, Eye, Phone, Plus, AlertTriangle, ChevronLeft, ChevronRight } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
 import {
@@ -114,7 +114,6 @@ const EXPORT_HEADERS = [
   "Email",
   "Phone Number",
   "Role",
-  "Attribute",
   "Status",
   "Created At",
   "Last Login",
@@ -125,9 +124,10 @@ const EXPORT_HEADERS = [
 const AVAILABLE_PROGRAMMES = [
   "KPMD", 
   "RANGE",
-  "MTLDK",
+  "KPMD2",
 ];
-const USER_ATTRIBUTE_OPTIONS = [
+const USER_ROLE_OPTIONS = [
+  "User",
   "Field Officer",
   "Chief Executive Officer",
   "Chief Operations Officer",
@@ -136,14 +136,13 @@ const USER_ATTRIBUTE_OPTIONS = [
   "M&E Officer",
   "Finance",
   "Offtake Officer",
+  "Executive Assistant",
+  "Staff",
 ] as const;
-const NO_ATTRIBUTE_VALUE = "__none__";
 const ROLE_OPTIONS = [
   { value: "admin", label: "Admin" },
-  ...USER_ATTRIBUTE_OPTIONS.map((attribute) => ({ value: attribute, label: attribute })),
+  ...USER_ROLE_OPTIONS.map((role) => ({ value: role, label: role })),
 ] as const;
-type RoleSelection = (typeof ROLE_OPTIONS)[number]["value"];
-type SystemRole = "admin" | "user";
 const LEGACY_ROLE_ATTRIBUTE_MAP: Record<string, string> = {
   "mobile": "Field Officer",
   "mobile user": "Field Officer",
@@ -164,6 +163,9 @@ const LEGACY_ROLE_ATTRIBUTE_MAP: Record<string, string> = {
   "monitoring & evaluation officer": "M&E Officer",
   "finance": "Finance",
   "offtake officer": "Offtake Officer",
+  "executive assistant": "Executive Assistant",
+  "executive assitant": "Executive Assistant",
+  "staff": "Staff",
   "ceo": "Chief Executive Officer",
   "chief executive officer": "Chief Executive Officer",
   "chief operations manager": "Chief Operations Officer",
@@ -251,8 +253,8 @@ const getCustomAttributeText = (accessControl?: AccessControl): string => {
   return "";
 };
 
-const normalizeSelectableAttribute = (attribute: string) =>
-  USER_ATTRIBUTE_OPTIONS.includes(attribute as typeof USER_ATTRIBUTE_OPTIONS[number]) ? attribute : "";
+const normalizeSelectableRole = (role: string) =>
+  USER_ROLE_OPTIONS.includes(role as typeof USER_ROLE_OPTIONS[number]) ? role : "";
 
 const formatRoleLabel = (role: string): string => {
   const normalized = normalizeRole(role);
@@ -267,10 +269,11 @@ const formatRoleLabel = (role: string): string => {
     .join(" ");
 };
 
-const normalizeSystemRole = (role: string | null | undefined): SystemRole => {
+const normalizeSystemRole = (role: string | null | undefined): string => {
   const normalized = normalizeRole(role);
   if (normalized === "admin") return "admin";
-  return "user";
+  const selectedRole = ROLE_OPTIONS.find((option) => normalizeRole(option.value) === normalized);
+  return selectedRole?.value || "user";
 };
 
 const isFieldOfficerSelection = (role: string | null | undefined): boolean =>
@@ -283,25 +286,28 @@ const getAttributeFromLegacyRole = (
   return LEGACY_ROLE_ATTRIBUTE_MAP[normalized] || "";
 };
 
-const getEffectiveAttribute = (record: UserRecord): string => {
-  const fromAccessControl = normalizeSelectableAttribute(
+const getEffectiveLegacyRole = (record: UserRecord): string => {
+  const fromAccessControl = normalizeSelectableRole(
     getCustomAttributeText(record.accessControl),
   );
   if (fromAccessControl) return fromAccessControl;
   return getAttributeFromLegacyRole(record.role);
 };
 
-const getEffectiveRole = (record: UserRecord): string =>
-  normalizeSystemRole(record.role);
+const getEffectiveRole = (record: UserRecord): string => {
+  const normalizedRole = normalizeSystemRole(record.role);
+  if (normalizedRole !== "user") return normalizedRole;
+  return getEffectiveLegacyRole(record) || "user";
+};
 
 const getDisplayRole = (record: UserRecord): string =>
-  getEffectiveRole(record) === "admin" ? "Admin" : getEffectiveAttribute(record) || "User";
+  formatRoleLabel(getEffectiveRole(record));
 
 const getRoleSelectionFromRecord = (record: UserRecord): string =>
-  getEffectiveRole(record) === "admin" ? "admin" : getEffectiveAttribute(record) || "user";
+  getEffectiveRole(record) === "user" ? "User" : getEffectiveRole(record);
 
 const getRecordPermissionPrincipal = (record: UserRecord): string =>
-  resolvePermissionPrincipal(getEffectiveRole(record), getEffectiveAttribute(record));
+  resolvePermissionPrincipal(getEffectiveRole(record), getEffectiveLegacyRole(record));
 
 const parseDate = (date: any): Date | null => {
   if (!date) return null;  
@@ -518,8 +524,6 @@ interface TableRowProps {
 const TableRow = ({ record, selectedRecords, onSelectRecord, onView, onEdit, onDeleteClick, userIsAdmin }: TableRowProps) => {
   const effectiveRole = getEffectiveRole(record);
   const displayRole = getDisplayRole(record);
-  const attribute = getEffectiveAttribute(record);
-  const principal = getRecordPermissionPrincipal(record);
 
   return (
     <tr className="border-b border-gray-100 hover:bg-blue-50/60 transition-all duration-200 group text-sm">
@@ -550,24 +554,6 @@ const TableRow = ({ record, selectedRecords, onSelectRecord, onView, onEdit, onD
         >
           {record.status ? record.status.charAt(0).toUpperCase() + record.status.slice(1) : "N/A"}
         </Badge>
-      </td>
-      <td className="py-3 px-4 text-sm">
-        {attribute ? (
-          <Badge
-            variant="secondary"
-            className={
-              isHummanResourceManager(principal) ? "bg-orange-100 text-orange-800" :
-              isProjectManager(principal) ? "bg-emerald-100 text-emerald-800" :
-              isFinance(principal) ? "bg-cyan-100 text-cyan-800" :
-              isOfftakeOfficer(principal) ? "bg-amber-100 text-amber-800" :
-              "bg-slate-100 text-slate-800"
-            }
-          >
-            {attribute}
-          </Badge>
-        ) : (
-          <span className="text-gray-400 text-xs">—</span>
-        )}
       </td>
       <td className="py-3 px-4 text-sm text-gray-600">{formatDate(record.createdAt)}</td>
       <td className="py-3 px-4 text-sm">
@@ -698,7 +684,7 @@ const UserManagementPage = () => {
     phoneNumber: "",
     county: "",
     subcounty: "",
-    role: "user",
+    role: "User",
     password: "",
     confirmPassword: "",
     customAttribute: "",
@@ -847,9 +833,7 @@ const UserManagementPage = () => {
   // Main filtering logic
   const filterAndProcessData = useCallback((records: UserRecord[], searchTerm: string, filterParams: Omit<Filters, 'search'>) => {
     const filtered = records.filter(record => {
-      const effectiveRole = getEffectiveRole(record);
       const displayRole = getDisplayRole(record);
-      const attributeSearchText = getEffectiveAttribute(record);
 
       if (filterParams.role !== "all" && displayRole !== filterParams.role) {
         return false;
@@ -889,7 +873,6 @@ const UserManagementPage = () => {
           record.phoneNumber,
           record.phone,
           displayRole,
-          attributeSearchText,
         ].some(field => field?.toLowerCase().includes(searchTermLower));
         if (!searchMatch) return false;
       }
@@ -978,7 +961,6 @@ const UserManagementPage = () => {
         record.email || "N/A",
         record.phoneNumber || record.phone || "N/A",
         getDisplayRole(record),
-        getEffectiveAttribute(record) || "N/A",
         record.status || "N/A",
         formatDate(record.createdAt),
         formatDate(record.lastLogin),
@@ -1066,7 +1048,7 @@ const UserManagementPage = () => {
       subcounty: record.subcounty || "",
       role: getRoleSelectionFromRecord(record),
       status: record.status || "active",
-      customAttribute: getEffectiveAttribute(record),
+      customAttribute: "",
       allowedProgrammes: mergedProgs
     });
     setIsEditDialogOpen(true);
@@ -1085,7 +1067,7 @@ const UserManagementPage = () => {
       phoneNumber: "",
       county: "",
       subcounty: "",
-      role: "user",
+      role: "User",
       password: "",
       confirmPassword: "",
       customAttribute: "",
@@ -1112,7 +1094,6 @@ const UserManagementPage = () => {
 
     try {
       const normalizedRole = normalizeSystemRole(editForm.role);
-      const selectedAttribute = normalizedRole === "admin" ? "" : editForm.role;
       const isFieldOfficer = isFieldOfficerSelection(editForm.role);
       if (isFieldOfficer && (!editForm.county.trim() || !editForm.subcounty.trim())) {
         toast({
@@ -1131,7 +1112,7 @@ const UserManagementPage = () => {
         subcounty: isFieldOfficer ? editForm.subcounty.trim() : "",
         role: normalizedRole,
         status: editForm.status,
-        accessControl: buildAccessControl(selectedAttribute),
+        accessControl: buildAccessControl(""),
         allowedProgrammes: editForm.allowedProgrammes,
         updatedAt: serverTimestamp()
       });
@@ -1171,7 +1152,6 @@ const UserManagementPage = () => {
     try {
       setAddLoading(true);
       const normalizedRole = normalizeSystemRole(addForm.role);
-      const selectedAttribute = normalizedRole === "admin" ? "" : addForm.role;
       const isFieldOfficer = isFieldOfficerSelection(addForm.role);
       if (isFieldOfficer && (!addForm.county.trim() || !addForm.subcounty.trim())) {
         toast({
@@ -1199,7 +1179,7 @@ const UserManagementPage = () => {
         subcounty: isFieldOfficer ? addForm.subcounty.trim() : "",
         role: normalizedRole,
         status: "active",
-        accessControl: buildAccessControl(selectedAttribute),
+        accessControl: buildAccessControl(""),
         allowedProgrammes: addForm.allowedProgrammes,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
@@ -1214,7 +1194,7 @@ const UserManagementPage = () => {
         phoneNumber: "",
         county: "",
         subcounty: "",
-        role: "user",
+        role: "User",
         password: "",
         confirmPassword: "",
         customAttribute: "",
@@ -1402,7 +1382,7 @@ const UserManagementPage = () => {
 
         <StatsCard title="Admin Users" value={stats.adminUsers} icon={Shield} description="Administrative users" />
         <StatsCard title="Field Officers" value={stats.fieldOfficerUsers} icon={User} description="Field data users" />
-        <StatsCard title="Attribute Roles" value={stats.hrUsers + stats.projectManagerUsers + stats.financeUsers + stats.offtakeOfficerUsers} icon={Users} description="Assigned attribute roles" />
+        <StatsCard title="Role Assignments" value={stats.hrUsers + stats.projectManagerUsers + stats.financeUsers + stats.offtakeOfficerUsers} icon={Users} description="Assigned operational roles" />
 
       </div>
 
@@ -1457,7 +1437,6 @@ const UserManagementPage = () => {
                       <th className="text-left py-3.5 px-4 font-semibold text-white/95">Name</th>
                       <th className="text-left py-3.5 px-4 font-semibold text-white/95">Role</th>
                       <th className="text-left py-3.5 px-4 font-semibold text-white/95">Status</th>
-                      <th className="text-left py-3.5 px-4 font-semibold text-white/95">Attribute</th>
                       <th className="text-left py-3.5 px-4 font-semibold text-white/95">Created</th>
                       <th className="text-left py-3.5 px-4 font-semibold text-white/95">Actions</th>
                     </tr>
@@ -1587,15 +1566,6 @@ const UserManagementPage = () => {
                   )}
                 </div>
               </div>
-
-              {/* Attribute */}
-              <div className="bg-gradient-to-br from-slate-50 to-slate-100/50 rounded-xl p-4 border border-slate-200">
-                <h5 className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-2 flex items-center gap-2">
-                  <Briefcase className="h-3.5 w-3.5" /> Attribute
-                </h5>
-                <p className="text-sm text-slate-900 font-medium">{getEffectiveAttribute(viewingRecord) || "N/A"}</p>
-              </div>
-
               {/* Coverage Area */}
               {(viewingRecord.county || viewingRecord.subcounty) && (
                 <div className="bg-gradient-to-br from-slate-50 to-slate-100/50 rounded-xl p-4 border border-slate-200">

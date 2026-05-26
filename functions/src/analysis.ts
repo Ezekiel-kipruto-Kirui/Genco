@@ -3,10 +3,10 @@ import * as admin from "firebase-admin";
 import {onValueWritten} from "firebase-functions/v2/database";
 import {onCall, HttpsError} from "firebase-functions/v2/https";
 
-const PROGRAMME_OPTIONS = ["KPMD", "RANGE", "MTLDK"] as const;
+const PROGRAMME_OPTIONS = ["KPMD", "RANGE", "KPMD2"] as const;
 const CACHE_TTL_MS = 2 * 60 * 1000;
 const PERSISTENT_CACHE_TTL_MS = 15 * 60 * 1000;
-const ANALYSIS_CACHE_VERSION = "v11";
+const ANALYSIS_CACHE_VERSION = "v13";
 const ANALYTICS_CACHE_ROOT = "__analyticsCache";
 const QUARTER_TARGET = 351;
 const QUARTER_TARGET_MILESTONES = [352, 702, 1053, 1404];
@@ -254,7 +254,15 @@ const toProgramme = (value: unknown): string => {
   const normalized = normalize(value);
   if (!normalized) return "";
   if (normalized === "all") return "ALL";
+  if (normalized === "mtldk" || normalized === "kpmd 2" || normalized === "kpmd-2") return "KPMD2";
   return normalized.toUpperCase();
+};
+
+const getProgrammeQueryValues = (programme: unknown): string[] => {
+  const normalized = toProgramme(programme);
+  if (!normalized || normalized === "ALL") return [];
+  if (normalized === "KPMD2") return ["KPMD2", "KPMD 2", "KPMD-2", "MTLDK"];
+  return [normalized];
 };
 
 const parseNumber = (value: unknown): number => {
@@ -922,14 +930,49 @@ const getRecordProgramme = (record: Record<string, unknown>): string => {
   const candidates = [record.programme, record.Programme];
 
   for (const candidate of candidates) {
-    if (typeof candidate !== "string") continue;
-    const trimmed = candidate.trim();
-    if (PROGRAMME_OPTIONS.includes(trimmed as (typeof PROGRAMME_OPTIONS)[number])) {
-      return trimmed;
+    const programme = toProgramme(candidate);
+    if (PROGRAMME_OPTIONS.includes(programme as (typeof PROGRAMME_OPTIONS)[number])) {
+      return programme;
     }
   }
 
   return "";
+};
+
+const normalizeDuplicateToken = (value: unknown): string =>
+  String(value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+
+const isUsableIdentityValue = (value: unknown): boolean => {
+  const normalized = normalizeDuplicateToken(value);
+  return Boolean(normalized) && !["n/a", "na", "/a", "0", "0.0", "null", "undefined"].includes(normalized);
+};
+
+const getFarmerDuplicateKey = (record: Record<string, unknown>): string => {
+  if (isUsableIdentityValue(record.farmerId)) return `farmer:${normalizeDuplicateToken(record.farmerId)}`;
+  if (isUsableIdentityValue(record.idNumber)) return `id:${normalizeDuplicateToken(record.idNumber)}`;
+  if (isUsableIdentityValue(record.phone)) return `phone:${normalizeDuplicateToken(record.phone)}`;
+
+  return [
+    "profile",
+    normalizeDuplicateToken(getFarmerDisplayName(record)),
+    normalizeDuplicateToken(record.county),
+    normalizeDuplicateToken(record.subcounty),
+    normalizeDuplicateToken(record.location),
+    normalizeDuplicateToken(getRecordProgramme(record)),
+  ].join(":");
+};
+
+const dedupeFarmerRecords = <T extends Record<string, unknown>>(records: T[]): T[] => {
+  const uniqueRecords = new Map<string, T>();
+  [...records]
+    .sort((left, right) =>
+      (getFarmerRegistrationDate(right)?.getTime() || 0) -
+      (getFarmerRegistrationDate(left)?.getTime() || 0))
+    .forEach((record) => {
+      const key = getFarmerDuplicateKey(record);
+      if (!uniqueRecords.has(key)) uniqueRecords.set(key, record);
+    });
+  return Array.from(uniqueRecords.values());
 };
 
 const filterRecordsByDateRange = <T extends Record<string, unknown>>(
@@ -1155,7 +1198,11 @@ const fetchCollectionByProgrammes = async (
 
   const scopedRecords = await Promise.all(
     ["programme", "Programme"].flatMap((fieldName) =>
-      uniqueProgrammes.map((programme) => getCollectionRecordsByChildValue(collectionPath, fieldName, programme)),
+      uniqueProgrammes.flatMap((programme) =>
+        getProgrammeQueryValues(programme).map((queryValue) =>
+          getCollectionRecordsByChildValue(collectionPath, fieldName, queryValue),
+        ),
+      ),
     ),
   );
 
@@ -1517,6 +1564,7 @@ const createOverview = async (
     fetchCollectionByProgrammes("AnimalHealthActivities", programmes),
     fetchCollectionByProgrammes("BoreholeStorage", programmes),
   ]);
+  const uniqueFarmers = dedupeFarmerRecords(farmers);
 
   let maleFarmers = 0;
   let femaleFarmers = 0;
@@ -1528,7 +1576,7 @@ const createOverview = async (
   const regionMap: Record<string, number> = {};
   const availableYears = new Set<number>();
 
-  for (const farmer of farmers) {
+  for (const farmer of uniqueFarmers) {
     const farmerDate = getFarmerRegistrationDate(farmer);
     if (farmerDate) {
       availableYears.add(farmerDate.getFullYear());
@@ -1625,7 +1673,7 @@ const createOverview = async (
     scope: "overview",
     resolvedProgrammes: programmes,
     stats: {
-      totalFarmers: farmers.length,
+      totalFarmers: uniqueFarmers.length,
       maleFarmers,
       femaleFarmers,
       trainedFarmers,
@@ -1641,17 +1689,17 @@ const createOverview = async (
     topRegions,
     comparisonYears,
     maintainedInfrastructure: buildInfrastructureComparison(boreholes),
-    registrationComparison: buildOverviewRegistrationComparison(farmers),
-    animalCensusComparison: buildAnnualComparison(farmers, offtakes),
+    registrationComparison: buildOverviewRegistrationComparison(uniqueFarmers),
+    animalCensusComparison: buildAnnualComparison(uniqueFarmers, offtakes),
     animalCensusVsPurchased: [
       {name: "Goats on record", value: totalGoats, color: "#ffc107"},
       {name: "Goats purchased", value: totalGoatsPurchased, color: "#a80d10"},
     ],
-    vaccinationTrend: buildOverviewVaccinationTrend(farmers),
+    vaccinationTrend: buildOverviewVaccinationTrend(uniqueFarmers),
     countyCoverage,
-    recentLocations: buildOverviewRecentLocations(farmers),
+    recentLocations: buildOverviewRecentLocations(uniqueFarmers),
     recentActivities,
-    recentFarmers: buildOverviewRecentFarmers(farmers),
+    recentFarmers: buildOverviewRecentFarmers(uniqueFarmers),
     pendingActivitiesCount,
   };
 };
@@ -1669,6 +1717,7 @@ const createLivestockAnalytics = async (
     fetchCollectionByProgrammes("farmers", programmes),
     fetchCollectionByProgrammes("capacityBuilding", programmes),
   ]);
+  const uniqueFarmers = dedupeFarmerRecords(farmers);
   const analysisYear =
     parseDate(dateRange?.startDate)?.getFullYear() ??
     parseDate(dateRange?.endDate)?.getFullYear() ??
@@ -1677,7 +1726,7 @@ const createLivestockAnalytics = async (
   const coverageYears = (() => {
     let minYear = Number.POSITIVE_INFINITY;
     let maxYear = Number.NEGATIVE_INFINITY;
-    for (const farmer of farmers) {
+    for (const farmer of uniqueFarmers) {
       const date = parseDate(farmer.createdAt || farmer.registrationDate);
       if (!date) continue;
       const year = date.getFullYear();
@@ -1699,7 +1748,7 @@ const createLivestockAnalytics = async (
   const fieldOfficerTarget = Math.max(1, Math.round(Number(activeTarget) || 1404));
 
   const filteredFarmers = filterRecordsByDateRange(
-    farmers,
+    uniqueFarmers,
     (farmer) => farmer.createdAt || farmer.registrationDate,
     dateRange,
   );
@@ -1899,9 +1948,10 @@ const createPerformanceReport = async (
     fetchCollectionByProgrammes("offtakes", programmes),
     fetchCollectionByProgrammes("hrStaffMarks", programmes),
   ]);
+  const uniqueFarmers = dedupeFarmerRecords(farmers);
 
   const filteredFarmers = filterRecordsByDateRange(
-    farmers,
+    uniqueFarmers,
     (farmer) => farmer.createdAt || farmer.registrationDate,
     dateRange,
   );
@@ -2122,7 +2172,7 @@ const createPerformanceReport = async (
   const registrationTrendComparisonData = trendComparisonYears.map((year) => {
     const yearStart = new Date(year, 0, 1);
     const yearEnd = new Date(year, 11, 31);
-    const count = farmers.filter((farmer) => {
+    const count = uniqueFarmers.filter((farmer) => {
       const date = parseDate(farmer.createdAt || farmer.registrationDate);
       return !!date && date >= yearStart && date <= yearEnd;
     }).length;

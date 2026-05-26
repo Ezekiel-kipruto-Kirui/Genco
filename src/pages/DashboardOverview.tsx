@@ -39,6 +39,7 @@ import {
   ALL_PROGRAMMES_VALUE,
   PROGRAMME_OPTIONS,
   isAllProgrammesSelection,
+  normalizeProgramme,
   resolveAccessibleProgrammes,
 } from "@/lib/programme-access";
 
@@ -537,13 +538,52 @@ const buildInfrastructureComparison = (records: OverviewRecord[]): DonutSegment[
 };
 
 const getAnalyticsProgrammeToken = (value: unknown): string => {
-  if (typeof value !== "string") return "";
-  const trimmed = value.trim();
-  return CANONICAL_PROGRAMME_SET.has(trimmed) ? trimmed : "";
+  const normalized = normalizeProgramme(value);
+  return normalized && CANONICAL_PROGRAMME_SET.has(normalized) ? normalized : "";
 };
 
 const getOverviewRecordProgramme = (record: OverviewRecord) =>
   getAnalyticsProgrammeToken(record.programme ?? record.Programme);
+
+const normalizeDuplicateToken = (value: unknown): string =>
+  String(value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+
+const isUsableIdentityValue = (value: unknown): boolean => {
+  const normalized = normalizeDuplicateToken(value);
+  return Boolean(normalized) && !["n/a", "na", "/a", "0", "0.0", "null", "undefined"].includes(normalized);
+};
+
+const getFarmerDuplicateKey = (record: OverviewRecord): string => {
+  if (isUsableIdentityValue(record.farmerId)) return `farmer:${normalizeDuplicateToken(record.farmerId)}`;
+  if (isUsableIdentityValue(record.idNumber)) return `id:${normalizeDuplicateToken(record.idNumber)}`;
+  if (isUsableIdentityValue(record.phone)) return `phone:${normalizeDuplicateToken(record.phone)}`;
+
+  return [
+    "profile",
+    normalizeDuplicateToken(record.fullName || record.name || record.farmerName),
+    normalizeDuplicateToken(record.county || record.region),
+    normalizeDuplicateToken(record.subcounty),
+    normalizeDuplicateToken(record.location),
+    normalizeDuplicateToken(getOverviewRecordProgramme(record)),
+  ].join(":");
+};
+
+const dedupeFarmers = (records: OverviewRecord[]): OverviewRecord[] => {
+  const uniqueRecords = new Map<string, OverviewRecord>();
+
+  [...records]
+    .sort(
+      (left, right) =>
+        (parseDate(right.createdAt || right.registrationDate)?.getTime() || 0) -
+        (parseDate(left.createdAt || left.registrationDate)?.getTime() || 0),
+    )
+    .forEach((record) => {
+      const key = getFarmerDuplicateKey(record);
+      if (!uniqueRecords.has(key)) uniqueRecords.set(key, record);
+    });
+
+  return Array.from(uniqueRecords.values());
+};
 
 const buildRecentLocations = (farmers: OverviewRecord[]): RecentLocation[] => {
   const seen = new Set<string>();
@@ -623,6 +663,7 @@ const buildOverviewSummaryFromRecords = ({
   boreholes,
   activities,
 }: OverviewCollections): OverviewSummaryData => {
+  const uniqueFarmers = dedupeFarmers(farmers);
   let maleFarmers = 0;
   let femaleFarmers = 0;
   let totalGoats = 0;
@@ -630,7 +671,7 @@ const buildOverviewSummaryFromRecords = ({
   let totalCattle = 0;
   const countyMap: Record<string, number> = {};
 
-  for (const farmer of farmers) {
+  for (const farmer of uniqueFarmers) {
     const gender = String(farmer.gender || "").trim().toLowerCase();
     if (gender === "male") maleFarmers += 1;
     if (gender === "female") femaleFarmers += 1;
@@ -663,7 +704,7 @@ const buildOverviewSummaryFromRecords = ({
 
   return {
     stats: {
-      totalFarmers: farmers.length,
+      totalFarmers: uniqueFarmers.length,
       maleFarmers,
       femaleFarmers,
       trainedFarmers,
@@ -676,20 +717,20 @@ const buildOverviewSummaryFromRecords = ({
     },
     maintainedInfrastructure: buildInfrastructureComparison(boreholes),
     registrationComparison: buildYearlySegments(
-      farmers,
+      uniqueFarmers,
       (record) => parseDate(record.createdAt || record.registrationDate),
     ),
-    animalCensusComparison: buildAnnualComparison(farmers, offtakes),
+    animalCensusComparison: buildAnnualComparison(uniqueFarmers, offtakes),
     vaccinationTrend: buildYearlyTrend(
-      farmers,
+      uniqueFarmers,
       getFarmerVaccinationDate,
       (record) => Math.max(getFarmerGoatTotal(record), getNumberField(record, "goats"), 0),
       (record) => parseBoolean(record.vaccinated),
     ),
     countyCoverage: countyCoverage.length > 0 ? countyCoverage : EMPTY_COUNTY_COVERAGE,
-    recentLocations: buildRecentLocations(farmers),
+    recentLocations: buildRecentLocations(uniqueFarmers),
     recentActivities: buildRecentActivities(activities),
-    recentFarmers: buildRecentFarmers(farmers),
+    recentFarmers: buildRecentFarmers(uniqueFarmers),
     pendingActivitiesCount: activities.filter(
       (record) => String(record.status || "").trim().toLowerCase() === "pending",
     ).length,
@@ -1395,52 +1436,54 @@ const RecentFarmersPanel = ({ farmers }: { farmers: RecentFarmer[] }) => (
     {farmers.length > 0 ? (
       <div className="mt-5 flex-1 overflow-hidden">
         {/* Desktop table */}
-        <div className="hidden sm:block overflow-hidden rounded-2xl border border-slate-100">
-          <div className={`grid grid-cols-[1.4fr_1fr_0.8fr_0.8fr] gap-4 bg-slate-50 px-5 py-3 text-xs font-semibold uppercase tracking-[0.06em] ${SECONDARY_TEXT_CLASS}`}>
-            <span>Farmer Name</span>
-            <span>County</span>
-            <span>Goats</span>
-            <span>Registered</span>
+        <div className="hidden overflow-x-auto rounded-2xl border border-slate-100 sm:block">
+          <div className="min-w-[620px]">
+            <div className={`grid grid-cols-[minmax(180px,1.5fr)_minmax(140px,1fr)_80px_130px] items-center gap-4 bg-slate-50 px-5 py-3 text-xs font-semibold uppercase tracking-[0.06em] ${SECONDARY_TEXT_CLASS}`}>
+              <span className="whitespace-nowrap">Farmer Name</span>
+              <span className="whitespace-nowrap">County</span>
+              <span className="whitespace-nowrap text-right">Goats</span>
+              <span className="whitespace-nowrap">Registered</span>
+            </div>
+
+            {farmers.map((farmer, index) => {
+              const genderInitial = farmer.gender.trim().toLowerCase();
+              const avatarBg =
+                genderInitial === "female"
+                  ? "bg-pink-100 text-pink-600"
+                  : genderInitial === "male"
+                    ? "bg-blue-100 text-blue-600"
+                    : "bg-slate-100 text-slate-500";
+
+              return (
+                <div
+                  key={`${farmer.id}-${farmer.registeredAt}-${index}`}
+                  className={`grid grid-cols-[minmax(180px,1.5fr)_minmax(140px,1fr)_80px_130px] items-center gap-4 border-t border-slate-100 px-5 py-3.5 text-sm ${SECONDARY_TEXT_CLASS}`}
+                >
+                  <div className="flex min-w-0 items-center gap-3">
+                    <span
+                      className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold ${avatarBg}`}
+                    >
+                      {farmer.name.charAt(0).toUpperCase()}
+                    </span>
+                    <span className="truncate font-medium text-slate-800">
+                      {farmer.name}
+                    </span>
+                  </div>
+                  <div className="flex min-w-0 items-center gap-1.5">
+                    <MapPin className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                    <span className="truncate">{farmer.county}</span>
+                  </div>
+                  <div className="text-right font-semibold tabular-nums text-slate-700">
+                    {formatWholeNumber(farmer.goats)}
+                  </div>
+                  <div className="flex items-center gap-1.5 whitespace-nowrap">
+                    <Clock3 className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                    <span className="text-xs">{formatFarmerRegisteredDate(farmer.registeredAt)}</span>
+                  </div>
+                </div>
+              );
+            })}
           </div>
-
-          {farmers.map((farmer, index) => {
-            const genderInitial = farmer.gender.trim().toLowerCase();
-            const avatarBg =
-              genderInitial === "female"
-                ? "bg-pink-100 text-pink-600"
-                : genderInitial === "male"
-                  ? "bg-blue-100 text-blue-600"
-                  : "bg-slate-100 text-slate-500";
-
-            return (
-              <div
-                key={`${farmer.id}-${farmer.registeredAt}-${index}`}
-                className={`grid grid-cols-[1.4fr_1fr_0.8fr_0.8fr] gap-4 border-t border-slate-100 px-5 py-3.5 text-sm ${SECONDARY_TEXT_CLASS}`}
-              >
-                <div className="flex items-center gap-3">
-                  <span
-                    className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold ${avatarBg}`}
-                  >
-                    {farmer.name.charAt(0).toUpperCase()}
-                  </span>
-                  <span className="truncate font-medium text-slate-800">
-                    {farmer.name}
-                  </span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <MapPin className="h-3.5 w-3.5 shrink-0 text-slate-400" />
-                  <span className="truncate">{farmer.county}</span>
-                </div>
-                <div className="flex items-center font-semibold text-slate-700">
-                  {formatWholeNumber(farmer.goats)}
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <Clock3 className="h-3.5 w-3.5 shrink-0 text-slate-400" />
-                  <span className="text-xs">{formatFarmerRegisteredDate(farmer.registeredAt)}</span>
-                </div>
-              </div>
-            );
-          })}
         </div>
 
         {/* Mobile card list */}
@@ -1499,22 +1542,29 @@ const RecentLocationsPanel = ({ locations }: { locations: RecentLocation[] }) =>
     <h2 className="text-[17px] font-semibold tracking-[-0.02em] text-slate-900">Recently Visited Locations</h2>
 
     {locations.length > 0 ? (
-      <div className="mt-7 space-y-6">
+      <div className="mt-7 overflow-hidden rounded-2xl border border-slate-100">
+        <div className={`grid grid-cols-[minmax(0,1fr)_130px] items-center gap-4 bg-slate-50 px-4 py-3 text-xs font-semibold uppercase tracking-[0.06em] ${SECONDARY_TEXT_CLASS}`}>
+          <span>Location</span>
+          <span className="whitespace-nowrap">Time</span>
+        </div>
         {locations.map((location) => (
-          <div key={`${location.name}-${location.visitedAt}`} className="flex items-start justify-between gap-4">
-            <div className="flex items-start gap-4">
-              <div className="flex h-11 w-11 items-center justify-center rounded-full bg-emerald-50">
+          <div
+            key={`${location.name}-${location.visitedAt}`}
+            className="grid grid-cols-[minmax(0,1fr)_130px] items-center gap-4 border-t border-slate-100 px-4 py-4"
+          >
+            <div className="flex min-w-0 items-center gap-4">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-emerald-50">
                 <MapPin className="h-5 w-5 text-emerald-500" />
               </div>
-              <div>
-                <p className="text-[16px] font-medium text-slate-800">{location.name}</p>
-                <p className={`text-sm ${SECONDARY_TEXT_CLASS}`}>{location.county}</p>
+              <div className="min-w-0">
+                <p className="truncate text-[16px] font-medium text-slate-800">{location.name}</p>
+                <p className={`truncate text-sm ${SECONDARY_TEXT_CLASS}`}>{location.county}</p>
               </div>
             </div>
 
-            <div className={`mt-1 flex items-center gap-2 text-sm ${SECONDARY_TEXT_CLASS}`}>
-              <Clock3 className="h-4 w-4" />
-              <span>{formatRelativeTime(location.visitedAt)}</span>
+            <div className={`flex items-center gap-2 whitespace-nowrap text-sm ${SECONDARY_TEXT_CLASS}`}>
+              <Clock3 className="h-4 w-4 shrink-0" />
+              <span className="tabular-nums">{formatRelativeTime(location.visitedAt)}</span>
             </div>
           </div>
         ))}

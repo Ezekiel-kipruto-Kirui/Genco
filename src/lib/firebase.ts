@@ -3,6 +3,7 @@ import { getAuth } from "firebase/auth";
 import { getAnalytics } from "firebase/analytics";
 import { getDatabase, ref, get, query, orderByChild, equalTo, type DataSnapshot } from "firebase/database";
 import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
+import { getProgrammeQueryValues } from "@/lib/programme-access";
 
 // --- Types ---
 
@@ -72,11 +73,10 @@ const snapshotToRecords = <T = Record<string, any>>(snapshot: DataSnapshot): Dat
   }));
 };
 
-// Programmes are always stored in uppercase (KPMD, RANGE, MTLDK).
+// Programmes are always stored in uppercase (KPMD, RANGE, KPMD2).
 // Only query the canonical uppercase form to avoid 4→2 duplicate round-trips.
 const buildProgrammeCandidates = (programme: string): string[] => {
-  const upper = programme.trim().toUpperCase();
-  return upper ? [upper] : [];
+  return getProgrammeQueryValues(programme);
 };
 
 /**

@@ -341,7 +341,7 @@ const getQDates = (year: number, quarter: 1 | 2 | 3 | 4) => {
 // Normalisation helpers
 // ---------------------------------------------------------------------------
 
-const CANONICAL_PROGRAMME_SET = new Set(["KPMD", "RANGE", "MTLDK"]);
+const CANONICAL_PROGRAMME_SET = new Set(["KPMD", "RANGE", "KPMD2"]);
 
 const getAnalyticsProgrammeToken = (value: unknown): string => {
   if (typeof value !== "string") return "";
@@ -631,7 +631,7 @@ const createEmptySalesAnalytics = (salesInputs: SalesInputs): SalesAnalyticsPayl
 });
 
 // ---------------------------------------------------------------------------
-// Offtake record transformer — extracted for reuse & testability
+// Offtake record transformer ï¿½ extracted for reuse & testability
 // ---------------------------------------------------------------------------
 
 const toAnimalArr = (value: unknown): Array<{ live: string; carcass: string; price: string }> => {
@@ -988,7 +988,7 @@ const buildLocalSalesAnalytics = (
 };
 
 // ---------------------------------------------------------------------------
-// Custom Hook – useOfftakeData
+// Custom Hook ï¿½ useOfftakeData
 // ---------------------------------------------------------------------------
 
 const useOfftakeData = (
@@ -1183,7 +1183,7 @@ const safeGetByProgramme = async (
 ): Promise<DataSnapshot[]> => {
   const results: DataSnapshot[] = [];
 
-  // Always try the lowercase variant first — this is the primary field.
+  // Always try the lowercase variant first ï¿½ this is the primary field.
   try {
     const snap = await get(
       query(ref(db, path), orderByChild("programme"), equalTo(programme)),
@@ -1193,14 +1193,14 @@ const safeGetByProgramme = async (
     console.warn(`[safeGetByProgramme] "programme" query failed on /${path}:`, err);
   }
 
-  // Try the capitalised variant — gracefully skip if the index is missing.
+  // Try the capitalised variant ï¿½ gracefully skip if the index is missing.
   try {
     const snap = await get(
       query(ref(db, path), orderByChild("Programme"), equalTo(programme)),
     );
     results.push(snap);
   } catch (err) {
-    // Index not defined for "Programme" — this is expected on some Realtime
+    // Index not defined for "Programme" ï¿½ this is expected on some Realtime
     // Database instances.  Log at debug level and continue.
     console.debug(
       `[safeGetByProgramme] "Programme" index missing on /${path}, skipping. Error:`,
@@ -1273,8 +1273,8 @@ const SalesReport = () => {
   );
 
   // Cast to readonly string[] so that .includes() accepts a plain string
-  // argument — fixes TS 2345 when resolveAccessibleProgrammes returns a
-  // narrower union-typed array such as ("KPMD" | "RANGE" | "MTLDK")[].
+  // argument ï¿½ fixes TS 2345 when resolveAccessibleProgrammes returns a
+  // narrower union-typed array such as ("KPMD" | "RANGE" | "KPMD2")[].
   const accessibleProgrammes = useMemo(
     () =>
       (resolveAccessibleProgrammes(
@@ -1392,7 +1392,7 @@ const SalesReport = () => {
   }, [salesInputs]);
 
   // ---------------------------------------------------------------------------
-  // Combined data loading — offtake listener + orders/requisitions fetch
+  // Combined data loading ï¿½ offtake listener + orders/requisitions fetch
   // coordinated to reduce overall loading time
   // ---------------------------------------------------------------------------
 
@@ -1607,7 +1607,7 @@ const SalesReport = () => {
       };
     }
 
-    // Set up real-time listener for offtake data (single programme —
+    // Set up real-time listener for offtake data (single programme ï¿½
     // lowercase "programme" field is indexed, so this is safe)
     const offtakesRef = normalizedActive
       ? query(ref(db, "offtakes"), orderByChild("programme"), equalTo(normalizedActive))
@@ -2111,7 +2111,7 @@ const SalesReport = () => {
           </div>
 
           <div className="grid gap-6 md:grid-cols-2">
-            {/* Doughnut — Gender */}
+            {/* Doughnut ï¿½ Gender */}
             <Card className="border-0 shadow-sm bg-white rounded-2xl">
               <CardHeader className="pb-4 pt-6 px-6">
                 <CardTitle className="text-sm font-bold flex items-center gap-2 text-gray-800">
@@ -2220,7 +2220,7 @@ const SalesReport = () => {
           </div>
 
           <div className="grid gap-6 md:grid-cols-2">
-            {/* Curved Area Chart — Goats Per County */}
+            {/* Curved Area Chart ï¿½ Goats Per County */}
             <Card className="border-0 shadow-sm bg-white rounded-2xl">
               <CardHeader className="pb-4 pt-6 px-6">
                 <CardTitle className="text-sm font-bold flex items-center gap-2 text-gray-800">

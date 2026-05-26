@@ -237,7 +237,7 @@ interface FieldOfficerOption {
 
 const PAGE_LIMIT = 15;
 const ORDERS_CACHE_TTL_MS = 5 * 60 * 1000;
-const PROGRAMME_OPTIONS = ["KPMD", "RANGE", "MTLDK"] as const;
+const PROGRAMME_OPTIONS = ["KPMD", "RANGE", "KPMD2"] as const;
 
 /* ------------------------------------------------------------------ */
 /* Pure utility functions (outside component)                          */

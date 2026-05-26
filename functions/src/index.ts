@@ -33,8 +33,16 @@ const ROLE_HR_IDENTIFIERS = new Set([
   "human resource manger",
   "humman resource manger",
 ]);
-const ROLE_PROJECT_MANAGER_IDENTIFIERS = new Set(["project manager"]);
+const ROLE_PROJECT_MANAGER_IDENTIFIERS = new Set([
+  "project manager",
+  "project officer",
+]);
 const ROLE_FINANCE_IDENTIFIERS = new Set(["finance"]);
+const ROLE_DIRECT_HR_REQUISITION_IDENTIFIERS = new Set([
+  "executive assistant",
+  "executive assitant",
+  "staff",
+]);
 const BLOCKED_STATUS_IDENTIFIERS = new Set([
   "inactive",
   "disabled",
@@ -47,6 +55,13 @@ interface RequisitionRecord {
   status?: string;
   type?: string;
   uid?: string;
+  role?: string;
+  userRole?: string;
+  requesterRole?: string;
+  createdByRole?: string;
+  submittedByRole?: string;
+  userAttribute?: string;
+  requesterAttribute?: string;
   name?: string;
   userName?: string;
   username?: string;
@@ -201,6 +216,75 @@ const hasAnyRoleToken = (
   allowedTokens: Set<string>,
 ): boolean =>
   getRoleTokens(user).some((token) => allowedTokens.has(token));
+
+const requesterHasAnyRoleToken = async (
+  record: RequisitionRecord,
+  allowedTokens: Set<string>,
+): Promise<boolean> => {
+  const directTokens = [
+    record.role,
+    record.userRole,
+    record.requesterRole,
+    record.createdByRole,
+    record.submittedByRole,
+    record.userAttribute,
+    record.requesterAttribute,
+  ]
+    .map((value) => normalize(value))
+    .filter((value) => value.length > 0);
+
+  if (directTokens.some((token) => allowedTokens.has(token))) return true;
+
+  const uid = typeof record.uid === "string" ? record.uid.trim() : "";
+  const keyCandidates = [
+    uid,
+    typeof record.username === "string" ? record.username.trim() : "",
+    typeof record.userName === "string" ? record.userName.trim() : "",
+  ].filter((value) => value.length > 0);
+
+  try {
+    for (const key of keyCandidates) {
+      const userData = await getUserByKey(key);
+      if (userData && hasAnyRoleToken(userData, allowedTokens)) return true;
+    }
+
+    if (uid) {
+      const userByUid = await getFirstUserByChild("uid", uid);
+      if (userByUid && hasAnyRoleToken(userByUid, allowedTokens)) return true;
+    }
+
+    const emailCandidates = [
+      record.email,
+      record.requesterEmail,
+      record.userEmail,
+    ]
+      .filter((value): value is string => typeof value === "string")
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0);
+
+    for (const email of emailCandidates) {
+      const userByEmail = await getFirstUserByChild("email", email);
+      if (userByEmail && hasAnyRoleToken(userByEmail, allowedTokens)) {
+        return true;
+      }
+
+      const emailLower = email.toLowerCase();
+      if (emailLower !== email) {
+        const userByLowerEmail = await getFirstUserByChild("email", emailLower);
+        if (
+          userByLowerEmail &&
+          hasAnyRoleToken(userByLowerEmail, allowedTokens)
+        ) {
+          return true;
+        }
+      }
+    }
+  } catch (error) {
+    logger.error("Failed requester role lookup in /users", {uid, error});
+  }
+
+  return false;
+};
 
 const getUserPhone = (user: UserRecord): string | null => {
   const phoneCandidates = [
@@ -1101,11 +1185,17 @@ export const notifyRequisitionStatusEmails = onValueWritten(
     const nextTransactionCompletedBy = normalize(after.transactionCompletedBy);
 
     if (!before && after) {
+      const shouldRouteDirectlyToHr = await requesterHasAnyRoleToken(
+        after,
+        ROLE_DIRECT_HR_REQUISITION_IDENTIFIERS,
+      );
       const notifications = [
-        sendProjectManagerNewRequisitionSms(requisitionId, after),
         sendHrNewRequisitionEmail(requisitionId, after),
       ];
-      if (isPendingStatus) {
+      if (isPendingStatus && !shouldRouteDirectlyToHr) {
+        notifications.push(
+          sendProjectManagerNewRequisitionSms(requisitionId, after),
+        );
         notifications.push(
           sendProjectManagerNewRequisitionEmail(requisitionId, after),
         );

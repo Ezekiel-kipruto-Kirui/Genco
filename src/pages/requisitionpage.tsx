@@ -434,7 +434,8 @@ const RequisitionsPage = () => {
   const canApproveRequisition =
     isAdmin(permissionPrincipal) ||
     userHasProjectManagerRights ||
-    userHasMerRights;
+    userHasMerRights ||
+    userHasHummanResourceRights;
   const canAuthorizeRequisition = userHasHummanResourceRights;
   const canCompleteTransaction = userHasFinanceRights;
   const canSendRequisitionSms = useMemo(
@@ -615,8 +616,7 @@ const RequisitionsPage = () => {
     const roleScopedList = baseFilteredList.filter((record) => {
       const normalizedStatus = getNormalizedStatus(record.status);
       if (userHasHummanResourceRights) {
-        if (filters.status !== "all") return normalizedStatus === filters.status.toLowerCase();
-        return normalizedStatus === "approved";
+        return filters.status === "all" || normalizedStatus === filters.status.toLowerCase();
       }
       if (userHasFinanceRights) {
         const isAuthorized = !!String(record.authorizedBy || "").trim();
