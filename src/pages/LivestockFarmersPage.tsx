@@ -1778,7 +1778,7 @@ const LivestockFarmersPage = () => {
                 </div>
               </div>
               <div className="col-span-1 sm:col-span-2 border-t pt-4">
-                <h4 className="font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                <h4 className="font-semibold text-gray-700 mb-2 flex items-center gap-2">
                   <Scale className="h-4 w-4" />Breeding
                 </h4>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
