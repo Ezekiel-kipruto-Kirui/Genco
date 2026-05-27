@@ -507,7 +507,7 @@ const EMPTY_PERFORMANCE_DATA: PerformanceReportData = {
 const normalizeProgramme = (value: unknown): string => {
   if (typeof value !== "string") return "";
   const normalized = value.trim().toUpperCase();
-  if (normalized === "KPMD 2" || normalized === "KPMD-2") return "KPMD2";
+  if (normalized === "KPMD 2" || normalized === "KPMD-2") return "KPMD 2";
   return normalized;
 };
 

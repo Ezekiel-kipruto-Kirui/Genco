@@ -124,7 +124,7 @@ const EXPORT_HEADERS = [
 const AVAILABLE_PROGRAMMES = [
   "KPMD", 
   "RANGE",
-  "KPMD2",
+  "KPMD 2",
 ];
 const USER_ROLE_OPTIONS = [
   "User",
