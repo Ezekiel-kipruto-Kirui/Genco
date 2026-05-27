@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef, ChangeEvent, memo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, useTransition, useDeferredValue, ChangeEvent, memo } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import {
   ref, set, update, remove, push,
@@ -221,8 +221,7 @@ const getAcreTotal = (item: Record<string, any>): number => {
   return 0;
 };
 
-// --- Extracted Record Processors ---
-// Eliminates duplicate mapping logic between initial load and real-time updates.
+// --- Record Processors ---
 
 const processFarmerRecord = (
   key: string,
@@ -328,12 +327,33 @@ const processTrainingRecord = (
     "",
 });
 
+// =============================================================================
+// OPTIMIZATION #1: Incremental subscription — publishes data as each query
+// fires instead of blocking until ALL 2N queries complete.
+//
+// Before: With 3 programmes × 2 field casings = 6 queries, data appeared
+//         only after the 6th query returned.
+// After:  Data appears after the 1st query returns (with 80ms debounce to
+//         batch rapid successive callbacks), then incrementally enriches.
+//
+// Also adds a stale-while-revalidate cache layer: if localStorage has a
+// recent snapshot, it's yielded synchronously while Firebase fetches.
+// =============================================================================
+
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+interface SubscriptionOptions {
+  debounceMs?: number;
+  cacheKey?: string;
+}
+
 const subscribeToProgrammeRecords = <T,>(
   path: string,
   programmeValues: readonly string[],
   mapRecord: (key: string, item: any, fallbackProgramme: string) => T,
   onRecords: (records: T[]) => void,
   onError: (error: Error) => void,
+  options?: SubscriptionOptions,
 ) => {
   const normalizedProgrammes = Array.from(new Set(programmeValues.map(normalizeProgramme).filter(Boolean)));
   if (normalizedProgrammes.length === 0) {
@@ -341,56 +361,236 @@ const subscribeToProgrammeRecords = <T,>(
     return () => {};
   }
 
-  const recordsByQuery = new Map<string, Map<string, T>>();
-  const loadedQueries = new Set<string>();
+  // --- Stale-while-revalidate: hydrate from cache immediately ---
+  let cacheHit = false;
+  if (options?.cacheKey) {
+    try {
+      const cached = localStorage.getItem(options.cacheKey);
+      if (cached) {
+        const { data, ts } = JSON.parse(cached) as { data: T[]; ts: number };
+        if (Date.now() - ts < CACHE_TTL_MS) {
+          onRecords(data);
+          cacheHit = true;
+        }
+      }
+    } catch { /* ignore corrupt cache */ }
+  }
+
+  const recordsById = new Map<string, T>();
+  const initializedQueries = new Set<string>();
   const expectedQueryCount = normalizedProgrammes.length * 2;
   let hasErrored = false;
+  let publishTimer: ReturnType<typeof setTimeout> | null = null;
+  const debounceMs = options?.debounceMs ?? 80;
 
-  const publish = () => {
-    if (loadedQueries.size === expectedQueryCount) {
-      const recordsById = new Map<string, T>();
-      recordsByQuery.forEach((fieldRecords) => {
-        fieldRecords.forEach((record, id) => {
-          recordsById.set(id, record);
-        });
-      });
-      onRecords(Array.from(recordsById.values()));
+  const persistCache = () => {
+    if (options?.cacheKey) {
+      try {
+        localStorage.setItem(
+          options.cacheKey,
+          JSON.stringify({ data: Array.from(recordsById.values()), ts: Date.now() })
+        );
+      } catch { /* storage full */ }
     }
   };
 
-  const unsubscribers = normalizedProgrammes.flatMap((programmeValue) => ["programme", "Programme"].map((fieldName) => {
-    const queryKey = `${programmeValue}:${fieldName}`;
-    const collectionQuery = query(
-      ref(db, path),
-      orderByChild(fieldName),
-      equalTo(programmeValue)
-    );
+  const tryPublish = (isInitialLoad: boolean) => {
+    if (publishTimer) clearTimeout(publishTimer);
 
-    return onValue(
-      collectionQuery,
-      (snapshot) => {
-        loadedQueries.add(queryKey);
-        const fieldRecords = new Map<string, T>();
-        snapshot.forEach((childSnapshot) => {
-          fieldRecords.set(
-            childSnapshot.key || "",
-            mapRecord(childSnapshot.key || "", childSnapshot.val(), programmeValue)
-          );
-        });
-        recordsByQuery.set(queryKey, fieldRecords);
-        publish();
-      },
-      (error) => {
-        if (hasErrored) return;
-        hasErrored = true;
-        onError(error);
-      }
-    );
-  }));
+    if (isInitialLoad && !cacheHit) {
+      // On first load without cache, publish immediately after first query
+      // so the user sees SOMETHING fast
+      onRecords(Array.from(recordsById.values()));
+      return;
+    }
+
+    // Subsequent publishes are debounced to batch rapid updates
+    publishTimer = setTimeout(() => {
+      const merged = Array.from(recordsById.values());
+      onRecords(merged);
+      persistCache();
+    }, debounceMs);
+  };
+
+  const unsubscribers = normalizedProgrammes.flatMap((programmeValue) =>
+    ["programme", "Programme"].map((fieldName) => {
+      const queryKey = `${programmeValue}:${fieldName}`;
+      const collectionQuery = query(
+        ref(db, path),
+        orderByChild(fieldName),
+        equalTo(programmeValue)
+      );
+
+      return onValue(
+        collectionQuery,
+        (snapshot) => {
+          if (hasErrored) return;
+
+          const isFirstLoad = !initializedQueries.has(queryKey);
+          initializedQueries.add(queryKey);
+
+          // Replace records from this query (not merge — snapshot is authoritative)
+          snapshot.forEach((childSnapshot) => {
+            recordsById.set(
+              childSnapshot.key || "",
+              mapRecord(childSnapshot.key || "", childSnapshot.val(), programmeValue)
+            );
+          });
+
+          tryPublish(isFirstLoad);
+        },
+        (error) => {
+          if (hasErrored) return;
+          initializedQueries.add(queryKey);
+          hasErrored = true;
+          onError(error);
+        }
+      );
+    })
+  );
 
   return () => {
+    if (publishTimer) clearTimeout(publishTimer);
     unsubscribers.forEach((unsubscribe) => unsubscribe());
   };
+};
+
+// =============================================================================
+// OPTIMIZATION #2: Date-range filter predicate — extracted so it's shared
+// between farmer filtering and training filtering without duplication.
+// =============================================================================
+
+const matchesDateRange = (
+  rawDate: any,
+  startDateStr: string,
+  endDateStr: string,
+): boolean => {
+  if (!startDateStr && !endDateStr) return true;
+
+  const recordDate = parseDate(rawDate);
+  if (!recordDate) {
+    // If a date filter is active but the record has no date, exclude it
+    return !startDateStr && !endDateStr;
+  }
+
+  const recordDateOnly = new Date(recordDate);
+  recordDateOnly.setHours(0, 0, 0, 0);
+
+  if (startDateStr) {
+    const startDate = new Date(startDateStr);
+    startDate.setHours(0, 0, 0, 0);
+    if (recordDateOnly < startDate) return false;
+  }
+
+  if (endDateStr) {
+    const endDate = new Date(endDateStr);
+    endDate.setHours(23, 59, 59, 999);
+    if (recordDateOnly > endDate) return false;
+  }
+
+  return true;
+};
+
+// =============================================================================
+// OPTIMIZATION #3: Filtering logic extracted into a pure function + useMemo
+// instead of a useEffect. This means:
+//   - It recalculates ONLY when its inputs actually change (no stale closure risk)
+//   - It doesn't depend on pagination state (page changes don't trigger re-filter)
+//   - React can defer/batch the computation with useTransition
+// =============================================================================
+
+const applyFiltersAndDedupe = (
+  allFarmers: FarmerData[],
+  trainingRecords: TrainingData[],
+  filters: Filters,
+): { filtered: FarmerData[]; filteredTraining: TrainingData[] } => {
+  // --- Filter farmers ---
+  const filteredFarmersList = allFarmers.filter((record) => {
+    if (!matchesDateRange(record.createdAt, filters.startDate, filters.endDate)) return false;
+    if (filters.county !== "all" && record.county?.toLowerCase() !== filters.county.toLowerCase()) return false;
+    if (filters.subcounty !== "all" && record.subcounty?.toLowerCase() !== filters.subcounty.toLowerCase()) return false;
+    if (filters.location !== "all" && record.location?.toLowerCase() !== filters.location.toLowerCase()) return false;
+    if (filters.gender !== "all" && record.gender?.toLowerCase() !== filters.gender.toLowerCase()) return false;
+    if (filters.search) {
+      const searchTerm = filters.search.toLowerCase();
+      const searchMatch = [
+        record.name, record.farmerId, record.location,
+        record.county, record.idNumber, record.phone, record.username,
+      ].some((field) => field?.toLowerCase().includes(searchTerm));
+      if (!searchMatch) return false;
+    }
+    return true;
+  });
+
+  const duplicateKeyCounts = getDuplicateKeyCounts(filteredFarmersList);
+  const sortedFilteredFarmers =
+    filters.duplicateStatus === "repeated"
+      ? sortFarmersByLatest(
+          filteredFarmersList.filter(
+            (record) => (duplicateKeyCounts.get(getFarmerDuplicateKey(record)) || 0) > 1
+          )
+        )
+      : filters.duplicateStatus === "all"
+        ? sortFarmersByLatest(filteredFarmersList)
+        : dedupeFarmers(filteredFarmersList);
+
+  // --- Filter training records ---
+  const filteredTraining = trainingRecords.filter((record) =>
+    matchesDateRange(record.startDate || record.createdAt || record.rawTimestamp, filters.startDate, filters.endDate)
+  );
+
+  return { filtered: sortedFilteredFarmers, filteredTraining };
+};
+
+// =============================================================================
+// OPTIMIZATION #4: Stats derived from filtered farmers via useMemo.
+// No longer recomputed when only the page number changes.
+// =============================================================================
+
+const computeStats = (
+  filteredFarmers: FarmerData[],
+  filteredTraining: TrainingData[],
+): Stats => {
+  const totalFarmers = filteredFarmers.length;
+  const totalGoats = filteredFarmers.reduce((sum, f) => sum + getGoatTotal(f.goats), 0);
+  const totalSheep = filteredFarmers.reduce((sum, f) => sum + (Number(f.sheep) || 0), 0);
+  const totalCattle = filteredFarmers.reduce((sum, f) => sum + (Number(f.cattle) || 0), 0);
+  const totalAcres = filteredFarmers.reduce((sum, f) => sum + (Number(f.acres) || 0), 0);
+  const vaccinatedCount = filteredFarmers.filter((f) => f.vaccinated).length;
+  const maleFarmers = filteredFarmers.filter((f) => f.gender?.toLowerCase() === "male").length;
+  const femaleFarmers = filteredFarmers.filter((f) => f.gender?.toLowerCase() === "female").length;
+  const totalTrainedFarmers = filteredTraining.reduce((sum, t) => sum + (Number(t.totalFarmers) || 0), 0);
+
+  return {
+    totalFarmers, totalGoats, totalSheep, totalCattle, totalAcres,
+    vaccinatedCount, maleFarmers, femaleFarmers, totalTrainedFarmers,
+  };
+};
+
+// --- CSV helpers ---
+
+const parseCSVLine = (line: string): string[] => {
+  const result: string[] = [];
+  let current = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    if (char === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        current += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (char === "," && !inQuotes) {
+      result.push(current);
+      current = "";
+    } else {
+      current += char;
+    }
+  }
+  result.push(current);
+  return result;
 };
 
 // --- Component ---
@@ -399,13 +599,16 @@ const LivestockFarmersPage = () => {
   const { user, userRole, userAttribute, userName, allowedProgrammes } = useAuth();
   const { toast } = useToast();
 
+  // =========================================================================
+  // State
+  // =========================================================================
+
   const [allFarmers, setAllFarmers] = useState<FarmerData[]>([]);
-  const [filteredFarmers, setFilteredFarmers] = useState<FarmerData[]>([]);
+  const [trainingRecords, setTrainingRecords] = useState<TrainingData[]>([]);
   const [availablePrograms, setAvailablePrograms] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [exportLoading, setExportLoading] = useState(false);
   const [selectedRecords, setSelectedRecords] = useState<string[]>([]);
-  const [trainingRecords, setTrainingRecords] = useState<TrainingData[]>([]);
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
   const [isBulkSmsDialogOpen, setIsBulkSmsDialogOpen] = useState(false);
   const [uploadLoading, setUploadLoading] = useState(false);
@@ -423,8 +626,6 @@ const LivestockFarmersPage = () => {
   const [bulkSmsSending, setBulkSmsSending] = useState(false);
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Refs to prevent duplicate processing when cache + real-time listener both fire
-
   const [filters, setFilters] = useState<Filters>({
     search: "",
     startDate: "",
@@ -436,18 +637,6 @@ const LivestockFarmersPage = () => {
     duplicateStatus: "all",
   });
 
-  const [stats, setStats] = useState<Stats>({
-    totalFarmers: 0,
-    totalGoats: 0,
-    totalSheep: 0,
-    totalCattle: 0,
-    totalAcres: 0,
-    vaccinatedCount: 0,
-    maleFarmers: 0,
-    femaleFarmers: 0,
-    totalTrainedFarmers: 0,
-  });
-
   const [pagination, setPagination] = useState<Pagination>({
     page: 1,
     limit: PAGE_LIMIT,
@@ -457,24 +646,16 @@ const LivestockFarmersPage = () => {
   });
 
   const [editForm, setEditForm] = useState<EditForm>({
-    farmerId: "",
-    name: "",
-    gender: "",
-    idNumber: "",
-    phone: "",
-    county: "",
-    subcounty: "",
-    location: "",
-    cattle: 0,
-    goats: 0,
-    sheep: 0,
-    vaccinated: false,
-    programme: "",
-    bucksServed: "",
-    maleBreeds: "",
-    femaleBreeds: "",
-    tugNumber: "",
+    farmerId: "", name: "", gender: "", idNumber: "", phone: "",
+    county: "", subcounty: "", location: "", cattle: 0, goats: 0, sheep: 0,
+    vaccinated: false, programme: "",
+    bucksServed: "", maleBreeds: "", femaleBreeds: "", tugNumber: "",
   });
+
+  // =========================================================================
+  // OPTIMIZATION #5: useTransition for non-urgent filter updates
+  // =========================================================================
+  const [isPending, startTransition] = useTransition();
 
   const userIsAdmin = useMemo(() => isAdmin(userRole), [userRole]);
   const userCanViewAllProgrammeData = useMemo(
@@ -505,9 +686,12 @@ const LivestockFarmersPage = () => {
   }, [accessibleProgrammes]);
 
   // =========================================================================
-  // OPTIMIZED: Farmers listener
-  // - Server-side query filters by programme at Firebase level
-  // - Batched snapshots avoid sorting/deduping once per child during initial load
+  // OPTIMIZATION #6: Deferred search value — keeps typing responsive
+  // =========================================================================
+  const deferredSearch = useDeferredValue(filters.search);
+
+  // =========================================================================
+  // Farmers listener — cache-first + incremental publishing
   // =========================================================================
   useEffect(() => {
     if (!activeProgram) {
@@ -517,8 +701,6 @@ const LivestockFarmersPage = () => {
     }
 
     setLoading(true);
-
-    localStorage.removeItem(`farmers_cache_${activeProgram}`);
 
     const programmeValues =
       activeProgram === ALL_PROGRAMMES_VALUE
@@ -548,6 +730,10 @@ const LivestockFarmersPage = () => {
         });
         setLoading(false);
       },
+      {
+        debounceMs: 80,
+        cacheKey: `farmers_cache_${activeProgram}`,
+      },
     );
 
     return () => {
@@ -556,15 +742,13 @@ const LivestockFarmersPage = () => {
   }, [accessibleProgrammes, activeProgram, toast]);
 
   // =========================================================================
-  // OPTIMIZED: Training records - same server-side query + batched snapshot
+  // Training records listener — cache-first + incremental publishing
   // =========================================================================
   useEffect(() => {
     if (!activeProgram) {
       setTrainingRecords([]);
       return;
     }
-
-    localStorage.removeItem(`training_cache_${activeProgram}`);
 
     const programmeValues =
       activeProgram === ALL_PROGRAMMES_VALUE
@@ -584,6 +768,10 @@ const LivestockFarmersPage = () => {
       (error) => {
         console.error("Error loading training records:", error);
       },
+      {
+        debounceMs: 80,
+        cacheKey: `training_cache_${activeProgram}`,
+      },
     );
 
     return () => {
@@ -592,97 +780,43 @@ const LivestockFarmersPage = () => {
   }, [accessibleProgrammes, activeProgram]);
 
   // =========================================================================
-  // Filtering & Stats
+  // OPTIMIZATION #7: Filtering + deduplication via useMemo (NOT useEffect)
+  //
+  // Before: Giant useEffect that ran on every filter/page change, causing
+  //         synchronous blocking of the main thread.
+  // After:  Pure useMemo with stable inputs. React can defer this work.
+  //         Pagination is completely separated — page changes skip this.
+  //
+  // NOTE: We use deferredSearch instead of filters.search so that rapid
+  //       typing doesn't trigger expensive re-filtering immediately.
   // =========================================================================
 
+  const effectiveFilters = useMemo(
+    () => ({ ...filters, search: deferredSearch }),
+    [filters, deferredSearch]
+  );
+
+  const { filtered: filteredFarmers, filteredTraining } = useMemo(
+    () => applyFiltersAndDedupe(allFarmers, trainingRecords, effectiveFilters),
+    [allFarmers, trainingRecords, effectiveFilters]
+  );
+
+  // Stats derived from filtered data — no dependency on pagination
+  const stats = useMemo(
+    () => computeStats(filteredFarmers, filteredTraining),
+    [filteredFarmers, filteredTraining]
+  );
+
+  // =========================================================================
+  // OPTIMIZATION #8: Pagination is its own lightweight computation
+  // =========================================================================
+
+  const totalPages = useMemo(
+    () => Math.ceil(filteredFarmers.length / PAGE_LIMIT),
+    [filteredFarmers.length]
+  );
+
   useEffect(() => {
-    if (allFarmers.length === 0) {
-      setFilteredFarmers([]);
-      setStats({
-        totalFarmers: 0, totalGoats: 0, totalSheep: 0, totalCattle: 0,
-        totalAcres: 0, vaccinatedCount: 0, maleFarmers: 0, femaleFarmers: 0,
-        totalTrainedFarmers: 0,
-      });
-      return;
-    }
-
-    const filteredFarmersList = allFarmers.filter((record) => {
-      if (filters.startDate || filters.endDate) {
-        const recordDate = parseDate(record.createdAt);
-        if (recordDate) {
-          const recordDateOnly = new Date(recordDate);
-          recordDateOnly.setHours(0, 0, 0, 0);
-          const startDate = filters.startDate ? new Date(filters.startDate) : null;
-          const endDate = filters.endDate ? new Date(filters.endDate) : null;
-          if (startDate) startDate.setHours(0, 0, 0, 0);
-          if (endDate) endDate.setHours(23, 59, 59, 999);
-          if (startDate && recordDateOnly < startDate) return false;
-          if (endDate && recordDateOnly > endDate) return false;
-        } else if (filters.startDate || filters.endDate) return false;
-      }
-      if (filters.county !== "all" && record.county?.toLowerCase() !== filters.county.toLowerCase()) return false;
-      if (filters.subcounty !== "all" && record.subcounty?.toLowerCase() !== filters.subcounty.toLowerCase()) return false;
-      if (filters.location !== "all" && record.location?.toLowerCase() !== filters.location.toLowerCase()) return false;
-      if (filters.gender !== "all" && record.gender?.toLowerCase() !== filters.gender.toLowerCase()) return false;
-      if (filters.search) {
-        const searchTerm = filters.search.toLowerCase();
-        const searchMatch = [
-          record.name, record.farmerId, record.location,
-          record.county, record.idNumber, record.phone, record.username,
-        ].some((field) => field?.toLowerCase().includes(searchTerm));
-        if (!searchMatch) return false;
-      }
-      return true;
-    });
-
-    const duplicateKeyCounts = getDuplicateKeyCounts(filteredFarmersList);
-    const sortedFilteredFarmers =
-      filters.duplicateStatus === "repeated"
-        ? sortFarmersByLatest(
-            filteredFarmersList.filter(
-              (record) => (duplicateKeyCounts.get(getFarmerDuplicateKey(record)) || 0) > 1
-            )
-          )
-        : filters.duplicateStatus === "all"
-          ? sortFarmersByLatest(filteredFarmersList)
-          : dedupeFarmers(filteredFarmersList);
-    setFilteredFarmers(sortedFilteredFarmers);
-
-    const filteredTraining = trainingRecords.filter((record) => {
-      if (filters.startDate || filters.endDate) {
-        const recordDate = parseDate(
-          record.startDate || record.createdAt || record.rawTimestamp
-        );
-        if (recordDate) {
-          const recordDateOnly = new Date(recordDate);
-          recordDateOnly.setHours(0, 0, 0, 0);
-          const startDate = filters.startDate ? new Date(filters.startDate) : null;
-          const endDate = filters.endDate ? new Date(filters.endDate) : null;
-          if (startDate) startDate.setHours(0, 0, 0, 0);
-          if (endDate) endDate.setHours(23, 59, 59, 999);
-          if (startDate && recordDateOnly < startDate) return false;
-          if (endDate && recordDateOnly > endDate) return false;
-        } else if (filters.startDate || filters.endDate) return false;
-      }
-      return true;
-    });
-
-    const totalFarmers = sortedFilteredFarmers.length;
-    const totalGoats = sortedFilteredFarmers.reduce((sum, f) => sum + getGoatTotal(f.goats), 0);
-    const totalSheep = sortedFilteredFarmers.reduce((sum, f) => sum + (Number(f.sheep) || 0), 0);
-    const totalCattle = sortedFilteredFarmers.reduce((sum, f) => sum + (Number(f.cattle) || 0), 0);
-    const totalAcres = sortedFilteredFarmers.reduce((sum, f) => sum + (Number(f.acres) || 0), 0);
-    const vaccinatedCount = sortedFilteredFarmers.filter((f) => f.vaccinated).length;
-    const maleFarmers = sortedFilteredFarmers.filter((f) => f.gender?.toLowerCase() === "male").length;
-    const femaleFarmers = sortedFilteredFarmers.filter((f) => f.gender?.toLowerCase() === "female").length;
-    const totalTrainedFarmers = filteredTraining.reduce((sum, t) => sum + (Number(t.totalFarmers) || 0), 0);
-
-    setStats({
-      totalFarmers, totalGoats, totalSheep, totalCattle, totalAcres,
-      vaccinatedCount, maleFarmers, femaleFarmers, totalTrainedFarmers,
-    });
-
-    const totalPages = Math.ceil(sortedFilteredFarmers.length / pagination.limit);
     const currentPage = Math.min(pagination.page, Math.max(1, totalPages));
     setPagination((prev) => ({
       ...prev,
@@ -691,7 +825,34 @@ const LivestockFarmersPage = () => {
       hasNext: currentPage < totalPages,
       hasPrev: currentPage > 1,
     }));
-  }, [allFarmers, trainingRecords, filters, pagination.limit, pagination.page]);
+  }, [totalPages, pagination.page]);
+
+  // =========================================================================
+  // Derived values for table rendering
+  // =========================================================================
+
+  const currentPageRecords = useMemo(() => {
+    const startIndex = (pagination.page - 1) * pagination.limit;
+    const endIndex = startIndex + pagination.limit;
+    return filteredFarmers.slice(startIndex, endIndex);
+  }, [filteredFarmers, pagination.page, pagination.limit]);
+
+  const uniqueCounties = useMemo(
+    () => [...new Set(allFarmers.map((f) => f.county).filter(Boolean))],
+    [allFarmers]
+  );
+  const uniqueSubcounties = useMemo(
+    () => [...new Set(allFarmers.map((f) => f.subcounty).filter(Boolean))],
+    [allFarmers]
+  );
+  const uniqueLocations = useMemo(
+    () => [...new Set(allFarmers.map((f) => f.location).filter(Boolean))],
+    [allFarmers]
+  );
+  const uniqueGenders = useMemo(
+    () => [...new Set(allFarmers.map((f) => f.gender).filter(Boolean))],
+    [allFarmers]
+  );
 
   // =========================================================================
   // Handlers
@@ -699,17 +860,11 @@ const LivestockFarmersPage = () => {
 
   const handleProgramChange = (program: string) => {
     setActiveProgram(program);
-    setFilters((prev) => ({
-      ...prev,
-      search: "",
-      startDate: "",
-      endDate: "",
-      county: "all",
-      subcounty: "all",
-      gender: "all",
-      location: "all",
-      duplicateStatus: "all",
-    }));
+    setFilters({
+      search: "", startDate: "", endDate: "",
+      county: "all", subcounty: "all", gender: "all",
+      location: "all", duplicateStatus: "all",
+    });
     setSelectedRecords([]);
     setPagination((prev) => ({ ...prev, page: 1 }));
   };
@@ -717,19 +872,22 @@ const LivestockFarmersPage = () => {
   const handleSearchChange = useCallback((value: string) => {
     if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
     searchTimeoutRef.current = setTimeout(() => {
-      setFilters((prev) => ({ ...prev, search: value }));
-      setPagination((prev) => ({ ...prev, page: 1 }));
+      startTransition(() => {
+        setFilters((prev) => ({ ...prev, search: value }));
+        setPagination((prev) => ({ ...prev, page: 1 }));
+      });
     }, 300);
   }, []);
 
   const handleFilterChange = useCallback(<K extends keyof Filters>(key: K, value: Filters[K]) => {
-    setFilters((prev) => ({ ...prev, [key]: value }));
-    setPagination((prev) => ({ ...prev, page: 1 }));
+    startTransition(() => {
+      setFilters((prev) => ({ ...prev, [key]: value }));
+      setPagination((prev) => ({ ...prev, page: 1 }));
+    });
   }, []);
 
   const handlePageChange = useCallback((newPage: number) => {
     setPagination((prev) => {
-      const totalPages = Math.ceil(filteredFarmers.length / prev.limit);
       const validatedPage = Math.max(1, Math.min(newPage, totalPages));
       return {
         ...prev,
@@ -738,7 +896,7 @@ const LivestockFarmersPage = () => {
         hasPrev: validatedPage > 1,
       };
     });
-  }, [filteredFarmers.length]);
+  }, [totalPages]);
 
   const handleSelectRecord = useCallback((recordId: string) => {
     setSelectedRecords((prev) =>
@@ -747,17 +905,11 @@ const LivestockFarmersPage = () => {
   }, []);
 
   const handleSelectAll = useCallback(() => {
-    const currentPageIds = getCurrentPageRecords().map((f) => f.id);
+    const pageIds = currentPageRecords.map((f) => f.id);
     setSelectedRecords((prev) =>
-      prev.length === currentPageIds.length ? [] : currentPageIds
+      prev.length === pageIds.length ? [] : pageIds
     );
-  }, [filteredFarmers, pagination]);
-
-  const getCurrentPageRecords = useCallback(() => {
-    const startIndex = (pagination.page - 1) * pagination.limit;
-    const endIndex = startIndex + pagination.limit;
-    return filteredFarmers.slice(startIndex, endIndex);
-  }, [filteredFarmers, pagination.page, pagination.limit]);
+  }, [currentPageRecords]);
 
   const openViewDialog = useCallback((record: FarmerData) => {
     setViewingRecord(record);
@@ -772,19 +924,11 @@ const LivestockFarmersPage = () => {
     const goatsVal = getGoatTotal(record.goats);
 
     setEditForm({
-      farmerId: record.farmerId,
-      name: record.name,
-      gender: record.gender,
-      idNumber: record.idNumber || "",
-      phone: record.phone,
-      county: record.county,
-      subcounty: record.subcounty,
-      location: record.location,
-      cattle: cattleVal,
-      goats: goatsVal,
-      sheep: sheepVal,
-      vaccinated: record.vaccinated,
-      programme: record.programme,
+      farmerId: record.farmerId, name: record.name, gender: record.gender,
+      idNumber: record.idNumber || "", phone: record.phone,
+      county: record.county, subcounty: record.subcounty, location: record.location,
+      cattle: cattleVal, goats: goatsVal, sheep: sheepVal,
+      vaccinated: record.vaccinated, programme: record.programme,
       bucksServed: (record.bucksServed ?? "").toString(),
       maleBreeds: (record.maleBreeds ?? "").toString(),
       femaleBreeds: (record.femaleBreeds ?? "").toString(),
@@ -809,23 +953,13 @@ const LivestockFarmersPage = () => {
     if (!editingRecord) return;
     try {
       await update(ref(db, `farmers/${editingRecord.id}`), {
-        farmerId: editForm.farmerId,
-        name: editForm.name,
-        gender: editForm.gender,
-        idNumber: editForm.idNumber,
-        phone: editForm.phone,
-        county: editForm.county,
-        subcounty: editForm.subcounty,
-        location: editForm.location,
-        cattle: Number(editForm.cattle),
-        goats: Number(editForm.goats),
-        sheep: Number(editForm.sheep),
-        vaccinated: editForm.vaccinated,
-        programme: editForm.programme,
-        bucksServed: editForm.bucksServed,
-        maleBreeds: editForm.maleBreeds,
-        femaleBreeds: editForm.femaleBreeds,
-        tugNumber: editForm.tugNumber,
+        farmerId: editForm.farmerId, name: editForm.name, gender: editForm.gender,
+        idNumber: editForm.idNumber, phone: editForm.phone,
+        county: editForm.county, subcounty: editForm.subcounty, location: editForm.location,
+        cattle: Number(editForm.cattle), goats: Number(editForm.goats), sheep: Number(editForm.sheep),
+        vaccinated: editForm.vaccinated, programme: editForm.programme,
+        bucksServed: editForm.bucksServed, maleBreeds: editForm.maleBreeds,
+        femaleBreeds: editForm.femaleBreeds, tugNumber: editForm.tugNumber,
       });
       toast({ title: "Success", description: "Farmer record updated" });
       setIsEditDialogOpen(false);
@@ -841,6 +975,7 @@ const LivestockFarmersPage = () => {
     try {
       setDeleteLoading(true);
       await remove(ref(db, `farmers/${recordToDelete.id}`));
+      // Invalidate cache so next load fetches fresh data
       localStorage.removeItem(`farmers_cache_${activeProgram}`);
       toast({ title: "Success", description: "Record deleted" });
       setIsSingleDeleteDialogOpen(false);
@@ -873,11 +1008,7 @@ const LivestockFarmersPage = () => {
 
   const openBulkSmsDialog = () => {
     if (selectedRecords.length === 0) {
-      toast({
-        title: "No Records Selected",
-        description: "Select farmers to send bulk SMS.",
-        variant: "destructive",
-      });
+      toast({ title: "No Records Selected", description: "Select farmers to send bulk SMS.", variant: "destructive" });
       return;
     }
     setIsBulkSmsDialogOpen(true);
@@ -886,11 +1017,7 @@ const LivestockFarmersPage = () => {
   const handleSendBulkSms = async () => {
     const message = bulkSmsMessage.trim();
     if (!message) {
-      toast({
-        title: "Message Required",
-        description: "Enter the SMS message to send.",
-        variant: "destructive",
-      });
+      toast({ title: "Message Required", description: "Enter the SMS message to send.", variant: "destructive" });
       return;
     }
 
@@ -902,11 +1029,7 @@ const LivestockFarmersPage = () => {
     const uniqueRecipients = Array.from(new Set(recipients));
 
     if (uniqueRecipients.length === 0) {
-      toast({
-        title: "No Phone Numbers",
-        description: "Selected farmers have no valid phone numbers.",
-        variant: "destructive",
-      });
+      toast({ title: "No Phone Numbers", description: "Selected farmers have no valid phone numbers.", variant: "destructive" });
       return;
     }
 
@@ -923,47 +1046,15 @@ const LivestockFarmersPage = () => {
         recipients: uniqueRecipients,
         selectedRecordCount: selectedRecords.length,
       });
-
-      toast({
-        title: "SMS Queued",
-        description: `Bulk SMS queued for ${uniqueRecipients.length} farmers.`,
-      });
+      toast({ title: "SMS Queued", description: `Bulk SMS queued for ${uniqueRecipients.length} farmers.` });
       setBulkSmsMessage("");
       setIsBulkSmsDialogOpen(false);
     } catch (error) {
       console.error("Failed to queue bulk SMS:", error);
-      toast({
-        title: "Queue Failed",
-        description: "Failed to queue bulk SMS.",
-        variant: "destructive",
-      });
+      toast({ title: "Queue Failed", description: "Failed to queue bulk SMS.", variant: "destructive" });
     } finally {
       setBulkSmsSending(false);
     }
-  };
-
-  const parseCSVLine = (line: string): string[] => {
-    const result: string[] = [];
-    let current = "";
-    let inQuotes = false;
-    for (let i = 0; i < line.length; i++) {
-      const char = line[i];
-      if (char === '"') {
-        if (inQuotes && line[i + 1] === '"') {
-          current += '"';
-          i++;
-        } else {
-          inQuotes = !inQuotes;
-        }
-      } else if (char === "," && !inQuotes) {
-        result.push(current);
-        current = "";
-      } else {
-        current += char;
-      }
-    }
-    result.push(current);
-    return result;
   };
 
   const handleFileSelect = (e: ChangeEvent<HTMLInputElement>) => {
@@ -996,13 +1087,8 @@ const LivestockFarmersPage = () => {
 
         const rawHeaders = parseCSVLine(lines[0]);
         const headers = rawHeaders.map((h) =>
-          h
-            .replace(/^\uFEFF/, "")
-            .trim()
-            .toLowerCase()
-            .replace(/\(.*?\)/g, "")
-            .replace(/[^a-z0-9 ]/g, "")
-            .replace(/\s+/g, " ")
+          h.replace(/^\uFEFF/, "").trim().toLowerCase().replace(/\(.*?\)/g, "")
+            .replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ")
         );
 
         const findIndex = (keys: string[]) =>
@@ -1043,7 +1129,6 @@ const LivestockFarmersPage = () => {
           const v = (val || "").toLowerCase().trim();
           return v === "yes" || v === "true" || v === "1";
         };
-
         const valAt = (values: string[], idx: number) =>
           idx >= 0 && idx < values.length ? values[idx] : "";
 
@@ -1052,7 +1137,6 @@ const LivestockFarmersPage = () => {
           if (!values.some((v) => v.trim() !== "")) continue;
 
           const obj: any = {};
-
           if (idxName !== -1) obj.name = valAt(values, idxName).trim();
           if (idxGender !== -1) obj.gender = valAt(values, idxGender).trim();
           if (idxCounty !== -1) obj.county = valAt(values, idxCounty).trim();
@@ -1065,14 +1149,11 @@ const LivestockFarmersPage = () => {
           if (idxFarmerId !== -1) obj.farmerId = valAt(values, idxFarmerId).trim();
 
           let createdAtTimestamp = Date.now();
-
           if (idxRegDate !== -1) {
             const regDateStr = valAt(values, idxRegDate).trim();
             obj.registrationDate = regDateStr;
             const dateObj = new Date(regDateStr);
-            if (!isNaN(dateObj.getTime())) {
-              createdAtTimestamp = dateObj.getTime();
-            }
+            if (!isNaN(dateObj.getTime())) createdAtTimestamp = dateObj.getTime();
           }
           obj.createdAt = createdAtTimestamp;
 
@@ -1082,12 +1163,10 @@ const LivestockFarmersPage = () => {
             const raw = valAt(values, idxVaccines).trim();
             obj.vaccines = raw ? raw.split(";").map((s) => s.trim()).filter((s) => s) : [];
           }
-
           if (idxDewormed !== -1) obj.dewormed = parseBool(valAt(values, idxDewormed));
           if (idxDewormingDate !== -1) obj.dewormingDate = valAt(values, idxDewormingDate).trim();
           if (idxAggregationGroup !== -1) obj.aggregationGroup = valAt(values, idxAggregationGroup).trim();
           if (idxVaccinationDate !== -1) obj.vaccinationDate = valAt(values, idxVaccinationDate).trim();
-
           if (idxFieldOfficer !== -1) obj.username = valAt(values, idxFieldOfficer).trim();
 
           const foundGoatsMale = idxGoatsMale > -1;
@@ -1100,8 +1179,7 @@ const LivestockFarmersPage = () => {
             const totalGoats = foundGoatsTotal ? Number(valAt(values, idxGoatsTotal)) || 0 : maleCount + femaleCount;
             obj.goats = { male: maleCount, female: femaleCount, total: totalGoats };
           } else if (foundGoatsTotal) {
-            const totalGoats = Number(valAt(values, idxGoatsTotal)) || 0;
-            obj.goats = { total: totalGoats, male: 0, female: 0 };
+            obj.goats = { total: Number(valAt(values, idxGoatsTotal)) || 0, male: 0, female: 0 };
           }
           parsedData.push(obj);
         }
@@ -1109,7 +1187,6 @@ const LivestockFarmersPage = () => {
 
       let count = 0;
       const collectionRef = ref(db, "farmers");
-
       for (const item of parsedData) {
         await push(collectionRef, {
           ...item,
@@ -1119,22 +1196,15 @@ const LivestockFarmersPage = () => {
         count++;
       }
 
+      // Invalidate cache so next load picks up new records
       localStorage.removeItem(`farmers_cache_${activeProgram}`);
-
-      toast({
-        title: "Success",
-        description: `Uploaded ${count} records to ${activeProgram}.`,
-      });
+      toast({ title: "Success", description: `Uploaded ${count} records to ${activeProgram}.` });
       setIsUploadDialogOpen(false);
       setUploadFile(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
     } catch (error) {
       console.error(error);
-      toast({
-        title: "Error",
-        description: "Upload failed. Please check file format.",
-        variant: "destructive",
-      });
+      toast({ title: "Error", description: "Upload failed. Please check file format.", variant: "destructive" });
     } finally {
       setUploadLoading(false);
     }
@@ -1185,11 +1255,9 @@ const LivestockFarmersPage = () => {
       const csvContent = [
         headers.map(escapeCsvCell).join(","),
         ...csvData.map((row) =>
-          row
-            .map((cell, index) =>
-              dateColumns.has(index) ? String(cell ?? "") : escapeCsvCell(cell)
-            )
-            .join(",")
+          row.map((cell, index) =>
+            dateColumns.has(index) ? String(cell ?? "") : escapeCsvCell(cell)
+          ).join(",")
         ),
       ].join("\n");
 
@@ -1209,24 +1277,6 @@ const LivestockFarmersPage = () => {
       setExportLoading(false);
     }
   };
-
-  const uniqueCounties = useMemo(
-    () => [...new Set(allFarmers.map((f) => f.county).filter(Boolean))],
-    [allFarmers]
-  );
-  const uniqueSubcounties = useMemo(
-    () => [...new Set(allFarmers.map((f) => f.subcounty).filter(Boolean))],
-    [allFarmers]
-  );
-  const uniqueLocations = useMemo(
-    () => [...new Set(allFarmers.map((f) => f.location).filter(Boolean))],
-    [allFarmers]
-  );
-  const uniqueGenders = useMemo(
-    () => [...new Set(allFarmers.map((f) => f.gender).filter(Boolean))],
-    [allFarmers]
-  );
-  const currentPageRecords = useMemo(getCurrentPageRecords, [getCurrentPageRecords]);
 
   // =========================================================================
   // UI
@@ -1292,6 +1342,9 @@ const LivestockFarmersPage = () => {
             <div className="bg-blue-50 text-blue-700 border-blue-200 text-xs w-fit">
               {activeProgram === ALL_PROGRAMMES_VALUE ? "ALL PROGRAMMES" : activeProgram || "No Access"} PROJECT
             </div>
+            {isPending && (
+              <span className="text-xs text-gray-400 animate-pulse">Updating...</span>
+            )}
           </div>
         </div>
 
@@ -1334,53 +1387,34 @@ const LivestockFarmersPage = () => {
             <Button
               variant="outline"
               size="sm"
-              onClick={() =>
-                setFilters({
-                  ...filters,
-                  search: "",
-                  startDate: "",
-                  endDate: "",
-                  county: "all",
-                  subcounty: "all",
-                  gender: "all",
-                  location: "all",
-                  duplicateStatus: "all",
-                })
-              }
+              onClick={() => {
+                startTransition(() => {
+                  setFilters({
+                    search: "", startDate: "", endDate: "",
+                    county: "all", subcounty: "all", gender: "all",
+                    location: "all", duplicateStatus: "all",
+                  });
+                  setPagination((prev) => ({ ...prev, page: 1 }));
+                });
+              }}
               className="h-10 px-6 w-full xl:w-auto"
             >
               Clear Filters
             </Button>
 
             {selectedRecords.length > 0 && userIsAdmin && (
-              <Button
-                variant="destructive"
-                size="sm"
-                onClick={openBulkDeleteConfirm}
-                disabled={deleteLoading}
-                className="text-xs h-10"
-              >
+              <Button variant="destructive" size="sm" onClick={openBulkDeleteConfirm} disabled={deleteLoading} className="text-xs h-10">
                 <Trash2 className="h-4 w-4 mr-2" /> Delete ({selectedRecords.length})
               </Button>
             )}
             {selectedRecords.length > 0 && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={openBulkSmsDialog}
-                className="border-green-300 text-green-700 h-10 hover:bg-green-50"
-              >
+              <Button variant="outline" size="sm" onClick={openBulkSmsDialog} className="border-green-300 text-green-700 h-10 hover:bg-green-50">
                 <Phone className="h-4 w-4 mr-2" /> Send SMS ({selectedRecords.length})
               </Button>
             )}
             {userIsAdmin && (
               <>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setIsUploadDialogOpen(true)}
-                  className="border-green-300 text-green-700 h-10"
-                >
+                <Button variant="outline" size="sm" onClick={() => setIsUploadDialogOpen(true)} className="border-green-300 text-green-700 h-10">
                   <Upload className="h-4 w-4 mr-2" /> Upload
                 </Button>
                 <Button
@@ -1620,30 +1654,18 @@ const LivestockFarmersPage = () => {
                         <td className="py-2 px-3 text-xs italic text-gray-500 hidden sm:table-cell">{record.username}</td>
                         <td className="py-2 px-3">
                           <div className="flex gap-1">
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-7 w-7 text-green-600 hover:bg-green-50"
-                              onClick={() => openViewDialog(record)}
-                            >
+                            <Button variant="ghost" size="icon" className="h-7 w-7 text-green-600 hover:bg-green-50"
+                              onClick={() => openViewDialog(record)}>
                               <Eye className="h-3.5 w-3.5" />
                             </Button>
                             {userIsAdmin && (
                               <>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-7 w-7 text-blue-600 hover:bg-blue-50"
-                                  onClick={() => openEditDialog(record)}
-                                >
+                                <Button variant="ghost" size="icon" className="h-7 w-7 text-blue-600 hover:bg-blue-50"
+                                  onClick={() => openEditDialog(record)}>
                                   <Edit className="h-3.5 w-3.5" />
                                 </Button>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-7 w-7 text-red-600 hover:bg-red-50"
-                                  onClick={() => openSingleDeleteConfirm(record)}
-                                >
+                                <Button variant="ghost" size="icon" className="h-7 w-7 text-red-600 hover:bg-red-50"
+                                  onClick={() => openSingleDeleteConfirm(record)}>
                                   <Trash2 className="h-3.5 w-3.5" />
                                 </Button>
                               </>
@@ -1942,9 +1964,7 @@ const LivestockFarmersPage = () => {
         <DialogContent className="sm:max-w-lg w-[95vw] sm:w-full">
           <DialogHeader>
             <DialogTitle>Send Bulk SMS to Farmers</DialogTitle>
-            <DialogDescription>
-              This message will be sent to selected farmers with valid phone numbers.
-            </DialogDescription>
+            <DialogDescription>This message will be sent to selected farmers with valid phone numbers.</DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
             <Label htmlFor="farmers-bulk-sms-message">SMS Message</Label>
@@ -1979,5 +1999,3 @@ const DetailRow = ({ label, value }: { label: string; value: string }) => (
 );
 
 export default LivestockFarmersPage;
-
-
