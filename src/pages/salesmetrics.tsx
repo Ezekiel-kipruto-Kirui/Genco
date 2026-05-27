@@ -42,7 +42,13 @@ import { useSharedProgrammeSelection } from "@/hooks/use-shared-programme-select
 import { useToast } from "@/hooks/use-toast";
 import { millify } from "millify";
 import { fetchAnalysisSummary } from "@/lib/analysis";
-import { ALL_PROGRAMMES_VALUE, isAllProgrammesSelection, resolveAccessibleProgrammes } from "@/lib/programme-access";
+import {
+  ALL_PROGRAMMES_VALUE,
+  PROGRAMME_OPTIONS,
+  isAllProgrammesSelection,
+  normalizeProgramme,
+  resolveAccessibleProgrammes,
+} from "@/lib/programme-access";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -341,12 +347,8 @@ const getQDates = (year: number, quarter: 1 | 2 | 3 | 4) => {
 // Normalisation helpers
 // ---------------------------------------------------------------------------
 
-const CANONICAL_PROGRAMME_SET = new Set(["KPMD", "RANGE", "KPMD2"]);
-
 const getAnalyticsProgrammeToken = (value: unknown): string => {
-  if (typeof value !== "string") return "";
-  const trimmed = value.trim();
-  return CANONICAL_PROGRAMME_SET.has(trimmed) ? trimmed : "";
+  return normalizeProgramme(value);
 };
 
 const normalizeLooseText = (value: unknown): string =>
@@ -1039,7 +1041,7 @@ const useOfftakeData = (
         salesInputs,
       }),
     enabled: USE_REMOTE_ANALYTICS && !!selectedProgramme,
-    staleTime: 2 * 60 * 1000,
+    staleTime: 10 * 60 * 1000,
   });
 
   const data: SalesAnalyticsPayload = queryResult.data

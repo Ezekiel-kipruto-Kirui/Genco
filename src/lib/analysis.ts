@@ -21,8 +21,8 @@ export interface AnalysisRequest {
   salesInputs?: { pricePerKg?: number | string | null; expenses?: number | string | null } | null;
 }
 
-const DEFAULT_CACHE_TTL_MS = 2 * 60 * 1000;
-const OVERVIEW_CACHE_TTL_MS = 10 * 60 * 1000;
+const DEFAULT_CACHE_TTL_MS = 10 * 60 * 1000;
+const OVERVIEW_CACHE_TTL_MS = 15 * 60 * 1000;
 
 const buildCacheKey = (request: AnalysisRequest): string =>
   cacheKey(

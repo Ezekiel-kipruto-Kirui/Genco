@@ -2,12 +2,24 @@
 import * as admin from "firebase-admin";
 import {onValueWritten} from "firebase-functions/v2/database";
 import {onCall, HttpsError} from "firebase-functions/v2/https";
+import {onSchedule} from "firebase-functions/v2/scheduler";
 
 const PROGRAMME_OPTIONS = ["KPMD", "RANGE", "KPMD2"] as const;
 const CACHE_TTL_MS = 2 * 60 * 1000;
 const PERSISTENT_CACHE_TTL_MS = 15 * 60 * 1000;
 const ANALYSIS_CACHE_VERSION = "v13";
 const ANALYTICS_CACHE_ROOT = "__analyticsCache";
+const ANALYTICS_COLLECTION_PATHS = [
+  "farmers",
+  "Recent Activities",
+  "capacityBuilding",
+  "offtakes",
+  "AnimalHealthActivities",
+  "BoreholeStorage",
+  "hrStaffMarks",
+  "orders",
+  "requisitions",
+];
 const QUARTER_TARGET = 351;
 const QUARTER_TARGET_MILESTONES = [352, 702, 1053, 1404];
 const CHART_COLORS = {
@@ -254,14 +266,14 @@ const toProgramme = (value: unknown): string => {
   const normalized = normalize(value);
   if (!normalized) return "";
   if (normalized === "all") return "ALL";
-  if (normalized === "mtldk" || normalized === "kpmd 2" || normalized === "kpmd-2") return "KPMD2";
+  if (normalized === "KPMD2" || normalized === "kpmd 2" || normalized === "kpmd-2") return "KPMD2";
   return normalized.toUpperCase();
 };
 
 const getProgrammeQueryValues = (programme: unknown): string[] => {
   const normalized = toProgramme(programme);
   if (!normalized || normalized === "ALL") return [];
-  if (normalized === "KPMD2") return ["KPMD2", "KPMD 2", "KPMD-2", "MTLDK"];
+  if (normalized === "KPMD2") return ["KPMD2"];
   return [normalized];
 };
 
@@ -1063,14 +1075,16 @@ const getPersistentCollectionVersion = async (collectionPath: string): Promise<n
 const getScopeDependencyCollections = (scope: AnalysisScope): string[] => {
   switch (scope) {
   case "overview":
-    return [
-      "farmers",
-      "Recent Activities",
-      "capacityBuilding",
-      "offtakes",
-      "AnimalHealthActivities",
-      "BoreholeStorage",
-    ];
+    return ANALYTICS_COLLECTION_PATHS.filter((collectionPath) =>
+      [
+        "farmers",
+        "Recent Activities",
+        "capacityBuilding",
+        "offtakes",
+        "AnimalHealthActivities",
+        "BoreholeStorage",
+      ].includes(collectionPath),
+    );
   case "livestock-analytics":
     return ["farmers", "capacityBuilding"];
   case "performance-report":
@@ -1148,34 +1162,62 @@ const writePersistentAnalysisResult = async (
   });
 };
 
+const hydratePersistentCollectionCache = async (collectionPath: string): Promise<number> => {
+  const records = await getSourceCollectionRecords(collectionPath);
+  await writePersistentCollectionCache(collectionPath, records);
+  return records.length;
+};
+
+const incrementPersistentCollectionVersion = async (
+  collectionPath: string,
+  countDelta: number,
+): Promise<void> => {
+  const now = Date.now();
+  await getCollectionCacheRef(collectionPath).child("meta").transaction((current) => {
+    const meta = current && typeof current === "object" ?
+      current as Record<string, unknown> :
+      {};
+    const currentCount = typeof meta.count === "number" && Number.isFinite(meta.count) ?
+      meta.count :
+      0;
+    const currentVersion = typeof meta.version === "number" && Number.isFinite(meta.version) ?
+      meta.version :
+      0;
+
+    return {
+      ...meta,
+      count: Math.max(0, currentCount + countDelta),
+      updatedAt: now,
+      version: currentVersion + 1,
+    };
+  });
+};
+
 const syncAnalysisCollectionCache = (collectionPath: string) =>
   onValueWritten(`/${collectionPath}/{recordId}`, async (event): Promise<void> => {
     const cacheRef = getCollectionCacheRef(collectionPath);
     const metaSnapshot = await cacheRef.child("meta/hydratedAt").get();
-    const now = Date.now();
 
     if (!metaSnapshot.exists()) {
-      await cacheRef.child("meta").update({
-        lastSourceChangeAt: now,
-        version: now,
-      });
+      await hydratePersistentCollectionCache(collectionPath);
+      cache.clear();
       return;
     }
 
     const recordId = String(event.params.recordId);
     const after = event.data.after.val();
-    const updates: Record<string, unknown> = {
-      "meta/updatedAt": now,
-      "meta/version": now,
-    };
 
     if (after && typeof after === "object") {
-      updates[`records/${recordId}`] = after;
+      await cacheRef.child(`records/${recordId}`).set(after);
     } else {
-      updates[`records/${recordId}`] = null;
+      await cacheRef.child(`records/${recordId}`).remove();
     }
 
-    await cacheRef.update(updates);
+    const beforeExists = event.data.before.exists();
+    const afterExists = event.data.after.exists();
+    const countDelta = beforeExists === afterExists ? 0 : (afterExists ? 1 : -1);
+    await incrementPersistentCollectionVersion(collectionPath, countDelta);
+    cache.clear();
   });
 
 const fetchCollectionByProgrammes = async (
@@ -1378,6 +1420,15 @@ const getCollectionRecordsByChildValue = async (
   const key = collectionCacheKey(collectionPath, `${childKey}:${childValue}`);
   const cachedRecords = getCached(key);
   if (cachedRecords) return cachedRecords as any[];
+
+  if (childKey === "programme" || childKey === "Programme") {
+    const programme = toProgramme(childValue);
+    const records = (await getCollectionRecords(collectionPath)).filter(
+      (record) => getRecordProgramme(record) === programme,
+    );
+    setCached(key, records);
+    return records;
+  }
 
   const collectionRecords = await readPersistentCollectionCache(collectionPath);
   if (collectionRecords) {
@@ -2544,3 +2595,18 @@ export const syncBoreholeAnalysisCache = syncAnalysisCollectionCache("BoreholeSt
 export const syncHrStaffMarksAnalysisCache = syncAnalysisCollectionCache("hrStaffMarks");
 export const syncOrdersAnalysisCache = syncAnalysisCollectionCache("orders");
 export const syncRequisitionsAnalysisCache = syncAnalysisCollectionCache("requisitions");
+
+export const refreshAnalysisCollectionCaches = onSchedule(
+  {
+    schedule: "every 24 hours",
+    timeZone: "Africa/Nairobi",
+  },
+  async (): Promise<void> => {
+    await Promise.all(
+      ANALYTICS_COLLECTION_PATHS.map((collectionPath) =>
+        hydratePersistentCollectionCache(collectionPath),
+      ),
+    );
+    cache.clear();
+  },
+);

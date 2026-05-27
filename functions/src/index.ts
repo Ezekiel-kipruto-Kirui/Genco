@@ -20,6 +20,7 @@ export {
   syncOrdersAnalysisCache,
   syncRecentActivitiesAnalysisCache,
   syncRequisitionsAnalysisCache,
+  refreshAnalysisCollectionCaches,
 } from "./analysis.js";
 
 const DEFAULT_HR_REJECTION_REASON =

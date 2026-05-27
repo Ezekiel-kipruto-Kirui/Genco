@@ -25,8 +25,8 @@ import { useSharedProgrammeSelection } from "@/hooks/use-shared-programme-select
 import { useToast } from "@/hooks/use-toast";
 import { canViewAllProgrammes, isAdmin } from "@/contexts/authhelper";
 import {
-  matchesActiveProgramme, normalizeProgramme,
-  resolveAccessibleProgrammes, resolveActiveProgramme
+  ALL_PROGRAMMES_VALUE, normalizeProgramme,
+  resolveAccessibleProgrammes
 } from "@/lib/programme-access";
 
 // --- Types ---
@@ -196,15 +196,6 @@ const escapeCsvCell = (value: unknown): string => {
   return `"${stringValue.replace(/"/g, '""')}"`;
 };
 
-const getCurrentMonthDates = () => {
-  const now = new Date();
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-  const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-  const fmt = (date: Date) =>
-    `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-  return { startDate: fmt(startOfMonth), endDate: fmt(endOfMonth) };
-};
-
 const getGoatTotal = (goats: any): number => {
   if (typeof goats === "number") return goats;
   if (typeof goats === "object" && goats !== null) {
@@ -337,6 +328,71 @@ const processTrainingRecord = (
     "",
 });
 
+const subscribeToProgrammeRecords = <T,>(
+  path: string,
+  programmeValues: readonly string[],
+  mapRecord: (key: string, item: any, fallbackProgramme: string) => T,
+  onRecords: (records: T[]) => void,
+  onError: (error: Error) => void,
+) => {
+  const normalizedProgrammes = Array.from(new Set(programmeValues.map(normalizeProgramme).filter(Boolean)));
+  if (normalizedProgrammes.length === 0) {
+    onRecords([]);
+    return () => {};
+  }
+
+  const recordsByQuery = new Map<string, Map<string, T>>();
+  const loadedQueries = new Set<string>();
+  const expectedQueryCount = normalizedProgrammes.length * 2;
+  let hasErrored = false;
+
+  const publish = () => {
+    if (loadedQueries.size === expectedQueryCount) {
+      const recordsById = new Map<string, T>();
+      recordsByQuery.forEach((fieldRecords) => {
+        fieldRecords.forEach((record, id) => {
+          recordsById.set(id, record);
+        });
+      });
+      onRecords(Array.from(recordsById.values()));
+    }
+  };
+
+  const unsubscribers = normalizedProgrammes.flatMap((programmeValue) => ["programme", "Programme"].map((fieldName) => {
+    const queryKey = `${programmeValue}:${fieldName}`;
+    const collectionQuery = query(
+      ref(db, path),
+      orderByChild(fieldName),
+      equalTo(programmeValue)
+    );
+
+    return onValue(
+      collectionQuery,
+      (snapshot) => {
+        loadedQueries.add(queryKey);
+        const fieldRecords = new Map<string, T>();
+        snapshot.forEach((childSnapshot) => {
+          fieldRecords.set(
+            childSnapshot.key || "",
+            mapRecord(childSnapshot.key || "", childSnapshot.val(), programmeValue)
+          );
+        });
+        recordsByQuery.set(queryKey, fieldRecords);
+        publish();
+      },
+      (error) => {
+        if (hasErrored) return;
+        hasErrored = true;
+        onError(error);
+      }
+    );
+  }));
+
+  return () => {
+    unsubscribers.forEach((unsubscribe) => unsubscribe());
+  };
+};
+
 // --- Component ---
 
 const LivestockFarmersPage = () => {
@@ -365,20 +421,19 @@ const LivestockFarmersPage = () => {
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [bulkSmsMessage, setBulkSmsMessage] = useState("");
   const [bulkSmsSending, setBulkSmsSending] = useState(false);
-  const currentMonth = useMemo(getCurrentMonthDates, []);
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Refs to prevent duplicate processing when cache + real-time listener both fire
 
   const [filters, setFilters] = useState<Filters>({
     search: "",
-    startDate: currentMonth.startDate,
-    endDate: currentMonth.endDate,
+    startDate: "",
+    endDate: "",
     county: "all",
     subcounty: "all",
     gender: "all",
     location: "all",
-    duplicateStatus: "unique",
+    duplicateStatus: "all",
   });
 
   const [stats, setStats] = useState<Stats>({
@@ -430,7 +485,10 @@ const LivestockFarmersPage = () => {
     () => resolveAccessibleProgrammes(userCanViewAllProgrammeData, allowedProgrammes),
     [allowedProgrammes, userCanViewAllProgrammeData]
   );
-  const [activeProgram, setActiveProgram] = useSharedProgrammeSelection(accessibleProgrammes);
+  const [activeProgram, setActiveProgram] = useSharedProgrammeSelection(accessibleProgrammes, {
+    allowAll: true,
+    fallbackToAll: true,
+  });
 
   const requireAdmin = () => {
     if (userIsAdmin) return true;
@@ -460,30 +518,24 @@ const LivestockFarmersPage = () => {
 
     setLoading(true);
 
-    const cacheKey = `farmers_cache_${activeProgram}`;
-    localStorage.removeItem(cacheKey);
+    localStorage.removeItem(`farmers_cache_${activeProgram}`);
 
-    const programmeValue = normalizeProgramme(activeProgram);
-    if (!programmeValue) {
+    const programmeValues =
+      activeProgram === ALL_PROGRAMMES_VALUE
+        ? accessibleProgrammes
+        : [normalizeProgramme(activeProgram)];
+
+    if (programmeValues.length === 0 || programmeValues.every((programme) => !normalizeProgramme(programme))) {
       setAllFarmers([]);
       setLoading(false);
       return;
     }
 
-    const farmersQuery = query(
-      ref(db, "farmers"),
-      orderByChild("programme"),
-      equalTo(programmeValue)
-    );
-
-    const unsubscribe = onValue(
-      farmersQuery,
-      (snapshot) => {
-        const data = snapshot.val();
-        const records = data && typeof data === "object"
-          ? Object.entries(data).map(([key, item]) => processFarmerRecord(key, item, programmeValue))
-          : [];
-
+    const unsubscribe = subscribeToProgrammeRecords(
+      "farmers",
+      programmeValues,
+      processFarmerRecord,
+      (records) => {
         setAllFarmers(sortFarmersByLatest(records));
         setLoading(false);
       },
@@ -495,13 +547,13 @@ const LivestockFarmersPage = () => {
           variant: "destructive",
         });
         setLoading(false);
-      }
+      },
     );
 
     return () => {
       unsubscribe();
     };
-  }, [activeProgram, toast]);
+  }, [accessibleProgrammes, activeProgram, toast]);
 
   // =========================================================================
   // OPTIMIZED: Training records - same server-side query + batched snapshot
@@ -512,34 +564,32 @@ const LivestockFarmersPage = () => {
       return;
     }
 
-    const cacheKey = `training_cache_${activeProgram}`;
-    localStorage.removeItem(cacheKey);
+    localStorage.removeItem(`training_cache_${activeProgram}`);
 
-    const programmeValue = normalizeProgramme(activeProgram);
-    if (!programmeValue) {
+    const programmeValues =
+      activeProgram === ALL_PROGRAMMES_VALUE
+        ? accessibleProgrammes
+        : [normalizeProgramme(activeProgram)];
+
+    if (programmeValues.length === 0 || programmeValues.every((programme) => !normalizeProgramme(programme))) {
       setTrainingRecords([]);
       return;
     }
 
-    const trainingQuery = query(
-      ref(db, "capacityBuilding"),
-      orderByChild("programme"),
-      equalTo(programmeValue)
+    const unsubscribe = subscribeToProgrammeRecords(
+      "capacityBuilding",
+      programmeValues,
+      processTrainingRecord,
+      setTrainingRecords,
+      (error) => {
+        console.error("Error loading training records:", error);
+      },
     );
-
-    const unsubscribe = onValue(trainingQuery, (snapshot) => {
-      const data = snapshot.val();
-      const records = data && typeof data === "object"
-        ? Object.entries(data).map(([key, item]) => processTrainingRecord(key, item, programmeValue))
-        : [];
-
-      setTrainingRecords(records);
-    });
 
     return () => {
       unsubscribe();
     };
-  }, [activeProgram]);
+  }, [accessibleProgrammes, activeProgram]);
 
   // =========================================================================
   // Filtering & Stats
@@ -652,13 +702,13 @@ const LivestockFarmersPage = () => {
     setFilters((prev) => ({
       ...prev,
       search: "",
-      startDate: currentMonth.startDate,
-      endDate: currentMonth.endDate,
+      startDate: "",
+      endDate: "",
       county: "all",
       subcounty: "all",
       gender: "all",
       location: "all",
-      duplicateStatus: "unique",
+      duplicateStatus: "all",
     }));
     setSelectedRecords([]);
     setPagination((prev) => ({ ...prev, page: 1 }));
@@ -923,6 +973,14 @@ const LivestockFarmersPage = () => {
   const handleUpload = async () => {
     if (!requireAdmin()) return;
     if (!uploadFile) return;
+    if (activeProgram === ALL_PROGRAMMES_VALUE) {
+      toast({
+        title: "Select a programme",
+        description: "Choose KPMD, RANGE, or KPMD2 before uploading farmer records.",
+        variant: "destructive",
+      });
+      return;
+    }
     setUploadLoading(true);
     try {
       const text = await uploadFile.text();
@@ -930,7 +988,8 @@ const LivestockFarmersPage = () => {
       let parsedData: any[] = [];
 
       if (isJSON) {
-        parsedData = JSON.parse(text);
+        const jsonData = JSON.parse(text);
+        parsedData = Array.isArray(jsonData) ? jsonData : Object.values(jsonData);
       } else {
         const lines = text.split(/\r?\n/).filter((l) => l.trim());
         if (lines.length < 2) throw new Error("CSV file is empty or has no data rows");
@@ -1231,7 +1290,7 @@ const LivestockFarmersPage = () => {
           </h2>
           <div className="flex items-center gap-2">
             <div className="bg-blue-50 text-blue-700 border-blue-200 text-xs w-fit">
-              {activeProgram || "No Access"} PROJECT
+              {activeProgram === ALL_PROGRAMMES_VALUE ? "ALL PROGRAMMES" : activeProgram || "No Access"} PROJECT
             </div>
           </div>
         </div>
@@ -1259,6 +1318,7 @@ const LivestockFarmersPage = () => {
                     <SelectValue placeholder="Select Programme" />
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectItem value={ALL_PROGRAMMES_VALUE}>All Programmes</SelectItem>
                     {availablePrograms.map((p) => (
                       <SelectItem key={p} value={p}>{p}</SelectItem>
                     ))}
@@ -1284,7 +1344,7 @@ const LivestockFarmersPage = () => {
                   subcounty: "all",
                   gender: "all",
                   location: "all",
-                  duplicateStatus: "unique",
+                  duplicateStatus: "all",
                 })
               }
               className="h-10 px-6 w-full xl:w-auto"
@@ -1457,12 +1517,12 @@ const LivestockFarmersPage = () => {
               <Label className="font-semibold text-gray-700 text-xs uppercase">Registration Repetition</Label>
               <Select value={filters.duplicateStatus} onValueChange={(value) => handleFilterChange("duplicateStatus", value as Filters["duplicateStatus"])}>
                 <SelectTrigger className="border-gray-300 focus:border-blue-500 bg-white h-9">
-                  <SelectValue placeholder="Unique Farmers" />
+                  <SelectValue placeholder="All Registrations" />
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="all">All Registrations</SelectItem>
                   <SelectItem value="unique">Unique Farmers</SelectItem>
                   <SelectItem value="repeated">Repeated Registrations</SelectItem>
-                  <SelectItem value="all">All Registrations</SelectItem>
                 </SelectContent>
               </Select>
             </div>

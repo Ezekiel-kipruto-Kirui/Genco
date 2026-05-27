@@ -9,7 +9,7 @@ import {
   resolvePermissionPrincipal,
 } from "@/contexts/authhelper";
 import { ref, push, update, remove } from "firebase/database";
-import { db, fetchCollection, invalidateCollectionCache } from "@/lib/firebase";
+import { db, fetchCollectionByProgrammes, invalidateCollectionCache } from "@/lib/firebase";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { 
   PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip, 
@@ -504,8 +504,12 @@ const EMPTY_PERFORMANCE_DATA: PerformanceReportData = {
   dosesByLocationData: [],
 };
 
-const normalizeProgramme = (value: unknown): string =>
-  typeof value === "string" ? value.trim().toUpperCase() : "";
+const normalizeProgramme = (value: unknown): string => {
+  if (typeof value !== "string") return "";
+  const normalized = value.trim().toUpperCase();
+  if (normalized === "KPMD 2" || normalized === "KPMD-2") return "KPMD2";
+  return normalized;
+};
 
 function computeLocalPerformanceReportData(
   farmers: Farmer[],
@@ -866,7 +870,7 @@ const useProcessedData = (
       }),
     enabled: USE_REMOTE_ANALYTICS && !!selectedProgramme,
     placeholderData: (previousData) => previousData,
-    staleTime: 2 * 60 * 1000,
+    staleTime: 10 * 60 * 1000,
     retry: 0,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
@@ -997,8 +1001,9 @@ const PerformanceReport = () => {
     training: TrainingRecord[] | null;
     animalHealth: AnimalHealthRecord[] | null;
     offtakes: OfftakeRecord[] | null;
+    programmes: string;
     timestamp: number;
-  }>({ farmers: null, training: null, animalHealth: null, offtakes: null, timestamp: 0 });
+  }>({ farmers: null, training: null, animalHealth: null, offtakes: null, programmes: "", timestamp: 0 });
   
   const [loading, setLoading] = useState(true);
   const [allFarmers, setAllFarmers] = useState<Farmer[]>([]);
@@ -1100,9 +1105,30 @@ const PerformanceReport = () => {
     () => buildLocationMetricSeries(data.dosesByLocationData),
     [data.dosesByLocationData],
   );
+  const queryableProgrammes = useMemo(
+    () => Array.from(new Set(accessibleProgrammes)),
+    [accessibleProgrammes],
+  );
+  const programmeCacheKey = useMemo(
+    () => queryableProgrammes.join("|"),
+    [queryableProgrammes],
+  );
 
-  const fetchAllData = async () => {
+  const fetchReportCollection = useCallback(
+    async <T extends Record<string, any>>(path: string) => {
+      if (queryableProgrammes.length === 0) return [];
+      return fetchCollectionByProgrammes<T>(path, queryableProgrammes);
+    },
+    [queryableProgrammes],
+  );
+
+  const fetchAllData = useCallback(async () => {
     if (USE_REMOTE_ANALYTICS) {
+      setLoading(false);
+      return;
+    }
+
+    if (queryableProgrammes.length === 0) {
       setLoading(false);
       return;
     }
@@ -1119,6 +1145,7 @@ const PerformanceReport = () => {
           cacheRef.current.training && 
           cacheRef.current.animalHealth &&
           cacheRef.current.offtakes &&
+          cacheRef.current.programmes === programmeCacheKey &&
           (now - cacheRef.current.timestamp < CACHE_DURATION)) {
         farmersList = cacheRef.current.farmers;
         trainingList = cacheRef.current.training;
@@ -1126,10 +1153,10 @@ const PerformanceReport = () => {
         offtakeList = cacheRef.current.offtakes;
       } else {
         const [farmersRaw, trainingRaw, animalHealthRaw, offtakeRaw] = await Promise.all([
-          fetchCollection<Farmer>("farmers"),
-          fetchCollection<TrainingRecord>("capacityBuilding"),
-          fetchCollection<AnimalHealthRecord>("AnimalHealthActivities"),
-          fetchCollection<OfftakeRecord>("offtakes"),
+          fetchReportCollection<Farmer>("farmers"),
+          fetchReportCollection<TrainingRecord>("capacityBuilding"),
+          fetchReportCollection<AnimalHealthRecord>("AnimalHealthActivities"),
+          fetchReportCollection<OfftakeRecord>("offtakes"),
         ]);
 
         farmersList = farmersRaw.map((record) => ({
@@ -1179,6 +1206,7 @@ const PerformanceReport = () => {
           training: trainingList,
           animalHealth: animalHealthList,
           offtakes: offtakeList,
+          programmes: programmeCacheKey,
           timestamp: now
         };
       }
@@ -1193,7 +1221,7 @@ const PerformanceReport = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [fetchReportCollection, programmeCacheKey, queryableProgrammes.length]);
 
   const fetchStaffDirectory = useCallback(async () => {
     if (!isHrReport) {
@@ -1202,7 +1230,7 @@ const PerformanceReport = () => {
     }
 
     try {
-      const staffDirectory = await fetchCollection<StaffDirectoryRecord>("hrStaffDirectory");
+      const staffDirectory = await fetchReportCollection<StaffDirectoryRecord>("hrStaffDirectory");
       const filteredDirectory = staffDirectory
         .filter((record) => {
           if (!allowedProgrammeSet) return true;
@@ -1224,7 +1252,7 @@ const PerformanceReport = () => {
         variant: "destructive",
       });
     }
-  }, [allowedProgrammeSet, isHrReport, toast]);
+  }, [allowedProgrammeSet, fetchReportCollection, isHrReport, toast]);
 
   const fetchStaffMarks = useCallback(async () => {
     if (!isHrReport) {
@@ -1233,7 +1261,7 @@ const PerformanceReport = () => {
     }
 
     try {
-      const marks = (await fetchCollection<StaffMarkRecord>("hrStaffMarks"))
+      const marks = (await fetchReportCollection<StaffMarkRecord>("hrStaffMarks"))
         .filter((record) => {
           if (!allowedProgrammeSet) return true;
           const programme = normalizeProgramme(record.programme);
@@ -1254,7 +1282,7 @@ const PerformanceReport = () => {
         variant: "destructive",
       });
     }
-  }, [allowedProgrammeSet, isHrReport, toast]);
+  }, [allowedProgrammeSet, fetchReportCollection, isHrReport, toast]);
 
   const filteredStaffMarkRecords = useMemo(
     () => {
@@ -1613,7 +1641,7 @@ const PerformanceReport = () => {
 
   useEffect(() => {
     fetchAllData();
-  }, []);
+  }, [fetchAllData]);
 
   useEffect(() => {
     fetchStaffDirectory();

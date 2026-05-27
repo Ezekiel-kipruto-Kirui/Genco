@@ -24,15 +24,15 @@ export const hasAllProgrammeAccess = (role: string | null | undefined): boolean 
 export const normalizeProgramme = (value: unknown): ProgrammeOption | "" => {
   if (typeof value !== "string") return "";
   const normalized = value.trim().toUpperCase();
-  if (normalized === "MTLDK" || normalized === "KPMD 2" || normalized === "KPMD-2") return "KPMD2";
-  if (normalized === "KPMD" || normalized === "RANGE" || normalized === "KPMD2") return normalized;
+  if (normalized === "KPMD2" || normalized === "KPMD 2" || normalized === "KPMD-2") return "KPMD2";
+  if (normalized === "KPMD" || normalized === "RANGE") return normalized;
   return "";
 };
 
 export const getProgrammeQueryValues = (programme: unknown): string[] => {
   const normalized = normalizeProgramme(programme);
   if (!normalized) return [];
-  if (normalized === "KPMD2") return ["KPMD2", "KPMD 2", "KPMD-2", "MTLDK"];
+  if (normalized === "KPMD2") return ["KPMD2"];
   return [normalized];
 };
 
