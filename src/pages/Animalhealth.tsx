@@ -863,7 +863,7 @@ const AnimalHealthPage = () => {
     () => ({
       KPMD: filteredActivities.filter((a) => a.programme === "KPMD"),
       RANGE: filteredActivities.filter((a) => a.programme === "RANGE"),
-      KPMD 2: filteredActivities.filter((a) => a.programme === "KPMD 2"),
+      "KPMD 2": filteredActivities.filter((a) => a.programme === "KPMD 2"),
     }),
     [filteredActivities],
   );
