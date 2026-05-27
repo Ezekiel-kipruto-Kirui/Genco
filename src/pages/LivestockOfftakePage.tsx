@@ -1288,10 +1288,13 @@ const LivestockOfftakePage = () => {
 
       type FarmerOfftakeSummary = {
         farmerName: string;
-        totalCarcassWeight: number;
-        totalLiveWeight: number;
         totalAnimals: number;
-        totalAmount: number;
+        carcassWeightTotal: number;
+        carcassWeightCount: number;
+        liveWeightTotal: number;
+        liveWeightCount: number;
+        priceTotal: number;
+        priceCount: number;
       };
 
       const summaries = new Map<string, FarmerOfftakeSummary>();
@@ -1299,29 +1302,45 @@ const LivestockOfftakePage = () => {
       filteredOfftake.forEach((record) => {
         const farmerName = record.farmerName?.trim() || "N/A";
         const key = farmerName.toLowerCase();
-        const liveWeightSum = calculateTotal(
-          Array.isArray(record.liveWeight) ? record.liveWeight : [Number(record.liveWeight) || 0],
-        );
-        const carcassWeightSum = calculateTotal(
-          Array.isArray(record.carcassWeight) ? record.carcassWeight : [Number(record.carcassWeight) || 0],
-        );
+        const liveWeights = (Array.isArray(record.liveWeight) ? record.liveWeight : [Number(record.liveWeight) || 0])
+          .map(Number)
+          .filter((value) => Number.isFinite(value) && value > 0);
+        const carcassWeights = (Array.isArray(record.carcassWeight) ? record.carcassWeight : [Number(record.carcassWeight) || 0])
+          .map(Number)
+          .filter((value) => Number.isFinite(value) && value > 0);
+        const prices = (Array.isArray(record.pricePerGoatAndSheep) ? record.pricePerGoatAndSheep : [Number(record.pricePerGoatAndSheep) || 0])
+          .map(Number)
+          .filter((value) => Number.isFinite(value) && value > 0);
+        const totalAnimals = Number(record.noSheepGoats) || 0;
+        const totalPrice = Number(record.totalprice) || 0;
+        const priceValues = prices.length > 0
+          ? prices
+          : totalPrice > 0 && totalAnimals > 0
+            ? [totalPrice / totalAnimals]
+            : [];
         const existing = summaries.get(key);
 
         if (!existing) {
           summaries.set(key, {
             farmerName,
-            totalCarcassWeight: carcassWeightSum,
-            totalLiveWeight: liveWeightSum,
-            totalAnimals: Number(record.noSheepGoats) || 0,
-            totalAmount: Number(record.totalprice) || 0,
+            totalAnimals,
+            carcassWeightTotal: calculateTotal(carcassWeights),
+            carcassWeightCount: carcassWeights.length,
+            liveWeightTotal: calculateTotal(liveWeights),
+            liveWeightCount: liveWeights.length,
+            priceTotal: calculateTotal(priceValues),
+            priceCount: priceValues.length,
           });
           return;
         }
 
-        existing.totalCarcassWeight += carcassWeightSum;
-        existing.totalLiveWeight += liveWeightSum;
-        existing.totalAnimals += Number(record.noSheepGoats) || 0;
-        existing.totalAmount += Number(record.totalprice) || 0;
+        existing.totalAnimals += totalAnimals;
+        existing.carcassWeightTotal += calculateTotal(carcassWeights);
+        existing.carcassWeightCount += carcassWeights.length;
+        existing.liveWeightTotal += calculateTotal(liveWeights);
+        existing.liveWeightCount += liveWeights.length;
+        existing.priceTotal += calculateTotal(priceValues);
+        existing.priceCount += priceValues.length;
       });
 
       const summaryRows = Array.from(summaries.values()).sort((left, right) =>
@@ -1330,37 +1349,40 @@ const LivestockOfftakePage = () => {
 
       const headers = [
         "Farmer Name",
-        "Total Carcass Weight (kg)",
-        "Total Live Weight (kg)",
-        "Total Animals",
-        "Total Amount (KES)",
+        "Number of Animals",
+        "Average Carcass Weight (kg)",
+        "Average Live Weight (kg)",
+        "Average Price (KES)",
       ];
 
       const rows = summaryRows.map((summary) => [
         summary.farmerName,
-        summary.totalCarcassWeight.toFixed(2),
-        summary.totalLiveWeight.toFixed(1),
         summary.totalAnimals.toString(),
-        summary.totalAmount.toFixed(2),
+        (summary.carcassWeightCount > 0 ? summary.carcassWeightTotal / summary.carcassWeightCount : 0).toFixed(2),
+        (summary.liveWeightCount > 0 ? summary.liveWeightTotal / summary.liveWeightCount : 0).toFixed(1),
+        (summary.priceCount > 0 ? summary.priceTotal / summary.priceCount : 0).toFixed(2),
       ]);
 
       const totals = summaryRows.reduce(
         (acc, summary) => {
-          acc.carcassWeight += summary.totalCarcassWeight;
-          acc.liveWeight += summary.totalLiveWeight;
+          acc.carcassWeight += summary.carcassWeightTotal;
+          acc.carcassWeightCount += summary.carcassWeightCount;
+          acc.liveWeight += summary.liveWeightTotal;
+          acc.liveWeightCount += summary.liveWeightCount;
           acc.animals += summary.totalAnimals;
-          acc.amount += summary.totalAmount;
+          acc.price += summary.priceTotal;
+          acc.priceCount += summary.priceCount;
           return acc;
         },
-        { carcassWeight: 0, liveWeight: 0, animals: 0, amount: 0 },
+        { carcassWeight: 0, carcassWeightCount: 0, liveWeight: 0, liveWeightCount: 0, animals: 0, price: 0, priceCount: 0 },
       );
 
       const grandTotalRow = [
         `GRAND TOTALS (${summaryRows.length} Farmers)`,
-        totals.carcassWeight.toFixed(2),
-        totals.liveWeight.toFixed(1),
         totals.animals.toString(),
-        totals.amount.toFixed(2),
+        (totals.carcassWeightCount > 0 ? totals.carcassWeight / totals.carcassWeightCount : 0).toFixed(2),
+        (totals.liveWeightCount > 0 ? totals.liveWeight / totals.liveWeightCount : 0).toFixed(1),
+        (totals.priceCount > 0 ? totals.price / totals.priceCount : 0).toFixed(2),
       ];
 
       const csvContent = [headers, ...rows, grandTotalRow]
