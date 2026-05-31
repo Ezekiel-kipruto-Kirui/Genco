@@ -1,8 +1,8 @@
 import { memo, type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState, startTransition, useDeferredValue } from "react";
 import * as XLSX from "xlsx";
 import { useAuth } from "@/contexts/AuthContext";
-import { onValue, ref, remove, update, push, set, get } from "firebase/database";
-import { db, fetchCollection } from "@/lib/firebase";
+import { ref, remove, update, push, set } from "firebase/database";
+import { db, fetchCollection, fetchCollectionByProgramme, subscribeCollectionByProgramme } from "@/lib/firebase";
 import { canViewAllProgrammes, isAdmin, isOfftakeOfficer, resolvePermissionPrincipal } from "@/contexts/authhelper";
 import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
 import { useToast } from "@/hooks/use-toast";
@@ -405,15 +405,13 @@ const generateCountyCode = (countyName: string): string => {
   return `${first}${next}`;
 };
 
-const generateOrderCode = async (county: string): Promise<string> => {
+const generateOrderCode = async (county: string, programme: string): Promise<string> => {
   const countyCode = generateCountyCode(county);
-  const ordersRef = ref(db, "orders");
-  const snapshot = await get(ordersRef);
+  const existingOrders = await fetchCollectionByProgramme<Record<string, unknown>>("orders", programme);
   let maxNumber = 0;
 
-  if (snapshot.exists()) {
-    const data = snapshot.val();
-    Object.values(data as Record<string, unknown>).forEach((record) => {
+  if (existingOrders.length > 0) {
+    existingOrders.forEach((record) => {
       const rec = record as Record<string, unknown>;
       const existingCode = String(rec?.orderId || "");
       if (existingCode.startsWith(countyCode)) {
@@ -1465,11 +1463,11 @@ const OrdersPage = () => {
       setLoading(false);
     };
 
-    const unsubscribe = onValue(
-      ref(db, "orders"),
-      (snapshot) => {
-        const data = snapshot.val();
-        syncRecords(data && typeof data === "object" ? (data as Record<string, Partial<OrderRecord>>) : {});
+    const unsubscribe = subscribeCollectionByProgramme<Partial<OrderRecord>>(
+      "orders",
+      activeProgram,
+      (data) => {
+        syncRecords(data && typeof data === "object" ? data : {});
       },
       (error) => {
         toast({
@@ -1478,7 +1476,7 @@ const OrdersPage = () => {
           variant: "destructive"
         });
         setLoading(false);
-      }
+      },
     );
 
     return () => {
@@ -2183,9 +2181,9 @@ const OrdersPage = () => {
       : [...newOrder.counties, county];
     setNewOrder((prev) => ({ ...prev, counties: nextCounties }));
     setSelectedFieldOfficerIds([]);
-    const code = nextCounties.length > 0 ? await generateOrderCode(nextCounties[0]) : "";
+    const code = nextCounties.length > 0 ? await generateOrderCode(nextCounties[0], resolvedOrderProgramme) : "";
     setNewOrder((prev) => ({ ...prev, orderCode: code }));
-  }, [newOrder.counties]);
+  }, [newOrder.counties, resolvedOrderProgramme]);
 
   const updateBatchOrders = async (row: BatchOrderRow, nextItems: NormalizedOrderItem[], nextGoatsBought?: number) => {
     const sanitizedItems = nextItems

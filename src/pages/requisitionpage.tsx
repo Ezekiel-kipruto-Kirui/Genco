@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useMemo, useRef, ChangeEvent, memo } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { getAuth } from "firebase/auth"; 
-import { ref, set, update, remove, push, onValue, query, orderByChild, equalTo } from "firebase/database";
-import { db } from "@/lib/firebase";
+import { ref, set, update, remove, push, onValue } from "firebase/database";
+import { db, subscribeCollectionByProgrammes } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
 import ProgrammeSelector from "@/components/programme-selector";
 import { Input } from "@/components/ui/input";
@@ -515,12 +515,9 @@ const RequisitionsPage = () => {
     }
 
     const normalizedActiveProgram = normalizeProgramme(activeProgram);
-    const requisitionsRef = normalizedActiveProgram
-      ? query(ref(db, "requisitions"), orderByChild("programme"), equalTo(normalizedActiveProgram))
-      : ref(db, "requisitions");
+    const readProgrammes = normalizedActiveProgram ? [normalizedActiveProgram] : accessibleProgrammes;
 
-    const unsubscribe = onValue(requisitionsRef, (snapshot) => {
-        const data = snapshot.val();
+    const unsubscribe = subscribeCollectionByProgrammes<Record<string, any>>("requisitions", readProgrammes, (data) => {
         if (!data) {
             setAllRequisitions([]);
             removeCachedValue(requisitionCacheKey);
@@ -555,7 +552,7 @@ const RequisitionsPage = () => {
         setLoading(false);
     });
     return () => { if(typeof unsubscribe === 'function') unsubscribe(); };
-  }, [activeProgram, canViewAllRequisitionProgrammes, toast, requisitionCacheKey]);
+  }, [activeProgram, accessibleProgrammes, canViewAllRequisitionProgrammes, toast, requisitionCacheKey]);
 
   // --- 3. Filtering & Stats Logic ---
   useEffect(() => {

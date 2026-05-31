@@ -1,7 +1,7 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
 import { getAnalytics } from "firebase/analytics";
-import { getDatabase, ref, get, query, orderByChild, equalTo, type DataSnapshot } from "firebase/database";
+import { getDatabase, ref, get, onValue, query, orderByChild, equalTo, type DataSnapshot } from "firebase/database";
 import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
 import { getProgrammeQueryValues } from "@/lib/programme-access";
 
@@ -215,6 +215,98 @@ export const fetchCollectionByProgrammes = async <T = Record<string, any>>(
   } finally {
     inFlightCollectionRequests.delete(cacheName);
   }
+};
+
+export const subscribeCollectionByProgramme = <T = Record<string, any>>(
+  path: string,
+  programme: string,
+  onRecords: (records: Record<string, T>) => void,
+  onError?: (error: Error) => void,
+): (() => void) => {
+  const programmeCandidates = buildProgrammeCandidates(programme);
+  if (programmeCandidates.length === 0) {
+    onRecords({});
+    return () => {};
+  }
+
+  const recordsByQuery = new Map<string, Record<string, T>>();
+  const publish = () => {
+    const merged: Record<string, T> = {};
+    recordsByQuery.forEach((records) => {
+      Object.assign(merged, records);
+    });
+    onRecords(merged);
+  };
+
+  const unsubscribers = ["programme", "Programme"].flatMap((fieldName) =>
+    programmeCandidates.map((candidate) => {
+      const queryKey = `${fieldName}:${candidate}`;
+      return onValue(
+        query(ref(db, path), orderByChild(fieldName), equalTo(candidate)),
+        (snapshot) => {
+          const records: Record<string, T> = {};
+          if (snapshot.exists()) {
+            const data = snapshot.val();
+            if (data && typeof data === "object") {
+              Object.entries(data as Record<string, T>).forEach(([id, record]) => {
+                records[id] = record;
+              });
+            }
+          }
+          recordsByQuery.set(queryKey, records);
+          publish();
+        },
+        (error) => {
+          onError?.(error);
+        },
+      );
+    }),
+  );
+
+  return () => {
+    unsubscribers.forEach((unsubscribe) => unsubscribe());
+  };
+};
+
+export const subscribeCollectionByProgrammes = <T = Record<string, any>>(
+  path: string,
+  programmes: readonly string[],
+  onRecords: (records: Record<string, T>) => void,
+  onError?: (error: Error) => void,
+): (() => void) => {
+  const normalizedProgrammes = Array.from(
+    new Set(programmes.map((programme) => programme.trim().toUpperCase()).filter(Boolean)),
+  );
+
+  if (normalizedProgrammes.length === 0) {
+    onRecords({});
+    return () => {};
+  }
+
+  const recordsByProgramme = new Map<string, Record<string, T>>();
+  const publish = () => {
+    const merged: Record<string, T> = {};
+    recordsByProgramme.forEach((records) => {
+      Object.assign(merged, records);
+    });
+    onRecords(merged);
+  };
+
+  const unsubscribers = normalizedProgrammes.map((programme) =>
+    subscribeCollectionByProgramme<T>(
+      path,
+      programme,
+      (records) => {
+        recordsByProgramme.set(programme, records);
+        publish();
+      },
+      onError,
+    ),
+  );
+
+  return () => {
+    unsubscribers.forEach((unsubscribe) => unsubscribe());
+  };
 };
 
 export const invalidateCollectionCache = (path: string): void => {

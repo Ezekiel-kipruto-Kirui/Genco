@@ -7,13 +7,12 @@ export type ProgrammeSelection = ProgrammeOption | typeof ALL_PROGRAMMES_VALUE |
 // ---------------------------------------------------------------------------
 // Roles that bypass programme-level restrictions entirely
 // ---------------------------------------------------------------------------
-const PROGRAMME_ACCESS_BYPASS_ROLES = ["admin", "admin"] as const;
+const PROGRAMME_ACCESS_BYPASS_ROLES = [] as const;
 export type BypassRole = (typeof PROGRAMME_ACCESS_BYPASS_ROLES)[number];
 
 /**
- * Determines whether a user's role grants unrestricted access to all
- * programmes. Only admin and admin roles bypass the restriction.
- * Field Officers are ALWAYS scoped to their allowedProgrammes.
+ * Determines whether a user's role grants unrestricted programme access.
+ * Programme access is assignment-based, so no role bypasses this check.
  */
 export const hasAllProgrammeAccess = (role: string | null | undefined): boolean =>
   !!role && (PROGRAMME_ACCESS_BYPASS_ROLES as readonly string[]).includes(role);

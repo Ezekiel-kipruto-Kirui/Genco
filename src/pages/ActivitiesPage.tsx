@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 // REALTIME DATABASE IMPORTS
 import { ref, push, update, remove } from "firebase/database";
-import { db, fetchCollection, fetchCollectionByProgrammes } from "@/lib/firebase";
+import { db, fetchCollectionByProgrammes } from "@/lib/firebase";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -200,9 +200,10 @@ const ActivitiesPage = () => {
         setLoading(true);
       }
 
-      const rawActivities = userCanViewAllProgrammeData
-        ? await fetchCollection<Record<string, any>>("Recent Activities")
-        : await fetchCollectionByProgrammes<Record<string, any>>("Recent Activities", accessibleProgrammes);
+      const rawActivities = await fetchCollectionByProgrammes<Record<string, any>>(
+        "Recent Activities",
+        accessibleProgrammes,
+      );
 
       if (rawActivities.length > 0) {
         const activitiesData = rawActivities.map((record) => ({

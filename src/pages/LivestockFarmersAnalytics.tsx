@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { ref, onValue, query, orderByChild, equalTo } from "firebase/database";
-import { db } from "@/lib/firebase"; // Ensure this is getDatabase()
+import { subscribeCollectionByProgrammes } from "@/lib/firebase";
 import { useAuth } from "@/contexts/AuthContext";
 import { useQuery } from "@tanstack/react-query";
 import { fetchAnalysisSummary } from "@/lib/analysis";
@@ -735,28 +734,22 @@ const LivestockFarmersAnalytics = () => {
         .filter((item): item is FarmerData => item !== null)
         .sort((a, b) => getDateTimestamp(b.createdAt) - getDateTimestamp(a.createdAt));
 
-    if (activeProgram === ALL_PROGRAMMES_VALUE) {
-      const unsubscribe = onValue(ref(db, "farmers"), (snapshot) => {
-        setAllFarmers(mapFarmers(snapshot.val()));
-        setLoading(false);
-      }, (error) => {
-        console.error("Error fetching farmers data:", error);
-        setLoading(false);
-      });
-      return () => { if (typeof unsubscribe === "function") unsubscribe(); };
-    }
+    const programmesToRead =
+      activeProgram === ALL_PROGRAMMES_VALUE
+        ? accessibleProgrammes
+        : [normalizeProgramme(activeProgram)].filter(Boolean);
 
-    const programmeValue = normalizeProgramme(activeProgram);
-    if (!programmeValue) {
+    if (programmesToRead.length === 0) {
       setAllFarmers([]);
       setLoading(false);
       return;
     }
 
-    const unsubscribe = onValue(
-      query(ref(db, "farmers"), orderByChild("programme"), equalTo(programmeValue)),
-      (snapshot) => {
-        setAllFarmers(mapFarmers(snapshot.val()));
+    const unsubscribe = subscribeCollectionByProgrammes<Record<string, any>>(
+      "farmers",
+      programmesToRead,
+      (records) => {
+        setAllFarmers(mapFarmers(records));
         setLoading(false);
       },
       (error) => {
@@ -766,7 +759,7 @@ const LivestockFarmersAnalytics = () => {
     );
 
     return () => { unsubscribe(); };
-  }, [activeProgram]);
+  }, [activeProgram, accessibleProgrammes]);
 
   // --- 3. Data Fetching (Capacity Building) ---
   useEffect(() => {
@@ -794,25 +787,21 @@ const LivestockFarmersAnalytics = () => {
         })
         .filter((item): item is TrainingData => item !== null);
 
-    if (activeProgram === ALL_PROGRAMMES_VALUE) {
-      const unsubscribe = onValue(ref(db, "capacityBuilding"), (snapshot) => {
-        setTrainingRecords(mapTraining(snapshot.val()));
-      }, (error) => {
-        console.error("Error fetching training data:", error);
-      });
-      return () => { if (typeof unsubscribe === "function") unsubscribe(); };
-    }
+    const programmesToRead =
+      activeProgram === ALL_PROGRAMMES_VALUE
+        ? accessibleProgrammes
+        : [normalizeProgramme(activeProgram)].filter(Boolean);
 
-    const programmeValue = normalizeProgramme(activeProgram);
-    if (!programmeValue) {
+    if (programmesToRead.length === 0) {
       setTrainingRecords([]);
       return;
     }
 
-    const unsubscribe = onValue(
-      query(ref(db, "capacityBuilding"), orderByChild("programme"), equalTo(programmeValue)),
-      (snapshot) => {
-        setTrainingRecords(mapTraining(snapshot.val()));
+    const unsubscribe = subscribeCollectionByProgrammes<Record<string, any>>(
+      "capacityBuilding",
+      programmesToRead,
+      (records) => {
+        setTrainingRecords(mapTraining(records));
       },
       (error) => {
         console.error("Error fetching training data:", error);
@@ -820,7 +809,7 @@ const LivestockFarmersAnalytics = () => {
     );
 
     return () => { unsubscribe(); };
-  }, [activeProgram]);
+  }, [activeProgram, accessibleProgrammes]);
 
   // --- 4. Filtering & Analytics Logic ---
   useEffect(() => {

@@ -127,7 +127,6 @@ const AVAILABLE_PROGRAMMES = [
   "KPMD 2",
 ];
 const USER_ROLE_OPTIONS = [
-  "User",
   "Field Officer",
   "Chief Executive Officer",
   "Chief Operations Officer",
@@ -684,7 +683,7 @@ const UserManagementPage = () => {
     phoneNumber: "",
     county: "",
     subcounty: "",
-    role: "User",
+    role: "",
     password: "",
     confirmPassword: "",
     customAttribute: "",
@@ -1067,7 +1066,7 @@ const UserManagementPage = () => {
       phoneNumber: "",
       county: "",
       subcounty: "",
-      role: "User",
+      role: "",
       password: "",
       confirmPassword: "",
       customAttribute: "",
@@ -1144,6 +1143,11 @@ const UserManagementPage = () => {
       return;
     }
 
+    if (!addForm.role) {
+      toast({ title: "Error", description: "Please select a role", variant: "destructive" });
+      return;
+    }
+
     if (addForm.password !== addForm.confirmPassword) {
       toast({ title: "Error", description: "Passwords do not match", variant: "destructive" });
       return;
@@ -1194,7 +1198,7 @@ const UserManagementPage = () => {
         phoneNumber: "",
         county: "",
         subcounty: "",
-        role: "User",
+        role: "",
         password: "",
         confirmPassword: "",
         customAttribute: "",

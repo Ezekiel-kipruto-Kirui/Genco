@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef, ChangeEvent } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import { ref, update, push, onValue } from "firebase/database";
-import { db } from "@/lib/firebase";
+import { ref, update, push } from "firebase/database";
+import { db, subscribeCollectionByProgramme } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -216,12 +216,9 @@ const FodderFarmersPage = () => {
       setLoading(true);
     }
 
-    const fodderQuery = ref(db, 'fodderFarmers');
-
-    const unsubscribe = onValue(fodderQuery, (snapshot) => {
-      const data = snapshot.val();
+    const unsubscribe = subscribeCollectionByProgramme<Record<string, any>>("fodderFarmers", activeProgram, (data) => {
       
-      if (!data) {
+      if (!data || Object.keys(data).length === 0) {
         setAllFodder([]);
         removeCachedValue(fodderCacheKey);
         setLoading(false);

@@ -194,7 +194,7 @@ const DashboardLayout = () => {
                 </DropdownMenu>
 
                 <span className="text-xs sm:text-sm px-2 sm:px-3 py-1 rounded-full bg-primary/10 text-primary font-medium whitespace-nowrap flex-shrink-0">
-                  {getRoleDisplayName(null, userAttribute)}
+                  {getRoleDisplayName(userRole, userAttribute)}
                 </span>
 
                 {/* Desktop signout */}

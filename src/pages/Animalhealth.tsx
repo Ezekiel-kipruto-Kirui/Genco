@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 // REALTIME DATABASE IMPORTS
 import { ref, push, remove, update } from "firebase/database";
-import { db, fetchCollection, fetchCollectionByProgrammes } from "@/lib/firebase";
+import { db, fetchCollectionByProgrammes } from "@/lib/firebase";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -384,12 +384,10 @@ const AnimalHealthPage = () => {
         setLoading(true);
       }
 
-      const rawActivities = userCanReadAllAnimalHealthProgrammes
-        ? await fetchCollection<Record<string, any>>("AnimalHealthActivities")
-        : await fetchCollectionByProgrammes<Record<string, any>>(
-            "AnimalHealthActivities",
-            accessibleProgrammes,
-          );
+      const rawActivities = await fetchCollectionByProgrammes<Record<string, any>>(
+        "AnimalHealthActivities",
+        accessibleProgrammes,
+      );
 
       if (rawActivities.length > 0) {
         const activitiesData = rawActivities.map((item) => {

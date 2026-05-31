@@ -208,10 +208,6 @@ export const canViewAllProgrammes = (
   allowedProgrammes?: Record<string, boolean> | null
 ): boolean => {
   if (isMobileUser(userRole, userAttribute)) return false;
-  const principal = resolvePermissionPrincipal(userRole, userAttribute);
-  if (isAdmin(userRole) || isAdmin(principal)) {
-    return true;
-  }
 
   const assignedProgrammes = PROGRAMME_OPTIONS.filter(
     (programme) => allowedProgrammes?.[programme] === true

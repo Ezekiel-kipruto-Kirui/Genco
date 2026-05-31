@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useMemo, useRef, memo } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { getAuth } from "firebase/auth";
-import { ref, set, update, remove, onValue, push } from "firebase/database";
-import { db, fetchCollection } from "@/lib/firebase";
+import { ref, set, update, remove, push } from "firebase/database";
+import { db, fetchCollectionByProgrammes, subscribeCollectionByProgramme } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -480,13 +480,13 @@ const LivestockOfftakePage = () => {
   };
 
   // =========================================================================
-  // UPDATED CSV PARSER � Handles row-spanning format:
-  //   � Header row: Date, Farmer Name, Gender, ID Number, Programme,
+  // UPDATED CSV PARSER - Handles row-spanning format:
+  //   - Header row: Date, Farmer Name, Gender, ID Number, Programme,
   //     Region (County), Subcounty, Location, Phone Number, Total Animals,
   //     Live Weight (kg), Carcass Weight (kg), Price per Animal (KES), Total Price (KES)
-  //   � Continuation rows: only Live Weight, Carcass Weight, Price per Animal
-  //   � Blank rows separate farmer sessions
-  //   � GRAND TOTALS row at the end (auto-skipped)
+  //   - Continuation rows: only Live Weight, Carcass Weight, Price per Animal
+  //   - Blank rows separate farmer sessions
+  //   - GRAND TOTALS row at the end (auto-skipped)
   // =========================================================================
   const parseCSVFile = (file: File): Promise<any[]> => new Promise((resolve) => {
     const reader = new FileReader();
@@ -761,12 +761,9 @@ const LivestockOfftakePage = () => {
       setLoading(true);
     }
     
-    const dbRef = ref(db, 'offtakes');
-
-    const unsubscribe = onValue(dbRef, (snapshot) => {
-      const data = snapshot.val();
+    const unsubscribe = subscribeCollectionByProgramme<Record<string, any>>("offtakes", activeProgram, (data) => {
       
-      if (!data) {
+      if (!data || Object.keys(data).length === 0) {
         setAllOfftake([]);
         removeCachedValue(offtakeCacheKey);
         setLoading(false);
@@ -1288,6 +1285,8 @@ const LivestockOfftakePage = () => {
 
       type FarmerOfftakeSummary = {
         farmerName: string;
+        latestDate: string;
+        latestDateTimestamp: number;
         totalAnimals: number;
         carcassWeightTotal: number;
         carcassWeightCount: number;
@@ -1318,11 +1317,18 @@ const LivestockOfftakePage = () => {
           : totalPrice > 0 && totalAnimals > 0
             ? [totalPrice / totalAnimals]
             : [];
+
+        // Compute the timestamp for this record's date for comparison
+        const recordDateTimestamp = getOfftakeTimestamp(record);
+        const recordDateFormatted = formatDate(record.date);
+
         const existing = summaries.get(key);
 
         if (!existing) {
           summaries.set(key, {
             farmerName,
+            latestDate: recordDateFormatted,
+            latestDateTimestamp: recordDateTimestamp,
             totalAnimals,
             carcassWeightTotal: calculateTotal(carcassWeights),
             carcassWeightCount: carcassWeights.length,
@@ -1332,6 +1338,12 @@ const LivestockOfftakePage = () => {
             priceCount: priceValues.length,
           });
           return;
+        }
+
+        // Keep the most recent date
+        if (recordDateTimestamp > existing.latestDateTimestamp) {
+          existing.latestDate = recordDateFormatted;
+          existing.latestDateTimestamp = recordDateTimestamp;
         }
 
         existing.totalAnimals += totalAnimals;
@@ -1348,6 +1360,7 @@ const LivestockOfftakePage = () => {
       );
 
       const headers = [
+        "Date",
         "Farmer Name",
         "Number of Animals",
         "Average Carcass Weight (kg)",
@@ -1356,6 +1369,7 @@ const LivestockOfftakePage = () => {
       ];
 
       const rows = summaryRows.map((summary) => [
+        summary.latestDate,
         summary.farmerName,
         summary.totalAnimals.toString(),
         (summary.carcassWeightCount > 0 ? summary.carcassWeightTotal / summary.carcassWeightCount : 0).toFixed(2),
@@ -1378,6 +1392,7 @@ const LivestockOfftakePage = () => {
       );
 
       const grandTotalRow = [
+        "",
         `GRAND TOTALS (${summaryRows.length} Farmers)`,
         totals.animals.toString(),
         (totals.carcassWeightCount > 0 ? totals.carcassWeight / totals.carcassWeightCount : 0).toFixed(2),
@@ -1699,7 +1714,7 @@ const LivestockOfftakePage = () => {
     const farmerPhonesById = new Map<string, string>();
 
     try {
-      const farmersData = await fetchCollection<any>("farmers");
+      const farmersData = await fetchCollectionByProgrammes<any>("farmers", [activeProgram]);
       for (const farmer of farmersData) {
         const farmerIdNumber = typeof farmer.idNumber === "string" ? farmer.idNumber.trim().toLowerCase() : "";
         const farmerPhone = getFarmerPhoneFromRecord(farmer);
@@ -2088,7 +2103,7 @@ const LivestockOfftakePage = () => {
               </div>
               <div className="flex items-center justify-between p-4 border-t bg-gray-50">
                 <div className="text-sm text-muted-foreground">
-                  {filteredOfftake.length} total records � Page {pagination.page} of {pagination.totalPages}
+                  {filteredOfftake.length} total records - Page {pagination.page} of {pagination.totalPages}
                 </div>
                 <div className="flex gap-2">
                   <Button variant="outline" size="sm" disabled={!pagination.hasPrev} onClick={() => handlePageChange(pagination.page - 1)}>Previous</Button>
@@ -2480,5 +2495,3 @@ const LivestockOfftakePage = () => {
   );
 };
 export default LivestockOfftakePage;
-
-

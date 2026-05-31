@@ -7,7 +7,7 @@ import {onSchedule} from "firebase-functions/v2/scheduler";
 const PROGRAMME_OPTIONS = ["KPMD", "RANGE", "KPMD 2"] as const;
 const CACHE_TTL_MS = 2 * 60 * 1000;
 const PERSISTENT_CACHE_TTL_MS = 15 * 60 * 1000;
-const ANALYSIS_CACHE_VERSION = "v13";
+const ANALYSIS_CACHE_VERSION = "v14";
 const ANALYTICS_CACHE_ROOT = "__analyticsCache";
 const ANALYTICS_COLLECTION_PATHS = [
   "farmers",
@@ -266,7 +266,7 @@ const toProgramme = (value: unknown): string => {
   const normalized = normalize(value);
   if (!normalized) return "";
   if (normalized === "all") return "ALL";
-  if (normalized === "KPMD 2" || normalized === "kpmd 2" || normalized === "kpmd-2") return "KPMD 2";
+  if (normalized === "kpmd 2" || normalized === "kpmd-2") return "KPMD 2";
   return normalized.toUpperCase();
 };
 
@@ -1271,13 +1271,7 @@ const getAllowedProgrammes = (user: any): string[] => {
 };
 
 const canViewAllProgrammes = (user: any): boolean => {
-  const role = normalize(user?.role);
-  const userAttribute = extractUserAttribute(user);
-  return getPermissionTokens(role, userAttribute).some((token) =>
-    isAdminToken(token) ||
-    isFullAccessAttributeToken(token) ||
-    isOfftakeToken(token),
-  );
+  return getAllowedProgrammes(user).length >= PROGRAMME_OPTIONS.length;
 };
 
 const loadProfile = async (uid: string): Promise<AnalysisProfile | null> => {
