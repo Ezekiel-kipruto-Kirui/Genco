@@ -165,6 +165,7 @@ const buildRoleMenuItems = (userRole: string | null, userAttribute: string | nul
       { title: "Dashboard Overview", url: "/dashboard", icon: TrendingUp },
       { title: "General Report", url: "/dashboard/reports", icon: LineChart },
       { title: "Progress Dashboard", url: "/dashboard/livestock/analytics", icon: TrendingUp },
+      { title: "Capacity Building", url: "/dashboard/capacity", icon: GraduationCap },
     ];
   }
 

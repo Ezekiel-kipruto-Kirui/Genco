@@ -226,6 +226,7 @@ export const canAccessDashboard = (
     isFinance(principal) ||
     isProjectManager(principal) ||
     isHummanResourceManager(principal) ||
+    isExecutiveAssistant(principal) ||
     isOfftakeOfficer(principal) ||
     isFullAccessAttribute(principal)
   );
@@ -404,7 +405,8 @@ export const getLandingRouteForRole = (
   if (isMobileUser(userRole, userAttribute)) return "/auth";
   const principal = resolvePermissionPrincipal(userRole, userAttribute);
 
-  if (isOrdersOnlyRole(principal)) return "/orders";
+  if (isExecutiveAssistant(principal)) return "/dashboard";
+  if (isStaff(principal)) return "/orders";
   if (isOfftakeOfficer(principal)) return "/orders";
   if (canAccessDashboard(userRole, userAttribute)) return "/dashboard";
   return "/auth";

@@ -72,6 +72,8 @@ const INFRASTRUCTURE_ALLOWED_IDENTITIES = [...FULL_ACCESS_IDENTITIES, ...PROJECT
 const SITE_MANAGEMENT_ALLOWED_IDENTITIES = ["admin"];
 const USER_MANAGEMENT_ALLOWED_IDENTITIES = ["admin"];
 const ORDERS_ONLY_IDENTITIES = ["executive assistant", "executive assitant", "staff"];
+const EXECUTIVE_ASSISTANT_IDENTITIES = ["executive assistant", "executive assitant"];
+const CAPACITY_ALLOWED_IDENTITIES = [...SITE_MANAGEMENT_ALLOWED_IDENTITIES, ...HR_IDENTITIES];
 const REQUISITION_ALLOWED_IDENTITIES = [
   ...FULL_ACCESS_IDENTITIES,
   ...PROJECT_MANAGER_IDENTITIES,
@@ -79,6 +81,7 @@ const REQUISITION_ALLOWED_IDENTITIES = [
   ...HR_IDENTITIES,
 ];
 const ORDERS_ALLOWED_IDENTITIES = [...FULL_ACCESS_IDENTITIES, "offtake officer", ...ORDERS_ONLY_IDENTITIES];
+const DASHBOARD_SHELL_ALLOWED_IDENTITIES = [...DASHBOARD_ALLOWED_IDENTITIES, ...EXECUTIVE_ASSISTANT_IDENTITIES];
 
 const PageLoader = () => (
   <div className="flex h-screen w-screen items-center justify-center">
@@ -126,7 +129,7 @@ const App = () => (
               <Route
                 path="/dashboard"
                 element={
-                  <ProtectedRoute allowedRoles={DASHBOARD_ALLOWED_IDENTITIES}>
+                  <ProtectedRoute allowedRoles={DASHBOARD_SHELL_ALLOWED_IDENTITIES}>
                     <DashboardLayout />
                   </ProtectedRoute>
                 }
@@ -219,7 +222,7 @@ const App = () => (
                 <Route
                   path="capacity"
                   element={
-                    <ProtectedRoute allowedRoles={SITE_MANAGEMENT_ALLOWED_IDENTITIES}>
+                    <ProtectedRoute allowedRoles={CAPACITY_ALLOWED_IDENTITIES}>
                       <CapacityBuildingPage />
                     </ProtectedRoute>
                   }
