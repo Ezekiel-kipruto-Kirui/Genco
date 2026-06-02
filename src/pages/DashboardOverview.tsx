@@ -147,6 +147,7 @@ const COUNTY_BAR_COLORS = SERIES_COLORS.slice(0, 4);
 const SECONDARY_TEXT_CLASS = "text-gray-600";
 const RECENT_LOCATION_MAX_AGE_DAYS = 180;
 const RECENT_LOCATION_MAX_AGE_MS = RECENT_LOCATION_MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
+const OVERVIEW_TIME_ZONE = "Africa/Nairobi";
 const relativeTimeFormatter = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
 const activityDateFormatter = new Intl.DateTimeFormat("en", {
   month: "short",
@@ -158,6 +159,7 @@ const overviewHeroDateFormatter = new Intl.DateTimeFormat("en", {
   day: "numeric",
   month: "long",
   year: "numeric",
+  timeZone: OVERVIEW_TIME_ZONE,
 });
 const farmerRegisteredDateFormatter = new Intl.DateTimeFormat("en", {
   month: "short",
@@ -211,11 +213,18 @@ const CANONICAL_PROGRAMME_SET = new Set<string>(PROGRAMME_OPTIONS);
 const buildOverviewCacheKey = (
   userId: string | null | undefined,
   programme: string | null | undefined,
-) => cacheKey("overview-summary-v4", userId || "anon", programme || "none");
+) => cacheKey("overview-summary-v5", userId || "anon", programme || "none");
 
 const getGreetingLabel = (date: Date): string => {
-  const hour = date.getHours();
-  if (hour >= 5 && hour < 12) return "Good morning";
+  const hour = Number(
+    new Intl.DateTimeFormat("en", {
+      hour: "numeric",
+      hour12: false,
+      timeZone: OVERVIEW_TIME_ZONE,
+    }).format(date),
+  );
+
+  if (hour >= 0 && hour < 12) return "Good morning";
   if (hour >= 12 && hour < 17) return "Good afternoon";
   return "Good evening";
 };
@@ -704,7 +713,7 @@ const buildOverviewSummaryFromRecords = ({
 
   return {
     stats: {
-      totalFarmers: uniqueFarmers.length,
+      totalFarmers: farmers.length,
       maleFarmers,
       femaleFarmers,
       trainedFarmers,
@@ -1811,21 +1820,22 @@ const DashboardOverview = () => {
     const remoteData = overviewQuery.data as OverviewSummaryData | undefined;
     if (!selectedProgramme || !remoteData) return;
 
-    writeCachedValue(overviewCacheStorageKey, remoteData);
-    setLocalOverviewState({
-      key: overviewCacheStorageKey,
-      data: remoteData,
+    setLocalOverviewState((current) => {
+      if (current.key === overviewCacheStorageKey && current.data) {
+        return current;
+      }
+
+      writeCachedValue(overviewCacheStorageKey, remoteData);
+      return {
+        key: overviewCacheStorageKey,
+        data: remoteData,
+      };
     });
   }, [overviewCacheStorageKey, overviewQuery.data, selectedProgramme]);
 
   // -- Local fallback fetch ----------------------------------------------
   const shouldFetchLocalOverview =
-    Boolean(selectedProgramme) &&
-    (
-      !remoteOverviewEnabled ||
-      overviewQuery.isError ||
-      (remoteOverviewEnabled && !overviewQuery.isLoading && !remoteOverviewHasUsableData)
-    );
+    Boolean(selectedProgramme);
 
   useEffect(() => {
     if (!selectedProgramme) {
@@ -1911,8 +1921,8 @@ const DashboardOverview = () => {
 
   // -- Resolved overview data --------------------------------------------
   const overviewData = sanitizeOverviewSummary(
-    (remoteOverviewHasUsableData ? remoteOverviewData : undefined) ??
     localOverviewData ??
+    (remoteOverviewHasUsableData ? remoteOverviewData : undefined) ??
     cachedOverviewData ??
     EMPTY_OVERVIEW_DATA
   );
@@ -1933,7 +1943,15 @@ const DashboardOverview = () => {
     overviewQuery.isLoading;
   const isLoadingData = !hasOverviewData && (isLoadingRemoteOverview || localOverviewLoading || shouldFetchLocalOverview);
 
-  const overviewHeroDate = useMemo(() => new Date(), []);
+  const [overviewHeroDate, setOverviewHeroDate] = useState(() => new Date());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setOverviewHeroDate(new Date());
+    }, 60 * 1000);
+
+    return () => window.clearInterval(timer);
+  }, []);
   const overviewGreeting = useMemo(() => {
     const greetingName =
       userName ||

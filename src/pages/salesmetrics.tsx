@@ -1390,7 +1390,11 @@ const SalesReport = () => {
 
   // Persist sales inputs
   useEffect(() => {
-    localStorage.setItem(SALES_INPUTS_STORAGE_KEY, JSON.stringify(salesInputs));
+    try {
+      localStorage.setItem(SALES_INPUTS_STORAGE_KEY, JSON.stringify(salesInputs));
+    } catch {
+      // Ignore storage quota/private mode failures. Inputs still work in memory.
+    }
   }, [salesInputs]);
 
   // ---------------------------------------------------------------------------

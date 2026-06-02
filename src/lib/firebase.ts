@@ -2,7 +2,14 @@ import { initializeApp, getApps, getApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
 import { getAnalytics } from "firebase/analytics";
 import { getDatabase, ref, get, onValue, query, orderByChild, equalTo, type DataSnapshot } from "firebase/database";
-import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
+import {
+  cacheKey,
+  installStorageQuotaGuard,
+  readCachedValue,
+  reclaimStorageForCriticalWrites,
+  removeCachedValue,
+  writeCachedValue,
+} from "@/lib/data-cache";
 import { getProgrammeQueryValues } from "@/lib/programme-access";
 
 // --- Types ---
@@ -28,10 +35,12 @@ const firebaseConfig = {
 
 // MAIN APP
 // Check if an app is already initialized to prevent errors during hot-reloads
+installStorageQuotaGuard();
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 export const auth = getAuth(app);
 
 // REALTIME DATABASE
+reclaimStorageForCriticalWrites();
 export const db = getDatabase(app);
 
 // SECONDARY APP (Used for admin operations without logging out the main user)
