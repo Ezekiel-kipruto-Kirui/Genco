@@ -527,18 +527,21 @@ const RequisitionsPage = () => {
         const records = Object.keys(data).map((key) => {
             const item = data[key];
             const dateVal = getRequisitionTimestamp(item as Partial<RequisitionData>);
-            const isFuel = item.type === 'fuel and Service';
             const normalizedPhone = item.phoneNumber || item.phone || item.phone_number || item.Phone || item.mobile || item.contact || item.telephone || '';
+            const type = item.type === "fuel and Service" || item.type === "perdiem" ? item.type : "perdiem";
+            const username = item.username || item.userName || item.name || item.email || "Unknown";
             return {
                 id: key,
                 ...item,
+                type,
+                username,
                 status: (getNormalizedStatus(item.status) || "pending") as RequisitionData["status"],
                 phoneNumber: normalizedPhone,
-                tripPurpose: isFuel ? item.fuelPurpose : item.tripPurpose,
+                tripPurpose: type === "fuel and Service" ? item.fuelPurpose : item.tripPurpose,
                 items: Array.isArray(item.items) ? item.items : [], 
                 submittedAt: item.submittedAt || item.createdAt || dateVal,
                 createdAt: dateVal || 0,
-                totalAmount: (isFuel ? item.fuelAmount : item.total) || 0,
+                totalAmount: (type === "fuel and Service" ? item.fuelAmount : item.total) || 0,
                 fileUploaded: item.fileUploaded || false
             };
         });

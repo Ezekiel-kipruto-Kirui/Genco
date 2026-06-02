@@ -341,6 +341,8 @@ const processTrainingRecord = (
 // =============================================================================
 
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const FARMER_REGISTRATION_SMS =
+  "You have been registered successfully with Genco Livestock. Thank you.";
 
 interface SubscriptionOptions {
   debounceMs?: number;
@@ -1186,19 +1188,51 @@ const LivestockFarmersPage = () => {
       }
 
       let count = 0;
+      const registrationSmsRecipients = new Set<string>();
       const collectionRef = ref(db, "farmers");
       for (const item of parsedData) {
+        const phone = String(item.phone || item.phoneNumber || item.phoneNo || "").trim();
         await push(collectionRef, {
           ...item,
           programme: activeProgram,
           username: item.username || "Unknown",
         });
+        if (phone) registrationSmsRecipients.add(phone);
         count++;
+      }
+
+      let queuedSmsCount = 0;
+      if (registrationSmsRecipients.size > 0) {
+        try {
+          const requestRef = push(ref(db, "smsOutbox"));
+          const recipients = Array.from(registrationSmsRecipients);
+          await set(requestRef, {
+            status: "pending",
+            sourcePage: "livestock-farmers-registration",
+            programme: activeProgram,
+            createdAt: Date.now(),
+            createdBy: userName || user?.email || user?.uid || "unknown",
+            message: FARMER_REGISTRATION_SMS,
+            recipients,
+            selectedRecordCount: count,
+          });
+          queuedSmsCount = recipients.length;
+        } catch (smsError) {
+          console.error("Failed to queue farmer registration SMS:", smsError);
+          toast({
+            title: "SMS Queue Failed",
+            description: "Farmers were uploaded, but registration SMS was not queued.",
+            variant: "destructive",
+          });
+        }
       }
 
       // Invalidate cache so next load picks up new records
       localStorage.removeItem(`farmers_cache_${activeProgram}`);
-      toast({ title: "Success", description: `Uploaded ${count} records to ${activeProgram}.` });
+      toast({
+        title: "Success",
+        description: `Uploaded ${count} records to ${activeProgram}.${queuedSmsCount ? ` SMS queued for ${queuedSmsCount} farmers.` : ""}`,
+      });
       setIsUploadDialogOpen(false);
       setUploadFile(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
