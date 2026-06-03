@@ -17,7 +17,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Download, Eye, Calendar, Edit, Trash2, Car, Wallet, CheckCircle, XCircle, MapPin, Printer, Plus, Minus, Save, FileImage, ExternalLink, MoreHorizontal, History, Clock, ChevronDown, FileText } from "lucide-react"; 
 import { useSharedProgrammeSelection } from "@/hooks/use-shared-programme-selection";
 import { useToast } from "@/hooks/use-toast";
-import { canViewAllProgrammes, isAdmin, isFinance, isHummanResourceManager, isMonitoringAndEvaluationOfficer, isProjectManager, resolvePermissionPrincipal } from "@/contexts/authhelper";
+import { canViewAllProgrammes, isAdmin, isFieldOfficer, isFinance, isHummanResourceManager, isMonitoringAndEvaluationOfficer, isProjectManager, resolvePermissionPrincipal } from "@/contexts/authhelper";
 import html2canvas from "html2canvas";
 import { jsPDF } from "jspdf";
 import { millify } from "millify";
@@ -49,6 +49,24 @@ interface RequisitionData {
   type: 'fuel and Service' | 'perdiem';
   status: 'pending' | 'approved' | 'rejected' | 'complete';
   username: string;
+  role?: string;
+  userRole?: string;
+  requesterRole?: string;
+  submittedByRole?: string;
+  createdByRole?: string;
+  customAttribute?: string;
+  userAttribute?: string;
+  requesterAttribute?: string;
+  submittedByAttribute?: string;
+  createdByAttribute?: string;
+  accessControl?: {
+    customAttribute?: string;
+    customAttributes?: Record<string, unknown>;
+  };
+  source?: string;
+  sourcePage?: string;
+  platform?: string;
+  submittedFrom?: string;
   name?: string;
   userName?: string;
   email?: string;
@@ -245,6 +263,51 @@ const getTransactedAmount = (record: RequisitionData | null | undefined): number
   if (record.transactionCompletedBy) return getRequestedAmount(record);
   return null;
 };
+
+const getRequisitionRequesterTokens = (record: RequisitionData | null | undefined): string[] => {
+  if (!record) return [];
+
+  const customAttributes = record.accessControl?.customAttributes
+    ? Object.keys(record.accessControl.customAttributes)
+    : [];
+
+  return [
+    record.role,
+    record.userRole,
+    record.requesterRole,
+    record.submittedByRole,
+    record.createdByRole,
+    record.customAttribute,
+    record.userAttribute,
+    record.requesterAttribute,
+    record.submittedByAttribute,
+    record.createdByAttribute,
+    record.accessControl?.customAttribute,
+    record.source,
+    record.sourcePage,
+    record.platform,
+    record.submittedFrom,
+    ...customAttributes,
+  ]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+};
+
+const isFieldOfficerRequisition = (record: RequisitionData | null | undefined): boolean =>
+  getRequisitionRequesterTokens(record).some((token) => isFieldOfficer(token));
+
+const isProjectOfficerApprovedRequisition = (record: RequisitionData | null | undefined): boolean => {
+  if (!record) return false;
+  const status = getNormalizedStatus(record.status);
+  if (status !== "approved" && status !== "complete") return false;
+  if (!String(record.approvedBy || "").trim()) return false;
+
+  const approvedByAttribute = String(record.approvedByAttribute || "").trim();
+  return !approvedByAttribute || isProjectManager(approvedByAttribute);
+};
+
+const canRequisitionReachHr = (record: RequisitionData | null | undefined): boolean =>
+  !isFieldOfficerRequisition(record) || isProjectOfficerApprovedRequisition(record);
 
 // --- Helper to Log History ---
 const logHistory = async (
@@ -477,8 +540,9 @@ const RequisitionsPage = () => {
   );
   const approvalActorAttribute = useMemo(() => {
     if (typeof userAttribute === "string" && userAttribute.trim()) return userAttribute.trim();
+    if (userHasProjectManagerRights) return permissionPrincipal || "Project Officer";
     return "";
-  }, [userAttribute]);
+  }, [permissionPrincipal, userAttribute, userHasProjectManagerRights]);
   const actorAttribute = useMemo(() => {
     if (typeof userAttribute === "string" && userAttribute.trim()) return userAttribute.trim();
     if (typeof userRole === "string" && userRole.trim()) return userRole.trim();
@@ -616,6 +680,7 @@ const RequisitionsPage = () => {
     const roleScopedList = baseFilteredList.filter((record) => {
       const normalizedStatus = getNormalizedStatus(record.status);
       if (userHasHummanResourceRights) {
+        if (!canRequisitionReachHr(record)) return false;
         return filters.status === "all" || normalizedStatus === filters.status.toLowerCase();
       }
       if (userHasFinanceRights) {
@@ -1084,6 +1149,10 @@ const RequisitionsPage = () => {
       toast({ title: "Unauthorized", description: "Only Project Manager, M&E Officer, Admin and Admin can approve requisitions.", variant: "destructive" });
       return;
     }
+    if (isFieldOfficerRequisition(viewingRecord) && !userHasProjectManagerRights && !userIsAdmin) {
+      toast({ title: "Project Officer Required", description: "Field Officer requisitions must be approved by Project Officer before HR receives them.", variant: "destructive" });
+      return;
+    }
     try {
         const approverName = userName || user?.displayName || user?.email || "Admin";
         await update(ref(db, `requisitions/${viewingRecord.id}`), {
@@ -1141,6 +1210,10 @@ const RequisitionsPage = () => {
     }
     if (viewingRecord.status !== 'approved') {
       toast({ title: "Invalid Status", description: "Only approved requisitions can be authorized.", variant: "destructive" });
+      return false;
+    }
+    if (!canRequisitionReachHr(viewingRecord)) {
+      toast({ title: "Project Officer Approval Required", description: "Field Officer requisitions can only be authorized after Project Officer approval.", variant: "destructive" });
       return false;
     }
     try {
@@ -1206,6 +1279,10 @@ const RequisitionsPage = () => {
     }
     if (status === "approved" && !canRejectRequisition) {
       toast({ title: "Unauthorized", description: "Only HR or Admin can reject approved requisitions.", variant: "destructive" });
+      return;
+    }
+    if (status === "approved" && canAuthorizeRequisition && !canRequisitionReachHr(viewingRecord)) {
+      toast({ title: "Project Officer Approval Required", description: "Field Officer requisitions can only be rejected by HR after Project Officer approval.", variant: "destructive" });
       return;
     }
 
@@ -1354,7 +1431,11 @@ const RequisitionsPage = () => {
     }
 
     const selected = getSelectedRequisitions();
-    const eligible = selected.filter((record) => record.status === "pending" && !record.approvedBy);
+    const eligible = selected.filter((record) => (
+      record.status === "pending" &&
+      !record.approvedBy &&
+      (!isFieldOfficerRequisition(record) || userHasProjectManagerRights || userIsAdmin)
+    ));
     const skipped = selected.length - eligible.length;
 
     if (eligible.length === 0) {
@@ -1404,7 +1485,11 @@ const RequisitionsPage = () => {
     }
 
     const selected = getSelectedRequisitions();
-    const eligible = selected.filter((record) => record.status === "approved" && !record.authorizedBy);
+    const eligible = selected.filter((record) => (
+      record.status === "approved" &&
+      !record.authorizedBy &&
+      canRequisitionReachHr(record)
+    ));
     const skipped = selected.length - eligible.length;
 
     if (eligible.length === 0) {
@@ -1456,7 +1541,7 @@ const RequisitionsPage = () => {
     }
 
     const selected = getSelectedRequisitions();
-    const eligible = selected.filter((record) => record.status === "approved");
+    const eligible = selected.filter((record) => record.status === "approved" && canRequisitionReachHr(record));
     const skipped = selected.length - eligible.length;
 
     if (eligible.length === 0) {
