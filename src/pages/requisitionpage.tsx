@@ -1149,7 +1149,7 @@ const RequisitionsPage = () => {
       toast({ title: "Unauthorized", description: "Only Project Manager, M&E Officer, Admin and Admin can approve requisitions.", variant: "destructive" });
       return;
     }
-    if (isFieldOfficerRequisition(viewingRecord) && !userHasProjectManagerRights && !userIsAdmin) {
+    if (isFieldOfficerRequisition(viewingRecord) && !userHasProjectManagerRights && !userHasMerRights && !userIsAdmin) {
       toast({ title: "Project Officer Required", description: "Field Officer requisitions must be approved by Project Officer before HR receives them.", variant: "destructive" });
       return;
     }
@@ -1434,7 +1434,7 @@ const RequisitionsPage = () => {
     const eligible = selected.filter((record) => (
       record.status === "pending" &&
       !record.approvedBy &&
-      (!isFieldOfficerRequisition(record) || userHasProjectManagerRights || userIsAdmin)
+      (!isFieldOfficerRequisition(record) || userHasProjectManagerRights || userHasMerRights || userIsAdmin)
     ));
     const skipped = selected.length - eligible.length;
 
