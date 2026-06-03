@@ -491,6 +491,7 @@ const RequisitionsPage = () => {
   );
   const [activeProgram, setActiveProgram] = useSharedProgrammeSelection(accessibleProgrammes, {
     allowAll: canViewAllRequisitionProgrammes || accessibleProgrammes.length > 1,
+    fallbackToAll: canViewAllRequisitionProgrammes || accessibleProgrammes.length > 1,
   });
   const canSelectAllProgrammes = canViewAllRequisitionProgrammes || accessibleProgrammes.length > 1;
   const showProgrammeSelector = accessibleProgrammes.length > 1;
