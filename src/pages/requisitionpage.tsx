@@ -14,7 +14,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu"; 
-import { Download, Eye, Calendar, Edit, Trash2, Car, Wallet, CheckCircle, XCircle, MapPin, Printer, Plus, Minus, Save, FileImage, ExternalLink, MoreHorizontal, History, Clock, ChevronDown, FileText } from "lucide-react"; 
+import { Download, Eye, Calendar, Edit, Trash2, Car, Wallet, CheckCircle, XCircle, MapPin, Printer, Plus, Minus, Save, FileImage, ExternalLink, MoreHorizontal, History, Clock, ChevronDown, FileText, Phone } from "lucide-react"; 
 import { useSharedProgrammeSelection } from "@/hooks/use-shared-programme-selection";
 import { useToast } from "@/hooks/use-toast";
 import { canViewAllProgrammes, isAdmin, isFieldOfficer, isFinance, isHummanResourceManager, isMonitoringAndEvaluationOfficer, isProjectManager, resolvePermissionPrincipal } from "@/contexts/authhelper";
@@ -46,9 +46,10 @@ interface HistoryEntry {
 
 interface RequisitionData {
   id: string;
-  type: 'fuel and Service' | 'perdiem';
+  type: 'fuel and Service' | 'perdiem' | 'airtime';
   status: 'pending' | 'approved' | 'rejected' | 'complete';
   username: string;
+  Programme?: string;
   role?: string;
   userRole?: string;
   requesterRole?: string;
@@ -112,6 +113,13 @@ interface RequisitionData {
   items?: PerdiemItem[]; 
   total?: number;
   location?: string; 
+
+  // Airtime Fields
+  airtimeAmount?: number;
+  airtimePurpose?: string;
+  beneficiaryName?: string;
+  beneficiaryPhone?: string;
+  networkProvider?: string;
   
   // Mobile App Upload Fields
   fileUploaded?: boolean;
@@ -252,9 +260,9 @@ const getRequisitionImages = (urlString: string | undefined): string[] => {
 
 const getRequestedAmount = (record: RequisitionData | null | undefined): number => {
   if (!record) return 0;
-  return record.type === "fuel and Service"
-    ? Number(record.fuelAmount || 0)
-    : Number(record.total || 0);
+  if (record.type === "fuel and Service") return Number(record.fuelAmount || 0);
+  if (record.type === "airtime") return Number(record.airtimeAmount || 0);
+  return Number(record.total || 0);
 };
 
 const getTransactedAmount = (record: RequisitionData | null | undefined): number | null => {
@@ -560,7 +568,7 @@ const RequisitionsPage = () => {
     return actorAttribute;
   }, [actorAttribute, permissionPrincipal]);
   const requisitionCacheKey = useMemo(
-    () => cacheKey("admin-page", "requisitions", permissionPrincipal || "no-access", activeProgram || "all"),
+    () => cacheKey("admin-page", "requisitions-v2", permissionPrincipal || "no-access", activeProgram || "all"),
     [permissionPrincipal, activeProgram]
   );
 
@@ -580,7 +588,11 @@ const RequisitionsPage = () => {
     }
 
     const normalizedActiveProgram = normalizeProgramme(activeProgram);
-    const readProgrammes = normalizedActiveProgram ? [normalizedActiveProgram] : accessibleProgrammes;
+    // Ensure "KPMD 2" is always included in fetched programmes when viewing all
+    const normalizedKPMD2 = normalizeProgramme('KPMD 2');
+    const readProgrammes = normalizedActiveProgram
+      ? [normalizedActiveProgram]
+      : Array.from(new Set([...accessibleProgrammes, normalizedKPMD2].filter(Boolean)));
 
     const unsubscribe = subscribeCollectionByProgrammes<Record<string, any>>("requisitions", readProgrammes, (data) => {
         if (!data) {
@@ -593,20 +605,22 @@ const RequisitionsPage = () => {
             const item = data[key];
             const dateVal = getRequisitionTimestamp(item as Partial<RequisitionData>);
             const normalizedPhone = item.phoneNumber || item.phone || item.phone_number || item.Phone || item.mobile || item.contact || item.telephone || '';
-            const type = item.type === "fuel and Service" || item.type === "perdiem" ? item.type : "perdiem";
+            const type = item.type === "fuel and Service" || item.type === "perdiem" || item.type === "airtime" ? item.type : item.type || "perdiem";
             const username = item.username || item.userName || item.name || item.email || "Unknown";
+            const programme = normalizeProgramme(item.programme || item.Programme);
             return {
                 id: key,
                 ...item,
                 type,
                 username,
+                programme: programme || item.programme || item.Programme || "",
                 status: (getNormalizedStatus(item.status) || "pending") as RequisitionData["status"],
                 phoneNumber: normalizedPhone,
-                tripPurpose: type === "fuel and Service" ? item.fuelPurpose : item.tripPurpose,
+                tripPurpose: type === "fuel and Service" ? item.fuelPurpose : type === "airtime" ? (item.airtimePurpose || item.tripPurpose) : item.tripPurpose,
                 items: Array.isArray(item.items) ? item.items : [], 
                 submittedAt: item.submittedAt || item.createdAt || dateVal,
                 createdAt: dateVal || 0,
-                totalAmount: (type === "fuel and Service" ? item.fuelAmount : item.total) || 0,
+                totalAmount: (type === "fuel and Service" ? item.fuelAmount : type === "airtime" ? item.airtimeAmount : item.total) || 0,
                 fileUploaded: item.fileUploaded || false
             };
         });
@@ -638,11 +652,12 @@ const RequisitionsPage = () => {
       return;
     }
     const baseFilteredList = allRequisitions.filter(record => {
-      const normalizedRecordProgramme = normalizeProgramme(record.programme);
+      const recordProgramme = record.programme || record.Programme;
+      const normalizedRecordProgramme = normalizeProgramme(recordProgramme);
       const normalizedActiveProgram = normalizeProgramme(activeProgram);
 
       if (!canViewAllRequisitionProgrammes) {
-        if (!canAccessProgrammeRecord(record.programme, accessibleProgrammes, false)) {
+        if (!canAccessProgrammeRecord(recordProgramme, accessibleProgrammes, false)) {
           return false;
         }
         if (normalizedActiveProgram && normalizedRecordProgramme !== normalizedActiveProgram) {
@@ -671,7 +686,8 @@ const RequisitionsPage = () => {
       if (filters.search) {
         const term = filters.search.toLowerCase();
         const match = [
-          getOfficerName(record), record.county, record.subcounty, record.location
+          getOfficerName(record), record.county, record.subcounty, record.location,
+          record.type === "airtime" ? record.beneficiaryName : undefined
         ].some(field => field?.toLowerCase().includes(term));
         if (!match) return false;
       }
@@ -1074,6 +1090,12 @@ const RequisitionsPage = () => {
         updatePayload.distanceTraveled = editFormData.distanceTraveled;
         updatePayload.fuelAmount = editFormData.fuelAmount;
         updatePayload.fuelPurpose = editFormData.tripPurpose; 
+      } else if (editRecord.type === 'airtime') {
+        updatePayload.airtimeAmount = editFormData.airtimeAmount;
+        updatePayload.airtimePurpose = editFormData.tripPurpose;
+        updatePayload.beneficiaryName = editFormData.beneficiaryName;
+        updatePayload.beneficiaryPhone = editFormData.beneficiaryPhone;
+        updatePayload.networkProvider = editFormData.networkProvider;
       } else {
         updatePayload.fromLocation = editFormData.fromLocation;
         updatePayload.toLocation = editFormData.toLocation;
@@ -1953,7 +1975,7 @@ const RequisitionsPage = () => {
 
     /* Main wrapper */
     .print-content-wrapper {
-        position: static !important;  /* ðŸ”¥ FIXED */
+        position: static !important;
         width: 100% !important;
         max-width: 100% !important;
         margin: 0 !important;
@@ -2193,6 +2215,7 @@ const RequisitionsPage = () => {
                         <SelectItem value="all">All Types</SelectItem>
                         <SelectItem value="fuel and Service">Fuel & Service</SelectItem>
                         <SelectItem value="perdiem">Perdiem</SelectItem>
+                        <SelectItem value="airtime">Airtime</SelectItem>
                     </SelectContent>
                 </Select>
             </div>
@@ -2366,16 +2389,18 @@ const RequisitionsPage = () => {
                         <td className="py-2 px-3 text-xs font-medium">
                             {record.type === 'fuel and Service' ? (
                                 <span className="flex items-center gap-1"><Car className="h-3 w-3"/> Fuel</span>
+                            ) : record.type === 'airtime' ? (
+                                <span className="flex items-center gap-1"><Phone className="h-3 w-3"/> Airtime</span>
                             ) : (
                                 <span className="flex items-center gap-1"><Wallet className="h-3 w-3"/> Perdiem</span>
                             )}
                         </td>
                         <td className="py-2 px-3 text-xs">{getOfficerName(record)}</td>
                         <td className="py-2 px-3 text-xs truncate max-w-[150px]">
-                            {record.type === 'fuel and Service' ? record.fuelPurpose : record.tripPurpose}
+                            {record.type === 'fuel and Service' ? record.fuelPurpose : record.type === 'airtime' ? record.airtimePurpose : record.tripPurpose}
                         </td>
                         <td className="py-2 px-3 text-xs font-semibold text-green-700">
-                            KES {record.type === 'fuel and Service' ? record.fuelAmount?.toLocaleString() : record.total?.toLocaleString()}
+                            KES {record.type === 'fuel and Service' ? record.fuelAmount?.toLocaleString() : record.type === 'airtime' ? record.airtimeAmount?.toLocaleString() : record.total?.toLocaleString()}
                         </td>
                         <td className="py-2 px-3">
                              <div className="flex flex-col gap-1">
@@ -2489,7 +2514,11 @@ const RequisitionsPage = () => {
                         <img src="/img/logo.png" alt="Logo" className="w-full" />
                       </div>
                       <h1 className="font-times text-2xl font-bold uppercase tracking-tight leading-tight mb-2">
-                        {viewingRecord.type === "fuel and Service" ? "Fuel & Service" : "Perdiem"}{" "}
+                        {viewingRecord.type === "fuel and Service"
+                          ? "Fuel & Service"
+                          : viewingRecord.type === "airtime"
+                          ? "Airtime"
+                          : "Perdiem"}{" "}
                         Requisition Form
                       </h1>
                   </div>
@@ -2515,6 +2544,23 @@ const RequisitionsPage = () => {
                         <div className="flex flex-row items-center gap-2"><span className="text-gray-800 text-[17px] ">Amount Requested : </span><span className="text-gray-800">KES {viewingRecord.fuelAmount?.toLocaleString()}</span></div>
                         <div className="flex flex-row items-center gap-2">
                           <span className="text-gray-800 text-[17px] ">Transacted Amount : </span>
+                          <span className="text-gray-800">
+                            {getTransactedAmount(viewingRecord) !== null
+                              ? `KES ${getTransactedAmount(viewingRecord)?.toLocaleString()}`
+                              : "Pending"}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  ) : viewingRecord.type === 'airtime' ? (
+                    <div className="space-y-2 font-times">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="flex flex-row items-center gap-2"><span className="text-gray-800 text-[17px]">Network Provider : </span><span className="text-gray-800">{viewingRecord.networkProvider || 'N/A'}</span></div>
+                        <div className="flex flex-row items-center gap-2"><span className="text-gray-800 text-[17px]">Beneficiary Name : </span><span className="text-gray-800">{viewingRecord.beneficiaryName || 'N/A'}</span></div>
+                        <div className="flex flex-row items-center gap-2"><span className="text-gray-800 text-[17px]">Beneficiary Phone : </span><span className="text-gray-800">{viewingRecord.beneficiaryPhone || 'N/A'}</span></div>
+                        <div className="flex flex-row items-center gap-2"><span className="text-gray-800 text-[17px]">Amount Requested : </span><span className="text-gray-800">KES {viewingRecord.airtimeAmount?.toLocaleString()}</span></div>
+                        <div className="flex flex-row items-center gap-2">
+                          <span className="text-gray-800 text-[17px]">Transacted Amount : </span>
                           <span className="text-gray-800">
                             {getTransactedAmount(viewingRecord) !== null
                               ? `KES ${getTransactedAmount(viewingRecord)?.toLocaleString()}`
@@ -2857,7 +2903,6 @@ const RequisitionsPage = () => {
       </Dialog>
 
       {/* --- IMAGE VIEWER DIALOG --- */}
-      {/* FIXED: Added print-content-wrapper class here to enable printing */}
       <Dialog
         open={isImageViewerOpen}
         onOpenChange={(open) => {
@@ -3011,6 +3056,17 @@ const RequisitionsPage = () => {
                       <div className="space-y-2"><Label>Distance (km)</Label><Input type="number" value={editFormData.distanceTraveled || ''} onChange={(e) => handleEditFieldChange('distanceTraveled', Number(e.target.value))} /></div>
                     </div>
                   </div>
+                ) : editRecord.type === 'airtime' ? (
+                  <div className="space-y-4 border p-4 rounded-lg bg-gray-50">
+                    <h3 className="font-semibold text-sm uppercase text-gray-700">Airtime Details</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2"><Label>Purpose</Label><Input value={editFormData.tripPurpose || ''} onChange={(e) => handleEditFieldChange('tripPurpose', e.target.value)} /></div>
+                      <div className="space-y-2"><Label>Amount (KES)</Label><Input type="number" value={editFormData.airtimeAmount || ''} onChange={(e) => handleEditFieldChange('airtimeAmount', Number(e.target.value))} /></div>
+                      <div className="space-y-2"><Label>Network Provider</Label><Input value={editFormData.networkProvider || ''} onChange={(e) => handleEditFieldChange('networkProvider', e.target.value)} placeholder="e.g. Safaricom, Airtel" /></div>
+                      <div className="space-y-2"><Label>Beneficiary Name</Label><Input value={editFormData.beneficiaryName || ''} onChange={(e) => handleEditFieldChange('beneficiaryName', e.target.value)} /></div>
+                      <div className="space-y-2"><Label>Beneficiary Phone</Label><Input value={editFormData.beneficiaryPhone || ''} onChange={(e) => handleEditFieldChange('beneficiaryPhone', e.target.value)} /></div>
+                    </div>
+                  </div>
                 ) : (
                   <div className="space-y-4 border p-4 rounded-lg bg-gray-50">
                     <h3 className="font-semibold text-sm uppercase text-gray-700">Perdiem Details</h3>
@@ -3077,6 +3133,3 @@ const RequisitionsPage = () => {
 };
 
 export default RequisitionsPage;
-
-
-
