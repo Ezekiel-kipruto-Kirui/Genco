@@ -262,6 +262,21 @@ const getRequestedAmount = (record: RequisitionData | null | undefined): number 
   return Number(record.total || 0);
 };
 
+const getRequisitionPurpose = (record: RequisitionData | null | undefined): string => {
+  if (!record) return "N/A";
+  const purpose =
+    record.type === "fuel and Service"
+      ? record.fuelPurpose || record.tripPurpose
+      : record.type === "airtime"
+        ? record.airtimePurpose || record.tripPurpose
+        : record.tripPurpose;
+
+  return String(purpose || "").trim() || "N/A";
+};
+
+const getTransactedBy = (record: RequisitionData | null | undefined): string =>
+  String(record?.transactionCompletedBy || "").trim() || "Pending";
+
 const getTransactedAmount = (record: RequisitionData | null | undefined): number | null => {
   if (!record) return null;
   if (typeof record.transactedAmount === "number") return record.transactedAmount;
@@ -848,7 +863,7 @@ const RequisitionsPage = () => {
     resetHrDecisionState();
     
     // Fetch history for this record
-    if (record.id) {
+    if (userIsAdmin && record.id) {
       const historyRef = ref(db, `requisitions/${record.id}/history`);
       onValue(historyRef, (snapshot) => {
         const data = snapshot.val();
@@ -860,12 +875,15 @@ const RequisitionsPage = () => {
             setHistoryList([]);
         }
       });
+    } else {
+      setHistoryList([]);
     }
     
     setIsViewDialogOpen(true); 
-  }, [resetHrDecisionState]);
+  }, [resetHrDecisionState, userIsAdmin]);
 
   const openHistoryOnly = useCallback((record: RequisitionData) => {
+    if (!userIsAdmin) return;
     setViewingRecord(record);
     if (record.id) {
       const historyRef = ref(db, `requisitions/${record.id}/history`);
@@ -881,7 +899,7 @@ const RequisitionsPage = () => {
         setIsHistoryOpen(true);
       }, { onlyOnce: true });
     }
-  }, []);
+  }, [userIsAdmin]);
 
   const handleOpenImageViewer = (record: RequisitionData, printImmediately = false) => {
     const images = getRequisitionImages(record.requisitionUrl);
@@ -2381,6 +2399,7 @@ const RequisitionsPage = () => {
                       <th className="py-3 px-3 font-semibold text-gray-700">Field Officer</th>
                       <th className="py-3 px-3 font-semibold text-gray-700">Purpose</th>
                       <th className="py-3 px-3 font-semibold text-gray-700">Amount</th>
+                      <th className="py-3 px-3 font-semibold text-gray-700">Transacted By</th>
                       <th className="py-3 px-3 font-semibold text-gray-700">Status</th>
                       <th className="py-3 px-3 font-semibold text-gray-700 text-right">Actions</th>
                     </tr>
@@ -2406,11 +2425,12 @@ const RequisitionsPage = () => {
                         </td>
                         <td className="py-2 px-3 text-xs">{getOfficerName(record)}</td>
                         <td className="py-2 px-3 text-xs truncate max-w-[150px]">
-                            {record.type === 'fuel and Service' ? record.fuelPurpose : record.type === 'airtime' ? record.airtimePurpose : record.tripPurpose}
+                            {getRequisitionPurpose(record)}
                         </td>
                         <td className="py-2 px-3 text-xs font-semibold text-green-700">
                             KES {record.type === 'fuel and Service' ? record.fuelAmount?.toLocaleString() : record.type === 'airtime' ? record.airtimeAmount?.toLocaleString() : record.total?.toLocaleString()}
                         </td>
+                        <td className="py-2 px-3 text-xs">{getTransactedBy(record)}</td>
                         <td className="py-2 px-3">
                              <div className="flex flex-col gap-1">
                                {(() => {
@@ -2466,9 +2486,11 @@ const RequisitionsPage = () => {
                                     <Eye className="mr-2 h-4 w-4 text-blue-600" /> <span className="text-gray-700">View Details</span>
                                 </DropdownMenuItem>
                                 
-                                <DropdownMenuItem onClick={() => openHistoryOnly(record)}>
-                                    <Clock className="mr-2 h-4 w-4 text-purple-600" /> <span className="text-gray-700">View History</span>
-                                </DropdownMenuItem>
+                                {userIsAdmin && (
+                                  <DropdownMenuItem onClick={() => openHistoryOnly(record)}>
+                                      <Clock className="mr-2 h-4 w-4 text-purple-600" /> <span className="text-gray-700">View History</span>
+                                  </DropdownMenuItem>
+                                )}
                                 
                                 <DropdownMenuItem onClick={() => handleOpenImageViewer(record)}>
                                     <FileImage className="mr-2 h-4 w-4 text-indigo-600" /> <span className="text-gray-700">View Images</span>
@@ -2541,7 +2563,8 @@ const RequisitionsPage = () => {
                     <div className="flex flex-row gap-2"><span className="text-gray-700 text-[17px]">Sub County:</span><span className="font-medium flex-1 text-[17px]">{viewingRecord.subcounty}</span></div>
                     <div className="flex flex-row gap-2"><span className="text-gray-700 text-[17px]">Requested By:</span><span className="font-medium flex-1 text-[17px]">{getOfficerName(viewingRecord)}</span></div>
                     <div className="flex flex-row gap-2"><span className="text-gray-700 text-[17px]">Phone: </span><span className="font-medium  flex-1 text-[17px]">{viewingRecord.phoneNumber || viewingRecord.phone || 'N/A'}</span></div>
-                    <div className="flex flex-row gap-2"><span className="text-gray-700 text-[17px]">Purpose : </span><span className="font-medium  flex-1 text-[17px]">{viewingRecord.tripPurpose}</span></div>
+                    <div className="flex flex-row gap-2"><span className="text-gray-700 text-[17px]">Purpose : </span><span className="font-medium  flex-1 text-[17px]">{getRequisitionPurpose(viewingRecord)}</span></div>
+                    <div className="flex flex-row gap-2"><span className="text-gray-700 text-[17px]">Transacted By : </span><span className="font-medium  flex-1 text-[17px]">{getTransactedBy(viewingRecord)}</span></div>
                   </div>
 
                   {viewingRecord.type === 'fuel and Service' ? (
@@ -2858,7 +2881,7 @@ const RequisitionsPage = () => {
       </Dialog>
 
       {/* --- HISTORY DIALOG --- */}
-      <Dialog open={isHistoryOpen} onOpenChange={setIsHistoryOpen}>
+      {userIsAdmin && <Dialog open={isHistoryOpen} onOpenChange={setIsHistoryOpen}>
         <DialogContent className="sm:max-w-lg">
             <DialogHeader>
                 <DialogTitle className="flex items-center gap-2">
@@ -2906,7 +2929,7 @@ const RequisitionsPage = () => {
                 <Button variant="outline" onClick={() => setIsHistoryOpen(false)}>Close</Button>
             </DialogFooter>
         </DialogContent>
-      </Dialog>
+      </Dialog>}
 
       {/* --- IMAGE VIEWER DIALOG --- */}
       <Dialog
