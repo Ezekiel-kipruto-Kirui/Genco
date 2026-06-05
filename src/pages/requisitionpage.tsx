@@ -117,9 +117,6 @@ interface RequisitionData {
   // Airtime Fields
   airtimeAmount?: number;
   airtimePurpose?: string;
-  beneficiaryName?: string;
-  beneficiaryPhone?: string;
-  networkProvider?: string;
   
   // Mobile App Upload Fields
   fileUploaded?: boolean;
@@ -304,6 +301,11 @@ const getRequisitionRequesterTokens = (record: RequisitionData | null | undefine
 const isFieldOfficerRequisition = (record: RequisitionData | null | undefined): boolean =>
   getRequisitionRequesterTokens(record).some((token) => isFieldOfficer(token));
 
+const isProjectOrMerRequisition = (record: RequisitionData | null | undefined): boolean =>
+  getRequisitionRequesterTokens(record).some(
+    (token) => isProjectManager(token) || isMonitoringAndEvaluationOfficer(token),
+  );
+
 const isProjectOfficerApprovedRequisition = (record: RequisitionData | null | undefined): boolean => {
   if (!record) return false;
   const status = getNormalizedStatus(record.status);
@@ -311,11 +313,20 @@ const isProjectOfficerApprovedRequisition = (record: RequisitionData | null | un
   if (!String(record.approvedBy || "").trim()) return false;
 
   const approvedByAttribute = String(record.approvedByAttribute || "").trim();
-  return !approvedByAttribute || isProjectManager(approvedByAttribute);
+  return !approvedByAttribute || isProjectManager(approvedByAttribute) || isMonitoringAndEvaluationOfficer(approvedByAttribute);
 };
 
 const canRequisitionReachHr = (record: RequisitionData | null | undefined): boolean =>
-  !isFieldOfficerRequisition(record) || isProjectOfficerApprovedRequisition(record);
+  !isProjectOrMerRequisition(record) &&
+  (!isFieldOfficerRequisition(record) || isProjectOfficerApprovedRequisition(record));
+
+const requiresHrAuthorization = (record: RequisitionData | null | undefined): boolean =>
+  !isProjectOrMerRequisition(record);
+
+const canProceedAfterApproval = (record: RequisitionData | null | undefined): boolean =>
+  Boolean(record) &&
+  getNormalizedStatus(record?.status) === "approved" &&
+  (!requiresHrAuthorization(record) || !!String(record?.authorizedBy || "").trim());
 
 // --- Helper to Log History ---
 const logHistory = async (
@@ -550,8 +561,9 @@ const RequisitionsPage = () => {
   const approvalActorAttribute = useMemo(() => {
     if (typeof userAttribute === "string" && userAttribute.trim()) return userAttribute.trim();
     if (userHasProjectManagerRights) return permissionPrincipal || "Project Officer";
+    if (userHasMerRights) return permissionPrincipal || "M&E Officer";
     return "";
-  }, [permissionPrincipal, userAttribute, userHasProjectManagerRights]);
+  }, [permissionPrincipal, userAttribute, userHasMerRights, userHasProjectManagerRights]);
   const actorAttribute = useMemo(() => {
     if (typeof userAttribute === "string" && userAttribute.trim()) return userAttribute.trim();
     if (typeof userRole === "string" && userRole.trim()) return userRole.trim();
@@ -686,8 +698,7 @@ const RequisitionsPage = () => {
       if (filters.search) {
         const term = filters.search.toLowerCase();
         const match = [
-          getOfficerName(record), record.county, record.subcounty, record.location,
-          record.type === "airtime" ? record.beneficiaryName : undefined
+          getOfficerName(record), record.county, record.subcounty, record.location
         ].some(field => field?.toLowerCase().includes(term));
         if (!match) return false;
       }
@@ -701,7 +712,7 @@ const RequisitionsPage = () => {
         return filters.status === "all" || normalizedStatus === filters.status.toLowerCase();
       }
       if (userHasFinanceRights) {
-        const isAuthorized = !!String(record.authorizedBy || "").trim();
+        const isAuthorized = !!String(record.authorizedBy || "").trim() || canProceedAfterApproval(record);
         const isCompleted = normalizedStatus === "complete";
         return isAuthorized || isCompleted;
       }
@@ -721,9 +732,7 @@ const RequisitionsPage = () => {
     const totalRequests = statsSourceList.length;
     const pendingRequests = statsSourceList.filter((r) => getNormalizedStatus(r.status) === "pending").length;
     const approvedRequests = statsSourceList.filter((r) => getNormalizedStatus(r.status) === "approved").length;
-    const authorizedRequests = statsSourceList.filter(
-      (r) => getNormalizedStatus(r.status) === "approved" && !!String(r.authorizedBy || "").trim()
-    ).length;
+    const authorizedRequests = statsSourceList.filter((r) => canProceedAfterApproval(r)).length;
     const rejectedRequests = statsSourceList.filter((r) => getNormalizedStatus(r.status) === "rejected").length;
     const completeRequests = statsSourceList.filter((r) => getNormalizedStatus(r.status) === "complete").length;
     const totalAmount = statsSourceList.reduce((sum, r) => sum + (r.totalAmount || 0), 0);
@@ -1057,7 +1066,7 @@ const RequisitionsPage = () => {
           return;
         }
         const authorizedBy = String(editFormData.authorizedBy || editRecord.authorizedBy || '').trim();
-        if (!authorizedBy) {
+        if (requiresHrAuthorization(editRecord) && !authorizedBy) {
           toast({ title: "Authorization Required", description: "Requisition can only be completed after Humman Resource Manager authorization.", variant: "destructive" });
           return;
         }
@@ -1093,9 +1102,6 @@ const RequisitionsPage = () => {
       } else if (editRecord.type === 'airtime') {
         updatePayload.airtimeAmount = editFormData.airtimeAmount;
         updatePayload.airtimePurpose = editFormData.tripPurpose;
-        updatePayload.beneficiaryName = editFormData.beneficiaryName;
-        updatePayload.beneficiaryPhone = editFormData.beneficiaryPhone;
-        updatePayload.networkProvider = editFormData.networkProvider;
       } else {
         updatePayload.fromLocation = editFormData.fromLocation;
         updatePayload.toLocation = editFormData.toLocation;
@@ -1174,6 +1180,10 @@ const RequisitionsPage = () => {
     }
     if (isFieldOfficerRequisition(viewingRecord) && !userHasProjectManagerRights && !userHasMerRights && !userIsAdmin) {
       toast({ title: "Project Officer Required", description: "Field Officer requisitions must be approved by Project Officer before HR receives them.", variant: "destructive" });
+      return;
+    }
+    if (isProjectOrMerRequisition(viewingRecord) && !userHasProjectManagerRights && !userHasMerRights && !userIsAdmin) {
+      toast({ title: "Project/M&E Approval Required", description: "Project Officer and M&E requisitions must be approved by Project Officer or M&E Officer.", variant: "destructive" });
       return;
     }
     try {
@@ -1361,7 +1371,7 @@ const RequisitionsPage = () => {
       toast({ title: "Invalid Status", description: "Only approved requisitions can be marked complete.", variant: "destructive" });
       return;
     }
-    if (!viewingRecord.authorizedBy) {
+    if (!canProceedAfterApproval(viewingRecord)) {
       toast({ title: "Authorization Required", description: "Requisition can only be completed after Humman Resource Manager authorization.", variant: "destructive" });
       return;
     }
@@ -1406,7 +1416,7 @@ const RequisitionsPage = () => {
       toast({ title: "Invalid Status", description: "Only approved requisitions can be marked complete.", variant: "destructive" });
       return;
     }
-    if (!viewingRecord.authorizedBy) {
+    if (!canProceedAfterApproval(viewingRecord)) {
       toast({ title: "Authorization Required", description: "Requisition can only be completed after Humman Resource Manager authorization.", variant: "destructive" });
       return;
     }
@@ -1457,7 +1467,8 @@ const RequisitionsPage = () => {
     const eligible = selected.filter((record) => (
       record.status === "pending" &&
       !record.approvedBy &&
-      (!isFieldOfficerRequisition(record) || userHasProjectManagerRights || userHasMerRights || userIsAdmin)
+      (!isFieldOfficerRequisition(record) || userHasProjectManagerRights || userHasMerRights || userIsAdmin) &&
+      (!isProjectOrMerRequisition(record) || userHasProjectManagerRights || userHasMerRights || userIsAdmin)
     ));
     const skipped = selected.length - eligible.length;
 
@@ -1616,7 +1627,7 @@ const RequisitionsPage = () => {
 
     const selected = getSelectedRequisitions();
     const eligible = selected.filter(
-      (record) => record.status === "approved" && !!record.authorizedBy && !record.transactionCompletedBy
+      (record) => canProceedAfterApproval(record) && !record.transactionCompletedBy
     );
     const skipped = selected.length - eligible.length;
 
@@ -1664,7 +1675,7 @@ const RequisitionsPage = () => {
 
     const scopeRecords = filteredRequisitions;
     const eligible = scopeRecords.filter(
-      (record) => record.status === "approved" && !!record.authorizedBy && !record.transactionCompletedBy
+      (record) => canProceedAfterApproval(record) && !record.transactionCompletedBy
     );
     const skipped = scopeRecords.length - eligible.length;
 
@@ -1712,8 +1723,7 @@ const RequisitionsPage = () => {
 
     const selected = getSelectedRequisitions();
     const eligible = selected.filter((record) => (
-      record.status === "approved" &&
-      !!record.authorizedBy &&
+      canProceedAfterApproval(record) &&
       !!record.transactionCompletedBy &&
       getRequisitionImages(record.requisitionUrl).length > 0
     ));
@@ -1764,8 +1774,7 @@ const RequisitionsPage = () => {
 
     const scopeRecords = filteredRequisitions;
     const eligible = scopeRecords.filter((record) => (
-      record.status === "approved" &&
-      !!record.authorizedBy &&
+      canProceedAfterApproval(record) &&
       !!record.transactionCompletedBy &&
       getRequisitionImages(record.requisitionUrl).length > 0
     ));
@@ -2555,9 +2564,7 @@ const RequisitionsPage = () => {
                   ) : viewingRecord.type === 'airtime' ? (
                     <div className="space-y-2 font-times">
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div className="flex flex-row items-center gap-2"><span className="text-gray-800 text-[17px]">Network Provider : </span><span className="text-gray-800">{viewingRecord.networkProvider || 'N/A'}</span></div>
-                        <div className="flex flex-row items-center gap-2"><span className="text-gray-800 text-[17px]">Beneficiary Name : </span><span className="text-gray-800">{viewingRecord.beneficiaryName || 'N/A'}</span></div>
-                        <div className="flex flex-row items-center gap-2"><span className="text-gray-800 text-[17px]">Beneficiary Phone : </span><span className="text-gray-800">{viewingRecord.beneficiaryPhone || 'N/A'}</span></div>
+
                         <div className="flex flex-row items-center gap-2"><span className="text-gray-800 text-[17px]">Amount Requested : </span><span className="text-gray-800">KES {viewingRecord.airtimeAmount?.toLocaleString()}</span></div>
                         <div className="flex flex-row items-center gap-2">
                           <span className="text-gray-800 text-[17px]">Transacted Amount : </span>
@@ -2708,7 +2715,7 @@ const RequisitionsPage = () => {
               )}
               
               
-              {canAuthorizeRequisition && viewingRecord?.status === 'approved' && !viewingRecord.authorizedBy && (
+              {canAuthorizeRequisition && viewingRecord?.status === 'approved' && !viewingRecord.authorizedBy && canRequisitionReachHr(viewingRecord) && (
                 <div className="w-full sm:w-[250px]">
                   <Select value={hrDecisionAction} onValueChange={handleHrDecisionChange}>
                     <SelectTrigger className="h-10 border-indigo-300 bg-indigo-50 text-indigo-900 focus:ring-indigo-500">
@@ -2738,14 +2745,13 @@ const RequisitionsPage = () => {
               )}
 
         
-              {canCompleteTransaction && viewingRecord?.status === 'approved' && !!viewingRecord.authorizedBy && !viewingRecord.transactionCompletedBy && (
+              {canCompleteTransaction && canProceedAfterApproval(viewingRecord) && !viewingRecord.transactionCompletedBy && (
                 <Button onClick={handleCompleteTransaction} className="bg-blue-800 hover:bg-blue-900 flex-1 sm:flex-none">
                   <CheckCircle className="h-4 w-4 mr-2" /> Complete Transaction
                 </Button>
               )}
               {canMarkRequisitionComplete &&
-                viewingRecord?.status === 'approved' &&
-                !!viewingRecord.authorizedBy &&
+                canProceedAfterApproval(viewingRecord) &&
                 !!viewingRecord.transactionCompletedBy &&
                 getRequisitionImages(viewingRecord?.requisitionUrl).length > 0 && (
                   <Button onClick={handleMarkComplete} className="bg-green-700 hover:bg-green-800 flex-1 sm:flex-none">
@@ -3062,9 +3068,6 @@ const RequisitionsPage = () => {
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div className="space-y-2"><Label>Purpose</Label><Input value={editFormData.tripPurpose || ''} onChange={(e) => handleEditFieldChange('tripPurpose', e.target.value)} /></div>
                       <div className="space-y-2"><Label>Amount (KES)</Label><Input type="number" value={editFormData.airtimeAmount || ''} onChange={(e) => handleEditFieldChange('airtimeAmount', Number(e.target.value))} /></div>
-                      <div className="space-y-2"><Label>Network Provider</Label><Input value={editFormData.networkProvider || ''} onChange={(e) => handleEditFieldChange('networkProvider', e.target.value)} placeholder="e.g. Safaricom, Airtel" /></div>
-                      <div className="space-y-2"><Label>Beneficiary Name</Label><Input value={editFormData.beneficiaryName || ''} onChange={(e) => handleEditFieldChange('beneficiaryName', e.target.value)} /></div>
-                      <div className="space-y-2"><Label>Beneficiary Phone</Label><Input value={editFormData.beneficiaryPhone || ''} onChange={(e) => handleEditFieldChange('beneficiaryPhone', e.target.value)} /></div>
                     </div>
                   </div>
                 ) : (
