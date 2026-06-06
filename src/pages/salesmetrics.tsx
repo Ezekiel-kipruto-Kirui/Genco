@@ -14,6 +14,7 @@ import {
   equalTo,
   onValue,
   get,
+  set,
   DataSnapshot,
 } from "firebase/database";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -31,7 +32,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -50,9 +51,6 @@ import {
   resolveAccessibleProgrammes,
 } from "@/lib/programme-access";
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
 
 const COLORS = {
   darkBlue: "#1e3a8a",
@@ -97,6 +95,17 @@ const USE_REMOTE_ANALYTICS =
   typeof window !== "undefined" && !["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
 
 const SALES_ANALYTICS_QUERY_VERSION = "v6";
+
+// ---------------------------------------------------------------------------
+// Sales prices are stored separately for the mobile app.
+// These values must not feed the web dashboard sales computations.
+// Path in Realtime DB:  prices  (single flat document)
+//   { pricePerKg: number, expenses: number, updatedAt: number }
+// ---------------------------------------------------------------------------
+
+const PRICES_COLLECTION_PATH = "prices";
+
+const pricesCollectionRef = () => ref(db, PRICES_COLLECTION_PATH);
 
 // ---------------------------------------------------------------------------
 // Types
@@ -633,7 +642,7 @@ const createEmptySalesAnalytics = (salesInputs: SalesInputs): SalesAnalyticsPayl
 });
 
 // ---------------------------------------------------------------------------
-// Offtake record transformer � extracted for reuse & testability
+// Offtake record transformer – extracted for reuse & testability
 // ---------------------------------------------------------------------------
 
 const toAnimalArr = (value: unknown): Array<{ live: string; carcass: string; price: string }> => {
@@ -990,7 +999,7 @@ const buildLocalSalesAnalytics = (
 };
 
 // ---------------------------------------------------------------------------
-// Custom Hook � useOfftakeData
+// Custom Hook – useOfftakeData
 // ---------------------------------------------------------------------------
 
 const useOfftakeData = (
@@ -1185,7 +1194,7 @@ const safeGetByProgramme = async (
 ): Promise<DataSnapshot[]> => {
   const results: DataSnapshot[] = [];
 
-  // Always try the lowercase variant first � this is the primary field.
+  // Always try the lowercase variant first – this is the primary field.
   try {
     const snap = await get(
       query(ref(db, path), orderByChild("programme"), equalTo(programme)),
@@ -1195,14 +1204,14 @@ const safeGetByProgramme = async (
     console.warn(`[safeGetByProgramme] "programme" query failed on /${path}:`, err);
   }
 
-  // Try the capitalised variant � gracefully skip if the index is missing.
+  // Try the capitalised variant – gracefully skip if the index is missing.
   try {
     const snap = await get(
       query(ref(db, path), orderByChild("Programme"), equalTo(programme)),
     );
     results.push(snap);
   } catch (err) {
-    // Index not defined for "Programme" � this is expected on some Realtime
+    // Index not defined for "Programme" – this is expected on some Realtime
     // Database instances.  Log at debug level and continue.
     console.debug(
       `[safeGetByProgramme] "Programme" index missing on /${path}, skipping. Error:`,
@@ -1243,11 +1252,16 @@ const SalesReport = () => {
     pricePerKg: 0,
     expenses: 0,
   });
+  const [priceConfig, setPriceConfig] = useState<SalesInputs>({
+    pricePerKg: 0,
+    expenses: 0,
+  });
   const [isSalesInputsDialogOpen, setIsSalesInputsDialogOpen] = useState(false);
   const [salesInputsForm, setSalesInputsForm] = useState<{
     pricePerKg: string;
     expenses: string;
   }>({ pricePerKg: "0", expenses: "0" });
+  const [isSavingSalesInputs, setIsSavingSalesInputs] = useState(false);
 
   // ----- Derived / Memos -----
 
@@ -1275,8 +1289,8 @@ const SalesReport = () => {
   );
 
   // Cast to readonly string[] so that .includes() accepts a plain string
-  // argument � fixes TS 2345 when resolveAccessibleProgrammes returns a
-  // narrower union-typed array such as ("KPMD" | "RANGE" | "KPMD 2")[].
+  // argument – fixes TS 2345 when resolveAccessibleProgrammes returns a
+  // narrower union-typed array such as ("KPMD" | "RANGE" | "MTLDK")[].
   const accessibleProgrammes = useMemo(
     () =>
       (resolveAccessibleProgrammes(
@@ -1291,8 +1305,9 @@ const SalesReport = () => {
     [userRole, userAttribute],
   );
 
+  // *** CHANGE 1: Allow both admin AND M&E to manage sales inputs / prices ***
   const userCanManageSalesInputs = useMemo(
-    () => isAdmin(permissionPrincipal),
+    () => isAdmin(permissionPrincipal) || permissionPrincipal === "me",
     [permissionPrincipal],
   );
 
@@ -1318,8 +1333,8 @@ const SalesReport = () => {
   const selectedProgramme = activeProgram || null;
   const analysisProgramme = activeProgram || null;
 
-  const hasConfiguredSalesInputs =
-    salesInputs.pricePerKg > 0 || salesInputs.expenses > 0;
+  const hasConfiguredPriceConfig =
+    priceConfig.pricePerKg > 0 || priceConfig.expenses > 0;
 
   // ----- Refs -----
   const unsubscribeRef = useRef<(() => void) | null>(null);
@@ -1366,39 +1381,78 @@ const SalesReport = () => {
     });
   }, [analysisError, toast]);
 
-  // Restore persisted sales inputs
+  // ---------------------------------------------------------------------------
+  // Load sales inputs from localStorage for the web calculations, and load
+  // the separate prices collection for the mobile app price configuration.
+  //
+  // 1. Restore immediately from localStorage so the UI has values instantly.
+  // 2. Then listen to the "prices" collection in Firebase without feeding
+  //    those values into the web computation inputs.
+  // ---------------------------------------------------------------------------
   useEffect(() => {
+    // --- Step 1: fast local cache restore ------------------------------------
     try {
       const storedInputs = localStorage.getItem(SALES_INPUTS_STORAGE_KEY);
-      if (!storedInputs) return;
-      const parsed = JSON.parse(storedInputs) as Partial<SalesInputs>;
-      const nextPrice = Number(parsed.pricePerKg);
-      const nextExpenses = Number(parsed.expenses);
+      if (storedInputs) {
+        const parsed = JSON.parse(storedInputs) as Partial<SalesInputs>;
+        const nextPrice = Number(parsed.pricePerKg);
+        const nextExpenses = Number(parsed.expenses);
 
-      startTransition(() => {
-        setSalesInputs({
-          pricePerKg:
-            Number.isFinite(nextPrice) && nextPrice >= 0 ? nextPrice : 0,
-          expenses:
-            Number.isFinite(nextExpenses) && nextExpenses >= 0 ? nextExpenses : 0,
+        startTransition(() => {
+          setSalesInputs({
+            pricePerKg:
+              Number.isFinite(nextPrice) && nextPrice >= 0 ? nextPrice : 0,
+            expenses:
+              Number.isFinite(nextExpenses) && nextExpenses >= 0 ? nextExpenses : 0,
+          });
         });
-      });
+      }
     } catch (error) {
-      console.error("Failed to load saved sales inputs:", error);
+      console.error("Failed to load cached sales inputs:", error);
     }
+
+    // --- Step 2: Firebase prices listener -------------------------------------
+    const unsubscribe = onValue(
+      pricesCollectionRef(),
+      (snapshot) => {
+        if (!snapshot.exists()) return;
+
+        const data = snapshot.val() as {
+          pricePerKg?: unknown;
+          expenses?: unknown;
+        };
+
+        const nextPrice = parseNumber(data.pricePerKg);
+        const nextExpenses = parseNumber(data.expenses);
+
+        startTransition(() => {
+          setPriceConfig({
+            pricePerKg: nextPrice,
+            expenses: nextExpenses,
+          });
+        });
+      },
+      (error) => {
+        console.error("Error listening to prices collection:", error);
+      },
+    );
+
+    return () => unsubscribe();
   }, []);
 
-  // Persist sales inputs
+  // ---------------------------------------------------------------------------
+  // Cache sales inputs to localStorage whenever they change (offline fallback)
+  // ---------------------------------------------------------------------------
   useEffect(() => {
     try {
       localStorage.setItem(SALES_INPUTS_STORAGE_KEY, JSON.stringify(salesInputs));
     } catch {
-      // Ignore storage quota/private mode failures. Inputs still work in memory.
+      // Ignore storage quota / private-mode failures.
     }
   }, [salesInputs]);
 
   // ---------------------------------------------------------------------------
-  // Combined data loading � offtake listener + orders/requisitions fetch
+  // Combined data loading – offtake listener + orders/requisitions fetch
   // coordinated to reduce overall loading time
   // ---------------------------------------------------------------------------
 
@@ -1439,9 +1493,6 @@ const SalesReport = () => {
     // Kick off orders + requisitions fetch in parallel with the offtake listener
     void (async () => {
       try {
-        // -----------------------------------------------------------------
-        // FIX #1: Use safeGetByProgramme to gracefully handle missing index
-        // -----------------------------------------------------------------
         const allSnapshots = await Promise.all(
           selectedFinanceProgrammes.flatMap((programme) => [
             safeGetByProgramme("orders", programme),
@@ -1554,9 +1605,6 @@ const SalesReport = () => {
 
     const loadSelectedProgrammeOfftakes = async () => {
       try {
-        // -----------------------------------------------------------------
-        // FIX #1: Use safeGetByProgramme for offtake "all programmes" path
-        // -----------------------------------------------------------------
         const snapshotBatches = await Promise.all(
           selectedFinanceProgrammes.map((programme) =>
             safeGetByProgramme("offtakes", programme),
@@ -1613,7 +1661,7 @@ const SalesReport = () => {
       };
     }
 
-    // Set up real-time listener for offtake data (single programme �
+    // Set up real-time listener for offtake data (single programme –
     // lowercase "programme" field is indexed, so this is safe)
     const offtakesRef = normalizedActive
       ? query(ref(db, "offtakes"), orderByChild("programme"), equalTo(normalizedActive))
@@ -1756,18 +1804,23 @@ const SalesReport = () => {
   const openSalesInputsDialog = useCallback(() => {
     if (!userCanManageSalesInputs) return;
     setSalesInputsForm({
-      pricePerKg: salesInputs.pricePerKg.toString(),
-      expenses: salesInputs.expenses.toString(),
+      pricePerKg: priceConfig.pricePerKg.toString(),
+      expenses: priceConfig.expenses.toString(),
     });
     setIsSalesInputsDialogOpen(true);
-  }, [userCanManageSalesInputs, salesInputs]);
+  }, [userCanManageSalesInputs, priceConfig]);
 
-  const saveSalesInputs = useCallback(() => {
+  // ---------------------------------------------------------------------------
+  // Save mobile-app prices. This writes to Firebase /prices only and does not
+  // update salesInputs, so it cannot change the web dashboard computations.
+  // ---------------------------------------------------------------------------
+  const saveSalesInputs = useCallback(async () => {
     if (!userCanManageSalesInputs) {
+      // *** CHANGE 3: Updated toast message to include M&E ***
       toast({
         title: "Unauthorized",
         description:
-          "Only admin can update expense inputs.",
+          "Only admin or M&E can update expense inputs.",
         variant: "destructive",
       });
       return;
@@ -1782,17 +1835,38 @@ const SalesReport = () => {
       Number(salesInputsForm.expenses) || 0,
     );
 
-    setSalesInputs({
-      pricePerKg: parsedPricePerKg,
-      expenses: parsedExpenses,
-    });
-    setIsSalesInputsDialogOpen(false);
+    setIsSavingSalesInputs(true);
 
-    toast({
-      title: "Inputs Saved",
-      description:
-        "Revenue and expenses updated. Revenue uses carcass weight only.",
-    });
+    try {
+      await set(pricesCollectionRef(), {
+        pricePerKg: parsedPricePerKg,
+        expenses: parsedExpenses,
+        updatedAt: Date.now(),
+      });
+
+      startTransition(() => {
+        setPriceConfig({
+          pricePerKg: parsedPricePerKg,
+          expenses: parsedExpenses,
+        });
+      });
+
+      setIsSalesInputsDialogOpen(false);
+
+      toast({
+        title: "Prices Saved",
+        description: "Prices collection updated for the mobile app.",
+      });
+    } catch (error) {
+      console.error("Failed to save prices to Firebase:", error);
+      toast({
+        title: "Save Failed",
+        description: "Could not create or update the prices collection.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSavingSalesInputs(false);
+    }
   }, [userCanManageSalesInputs, salesInputsForm, toast]);
 
   // ---------------------------------------------------------------------------
@@ -1895,9 +1969,9 @@ const SalesReport = () => {
                 onClick={openSalesInputsDialog}
               >
                 <Calculator className="h-4 w-4 mr-2" />
-                {hasConfiguredSalesInputs
-                  ? "Update Expense Inputs"
-                  : "Add Expense Inputs"}
+                {hasConfiguredPriceConfig
+                  ? "Update Prices"
+                  : "Add Prices"}
               </Button>
             )}
           </div>
@@ -2117,7 +2191,7 @@ const SalesReport = () => {
           </div>
 
           <div className="grid gap-6 md:grid-cols-2">
-            {/* Doughnut � Gender */}
+            {/* Doughnut – Gender */}
             <Card className="border-0 shadow-sm bg-white rounded-2xl">
               <CardHeader className="pb-4 pt-6 px-6">
                 <CardTitle className="text-sm font-bold flex items-center gap-2 text-gray-800">
@@ -2226,7 +2300,7 @@ const SalesReport = () => {
           </div>
 
           <div className="grid gap-6 md:grid-cols-2">
-            {/* Curved Area Chart � Goats Per County */}
+            {/* Curved Area Chart – Goats Per County */}
             <Card className="border-0 shadow-sm bg-white rounded-2xl">
               <CardHeader className="pb-4 pt-6 px-6">
                 <CardTitle className="text-sm font-bold flex items-center gap-2 text-gray-800">
@@ -2701,15 +2775,19 @@ const SalesReport = () => {
           <DialogContent className="sm:max-w-md">
             <DialogHeader>
               <DialogTitle>
-                {hasConfiguredSalesInputs
-                  ? "Update Expense Inputs"
-                  : "Add Expense Inputs"}
+                {hasConfiguredPriceConfig
+                  ? "Update Prices"
+                  : "Add Prices"}
               </DialogTitle>
+              <DialogDescription>
+                Create or update the prices collection used by the mobile app.
+              </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-2">
               <p className="text-xs text-slate-500">
                 Use this dialog to set or update <code>Price per Kg</code> and{" "}
-                <code>Total Expenses</code>.
+                <code>Total Expenses</code> in the cloud. These prices do not
+                affect the dashboard computations.
               </p>
               <div className="space-y-2">
                 <Label htmlFor="price-per-kg">Price per Kg (KES)</Label>
@@ -2751,13 +2829,24 @@ const SalesReport = () => {
               <Button
                 variant="outline"
                 onClick={() => setIsSalesInputsDialogOpen(false)}
+                disabled={isSavingSalesInputs}
               >
                 Cancel
               </Button>
-              <Button onClick={saveSalesInputs}>
-                {hasConfiguredSalesInputs
-                  ? "Update Expense Inputs"
-                  : "Add Expense Inputs"}
+              <Button
+                onClick={saveSalesInputs}
+                disabled={isSavingSalesInputs}
+              >
+                {isSavingSalesInputs ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Saving…
+                  </>
+                ) : hasConfiguredPriceConfig ? (
+                  "Update Prices"
+                ) : (
+                  "Add Prices"
+                )}
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -2768,7 +2857,3 @@ const SalesReport = () => {
 };
 
 export default SalesReport;
-
-
-
-

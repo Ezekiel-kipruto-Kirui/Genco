@@ -124,7 +124,7 @@ const EXPORT_HEADERS = [
 const AVAILABLE_PROGRAMMES = [
   "KPMD", 
   "RANGE",
-  "KPMD 2",
+  "MTLDK",
 ];
 const USER_ROLE_OPTIONS = [
   "Field Officer",

@@ -134,7 +134,7 @@ const VACCINE_OPTIONS = [
   "Rift Valley Fever", "Brucellosis", "Foot and Mouth Disease"
 ];
 
-type ProgrammeView = "ALL" | "KPMD" | "RANGE" | "KPMD 2";
+type ProgrammeView = "ALL" | "KPMD" | "RANGE" | "MTLDK";
 const FARMERS_PER_PAGE = 20;
 
 const normalizeProgramme = (programme: string | null | undefined): string => normalizeProg(programme);
@@ -861,7 +861,7 @@ const AnimalHealthPage = () => {
     () => ({
       KPMD: filteredActivities.filter((a) => a.programme === "KPMD"),
       RANGE: filteredActivities.filter((a) => a.programme === "RANGE"),
-      "KPMD 2": filteredActivities.filter((a) => a.programme === "KPMD 2"),
+      "MTLDK": filteredActivities.filter((a) => a.programme === "MTLDK"),
     }),
     [filteredActivities],
   );

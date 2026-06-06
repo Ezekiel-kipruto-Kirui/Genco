@@ -1,7 +1,7 @@
 const fs   = require("fs");
 const path = require("path");
 
-const INPUT_FILE  = process.argv[2] || "farmers_export_KPMD 2_2026-05-27.csv";
+const INPUT_FILE  = process.argv[2] || "farmers_export_MTLDK_2026-05-27.csv";
 const OUTPUT_FILE = process.argv[3] || "kpmd.json";
 
 const raw   = fs.readFileSync(INPUT_FILE, "utf8");
