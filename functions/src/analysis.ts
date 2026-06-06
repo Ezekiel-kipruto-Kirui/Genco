@@ -4,7 +4,7 @@ import {onValueWritten} from "firebase-functions/v2/database";
 import {onCall, HttpsError} from "firebase-functions/v2/https";
 import {onSchedule} from "firebase-functions/v2/scheduler";
 
-const PROGRAMME_OPTIONS = ["KPMD", "RANGE", "MTLDK"] as const;
+const PROGRAMME_OPTIONS = ["KPMD", "RANGE", "KPMD 2"] as const;
 const CACHE_TTL_MS = 2 * 60 * 1000;
 const PERSISTENT_CACHE_TTL_MS = 15 * 60 * 1000;
 const ANALYSIS_CACHE_VERSION = "v14";
@@ -266,14 +266,14 @@ const toProgramme = (value: unknown): string => {
   const normalized = normalize(value);
   if (!normalized) return "";
   if (normalized === "all") return "ALL";
-  if (normalized === "MTLDK" || normalized === "kpmd-2") return "MTLDK";
+  if (normalized === "KPMD 2" || normalized === "kpmd-2") return "KPMD 2";
   return normalized.toUpperCase();
 };
 
 const getProgrammeQueryValues = (programme: unknown): string[] => {
   const normalized = toProgramme(programme);
   if (!normalized || normalized === "ALL") return [];
-  if (normalized === "MTLDK") return ["MTLDK"];
+  if (normalized === "KPMD 2") return ["KPMD 2"];
   return [normalized];
 };
 

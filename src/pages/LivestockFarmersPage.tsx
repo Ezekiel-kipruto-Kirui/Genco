@@ -1069,7 +1069,7 @@ const LivestockFarmersPage = () => {
     if (activeProgram === ALL_PROGRAMMES_VALUE) {
       toast({
         title: "Select a programme",
-        description: "Choose KPMD, RANGE, or MTLDK before uploading farmer records.",
+        description: "Choose KPMD, RANGE, or KPMD 2 before uploading farmer records.",
         variant: "destructive",
       });
       return;

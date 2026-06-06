@@ -1290,7 +1290,7 @@ const SalesReport = () => {
 
   // Cast to readonly string[] so that .includes() accepts a plain string
   // argument – fixes TS 2345 when resolveAccessibleProgrammes returns a
-  // narrower union-typed array such as ("KPMD" | "RANGE" | "MTLDK")[].
+  // narrower union-typed array such as ("KPMD" | "RANGE" | "KPMD 2")[].
   const accessibleProgrammes = useMemo(
     () =>
       (resolveAccessibleProgrammes(

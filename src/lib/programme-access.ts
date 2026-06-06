@@ -1,4 +1,4 @@
-export const PROGRAMME_OPTIONS = ["KPMD", "RANGE", "MTLDK"] as const;
+export const PROGRAMME_OPTIONS = ["KPMD", "RANGE", "KPMD 2"] as const;
 export const ALL_PROGRAMMES_VALUE = "ALL" as const;
 
 export type ProgrammeOption = (typeof PROGRAMME_OPTIONS)[number];
@@ -23,7 +23,7 @@ export const hasAllProgrammeAccess = (role: string | null | undefined): boolean 
 export const normalizeProgramme = (value: unknown): ProgrammeOption | "" => {
   if (typeof value !== "string") return "";
   const normalized = value.trim().toUpperCase();
-  if (normalized === "MTLDK" || normalized === "MTLDK" || normalized === "KPMD-2") return "MTLDK";
+  if (normalized === "KPMD 2" || normalized === "KPMD 2" || normalized === "KPMD-2") return "KPMD 2";
   if (normalized === "KPMD" || normalized === "RANGE") return normalized;
   return "";
 };
@@ -31,7 +31,7 @@ export const normalizeProgramme = (value: unknown): ProgrammeOption | "" => {
 export const getProgrammeQueryValues = (programme: unknown): string[] => {
   const normalized = normalizeProgramme(programme);
   if (!normalized) return [];
-  if (normalized === "MTLDK") return ["MTLDK"];
+  if (normalized === "KPMD 2") return ["KPMD 2"];
   return [normalized];
 };
 

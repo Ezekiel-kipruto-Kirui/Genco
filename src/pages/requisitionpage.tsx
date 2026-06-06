@@ -615,8 +615,8 @@ const RequisitionsPage = () => {
     }
 
     const normalizedActiveProgram = normalizeProgramme(activeProgram);
-    // Ensure "MTLDK" is always included in fetched programmes when viewing all
-    const normalizedKPMD2 = normalizeProgramme('MTLDK');
+    // Ensure "KPMD 2" is always included in fetched programmes when viewing all
+    const normalizedKPMD2 = normalizeProgramme('KPMD 2');
     const readProgrammes = normalizedActiveProgram
       ? [normalizedActiveProgram]
       : Array.from(new Set([...accessibleProgrammes, normalizedKPMD2].filter(Boolean)));
