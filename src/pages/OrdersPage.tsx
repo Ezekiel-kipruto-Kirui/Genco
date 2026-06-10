@@ -868,6 +868,21 @@ const getOfficerDisplayName = (record: FieldOfficerRecord): string => {
   return "Field Officer";
 };
 
+const formatRecordName = (value: string | null | undefined): string => {
+  const trimmed = value?.trim();
+  if (!trimmed) return "N/A";
+  if (trimmed === "N/A" || trimmed.toLowerCase() === "unknown" || trimmed.includes("@")) return trimmed;
+
+  return trimmed
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((part) => {
+      const lower = part.toLowerCase();
+      return lower.charAt(0).toUpperCase() + lower.slice(1);
+    })
+    .join(" ");
+};
+
 const getOfficerPhone = (record: FieldOfficerRecord): string => {
   const candidates = [record.phoneNumber, record.phone, record.mobile, record.telephone, record.contact];
   for (const candidate of candidates) {
@@ -1229,7 +1244,7 @@ const OrderTableRow = memo(function OrderTableRow({
     <tr className="border-b hover:bg-blue-50 transition-colors group">
       <td className="py-2 px-4 text-xs text-gray-500">{formatDate(row.batchDate)}</td>
       <td className="py-2 px-4 font-medium text-sm">{row.county}</td>
-      <td className="py-2 px-4 text-xs text-gray-600 max-w-[140px] truncate">{row.username}</td>
+      <td className="py-2 px-4 text-xs text-gray-600 max-w-[140px] truncate">{formatRecordName(row.username)}</td>
       <td className="py-2 px-4 font-semibold text-xs">{row.targetGoats.toLocaleString()}</td>
       <td className="py-2 px-4 text-xs text-gray-600">{row.recordedGoats.toLocaleString()}</td>
       <td className="py-2 px-4 font-semibold text-xs">{row.goatsBought.toLocaleString()}</td>
@@ -3060,7 +3075,7 @@ const OrdersPage = () => {
                       ordersDialogPurchaseLedgerRows.map((purchaseRow) => (
                         <TableRow key={purchaseRow.key}>
                           <TableCell className="px-3 py-1.5 text-[10px] text-slate-700">{purchaseRow.dateLabel}</TableCell>
-                          <TableCell className="px-3 py-1.5 text-[10px] text-slate-700">{purchaseRow.recordedBy}</TableCell>
+                          <TableCell className="px-3 py-1.5 text-[10px] text-slate-700">{formatRecordName(purchaseRow.recordedBy)}</TableCell>
                           <TableCell className="px-3 py-1.5 text-right text-[10px] font-medium tabular-nums text-slate-800">
                             {purchaseRow.goats.toLocaleString()}
                           </TableCell>
@@ -3233,7 +3248,7 @@ const OrdersPage = () => {
                               {isEditing ? (
                                 <Input value={orderOfficerDraft} onChange={(e) => setOrderOfficerDraft(e.target.value)} className="h-7 text-xs border-slate-200" placeholder="Officer" />
                               ) : (
-                                <span className="text-xs text-slate-700 max-w-[120px] truncate block">{item.officer || "N/A"}</span>
+                                <span className="text-xs text-slate-700 max-w-[120px] truncate block">{formatRecordName(item.officer)}</span>
                               )}
                             </TableCell>
                             <TableCell className="px-4 py-2">

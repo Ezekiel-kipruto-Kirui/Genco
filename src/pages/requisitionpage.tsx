@@ -615,13 +615,7 @@ const RequisitionsPage = () => {
     }
 
     const normalizedActiveProgram = normalizeProgramme(activeProgram);
-    // Ensure "KPMD 2" is always included in fetched programmes when viewing all
-    const normalizedKPMD2 = normalizeProgramme('KPMD 2');
-    const readProgrammes = normalizedActiveProgram
-      ? [normalizedActiveProgram]
-      : Array.from(new Set([...accessibleProgrammes, normalizedKPMD2].filter(Boolean)));
-
-    const unsubscribe = subscribeCollectionByProgrammes<Record<string, any>>("requisitions", readProgrammes, (data) => {
+    const handleSnapshotData = (data: Record<string, any> | null | undefined) => {
         if (!data) {
             setAllRequisitions([]);
             removeCachedValue(requisitionCacheKey);
@@ -655,11 +649,29 @@ const RequisitionsPage = () => {
         setAllRequisitions(sortedRecords);
         writeCachedValue(requisitionCacheKey, sortedRecords);
         setLoading(false);
-    }, (error) => {
+    };
+
+    const handleSnapshotError = (error: Error) => {
         console.error("Error fetching requisition data:", error);
         toast({ title: "Error", description: "Failed to load requisition data", variant: "destructive" });
         setLoading(false);
-    });
+    };
+
+    const unsubscribe =
+      canViewAllRequisitionProgrammes && !normalizedActiveProgram
+        ? onValue(
+            ref(db, "requisitions"),
+            (snapshot) => handleSnapshotData(snapshot.exists() ? snapshot.val() : null),
+            handleSnapshotError,
+          )
+        : subscribeCollectionByProgrammes<Record<string, any>>(
+            "requisitions",
+            normalizedActiveProgram
+              ? [normalizedActiveProgram]
+              : Array.from(new Set([...accessibleProgrammes, normalizeProgramme("KPMD 2")].filter(Boolean))),
+            handleSnapshotData,
+            handleSnapshotError,
+          );
     return () => { if(typeof unsubscribe === 'function') unsubscribe(); };
   }, [activeProgram, accessibleProgrammes, canViewAllRequisitionProgrammes, toast, requisitionCacheKey]);
 
@@ -805,6 +817,14 @@ const RequisitionsPage = () => {
     const selectedSet = new Set(selectedRecords);
     return allRequisitions.filter((record) => selectedSet.has(record.id));
   };
+
+  const removeRequisitionsFromState = useCallback((ids: string[]) => {
+    if (ids.length === 0) return;
+    const deletedIds = new Set(ids);
+    setAllRequisitions((prev) => prev.filter((record) => !deletedIds.has(record.id)));
+    setFilteredRequisitions((prev) => prev.filter((record) => !deletedIds.has(record.id)));
+    setSelectedRecords((prev) => prev.filter((id) => !deletedIds.has(id)));
+  }, []);
 
   const handleSearchChange = useCallback((value: string) => {
     setSearchValue(value);
@@ -1180,6 +1200,7 @@ const RequisitionsPage = () => {
     try {
       await remove(ref(db, `requisitions/${recordToDelete.id}`));
       removeCachedValue(requisitionCacheKey);
+      removeRequisitionsFromState([recordToDelete.id]);
       toast({ title: "Deleted", description: "Requisition deleted successfully" });
       setIsDeleteConfirmOpen(false);
       setRecordToDelete(null);
@@ -1864,8 +1885,13 @@ const RequisitionsPage = () => {
         })
       );
       const successCount = results.filter(Boolean).length;
-      if (successCount > 0) removeCachedValue(requisitionCacheKey);
-      setSelectedRecords([]);
+      if (successCount > 0) {
+        removeCachedValue(requisitionCacheKey);
+        const deletedIds = selected.filter((_, index) => results[index]).map((record) => record.id);
+        removeRequisitionsFromState(deletedIds);
+      } else {
+        setSelectedRecords([]);
+      }
       toast({
         title: "Bulk Delete Complete",
         description: `${successCount} requisitions deleted.`,

@@ -1,0 +1,32 @@
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Default\IndexedDB\http_localhost_8080.indexeddb.leveldb
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Default\IndexedDB\https_www.gencofarm.com_0.indexeddb.leveldb
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 1\IndexedDB\http_localhost_5173.indexeddb.leveldb
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 1\IndexedDB\http_localhost_8080.indexeddb.leveldb
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 1\IndexedDB\https_genco2.vercel.app_0.indexeddb.leveldb
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 1\IndexedDB\https_genco2-4ov0vtegd-shadikirui0-9045s-projects.vercel.app_0.indexeddb.leveldb
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 1\IndexedDB\https_gencofarm2026.vercel.app_0.indexeddb.leveldb
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 1\IndexedDB\https_gencofarm2026-76qz504ne-shadikirui0-9045s-projects.vercel.app_0.indexeddb.leveldb
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 1\IndexedDB\https_gencofarm2026-830piwy0z-shadikirui0-9045s-projects.vercel.app_0.indexeddb.leveldb
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 1\IndexedDB\https_gencofarm2026-git-main-shadikirui0-9045s-projects.vercel.app_0.indexeddb.leveldb
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 1\IndexedDB\https_gencofarm2026-jt04bjua5-shadikirui0-9045s-projects.vercel.app_0.indexeddb.leveldb
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 1\IndexedDB\https_gencofarm2026-orgdfgrz7-shadikirui0-9045s-projects.vercel.app_0.indexeddb.leveldb
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 1\IndexedDB\https_genco-farm-hub.onrender.com_0.indexeddb.leveldb
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 1\IndexedDB\https_www.gencofarm.com_0.indexeddb.leveldb
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 10\IndexedDB\http_localhost_5173.indexeddb.leveldb
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 10\IndexedDB\https_www.gencofarm.com_0.indexeddb.leveldb
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 11\IndexedDB\http_localhost_8080.indexeddb.leveldb
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 12\IndexedDB\https_www.gencofarm.com_0.indexeddb.leveldb
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 16\IndexedDB\http_localhost_8080.indexeddb.leveldb
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 2\IndexedDB\http_127.0.0.1_8080.indexeddb.leveldb
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 2\IndexedDB\http_localhost_8080.indexeddb.leveldb
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 2\IndexedDB\https_gencofarm2026.vercel.app_0.indexeddb.leveldb
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 2\IndexedDB\https_www.gencofarm.com_0.indexeddb.leveldb
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 5\IndexedDB\http_127.0.0.1_8080.indexeddb.leveldb
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 5\IndexedDB\http_localhost_8080.indexeddb.leveldb
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 5\IndexedDB\https_gencofarm2026.vercel.app_0.indexeddb.leveldb
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 5\IndexedDB\https_www.gencofarm.com_0.indexeddb.leveldb
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 6\IndexedDB\https_genco-farm-hub.onrender.com_0.indexeddb.leveldb
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 8\IndexedDB\http_localhost_8080.indexeddb.leveldb
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 9\IndexedDB\https_www.gencofarm.com_0.indexeddb.leveldb
+C:\Users\Ezekiel Kirui\AppData\Local\Microsoft\Edge\User Data\Default\IndexedDB\http_localhost_8080.indexeddb.leveldb
+C:\Users\Ezekiel Kirui\AppData\Local\Microsoft\Edge\User Data\Default\IndexedDB\https_www.gencofarm.com_0.indexeddb.leveldb

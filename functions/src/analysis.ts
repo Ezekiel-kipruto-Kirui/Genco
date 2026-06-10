@@ -7,7 +7,7 @@ import {onSchedule} from "firebase-functions/v2/scheduler";
 const PROGRAMME_OPTIONS = ["KPMD", "RANGE", "KPMD 2"] as const;
 const CACHE_TTL_MS = 2 * 60 * 1000;
 const PERSISTENT_CACHE_TTL_MS = 15 * 60 * 1000;
-const ANALYSIS_CACHE_VERSION = "v14";
+const ANALYSIS_CACHE_VERSION = "v15";
 const ANALYTICS_CACHE_ROOT = "__analyticsCache";
 const ANALYTICS_COLLECTION_PATHS = [
   "farmers",
@@ -960,9 +960,7 @@ const isUsableIdentityValue = (value: unknown): boolean => {
 };
 
 const getFarmerDuplicateKey = (record: Record<string, unknown>): string => {
-  if (isUsableIdentityValue(record.farmerId)) return `farmer:${normalizeDuplicateToken(record.farmerId)}`;
   if (isUsableIdentityValue(record.idNumber)) return `id:${normalizeDuplicateToken(record.idNumber)}`;
-  if (isUsableIdentityValue(record.phone)) return `phone:${normalizeDuplicateToken(record.phone)}`;
 
   return [
     "profile",
@@ -970,7 +968,6 @@ const getFarmerDuplicateKey = (record: Record<string, unknown>): string => {
     normalizeDuplicateToken(record.county),
     normalizeDuplicateToken(record.subcounty),
     normalizeDuplicateToken(record.location),
-    normalizeDuplicateToken(getRecordProgramme(record)),
   ].join(":");
 };
 
@@ -1609,8 +1606,6 @@ const createOverview = async (
     fetchCollectionByProgrammes("AnimalHealthActivities", programmes),
     fetchCollectionByProgrammes("BoreholeStorage", programmes),
   ]);
-  const uniqueFarmers = dedupeFarmerRecords(farmers);
-
   let maleFarmers = 0;
   let femaleFarmers = 0;
   let totalGoats = 0;
@@ -1621,7 +1616,7 @@ const createOverview = async (
   const regionMap: Record<string, number> = {};
   const availableYears = new Set<number>();
 
-  for (const farmer of uniqueFarmers) {
+  for (const farmer of farmers) {
     const farmerDate = getFarmerRegistrationDate(farmer);
     if (farmerDate) {
       availableYears.add(farmerDate.getFullYear());
@@ -1718,7 +1713,7 @@ const createOverview = async (
     scope: "overview",
     resolvedProgrammes: programmes,
     stats: {
-      totalFarmers: uniqueFarmers.length,
+      totalFarmers: farmers.length,
       maleFarmers,
       femaleFarmers,
       trainedFarmers,
@@ -1734,17 +1729,17 @@ const createOverview = async (
     topRegions,
     comparisonYears,
     maintainedInfrastructure: buildInfrastructureComparison(boreholes),
-    registrationComparison: buildOverviewRegistrationComparison(uniqueFarmers),
-    animalCensusComparison: buildAnnualComparison(uniqueFarmers, offtakes),
+    registrationComparison: buildOverviewRegistrationComparison(farmers),
+    animalCensusComparison: buildAnnualComparison(farmers, offtakes),
     animalCensusVsPurchased: [
       {name: "Goats on record", value: totalGoats, color: "#ffc107"},
       {name: "Goats purchased", value: totalGoatsPurchased, color: "#a80d10"},
     ],
-    vaccinationTrend: buildOverviewVaccinationTrend(uniqueFarmers),
+    vaccinationTrend: buildOverviewVaccinationTrend(farmers),
     countyCoverage,
-    recentLocations: buildOverviewRecentLocations(uniqueFarmers),
+    recentLocations: buildOverviewRecentLocations(farmers),
     recentActivities,
-    recentFarmers: buildOverviewRecentFarmers(uniqueFarmers),
+    recentFarmers: buildOverviewRecentFarmers(farmers),
     pendingActivitiesCount,
   };
 };
@@ -1762,7 +1757,6 @@ const createLivestockAnalytics = async (
     fetchCollectionByProgrammes("farmers", programmes),
     fetchCollectionByProgrammes("capacityBuilding", programmes),
   ]);
-  const uniqueFarmers = dedupeFarmerRecords(farmers);
   const analysisYear =
     parseDate(dateRange?.startDate)?.getFullYear() ??
     parseDate(dateRange?.endDate)?.getFullYear() ??
@@ -1771,8 +1765,8 @@ const createLivestockAnalytics = async (
   const coverageYears = (() => {
     let minYear = Number.POSITIVE_INFINITY;
     let maxYear = Number.NEGATIVE_INFINITY;
-    for (const farmer of uniqueFarmers) {
-      const date = parseDate(farmer.createdAt || farmer.registrationDate);
+    for (const farmer of farmers) {
+      const date = getFarmerRegistrationDate(farmer);
       if (!date) continue;
       const year = date.getFullYear();
       minYear = Math.min(minYear, year);
@@ -1793,8 +1787,15 @@ const createLivestockAnalytics = async (
   const fieldOfficerTarget = Math.max(1, Math.round(Number(activeTarget) || 1404));
 
   const filteredFarmers = filterRecordsByDateRange(
-    uniqueFarmers,
-    (farmer) => farmer.createdAt || farmer.registrationDate,
+    farmers,
+    (farmer) =>
+      farmer.createdAt ??
+      farmer.created_at ??
+      farmer.registrationDate ??
+      farmer.registration_date ??
+      farmer.registeredAt ??
+      farmer.timestamp ??
+      farmer.date,
     dateRange,
   );
   const filteredTraining = filterRecordsByDateRange(
@@ -1860,7 +1861,7 @@ const createLivestockAnalytics = async (
     totalGoats += goats;
     totalSheep += sheep;
 
-    const farmerDate = parseDate(farmer.createdAt || farmer.registrationDate);
+    const farmerDate = getFarmerRegistrationDate(farmer);
     if (farmerDate) {
       const week = Math.ceil(farmerDate.getDate() / 7);
       if (week >= 1 && week <= 4) {

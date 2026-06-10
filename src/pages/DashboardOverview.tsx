@@ -213,7 +213,7 @@ const CANONICAL_PROGRAMME_SET = new Set<string>(PROGRAMME_OPTIONS);
 const buildOverviewCacheKey = (
   userId: string | null | undefined,
   programme: string | null | undefined,
-) => cacheKey("overview-summary-v5", userId || "anon", programme || "none");
+) => cacheKey("overview-summary-v7", userId || "anon", programme || "none");
 
 const getGreetingLabel = (date: Date): string => {
   const hour = Number(
@@ -415,6 +415,17 @@ const getFarmerVisitDate = (record: Record<string, unknown>) =>
     record.registrationDate,
   );
 
+const getFarmerRegistrationDate = (record: Record<string, unknown>) =>
+  parseDate(
+    record.createdAt ??
+    record.created_at ??
+    record.registrationDate ??
+    record.registration_date ??
+    record.registeredAt ??
+    record.timestamp ??
+    record.date,
+  );
+
 const getSeriesColor = (index: number): string => SERIES_COLORS[index % SERIES_COLORS.length];
 
 const buildYearlySegments = (
@@ -563,9 +574,7 @@ const isUsableIdentityValue = (value: unknown): boolean => {
 };
 
 const getFarmerDuplicateKey = (record: OverviewRecord): string => {
-  if (isUsableIdentityValue(record.farmerId)) return `farmer:${normalizeDuplicateToken(record.farmerId)}`;
   if (isUsableIdentityValue(record.idNumber)) return `id:${normalizeDuplicateToken(record.idNumber)}`;
-  if (isUsableIdentityValue(record.phone)) return `phone:${normalizeDuplicateToken(record.phone)}`;
 
   return [
     "profile",
@@ -573,7 +582,6 @@ const getFarmerDuplicateKey = (record: OverviewRecord): string => {
     normalizeDuplicateToken(record.county || record.region),
     normalizeDuplicateToken(record.subcounty),
     normalizeDuplicateToken(record.location),
-    normalizeDuplicateToken(getOverviewRecordProgramme(record)),
   ].join(":");
 };
 
@@ -630,12 +638,10 @@ const buildRecentFarmers = (farmers: OverviewRecord[]): RecentFarmer[] =>
         record.fullName ||
         record.name ||
         record.farmerName ||
-        record.firstName
-          ? `${record.firstName} ${record.lastName || ""}`.trim()
-          : "",
+        `${record.firstName || ""} ${record.lastName || ""}`.trim(),
       ).trim() || "Unknown farmer",
       county: String(record.county || record.region || "").trim() || "Unknown county",
-      registeredAt: String(record.createdAt || record.registrationDate || ""),
+      registeredAt: getFarmerRegistrationDate(record)?.toISOString() || "",
       gender: String(record.gender || "").trim(),
       goats: getFarmerGoatTotal(record),
     }))
@@ -672,7 +678,6 @@ const buildOverviewSummaryFromRecords = ({
   boreholes,
   activities,
 }: OverviewCollections): OverviewSummaryData => {
-  const uniqueFarmers = dedupeFarmers(farmers);
   let maleFarmers = 0;
   let femaleFarmers = 0;
   let totalGoats = 0;
@@ -680,7 +685,7 @@ const buildOverviewSummaryFromRecords = ({
   let totalCattle = 0;
   const countyMap: Record<string, number> = {};
 
-  for (const farmer of uniqueFarmers) {
+  for (const farmer of farmers) {
     const gender = String(farmer.gender || "").trim().toLowerCase();
     if (gender === "male") maleFarmers += 1;
     if (gender === "female") femaleFarmers += 1;
@@ -726,20 +731,20 @@ const buildOverviewSummaryFromRecords = ({
     },
     maintainedInfrastructure: buildInfrastructureComparison(boreholes),
     registrationComparison: buildYearlySegments(
-      uniqueFarmers,
+      farmers,
       (record) => parseDate(record.createdAt || record.registrationDate),
     ),
-    animalCensusComparison: buildAnnualComparison(uniqueFarmers, offtakes),
+    animalCensusComparison: buildAnnualComparison(farmers, offtakes),
     vaccinationTrend: buildYearlyTrend(
-      uniqueFarmers,
+      farmers,
       getFarmerVaccinationDate,
       (record) => Math.max(getFarmerGoatTotal(record), getNumberField(record, "goats"), 0),
       (record) => parseBoolean(record.vaccinated),
     ),
     countyCoverage: countyCoverage.length > 0 ? countyCoverage : EMPTY_COUNTY_COVERAGE,
-    recentLocations: buildRecentLocations(uniqueFarmers),
+    recentLocations: buildRecentLocations(farmers),
     recentActivities: buildRecentActivities(activities),
-    recentFarmers: buildRecentFarmers(uniqueFarmers),
+    recentFarmers: buildRecentFarmers(farmers),
     pendingActivitiesCount: activities.filter(
       (record) => String(record.status || "").trim().toLowerCase() === "pending",
     ).length,
@@ -1434,7 +1439,7 @@ const RecentFarmersPanel = ({ farmers }: { farmers: RecentFarmer[] }) => (
         <p className={`mt-0.5 text-xs ${SECONDARY_TEXT_CLASS}`}>Latest 5 registrations</p>
       </div>
       <Link
-        to="/dashboard/farmers"
+        to="/dashboard/livestock"
         className={`inline-flex items-center gap-1 text-xs font-medium ${SECONDARY_TEXT_CLASS} transition-colors hover:text-gray-600`}
       >
         <span>View All</span>

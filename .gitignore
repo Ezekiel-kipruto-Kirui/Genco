@@ -35,3 +35,7 @@ functions/.env.*
 !functions/.env.example
 src/pages/cloude.txt
 test-claude.mjs
+
+# Local browser cache recovery artifacts may contain credentials.
+recovery/browser-cache-copies/
+recovery/browser-cache-fragments/

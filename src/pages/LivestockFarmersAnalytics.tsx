@@ -38,7 +38,7 @@ const TARGETS = {
 };
 const QUARTER_TARGET = 351;
 const QUARTER_TARGET_MILESTONES = [351, 351, 351, 351];
-const PROGRESS_ANALYTICS_QUERY_VERSION = "v5";
+const PROGRESS_ANALYTICS_QUERY_VERSION = "v6";
 const EMPTY_STATS = {
   total: 0,
   trained: 0,
@@ -53,7 +53,12 @@ const EMPTY_STATS = {
 interface FarmerData {
   id: string;
   createdAt: number | string;
+  created_at?: number | string;
   registrationDate?: number | string;
+  registration_date?: number | string;
+  registeredAt?: number | string;
+  timestamp?: number | string;
+  date?: number | string;
   name: string;
   gender: string;
   phone: string;
@@ -175,6 +180,15 @@ const getToday = (): Date => {
 };
 
 const getDateTimestamp = (value: unknown): number => parseDate(value)?.getTime() || 0;
+
+const getFarmerRegistrationDateValue = (farmer: FarmerData): unknown =>
+  farmer.createdAt ??
+  farmer.created_at ??
+  farmer.registrationDate ??
+  farmer.registration_date ??
+  farmer.registeredAt ??
+  farmer.timestamp ??
+  farmer.date;
 
 const getCurrentMonthDates = () => {
   const now = getToday();
@@ -570,7 +584,7 @@ const LivestockFarmersAnalytics = () => {
   const coverageYears = useMemo(() => {
     if (hasActiveDateFilters) return null;
     const years = allFarmers
-      .map((farmer) => parseDate(farmer.createdAt || farmer.registrationDate)?.getFullYear())
+      .map((farmer) => parseDate(getFarmerRegistrationDateValue(farmer))?.getFullYear())
       .filter((year): year is number => typeof year === "number" && Number.isFinite(year));
     if (years.length === 0) return null;
     const minYear = Math.min(...years);
@@ -714,11 +728,21 @@ const LivestockFarmersAnalytics = () => {
             parseDate(item.createdAt)?.getTime() ||
             parseDate(item.created_at)?.getTime() ||
             parseDate(item.registrationDate)?.getTime() ||
+            parseDate(item.registration_date)?.getTime() ||
+            parseDate(item.registeredAt)?.getTime() ||
+            parseDate(item.timestamp)?.getTime() ||
+            parseDate(item.date)?.getTime() ||
             Date.now();
 
           return {
             id: key,
             createdAt: parsedCreatedAt,
+            created_at: item.created_at,
+            registrationDate: item.registrationDate,
+            registration_date: item.registration_date,
+            registeredAt: item.registeredAt,
+            timestamp: item.timestamp,
+            date: item.date,
             name: item.name || item.farmerName || '',
             gender: item.gender || '',
             phone: item.phone || item.phoneNumber || '',
@@ -835,7 +859,7 @@ const LivestockFarmersAnalytics = () => {
   const applyFilters = () => {
     const filtered = hasActiveDateFilters
       ? allFarmers.filter((farmer) =>
-        isDateInRange(farmer.createdAt, dateRange.startDate, dateRange.endDate)
+        isDateInRange(getFarmerRegistrationDateValue(farmer), dateRange.startDate, dateRange.endDate)
       )
       : allFarmers;
     setFilteredData(filtered);
@@ -965,7 +989,7 @@ const LivestockFarmersAnalytics = () => {
         };
       }
 
-      const farmerDate = parseDate(farmer.createdAt || farmer.registrationDate);
+      const farmerDate = parseDate(getFarmerRegistrationDateValue(farmer));
       if (
         farmerDate &&
         quarterCountingCutoff &&

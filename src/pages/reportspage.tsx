@@ -521,39 +521,40 @@ function computeLocalPerformanceReportData(
   timeFrame: "weekly" | "monthly" | "yearly",
   selectedProgramme: string | null,
   selectedYear: number | null,
+  canViewAllProgrammeData: boolean,
 ): PerformanceReportData {
   if (!selectedProgramme) return EMPTY_PERFORMANCE_DATA;
 
   const filteredFarmers = farmers.filter((farmer) => {
     const farmerDate = farmer.createdAt || farmer.registrationDate;
-    return matchesProgrammeSelection(farmer.programme, selectedProgramme) &&
+    return matchesProgrammeSelection(farmer.programme, selectedProgramme, canViewAllProgrammeData) &&
       isDateInRange(farmerDate, dateRange.startDate, dateRange.endDate);
   });
 
   const filteredTraining = trainingRecords.filter((record) => {
     const recordDate = record.createdAt || record.startDate;
-    return matchesProgrammeSelection(record.programme, selectedProgramme) &&
+    return matchesProgrammeSelection(record.programme, selectedProgramme, canViewAllProgrammeData) &&
       isDateInRange(recordDate, dateRange.startDate, dateRange.endDate);
   });
   const filteredAnimalHealthActivities = animalHealthActivities.filter((record) => {
     const recordDate = record.createdAt || record.date;
-    return matchesProgrammeSelection(record.programme, selectedProgramme) &&
+    return matchesProgrammeSelection(record.programme, selectedProgramme, canViewAllProgrammeData) &&
       isDateInRange(recordDate, dateRange.startDate, dateRange.endDate);
   });
   const filteredOfftakeRecords = offtakeRecords.filter((record) => {
     const recordDate = record.date || record.Date || record.createdAt;
-    return matchesProgrammeSelection(record.programme, selectedProgramme) &&
+    return matchesProgrammeSelection(record.programme, selectedProgramme, canViewAllProgrammeData) &&
       isDateInRange(recordDate, dateRange.startDate, dateRange.endDate);
   });
   const filteredStaffMarks = staffMarkRecords.filter((record) => {
     const recordDate = record.dateAwarded || record.createdAt;
-    return matchesProgrammeSelection(record.programme, selectedProgramme) &&
+    return matchesProgrammeSelection(record.programme, selectedProgramme, canViewAllProgrammeData) &&
       isDateInRange(recordDate, dateRange.startDate, dateRange.endDate);
   });
   const requestedProgramme = normalizeProgramme(selectedProgramme);
   const includeAllProgrammes = selectedProgramme === ALL_PROGRAMMES_VALUE || !requestedProgramme;
   const programmeFarmers = farmers.filter((farmer) =>
-    matchesProgrammeSelection(farmer.programme, selectedProgramme)
+    matchesProgrammeSelection(farmer.programme, selectedProgramme, canViewAllProgrammeData)
   );
 
   let maleFarmers = 0;
@@ -850,6 +851,7 @@ const useProcessedData = (
   timeFrame: 'weekly' | 'monthly' | 'yearly',
   selectedProgramme: string | null,
   selectedYear: number | null,
+  canViewAllProgrammeData: boolean,
 ) => {
   const queryResult = useQuery({
     queryKey: [
@@ -890,8 +892,9 @@ const useProcessedData = (
             timeFrame,
             selectedProgramme,
             selectedYear,
+            canViewAllProgrammeData,
           ),
-    [_allFarmers, _trainingRecords, _animalHealthActivities, _offtakeRecords, _staffMarkRecords, dateRange, timeFrame, selectedProgramme, selectedYear],
+    [_allFarmers, _trainingRecords, _animalHealthActivities, _offtakeRecords, _staffMarkRecords, dateRange, timeFrame, selectedProgramme, selectedYear, canViewAllProgrammeData],
   );
 
   const remoteData = useMemo(
@@ -1096,6 +1099,7 @@ const PerformanceReport = () => {
     timeFrame,
     activeProgram || null,
     selectedYearNum,
+    userCanViewAllProgrammeData,
   );
   const projectManagerBreedsByLocationData = useMemo(
     () => buildLocationMetricSeries(data.breedsByLocationData),
@@ -1290,12 +1294,12 @@ const PerformanceReport = () => {
       return (
       staffMarkRecords.filter((record) => {
         const recordDate = record.dateAwarded || record.createdAt;
-        return matchesProgrammeSelection(record.programme, activeProgram) &&
+        return matchesProgrammeSelection(record.programme, activeProgram, userCanViewAllProgrammeData) &&
           isDateInRange(recordDate, dateRange.startDate, dateRange.endDate);
       })
       );
     },
-    [activeProgram, dateRange.endDate, dateRange.startDate, isHrReport, staffMarkRecords],
+    [activeProgram, dateRange.endDate, dateRange.startDate, isHrReport, staffMarkRecords, userCanViewAllProgrammeData],
   );
 
   const filteredStaffDirectoryRecords = useMemo(
@@ -1303,11 +1307,11 @@ const PerformanceReport = () => {
       if (!isHrReport) return EMPTY_STAFF_DIRECTORY_RECORDS;
       return (
       staffDirectoryRecords.filter((record) => {
-        return matchesProgrammeSelection(record.programme, activeProgram);
+        return matchesProgrammeSelection(record.programme, activeProgram, userCanViewAllProgrammeData);
       })
       );
     },
-    [activeProgram, isHrReport, staffDirectoryRecords],
+    [activeProgram, isHrReport, staffDirectoryRecords, userCanViewAllProgrammeData],
   );
 
   const staffManagementRows = useMemo(() => {
@@ -2028,7 +2032,7 @@ const PerformanceReport = () => {
                     <TableBody>
                       {staffManagementRows.length > 0 ? staffManagementRows.map((staffRow) => (
                         <TableRow key={staffRow.id} className="border-b border-slate-100 transition-colors hover:bg-slate-50/80">
-                          <TableCell className="py-1 text-xs font-medium text-slate-900">
+                          <TableCell className="py-1 text-xs text-slate-900">
                             <div className="leading-tight">{staffRow.staffName}</div>
                             {staffRow.lastAwardNote && (
                               <div className="mt-1 text-xs text-slate-500 line-clamp-2">{staffRow.lastAwardNote}</div>

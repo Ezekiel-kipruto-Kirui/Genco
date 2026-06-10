@@ -269,20 +269,41 @@ const processFarmerRecord = (
   };
 };
 
+// =============================================================================
+// DEDUPLICATION HELPERS
+//
+// Key design decisions:
+//   1. farmerId is NOT used as a dedup key — it is not a reliable unique
+//      identifier and caused false duplicate detection.
+//   2. phone is NOT used as a dedup key — multiple farmers can legitimately
+//      share a phone number.
+//   3. idNumber is the PRIMARY key when it is a real, non-zero value.
+//      This correctly identifies the same farmer re-registered across
+//      dates or programmes.
+//   4. When idNumber is zero / blank / N/A, a PROFILE FINGERPRINT is used
+//      instead: name + county + subcounty + location + programme.
+//      This gives every distinct farmer their own bucket — 100 different
+//      zero-ID farmers are never collapsed into a single record.
+// =============================================================================
+
 const normalizeDuplicateToken = (value: unknown): string =>
-  String(value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+  String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
 
 const isUsableIdentityValue = (value: unknown): boolean => {
   const normalized = normalizeDuplicateToken(value);
-  return Boolean(normalized) && !["n/a", "na", "/a", "0", "0.0", "null", "undefined"].includes(normalized);
+  return (
+    Boolean(normalized) &&
+    !["n/a", "na", "/a", "0", "0.0", "null", "undefined", ""].includes(normalized)
+  );
 };
 
-const getFarmerDuplicateKey = (record: FarmerData): string => {
-  if (isUsableIdentityValue(record.farmerId)) return `farmer:${normalizeDuplicateToken(record.farmerId)}`;
-  if (isUsableIdentityValue(record.idNumber)) return `id:${normalizeDuplicateToken(record.idNumber)}`;
-  if (isUsableIdentityValue(record.phone)) return `phone:${normalizeDuplicateToken(record.phone)}`;
-
-  return [
+// Stable profile-based fingerprint for farmers with no real ID number.
+// Each distinct name + location combination gets its own unique bucket.
+const buildProfileKey = (record: FarmerData): string =>
+  [
     "profile",
     normalizeDuplicateToken(record.name),
     normalizeDuplicateToken(record.county),
@@ -290,15 +311,30 @@ const getFarmerDuplicateKey = (record: FarmerData): string => {
     normalizeDuplicateToken(record.location),
     normalizeDuplicateToken(record.programme),
   ].join(":");
+
+// Returns the deduplication key for a farmer record.
+//
+// Priority:
+//   1. Real idNumber (non-zero, non-blank) → "id:<idNumber>"
+//   2. Zero / blank / N/A idNumber        → profile fingerprint
+//
+// farmerId intentionally excluded — not a reliable unique identifier.
+// phone intentionally excluded — two farmers can share a number.
+const getFarmerDuplicateKey = (record: FarmerData): string => {
+  if (isUsableIdentityValue(record.idNumber)) {
+    return `id:${normalizeDuplicateToken(record.idNumber)}`;
+  }
+  return buildProfileKey(record);
 };
 
 const dedupeFarmers = (records: FarmerData[]): FarmerData[] => {
   const uniqueRecords = new Map<string, FarmerData>();
 
+  // Sort newest-first so the most recent registration wins when deduping
   sortFarmersByLatest(records).forEach((record) => {
-    const duplicateKey = getFarmerDuplicateKey(record);
-    if (!uniqueRecords.has(duplicateKey)) {
-      uniqueRecords.set(duplicateKey, record);
+    const key = getFarmerDuplicateKey(record);
+    if (!uniqueRecords.has(key)) {
+      uniqueRecords.set(key, record);
     }
   });
 
@@ -328,19 +364,10 @@ const processTrainingRecord = (
 });
 
 // =============================================================================
-// OPTIMIZATION #1: Incremental subscription — publishes data as each query
-// fires instead of blocking until ALL 2N queries complete.
-//
-// Before: With 3 programmes × 2 field casings = 6 queries, data appeared
-//         only after the 6th query returned.
-// After:  Data appears after the 1st query returns (with 80ms debounce to
-//         batch rapid successive callbacks), then incrementally enriches.
-//
-// Also adds a stale-while-revalidate cache layer: if localStorage has a
-// recent snapshot, it's yielded synchronously while Firebase fetches.
+// OPTIMIZATION #1: Incremental subscription
 // =============================================================================
 
-const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const CACHE_TTL_MS = 5 * 60 * 1000;
 const FARMER_REGISTRATION_SMS =
   "You have been registered successfully with Genco Livestock. Thank you.";
 
@@ -363,7 +390,6 @@ const subscribeToProgrammeRecords = <T,>(
     return () => {};
   }
 
-  // --- Stale-while-revalidate: hydrate from cache immediately ---
   let cacheHit = false;
   if (options?.cacheKey) {
     try {
@@ -380,7 +406,6 @@ const subscribeToProgrammeRecords = <T,>(
 
   const recordsById = new Map<string, T>();
   const initializedQueries = new Set<string>();
-  const expectedQueryCount = normalizedProgrammes.length * 2;
   let hasErrored = false;
   let publishTimer: ReturnType<typeof setTimeout> | null = null;
   const debounceMs = options?.debounceMs ?? 80;
@@ -400,13 +425,10 @@ const subscribeToProgrammeRecords = <T,>(
     if (publishTimer) clearTimeout(publishTimer);
 
     if (isInitialLoad && !cacheHit) {
-      // On first load without cache, publish immediately after first query
-      // so the user sees SOMETHING fast
       onRecords(Array.from(recordsById.values()));
       return;
     }
 
-    // Subsequent publishes are debounced to batch rapid updates
     publishTimer = setTimeout(() => {
       const merged = Array.from(recordsById.values());
       onRecords(merged);
@@ -431,7 +453,6 @@ const subscribeToProgrammeRecords = <T,>(
           const isFirstLoad = !initializedQueries.has(queryKey);
           initializedQueries.add(queryKey);
 
-          // Replace records from this query (not merge — snapshot is authoritative)
           snapshot.forEach((childSnapshot) => {
             recordsById.set(
               childSnapshot.key || "",
@@ -458,8 +479,7 @@ const subscribeToProgrammeRecords = <T,>(
 };
 
 // =============================================================================
-// OPTIMIZATION #2: Date-range filter predicate — extracted so it's shared
-// between farmer filtering and training filtering without duplication.
+// OPTIMIZATION #2: Date-range filter predicate
 // =============================================================================
 
 const matchesDateRange = (
@@ -471,7 +491,6 @@ const matchesDateRange = (
 
   const recordDate = parseDate(rawDate);
   if (!recordDate) {
-    // If a date filter is active but the record has no date, exclude it
     return !startDateStr && !endDateStr;
   }
 
@@ -494,11 +513,7 @@ const matchesDateRange = (
 };
 
 // =============================================================================
-// OPTIMIZATION #3: Filtering logic extracted into a pure function + useMemo
-// instead of a useEffect. This means:
-//   - It recalculates ONLY when its inputs actually change (no stale closure risk)
-//   - It doesn't depend on pagination state (page changes don't trigger re-filter)
-//   - React can defer/batch the computation with useTransition
+// OPTIMIZATION #3: Filtering logic as pure function
 // =============================================================================
 
 const applyFiltersAndDedupe = (
@@ -506,7 +521,6 @@ const applyFiltersAndDedupe = (
   trainingRecords: TrainingData[],
   filters: Filters,
 ): { filtered: FarmerData[]; filteredTraining: TrainingData[] } => {
-  // --- Filter farmers ---
   const filteredFarmersList = allFarmers.filter((record) => {
     if (!matchesDateRange(record.createdAt, filters.startDate, filters.endDate)) return false;
     if (filters.county !== "all" && record.county?.toLowerCase() !== filters.county.toLowerCase()) return false;
@@ -536,7 +550,6 @@ const applyFiltersAndDedupe = (
         ? sortFarmersByLatest(filteredFarmersList)
         : dedupeFarmers(filteredFarmersList);
 
-  // --- Filter training records ---
   const filteredTraining = trainingRecords.filter((record) =>
     matchesDateRange(record.startDate || record.createdAt || record.rawTimestamp, filters.startDate, filters.endDate)
   );
@@ -545,8 +558,7 @@ const applyFiltersAndDedupe = (
 };
 
 // =============================================================================
-// OPTIMIZATION #4: Stats derived from filtered farmers via useMemo.
-// No longer recomputed when only the page number changes.
+// OPTIMIZATION #4: Stats derived from filtered farmers
 // =============================================================================
 
 const computeStats = (
@@ -688,12 +700,12 @@ const LivestockFarmersPage = () => {
   }, [accessibleProgrammes]);
 
   // =========================================================================
-  // OPTIMIZATION #6: Deferred search value — keeps typing responsive
+  // OPTIMIZATION #6: Deferred search value
   // =========================================================================
   const deferredSearch = useDeferredValue(filters.search);
 
   // =========================================================================
-  // Farmers listener — cache-first + incremental publishing
+  // Farmers listener
   // =========================================================================
   useEffect(() => {
     if (!activeProgram) {
@@ -744,7 +756,7 @@ const LivestockFarmersPage = () => {
   }, [accessibleProgrammes, activeProgram, toast]);
 
   // =========================================================================
-  // Training records listener — cache-first + incremental publishing
+  // Training records listener
   // =========================================================================
   useEffect(() => {
     if (!activeProgram) {
@@ -782,15 +794,7 @@ const LivestockFarmersPage = () => {
   }, [accessibleProgrammes, activeProgram]);
 
   // =========================================================================
-  // OPTIMIZATION #7: Filtering + deduplication via useMemo (NOT useEffect)
-  //
-  // Before: Giant useEffect that ran on every filter/page change, causing
-  //         synchronous blocking of the main thread.
-  // After:  Pure useMemo with stable inputs. React can defer this work.
-  //         Pagination is completely separated — page changes skip this.
-  //
-  // NOTE: We use deferredSearch instead of filters.search so that rapid
-  //       typing doesn't trigger expensive re-filtering immediately.
+  // OPTIMIZATION #7: Filtering + deduplication via useMemo
   // =========================================================================
 
   const effectiveFilters = useMemo(
@@ -803,14 +807,13 @@ const LivestockFarmersPage = () => {
     [allFarmers, trainingRecords, effectiveFilters]
   );
 
-  // Stats derived from filtered data — no dependency on pagination
   const stats = useMemo(
     () => computeStats(filteredFarmers, filteredTraining),
     [filteredFarmers, filteredTraining]
   );
 
   // =========================================================================
-  // OPTIMIZATION #8: Pagination is its own lightweight computation
+  // OPTIMIZATION #8: Pagination
   // =========================================================================
 
   const totalPages = useMemo(
@@ -838,6 +841,13 @@ const LivestockFarmersPage = () => {
     const endIndex = startIndex + pagination.limit;
     return filteredFarmers.slice(startIndex, endIndex);
   }, [filteredFarmers, pagination.page, pagination.limit]);
+
+  const removeFarmersFromState = useCallback((ids: string[]) => {
+    if (ids.length === 0) return;
+    const deletedIds = new Set(ids);
+    setAllFarmers((prev) => prev.filter((record) => !deletedIds.has(record.id)));
+    setSelectedRecords((prev) => prev.filter((id) => !deletedIds.has(id)));
+  }, []);
 
   const uniqueCounties = useMemo(
     () => [...new Set(allFarmers.map((f) => f.county).filter(Boolean))],
@@ -977,8 +987,8 @@ const LivestockFarmersPage = () => {
     try {
       setDeleteLoading(true);
       await remove(ref(db, `farmers/${recordToDelete.id}`));
-      // Invalidate cache so next load fetches fresh data
       localStorage.removeItem(`farmers_cache_${activeProgram}`);
+      removeFarmersFromState([recordToDelete.id]);
       toast({ title: "Success", description: "Record deleted" });
       setIsSingleDeleteDialogOpen(false);
       setRecordToDelete(null);
@@ -994,12 +1004,13 @@ const LivestockFarmersPage = () => {
     if (selectedRecords.length === 0) return;
     try {
       setDeleteLoading(true);
+      const idsToDelete = [...selectedRecords];
       const updates: { [key: string]: null } = {};
-      selectedRecords.forEach((id) => (updates[`farmers/${id}`] = null));
+      idsToDelete.forEach((id) => (updates[`farmers/${id}`] = null));
       await update(ref(db), updates);
       localStorage.removeItem(`farmers_cache_${activeProgram}`);
-      toast({ title: "Success", description: `${selectedRecords.length} records deleted` });
-      setSelectedRecords([]);
+      removeFarmersFromState(idsToDelete);
+      toast({ title: "Success", description: `${idsToDelete.length} records deleted` });
       setIsDeleteConfirmOpen(false);
     } catch (error) {
       toast({ title: "Error", description: "Bulk delete failed", variant: "destructive" });
@@ -1227,7 +1238,6 @@ const LivestockFarmersPage = () => {
         }
       }
 
-      // Invalidate cache so next load picks up new records
       localStorage.removeItem(`farmers_cache_${activeProgram}`);
       toast({
         title: "Success",
@@ -1659,12 +1669,8 @@ const LivestockFarmersPage = () => {
                           />
                         </td>
                         <td className="py-2 px-3 text-xs text-gray-500">{formatDate(record.createdAt)}</td>
-                        <td className="py-2 px-3 font-medium text-sm">{record.name}</td>
-                        <td className="py-2 px-3">
-                          <Badge variant={record.gender === "Female" ? "secondary" : "outline"} className="text-xs">
-                            {record.gender}
-                          </Badge>
-                        </td>
+                        <td className="py-2 px-3 text-sm">{record.name}</td>
+                        <td className="py-2 px-3">{record.gender}</td>
                         <td className="py-2 px-3 text-xs">{record.phone}</td>
                         <td className="py-2 px-3 text-xs font-mono hidden sm:table-cell">{record.idNumber}</td>
                         <td className="py-2 px-3 text-xs">{record.county}</td>

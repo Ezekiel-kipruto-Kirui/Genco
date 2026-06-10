@@ -320,6 +320,15 @@ const getRecordPdfUrl = (record: TrainingRecord | null | undefined): string => {
       "documentPdfURL",
       "pdfDownloadUrl",
       "pdfDownloadURL",
+      "pdfLink",
+      "pdfLINK",
+      "PDFLink",
+      "PDF_Link",
+      "PDF link",
+      "PDF Link",
+      "Pdf Link",
+      "Pdf_Link",
+      "pdf_link",
       "downloadUrl",
       "downloadURL",
       "url",
@@ -410,7 +419,22 @@ const normalizeRecord = (
       reportId: (raw.reportId as string) || "",
       entries,
       pdfUrl:
-        getStringField(raw, ["pdfUrl", "pdfURL", "downloadUrl", "downloadURL", "url"]) ||
+        getStringField(raw, [
+          "pdfUrl",
+          "pdfURL",
+          "pdfLink",
+          "pdfLINK",
+          "PDFLink",
+          "PDF_Link",
+          "PDF link",
+          "PDF Link",
+          "Pdf Link",
+          "Pdf_Link",
+          "pdf_link",
+          "downloadUrl",
+          "downloadURL",
+          "url",
+        ]) ||
         getNestedStringField(
           raw,
           ["pdfFile", "validationDocument", "validationDocumentPdf", "document", "file"],
@@ -1362,7 +1386,7 @@ const CapacityBuildingPage = () => {
         r.totalFarmers || 0,
         r.fieldOfficer || r.username || "N/A",
         r.programme || activeProgram || "N/A",
-        r.pdfUrl || "",
+        getRecordPdfUrl(r) || "",
       ]);
 
       const dateColumns = new Set([0, 6, 7]);
