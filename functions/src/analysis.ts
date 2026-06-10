@@ -146,6 +146,12 @@ const VALID_SCOPES = new Set<AnalysisScope>([
   "performance-report",
   "sales-report",
 ]);
+const ANALYSIS_CALLABLE_CORS = [
+  "https://www.gencofarm.com",
+  "https://gencofarm.com",
+  /^http:\/\/localhost:\d+$/,
+  /^http:\/\/127\.0\.0\.1:\d+$/,
+];
 
 interface AnalysisRequest {
   scope?: AnalysisScope | string;
@@ -2517,7 +2523,7 @@ const createSalesReport = async (
   };
 };
 
-export const getAnalysisSummary = onCall(async (request) => {
+export const getAnalysisSummary = onCall({cors: ANALYSIS_CALLABLE_CORS}, async (request) => {
   const uid = request.auth?.uid;
   if (!uid) {
     throw new HttpsError("unauthenticated", "You must be signed in to view analytics.");
