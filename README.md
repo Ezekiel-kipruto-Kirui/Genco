@@ -48,4 +48,29 @@ This project is built with:
 - TypeScript
 - React
 - shadcn-ui
-- Tailwind CSS`
+- Tailwind CSS
+
+## Vercel Serverless Setup
+
+Firebase Cloud Functions are not used for analytics in this app. The analytics endpoint is a Vercel Function at:
+
+```txt
+/api/analysis-summary
+```
+
+Set these environment variables in Vercel:
+
+```txt
+FIREBASE_SERVICE_ACCOUNT_KEY=<full Firebase service account JSON>
+FIREBASE_DATABASE_URL=<Realtime Database URL>
+FIREBASE_AUTH_PROJECT_ID=<Firebase Auth project id>
+SITE_ORIGIN=https://gencofarm.com
+```
+
+For local Vercel Function testing:
+
+```sh
+npm run dev:vercel
+```
+
+The React app calls `/api/analysis-summary`; it should not call Firebase Cloud Functions.

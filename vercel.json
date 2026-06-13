@@ -1,5 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "devCommand": "vite --host 0.0.0.0 --port $PORT",
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "build": {
@@ -7,20 +8,33 @@
       "VERCEL_FORCE_NO_BUILD_CACHE": "1"
     }
   },
-  "routes": [
+  "functions": {
+    "api/analysis-summary.ts": {
+      "maxDuration": 300
+    }
+  },
+  "headers": [
     {
-      "src": "/(?!assets/|img/|fonts/|favicon\\.ico|robots\\.txt).*$",
-      "headers": {
-        "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
-        "Pragma": "no-cache",
-        "Expires": "0"
-      },
-      "continue": true
+      "source": "/((?!api/|@vite/|@react-refresh|src/|node_modules/|assets/|img/|fonts/|favicon\\.ico|robots\\.txt).*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-store, no-cache, must-revalidate, max-age=0"
+        },
+        {
+          "key": "Pragma",
+          "value": "no-cache"
+        },
+        {
+          "key": "Expires",
+          "value": "0"
+        }
+      ]
     }
   ],
   "rewrites": [
     {
-      "source": "/(.*)",
+      "source": "/((?!api/|@vite/|@react-refresh|src/|node_modules/|assets/|img/|fonts/|favicon\\.ico|robots\\.txt).*)",
       "destination": "/index.html"
     }
   ]

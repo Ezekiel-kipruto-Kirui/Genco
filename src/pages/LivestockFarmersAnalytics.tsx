@@ -550,8 +550,7 @@ const buildQuarterTargets = (year: number) => [
   },
 ];
 
-const USE_REMOTE_ANALYTICS =
-  typeof window !== "undefined" && !["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
+const USE_REMOTE_ANALYTICS = true;
 
 const LivestockFarmersAnalytics = () => {
   const { user, userRole, userAttribute, allowedProgrammes } = useAuth();
@@ -668,6 +667,9 @@ const LivestockFarmersAnalytics = () => {
     enabled: USE_REMOTE_ANALYTICS && !!activeProgram,
     placeholderData: (previousData) => previousData,
     staleTime: 10 * 60 * 1000,
+    retry: 0,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 
   const effectiveTarget = useMemo(() => {
@@ -1271,7 +1273,7 @@ const LivestockFarmersAnalytics = () => {
   );
 
   const isPageLoading = USE_REMOTE_ANALYTICS
-    ? ((accessibleProgrammes.length > 0 && !activeProgram) || (analyticsQuery.isLoading && !analyticsQuery.data))
+    ? ((accessibleProgrammes.length > 0 && !activeProgram) || (analyticsQuery.isLoading && !analyticsQuery.isError && !analyticsQuery.data))
     : loading;
 
   if (isPageLoading) {
@@ -1287,6 +1289,13 @@ const LivestockFarmersAnalytics = () => {
     <div className="space-y-5 p-1">
       <div className="space-y-3">
         <h1 className="text-lg font-semibold tracking-tight text-gray-900">Livestock Farmers Dashboard</h1>
+
+        {analyticsQuery.isError && !analyticsQuery.data ? (
+          <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>Analytics took too long to load. Adjust the filters or try again.</span>
+          </div>
+        ) : null}
 
         <Card className="w-full border-0 bg-white shadow-lg">
           <CardContent className="px-3 py-3">

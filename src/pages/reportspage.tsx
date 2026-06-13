@@ -417,8 +417,7 @@ const getQ4Dates = (year: number) => {
   return { startDate: `${year}-01-01`, endDate: `${year}-12-31` };
 };
 
-const USE_REMOTE_ANALYTICS =
-  typeof window !== "undefined" && !["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
+const USE_REMOTE_ANALYTICS = true;
 
 type PerformanceReportData = {
   scope: "performance-report";
@@ -905,6 +904,8 @@ const useProcessedData = (
   return {
     data: USE_REMOTE_ANALYTICS ? remoteData : localData ?? EMPTY_PERFORMANCE_DATA,
     isLoading: queryResult.isLoading,
+    isError: queryResult.isError,
+    error: queryResult.error,
   };
 };
 
@@ -1089,7 +1090,7 @@ const PerformanceReport = () => {
     [accessibleProgrammes, userCanViewAllProgrammeData],
   );
   
-  const { data, isLoading: analysisLoading } = useProcessedData(
+  const { data, isLoading: analysisLoading, isError: analysisError } = useProcessedData(
     allFarmers,
     trainingRecords,
     animalHealthActivities,
@@ -1816,6 +1817,12 @@ const PerformanceReport = () => {
         {reportViewProfile.title ? (
           <div>
             <h1 className="text-xl font-semibold text-gray-900">{reportViewProfile.title}</h1>
+          </div>
+        ) : null}
+
+        {analysisError ? (
+          <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+            Analytics took too long to load. Adjust the filters or try again.
           </div>
         ) : null}
 

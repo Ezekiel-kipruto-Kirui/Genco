@@ -19,7 +19,7 @@
     "requisitions": {
       ".read": "auth != null",
       ".write": "auth != null",
-      ".indexOn": ["status", "programme", "Programme", "uid", "submittedBy", "createdAt"],
+      ".indexOn": ["status", "programme", "Programme", "uid", "submittedBy", "createdAt", "submittedAt", "timestamp"],
       "$recordId": {
         ".read": "auth != null",
         ".write": "auth != null || !data.exists()",
@@ -37,7 +37,7 @@
     "capacityBuilding": {
       ".read": "auth != null",
       ".write": "auth != null",
-      ".indexOn": ["programme", "Programme", "submittedBy", "createdAt"],
+      ".indexOn": ["programme", "Programme", "submittedBy", "createdAt", "startDate", "rawTimestamp", "timestamp"],
       "$recordId": {
         ".read": "auth != null",
         ".write": "auth != null"
@@ -47,7 +47,7 @@
     "orders": {
       ".read": "auth != null",
       ".write": "auth != null",
-      ".indexOn": ["programme", "Programme"],
+      ".indexOn": ["programme", "Programme", "createdAt", "completedAt", "date", "timestamp"],
       "$recordId": {
         ".read": "auth != null",
         ".write": "auth != null"
@@ -57,7 +57,7 @@
     "farmers": {
       ".read": "auth != null",
       ".write": "auth != null",
-      ".indexOn": ["programme", "Programme"],
+      ".indexOn": ["programme", "Programme", "createdAt", "registrationDate", "timestamp"],
       "$recordId": {
         ".read": "auth != null",
         ".write": "auth != null"
@@ -67,7 +67,7 @@
     "fodderFarmers": {
       ".read": "auth != null",
       ".write": "auth != null",
-      ".indexOn": ["programme", "Programme"],
+      ".indexOn": ["programme", "Programme", "createdAt", "registrationDate", "timestamp"],
       "$recordId": {
         ".read": "auth != null",
         ".write": "auth != null"
@@ -77,7 +77,7 @@
     "offtakes": {
       ".read": "auth != null",
       ".write": "auth != null",
-      ".indexOn": ["programme", "Programme"],
+      ".indexOn": ["programme", "Programme", "createdAt", "date", "Date", "timestamp"],
       "$recordId": {
         ".read": "auth != null",
         ".write": "auth != null"
@@ -87,7 +87,7 @@
     "Onboarding": {
       ".read": "auth != null",
       ".write": "auth != null",
-      ".indexOn": ["programme", "Programme"],
+      ".indexOn": ["programme", "Programme", "createdAt", "date", "Date", "timestamp"],
       "$recordId": {
         ".read": "auth != null",
         ".write": "auth != null"
@@ -97,7 +97,7 @@
     "AnimalHealthActivities": {
       ".read": "auth != null",
       ".write": "auth != null",
-      ".indexOn": ["programme", "Programme"],
+      ".indexOn": ["programme", "Programme", "createdAt", "date", "Date", "timestamp"],
       "$recordId": {
         ".read": "auth != null",
         ".write": "auth != null"
@@ -107,7 +107,7 @@
     "BoreholeStorage": {
       ".read": "auth != null",
       ".write": "auth != null",
-      ".indexOn": ["programme", "Programme"],
+      ".indexOn": ["programme", "Programme", "createdAt", "date", "Date", "timestamp"],
       "$recordId": {
         ".read": "auth != null",
         ".write": "auth != null"
@@ -117,7 +117,7 @@
     "HayStorage": {
       ".read": "auth != null",
       ".write": "auth != null",
-      ".indexOn": ["programme", "Programme"],
+      ".indexOn": ["programme", "Programme", "createdAt", "date", "Date", "timestamp"],
       "$recordId": {
         ".read": "auth != null",
         ".write": "auth != null"
@@ -127,7 +127,7 @@
     "hrStaffDirectory": {
       ".read": "auth != null",
       ".write": "auth != null",
-      ".indexOn": ["programme", "Programme"],
+      ".indexOn": ["programme", "Programme", "createdAt", "dateAwarded", "timestamp"],
       "$recordId": {
         ".read": "auth != null",
         ".write": "auth != null"
@@ -137,7 +137,7 @@
     "hrStaffMarks": {
       ".read": "auth != null",
       ".write": "auth != null",
-      ".indexOn": ["programme", "Programme"],
+      ".indexOn": ["programme", "Programme", "createdAt", "date", "timestamp"],
       "$recordId": {
         ".read": "auth != null",
         ".write": "auth != null"

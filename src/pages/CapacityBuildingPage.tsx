@@ -176,7 +176,7 @@ const EXPORT_HEADERS = [
   "Officer", "Programme", "PDF Link",
 ];
 
-const INVALID_FIREBASE_KEY_CHARS = /[.#$\/\[\]]/g;
+const INVALID_FIREBASE_KEY_CHARS = /[.#$/[\]]/g;
 
 const sanitizeFirebaseKey = (key: string, fallback: string): string => {
   const sanitized = key

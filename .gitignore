@@ -33,6 +33,7 @@ functions/.env
 functions/.env.*
 !.env.example
 !functions/.env.example
+**/*firebase-adminsdk*.json
 src/pages/cloude.txt
 test-claude.mjs
 

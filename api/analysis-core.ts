@@ -1,8 +1,14 @@
-/* eslint-disable max-len */
-import * as admin from "firebase-admin";
-import {onValueWritten} from "firebase-functions/v2/database";
-import {onCall, HttpsError} from "firebase-functions/v2/https";
-import {onSchedule} from "firebase-functions/v2/scheduler";
+import {getDatabase, type DataSnapshot} from "firebase-admin/database";
+
+export class AnalysisError extends Error {
+  constructor(
+    public code: "unauthenticated" | "permission-denied" | "invalid-argument",
+    message: string,
+  ) {
+    super(message);
+    this.name = "AnalysisError";
+  }
+}
 
 const PROGRAMME_OPTIONS = ["KPMD", "RANGE", "KPMD 2"] as const;
 const CACHE_TTL_MS = 2 * 60 * 1000;
@@ -146,13 +152,6 @@ const VALID_SCOPES = new Set<AnalysisScope>([
   "performance-report",
   "sales-report",
 ]);
-const ANALYSIS_CALLABLE_CORS = [
-  "https://www.gencofarm.com",
-  "https://gencofarm.com",
-  /^http:\/\/localhost:\d+$/,
-  /^http:\/\/127\.0\.0\.1:\d+$/,
-];
-
 interface AnalysisRequest {
   scope?: AnalysisScope | string;
   programme?: string | null;
@@ -998,7 +997,7 @@ const filterRecordsByDateRange = <T extends Record<string, unknown>>(
     dateInRange(getDateValue(record), dateRange?.startDate, dateRange?.endDate),
   );
 
-const snapshotToArray = (snapshot: admin.database.DataSnapshot): any[] => {
+const snapshotToArray = (snapshot: DataSnapshot): any[] => {
   if (!snapshot.exists()) return [];
   const value = snapshot.val();
   if (!value || typeof value !== "object") return [];
@@ -1016,12 +1015,12 @@ const encodeCacheSegment = (value: string): string =>
     .replace(/=+$/g, "");
 
 const getCollectionCacheRef = (collectionPath: string) =>
-  admin.database().ref(`${ANALYTICS_CACHE_ROOT}/collections/${encodeCacheSegment(collectionPath)}`);
+  getDatabase().ref(`${ANALYTICS_CACHE_ROOT}/collections/${encodeCacheSegment(collectionPath)}`);
 
 const getAnalysisResultCacheRef = (key: string) =>
-  admin.database().ref(`${ANALYTICS_CACHE_ROOT}/results/${encodeCacheSegment(key)}`);
+  getDatabase().ref(`${ANALYTICS_CACHE_ROOT}/results/${encodeCacheSegment(key)}`);
 
-const getCachedRecordsFromSnapshot = (snapshot: admin.database.DataSnapshot): any[] => {
+const getCachedRecordsFromSnapshot = (snapshot: DataSnapshot): any[] => {
   if (!snapshot.exists()) return [];
   const value = snapshot.val();
   if (!value || typeof value !== "object") return [];
@@ -1065,7 +1064,7 @@ const writePersistentCollectionCache = async (
 };
 
 const getSourceCollectionRecords = async (collectionPath: string): Promise<any[]> => {
-  const snapshot = await admin.database().ref(collectionPath).get();
+  const snapshot = await getDatabase().ref(collectionPath).get();
   return snapshotToArray(snapshot);
 };
 
@@ -1196,33 +1195,6 @@ const incrementPersistentCollectionVersion = async (
   });
 };
 
-const syncAnalysisCollectionCache = (collectionPath: string) =>
-  onValueWritten(`/${collectionPath}/{recordId}`, async (event): Promise<void> => {
-    const cacheRef = getCollectionCacheRef(collectionPath);
-    const metaSnapshot = await cacheRef.child("meta/hydratedAt").get();
-
-    if (!metaSnapshot.exists()) {
-      await hydratePersistentCollectionCache(collectionPath);
-      cache.clear();
-      return;
-    }
-
-    const recordId = String(event.params.recordId);
-    const after = event.data.after.val();
-
-    if (after && typeof after === "object") {
-      await cacheRef.child(`records/${recordId}`).set(after);
-    } else {
-      await cacheRef.child(`records/${recordId}`).remove();
-    }
-
-    const beforeExists = event.data.before.exists();
-    const afterExists = event.data.after.exists();
-    const countDelta = beforeExists === afterExists ? 0 : (afterExists ? 1 : -1);
-    await incrementPersistentCollectionVersion(collectionPath, countDelta);
-    cache.clear();
-  });
-
 const fetchCollectionByProgrammes = async (
   collectionPath: string,
   programmes: string[],
@@ -1278,12 +1250,11 @@ const canViewAllProgrammes = (user: any): boolean => {
 };
 
 const loadProfile = async (uid: string): Promise<AnalysisProfile | null> => {
-  const directSnapshot = await admin.database().ref(`users/${uid}`).get();
+  const directSnapshot = await getDatabase().ref(`users/${uid}`).get();
   let userData = directSnapshot.exists() ? directSnapshot.val() : null;
 
   if (!userData) {
-    const fallbackSnapshot = await admin
-      .database()
+    const fallbackSnapshot = await getDatabase()
       .ref("users")
       .orderByChild("uid")
       .equalTo(uid)
@@ -1420,11 +1391,28 @@ const getCollectionRecordsByChildValue = async (
 
   if (childKey === "programme" || childKey === "Programme") {
     const programme = toProgramme(childValue);
-    const records = (await getCollectionRecords(collectionPath)).filter(
-      (record) => getRecordProgramme(record) === programme,
-    );
-    setCached(key, records);
-    return records;
+    try {
+      const snapshot = await getDatabase()
+        .ref(collectionPath)
+        .orderByChild(childKey)
+        .equalTo(childValue)
+        .get();
+      const records = snapshotToArray(snapshot).filter(
+        (record) => getRecordProgramme(record) === programme,
+      );
+      setCached(key, records);
+      return records;
+    } catch (error) {
+      console.warn(
+        `[analytics] Falling back to cached full collection for /${collectionPath} ${childKey}=${childValue}:`,
+        error,
+      );
+      const records = (await getCollectionRecords(collectionPath)).filter(
+        (record) => getRecordProgramme(record) === programme,
+      );
+      setCached(key, records);
+      return records;
+    }
   }
 
   const collectionRecords = await readPersistentCollectionCache(collectionPath);
@@ -1434,8 +1422,7 @@ const getCollectionRecordsByChildValue = async (
     return records;
   }
 
-  const snapshot = await admin
-    .database()
+  const snapshot = await getDatabase()
     .ref(collectionPath)
     .orderByChild(childKey)
     .equalTo(childValue)
@@ -1600,11 +1587,12 @@ const createOverview = async (
   profile: AnalysisProfile,
   requestedProgramme?: string | null,
   selectedComparisonYear?: number | string | null,
+  dateRange?: {startDate?: string; endDate?: string} | null,
 ) => {
   const programmes = resolveProgrammes(profile, requestedProgramme);
   if (programmes.length === 0) return emptyOverview();
 
-  const [farmers, activities, capacity, offtakes, animalHealthActivities, boreholes] = await Promise.all([
+  const [allFarmers, allActivities, allCapacity, allOfftakes, allAnimalHealthActivities, allBoreholes] = await Promise.all([
     fetchCollectionByProgrammes("farmers", programmes),
     fetchCollectionByProgrammes("Recent Activities", programmes),
     fetchCollectionByProgrammes("capacityBuilding", programmes),
@@ -1612,6 +1600,20 @@ const createOverview = async (
     fetchCollectionByProgrammes("AnimalHealthActivities", programmes),
     fetchCollectionByProgrammes("BoreholeStorage", programmes),
   ]);
+  const farmers = filterRecordsByDateRange(allFarmers, getFarmerRegistrationDate, dateRange);
+  const activities = filterRecordsByDateRange(allActivities, getActivityRecordDate, dateRange);
+  const capacity = filterRecordsByDateRange(
+    allCapacity,
+    (record) => record.startDate ?? record.date ?? record.Date ?? record.createdAt ?? record.created_at,
+    dateRange,
+  );
+  const offtakes = filterRecordsByDateRange(
+    allOfftakes,
+    (record) => record.date ?? record.Date ?? record.createdAt ?? record.created_at,
+    dateRange,
+  );
+  const animalHealthActivities = filterRecordsByDateRange(allAnimalHealthActivities, getActivityRecordDate, dateRange);
+  const boreholes = filterRecordsByDateRange(allBoreholes, getInfrastructureRecordDate, dateRange);
   let maleFarmers = 0;
   let femaleFarmers = 0;
   let totalGoats = 0;
@@ -2523,25 +2525,26 @@ const createSalesReport = async (
   };
 };
 
-export const getAnalysisSummary = onCall({cors: ANALYSIS_CALLABLE_CORS}, async (request) => {
-  const uid = request.auth?.uid;
+export const runAnalysisSummary = async (
+  uid: string,
+  payload: AnalysisRequest,
+): Promise<any> => {
   if (!uid) {
-    throw new HttpsError("unauthenticated", "You must be signed in to view analytics.");
+    throw new AnalysisError("unauthenticated", "You must be signed in to view analytics.");
   }
 
-  const payload = (request.data || {}) as AnalysisRequest;
   const scope = payload.scope;
   if (!scope || !VALID_SCOPES.has(scope as AnalysisScope)) {
-    throw new HttpsError("invalid-argument", "A valid analysis scope is required.");
+    throw new AnalysisError("invalid-argument", "A valid analysis scope is required.");
   }
 
   const profile = await loadProfile(uid);
   if (!profile) {
-    throw new HttpsError("permission-denied", "Your account is not allowed to access analytics.");
+    throw new AnalysisError("permission-denied", "Your account is not allowed to access analytics.");
   }
 
   if (!canAccessAnalyticsScope(scope as AnalysisScope, profile)) {
-    throw new HttpsError("permission-denied", "Your role or attribute is not allowed to access this analytics view.");
+    throw new AnalysisError("permission-denied", "Your role or attribute is not allowed to access this analytics view.");
   }
 
   const scopeName = scope as AnalysisScope;
@@ -2561,7 +2564,7 @@ export const getAnalysisSummary = onCall({cors: ANALYSIS_CALLABLE_CORS}, async (
   let response: any;
   switch (scope) {
   case "overview":
-    response = await createOverview(profile, payload.programme, payload.selectedYear);
+    response = await createOverview(profile, payload.programme, payload.selectedYear, payload.dateRange);
     break;
   case "livestock-analytics":
     response = await createLivestockAnalytics(profile, payload.programme, payload.dateRange, payload.target);
@@ -2579,35 +2582,10 @@ export const getAnalysisSummary = onCall({cors: ANALYSIS_CALLABLE_CORS}, async (
     response = await createSalesReport(profile, payload.programme, payload.dateRange, payload.salesInputs);
     break;
   default:
-    throw new HttpsError("invalid-argument", "Unsupported analysis scope.");
+    throw new AnalysisError("invalid-argument", "Unsupported analysis scope.");
   }
 
   setCached(runtimeKey, response);
   await writePersistentAnalysisResult(key, dependencyVersions, response);
   return response;
-});
-
-export const syncFarmersAnalysisCache = syncAnalysisCollectionCache("farmers");
-export const syncRecentActivitiesAnalysisCache = syncAnalysisCollectionCache("Recent Activities");
-export const syncCapacityBuildingAnalysisCache = syncAnalysisCollectionCache("capacityBuilding");
-export const syncOfftakesAnalysisCache = syncAnalysisCollectionCache("offtakes");
-export const syncAnimalHealthAnalysisCache = syncAnalysisCollectionCache("AnimalHealthActivities");
-export const syncBoreholeAnalysisCache = syncAnalysisCollectionCache("BoreholeStorage");
-export const syncHrStaffMarksAnalysisCache = syncAnalysisCollectionCache("hrStaffMarks");
-export const syncOrdersAnalysisCache = syncAnalysisCollectionCache("orders");
-export const syncRequisitionsAnalysisCache = syncAnalysisCollectionCache("requisitions");
-
-export const refreshAnalysisCollectionCaches = onSchedule(
-  {
-    schedule: "every 24 hours",
-    timeZone: "Africa/Nairobi",
-  },
-  async (): Promise<void> => {
-    await Promise.all(
-      ANALYTICS_COLLECTION_PATHS.map((collectionPath) =>
-        hydratePersistentCollectionCache(collectionPath),
-      ),
-    );
-    cache.clear();
-  },
-);
+};

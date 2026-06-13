@@ -34,7 +34,7 @@ import { canViewAllProgrammes } from "@/contexts/authhelper";
 import { useSharedProgrammeSelection } from "@/hooks/use-shared-programme-selection";
 import { fetchAnalysisSummary } from "@/lib/analysis";
 import { cacheKey, readCachedValue, writeCachedValue } from "@/lib/data-cache";
-import { fetchCollectionByProgramme, fetchCollectionByProgrammes } from "@/lib/firebase";
+import { getCurrentMonthDateRange } from "@/lib/date-range";
 import {
   ALL_PROGRAMMES_VALUE,
   PROGRAMME_OPTIONS,
@@ -137,9 +137,7 @@ type OverviewCollections = {
   activities: OverviewRecord[];
 };
 
-const LOCALHOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
-const USE_REMOTE_ANALYTICS =
-  typeof window !== "undefined" && !LOCALHOSTS.has(window.location.hostname);
+const USE_REMOTE_ANALYTICS = true;
 
 const SERIES_COLORS = ["#2710a1", "#f89b0d", "#ffea00", "#2cb100", "#0ea5e9", "#ef4444"];
 const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -213,7 +211,9 @@ const CANONICAL_PROGRAMME_SET = new Set<string>(PROGRAMME_OPTIONS);
 const buildOverviewCacheKey = (
   userId: string | null | undefined,
   programme: string | null | undefined,
-) => cacheKey("overview-summary-v7", userId || "anon", programme || "none");
+  startDate: string,
+  endDate: string,
+) => cacheKey("overview-summary-v8", userId || "anon", programme || "none", startDate, endDate);
 
 const getGreetingLabel = (date: Date): string => {
   const hour = Number(
@@ -1760,10 +1760,16 @@ const DashboardOverview = () => {
     data: null,
   });
   const [localOverviewLoading, setLocalOverviewLoading] = useState(false);
+  const currentMonthRange = useMemo(() => getCurrentMonthDateRange(), []);
 
   const overviewCacheStorageKey = useMemo(
-    () => buildOverviewCacheKey(user?.uid, selectedProgramme || null),
-    [selectedProgramme, user?.uid],
+    () => buildOverviewCacheKey(
+      user?.uid,
+      selectedProgramme || null,
+      currentMonthRange.startDate,
+      currentMonthRange.endDate,
+    ),
+    [currentMonthRange.endDate, currentMonthRange.startDate, selectedProgramme, user?.uid],
   );
 
   const cachedOverviewData = useMemo(
@@ -1801,11 +1807,20 @@ const DashboardOverview = () => {
   const remoteOverviewEnabled = USE_REMOTE_ANALYTICS && Boolean(selectedProgramme) && !loading;
 
   const overviewQuery = useQuery({
-    queryKey: ["overview-analysis", user?.uid, userRole, userAttribute, selectedProgramme],
+    queryKey: [
+      "overview-analysis",
+      user?.uid,
+      userRole,
+      userAttribute,
+      selectedProgramme,
+      currentMonthRange.startDate,
+      currentMonthRange.endDate,
+    ],
     queryFn: async () =>
       sanitizeOverviewSummary(await fetchAnalysisSummary({
         scope: "overview",
         programme: isAllProgrammesSelection(selectedProgramme) ? "All" : selectedProgramme || null,
+        dateRange: currentMonthRange,
       })),
     enabled: remoteOverviewEnabled,
     retry: 0,
@@ -1839,8 +1854,7 @@ const DashboardOverview = () => {
   }, [overviewCacheStorageKey, overviewQuery.data, selectedProgramme]);
 
   // -- Local fallback fetch ----------------------------------------------
-  const shouldFetchLocalOverview =
-    Boolean(selectedProgramme);
+  const shouldFetchLocalOverview = false;
 
   useEffect(() => {
     if (!selectedProgramme) {
@@ -1849,80 +1863,8 @@ const DashboardOverview = () => {
       return;
     }
 
-    if (!shouldFetchLocalOverview) {
-      setLocalOverviewLoading(false);
-      return;
-    }
-
-    let cancelled = false;
-
-    const fetchLocalOverview = async () => {
-      setLocalOverviewLoading(!hasImmediateOverviewData);
-
-      try {
-        const loadOverviewCollection = (path: string) =>
-          isAllProgrammesSelection(selectedProgramme)
-            ? fetchCollectionByProgrammes<OverviewRecord>(path, accessibleProgrammes)
-            : fetchCollectionByProgramme<OverviewRecord>(path, selectedProgramme);
-
-        const [farmersRecords, capacityRecords, offtakesRecords, animalHealthRecords, boreholeRecords, activityRecords] = await Promise.all([
-          loadOverviewCollection("farmers"),
-          loadOverviewCollection("capacityBuilding"),
-          loadOverviewCollection("offtakes"),
-          loadOverviewCollection("AnimalHealthActivities"),
-          loadOverviewCollection("BoreholeStorage"),
-          loadOverviewCollection("Recent Activities"),
-        ]);
-
-        if (cancelled) return;
-
-        const byProgramme = (records: OverviewRecord[]) =>
-          records.filter((record) => {
-            if (!selectedProgramme || isAllProgrammesSelection(selectedProgramme)) {
-              return Boolean(getOverviewRecordProgramme(record));
-            }
-
-            return getOverviewRecordProgramme(record) === selectedProgramme;
-          });
-
-        const summary = buildOverviewSummaryFromRecords({
-          farmers: byProgramme(farmersRecords),
-          capacity: byProgramme(capacityRecords),
-          offtakes: byProgramme(offtakesRecords),
-          animalHealth: byProgramme(animalHealthRecords),
-          boreholes: byProgramme(boreholeRecords),
-          activities: byProgramme(activityRecords),
-        });
-        const normalizedSummary = sanitizeOverviewSummary(summary);
-
-        if (!cancelled) {
-          writeCachedValue(overviewCacheStorageKey, normalizedSummary);
-          setLocalOverviewState({
-            key: overviewCacheStorageKey,
-            data: normalizedSummary,
-          });
-        }
-      } catch (error) {
-        console.error("Failed to build local overview:", error);
-        if (!cancelled && !cachedOverviewData) {
-          setLocalOverviewState({
-            key: overviewCacheStorageKey,
-            data: EMPTY_OVERVIEW_DATA,
-          });
-        }
-      } finally {
-        if (!cancelled) {
-          setLocalOverviewLoading(false);
-        }
-      }
-    };
-
-    void fetchLocalOverview();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [accessibleProgrammes, cachedOverviewData, hasImmediateOverviewData, overviewCacheStorageKey, selectedProgramme, shouldFetchLocalOverview]);
+    setLocalOverviewLoading(false);
+  }, [selectedProgramme]);
 
   // -- Resolved overview data --------------------------------------------
   const overviewData = sanitizeOverviewSummary(

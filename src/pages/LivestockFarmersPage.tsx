@@ -3,7 +3,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import {
   ref, set, update, remove, push,
   onValue,
-  query, orderByChild, equalTo,
+  query, orderByChild, equalTo, startAt, endAt,
 } from "firebase/database";
 import { db } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
@@ -374,7 +374,38 @@ const FARMER_REGISTRATION_SMS =
 interface SubscriptionOptions {
   debounceMs?: number;
   cacheKey?: string;
+  dateChild?: string;
+  startDate?: string;
+  endDate?: string;
 }
+
+const formatLocalDateForInput = (date: Date): string => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
+const getCurrentMonthRange = () => {
+  const now = new Date();
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+  return {
+    startDate: formatLocalDateForInput(startOfMonth),
+    endDate: formatLocalDateForInput(endOfMonth),
+  };
+};
+
+const getRangeBounds = (startDateStr?: string, endDateStr?: string) => {
+  const start = startDateStr ? new Date(startDateStr) : null;
+  const end = endDateStr ? new Date(endDateStr) : null;
+  if (start) start.setHours(0, 0, 0, 0);
+  if (end) end.setHours(23, 59, 59, 999);
+  return {
+    start: start?.getTime(),
+    end: end?.getTime(),
+  };
+};
 
 const subscribeToProgrammeRecords = <T,>(
   path: string,
@@ -435,6 +466,44 @@ const subscribeToProgrammeRecords = <T,>(
       persistCache();
     }, debounceMs);
   };
+
+  if (options?.dateChild && (options.startDate || options.endDate)) {
+    const { start, end } = getRangeBounds(options.startDate, options.endDate);
+    const programmeSet = new Set(normalizedProgrammes);
+    const dateQuery = query(
+      ref(db, path),
+      orderByChild(options.dateChild),
+      startAt(start ?? 0),
+      endAt(end ?? Number.MAX_SAFE_INTEGER),
+    );
+
+    const unsubscribe = onValue(
+      dateQuery,
+      (snapshot) => {
+        if (hasErrored) return;
+        recordsById.clear();
+        snapshot.forEach((childSnapshot) => {
+          const item = childSnapshot.val();
+          const recordProgramme = normalizeProgramme(item?.programme ?? item?.Programme);
+          if (!programmeSet.has(recordProgramme)) return;
+          recordsById.set(
+            childSnapshot.key || "",
+            mapRecord(childSnapshot.key || "", item, recordProgramme),
+          );
+        });
+        tryPublish(!cacheHit);
+      },
+      (error) => {
+        hasErrored = true;
+        onError(error);
+      },
+    );
+
+    return () => {
+      if (publishTimer) clearTimeout(publishTimer);
+      unsubscribe();
+    };
+  }
 
   const unsubscribers = normalizedProgrammes.flatMap((programmeValue) =>
     ["programme", "Programme"].map((fieldName) => {
@@ -639,11 +708,12 @@ const LivestockFarmersPage = () => {
   const [bulkSmsMessage, setBulkSmsMessage] = useState("");
   const [bulkSmsSending, setBulkSmsSending] = useState(false);
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const currentMonthRange = useMemo(() => getCurrentMonthRange(), []);
 
   const [filters, setFilters] = useState<Filters>({
     search: "",
-    startDate: "",
-    endDate: "",
+    startDate: currentMonthRange.startDate,
+    endDate: currentMonthRange.endDate,
     county: "all",
     subcounty: "all",
     gender: "all",
@@ -746,14 +816,17 @@ const LivestockFarmersPage = () => {
       },
       {
         debounceMs: 80,
-        cacheKey: `farmers_cache_${activeProgram}`,
+        cacheKey: `farmers_cache_${activeProgram}_${filters.startDate}_${filters.endDate}`,
+        dateChild: "createdAt",
+        startDate: filters.startDate,
+        endDate: filters.endDate,
       },
     );
 
     return () => {
       unsubscribe();
     };
-  }, [accessibleProgrammes, activeProgram, toast]);
+  }, [accessibleProgrammes, activeProgram, filters.endDate, filters.startDate, toast]);
 
   // =========================================================================
   // Training records listener
@@ -784,14 +857,17 @@ const LivestockFarmersPage = () => {
       },
       {
         debounceMs: 80,
-        cacheKey: `training_cache_${activeProgram}`,
+        cacheKey: `training_cache_${activeProgram}_${filters.startDate}_${filters.endDate}`,
+        dateChild: "rawTimestamp",
+        startDate: filters.startDate,
+        endDate: filters.endDate,
       },
     );
 
     return () => {
       unsubscribe();
     };
-  }, [accessibleProgrammes, activeProgram]);
+  }, [accessibleProgrammes, activeProgram, filters.endDate, filters.startDate]);
 
   // =========================================================================
   // OPTIMIZATION #7: Filtering + deduplication via useMemo

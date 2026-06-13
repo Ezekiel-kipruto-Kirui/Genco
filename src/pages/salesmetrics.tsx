@@ -12,7 +12,6 @@ import {
   query,
   orderByChild,
   equalTo,
-  onValue,
   get,
   set,
   DataSnapshot,
@@ -91,8 +90,7 @@ const ALL_YEARS_OPTION = "all";
 
 const SALES_INPUTS_STORAGE_KEY = "sales-metrics-inputs-v1";
 
-const USE_REMOTE_ANALYTICS =
-  typeof window !== "undefined" && !["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
+const USE_REMOTE_ANALYTICS = true;
 
 const SALES_ANALYTICS_QUERY_VERSION = "v6";
 
@@ -1048,27 +1046,16 @@ const useOfftakeData = (
         programme: selectedProgramme,
         dateRange,
         salesInputs,
-      }),
+    }),
     enabled: USE_REMOTE_ANALYTICS && !!selectedProgramme,
     staleTime: 10 * 60 * 1000,
+    retry: 0,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    placeholderData: (previousData) => previousData,
   });
 
-  const data: SalesAnalyticsPayload = queryResult.data
-    ? {
-        ...queryResult.data,
-        stats: {
-          ...queryResult.data.stats,
-          totalGoatOrdersPlaced: localData.stats.totalGoatOrdersPlaced,
-          totalGoatsPurchasedFromOrders: localData.stats.totalGoatsPurchasedFromOrders,
-          requisitionExpenses: localData.stats.requisitionExpenses,
-          totalRequisitions: localData.stats.totalRequisitions,
-          completedRequisitions: localData.stats.completedRequisitions,
-          completedRequisitionAmount: localData.stats.completedRequisitionAmount,
-        },
-        requisitionTrend: localData.requisitionTrend,
-        requisitionTrendSeries: localData.requisitionTrendSeries,
-      }
-    : localData;
+  const data: SalesAnalyticsPayload = queryResult.data || localData;
 
   return {
     ...data,
@@ -1239,14 +1226,12 @@ const SalesReport = () => {
   const [isCacheHit, setIsCacheHit] = useState(false);
 
   const currentYear = new Date().getFullYear();
+  const currentMonthDates = useMemo(() => getCurrentMonthDates(), []);
   const [selectedYear, setSelectedYear] = useState<string>(ALL_YEARS_OPTION);
   const [timeFrame, setTimeFrame] = useState<"weekly" | "monthly" | "yearly">(
-    "yearly",
+    "monthly",
   );
-  const [dateRange, setDateRange] = useState({
-    startDate: "",
-    endDate: "",
-  });
+  const [dateRange, setDateRange] = useState(currentMonthDates);
 
   const [salesInputs, setSalesInputs] = useState<SalesInputs>({
     pricePerKg: 0,
@@ -1411,10 +1396,11 @@ const SalesReport = () => {
       console.error("Failed to load cached sales inputs:", error);
     }
 
-    // --- Step 2: Firebase prices listener -------------------------------------
-    const unsubscribe = onValue(
-      pricesCollectionRef(),
-      (snapshot) => {
+    // --- Step 2: one-time Firebase prices read --------------------------------
+    let cancelled = false;
+    void get(pricesCollectionRef())
+      .then((snapshot) => {
+        if (cancelled) return;
         if (!snapshot.exists()) return;
 
         const data = snapshot.val() as {
@@ -1431,13 +1417,15 @@ const SalesReport = () => {
             expenses: nextExpenses,
           });
         });
-      },
-      (error) => {
+      })
+      .catch((error) => {
+        if (cancelled) return;
         console.error("Error listening to prices collection:", error);
-      },
-    );
+      });
 
-    return () => unsubscribe();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // ---------------------------------------------------------------------------
@@ -1461,6 +1449,14 @@ const SalesReport = () => {
     if (unsubscribeRef.current) {
       unsubscribeRef.current();
       unsubscribeRef.current = null;
+    }
+
+    if (USE_REMOTE_ANALYTICS) {
+      setOfftakeData([]);
+      setOrderData([]);
+      setRequisitionData([]);
+      setLoading(false);
+      return;
     }
 
     if (!activeProgram) {
@@ -1667,9 +1663,8 @@ const SalesReport = () => {
       ? query(ref(db, "offtakes"), orderByChild("programme"), equalTo(normalizedActive))
       : query(ref(db, "offtakes"), orderByChild("programme"), equalTo("__NO_PROGRAMME__"));
 
-    const unsubscribe = onValue(
-      offtakesRef,
-      (snapshot) => {
+    void get(offtakesRef)
+      .then((snapshot) => {
         if (cancelled) return;
 
         const data = snapshot.val();
@@ -1694,8 +1689,8 @@ const SalesReport = () => {
           setIsCacheHit(false);
           setLoading(false);
         });
-      },
-      (error) => {
+      })
+      .catch((error) => {
         if (cancelled) return;
         console.error("Error fetching offtake data:", error);
         toast({
@@ -1704,14 +1699,14 @@ const SalesReport = () => {
           variant: "destructive",
         });
         setLoading(false);
-      },
-    );
+      });
 
-    unsubscribeRef.current = unsubscribe;
+    unsubscribeRef.current = () => {
+      cancelled = true;
+    };
 
     return () => {
       cancelled = true;
-      if (unsubscribe) unsubscribe();
     };
   }, [accessibleProgrammes, activeProgram, toast]);
 

@@ -1,7 +1,7 @@
-import { getApp } from "firebase/app";
-import { getFunctions, httpsCallable } from "firebase/functions";
 import { auth } from "@/lib/firebase";
 import { cacheKey, readCachedValue, writeCachedValue } from "@/lib/data-cache";
+import { runSingleActiveDataLoad } from "@/lib/data-load-lock";
+import { serverApiFetch } from "@/lib/server-api";
 
 export type AnalysisScope =
   | "overview"
@@ -23,7 +23,6 @@ export interface AnalysisRequest {
 
 const DEFAULT_CACHE_TTL_MS = 10 * 60 * 1000;
 const OVERVIEW_CACHE_TTL_MS = 15 * 60 * 1000;
-
 const buildCacheKey = (request: AnalysisRequest): string =>
   cacheKey(
     "analysis",
@@ -46,9 +45,14 @@ export const fetchAnalysisSummary = async (request: AnalysisRequest): Promise<an
   const cached = readCachedValue<any>(key, ttlMs);
   if (cached) return cached;
 
-  const functions = getFunctions(getApp(), "us-central1");
-  const callable = httpsCallable<AnalysisRequest, any>(functions, "getAnalysisSummary");
-  const result = await callable(request);
+  const result = await runSingleActiveDataLoad(() =>
+    serverApiFetch<{data: any}>("/api/analysis-summary", {
+      method: "POST",
+      body: JSON.stringify(request),
+    }),
+    key,
+  );
+
   writeCachedValue(key, result.data);
   return result.data;
 };
