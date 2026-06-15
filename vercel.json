@@ -1,0 +1,56 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "devCommand": "vite --host 0.0.0.0 --port $PORT",
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "build": {
+    "env": {
+      "VERCEL_FORCE_NO_BUILD_CACHE": "1"
+    }
+  },
+  "functions": {
+    "api/analysis-summary.ts": {
+      "maxDuration": 300
+    },
+    "api/data.ts": {
+      "maxDuration": 60
+    },
+    "api/auth-verify.ts": {
+      "maxDuration": 10
+    }
+  },
+  "headers": [
+    {
+      "source": "/api/data(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, s-maxage=120, stale-while-revalidate=30"
+        }
+      ]
+    },
+    {
+      "source": "/((?!api/|@vite/|@react-refresh|src/|node_modules/|assets/|img/|fonts/|favicon\\.ico|robots\\.txt).*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-store, no-cache, must-revalidate, max-age=0"
+        },
+        {
+          "key": "Pragma",
+          "value": "no-cache"
+        },
+        {
+          "key": "Expires",
+          "value": "0"
+        }
+      ]
+    }
+  ],
+  "rewrites": [
+    {
+      "source": "/((?!api/|@vite/|@react-refresh|src/|node_modules/|assets/|img/|fonts/|favicon\\.ico|robots\\.txt).*)",
+      "destination": "/index.html"
+    }
+  ]
+}

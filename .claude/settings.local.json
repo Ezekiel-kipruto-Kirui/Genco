@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__ide__getDiagnostics",
+      "Bash(npm run *)",
+      "Bash(npx tsc *)",
+      "Bash(firebase deploy *)",
+      "Bash(npx firebase *)",
+      "Bash(git add *)",
+      "Bash(git commit -m 'Fix Vercel build: use standard dist output instead of Build Output API *)",
+      "Bash(git push *)",
+      "Bash(git rm *)",
+      "Bash(git commit -m 'Remove committed .vercel/output artifacts and exclude via .gitignore *)",
+      "Bash(node -e ' *)",
+      "PowerShell(& \"C:\\\\Users\\\\Ezekiel Kirui\\\\AppData\\\\Roaming\\\\npm\\\\firebase.cmd\" deploy --only database)",
+      "Bash(xargs grep *)",
+      "Bash(git reset *)"
+    ]
+  }
+}
