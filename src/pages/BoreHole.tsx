@@ -16,7 +16,7 @@ import { useToast } from "@/hooks/use-toast";
 import { canManageInfrastructureRecords, canViewAllProgrammes } from "@/contexts/authhelper";
 import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
 import {millify} from "millify";
-import { PROGRAMME_OPTIONS, normalizeProgramme as normalizeProgrammeValue, resolveAccessibleProgrammes } from "@/lib/programme-access";
+import { normalizeProgramme as normalizeProgrammeValue, resolveAccessibleProgrammes, getAllProgrammes } from "@/lib/programme-access";
 
 // REALTIME DATABASE IMPORTS ONLY
 import { 
@@ -155,7 +155,7 @@ const deleteData = async (collectionName: string, docIds: string[]): Promise<Fir
 // Constants
 const PAGE_LIMIT = 15;
 const SEARCH_DEBOUNCE_DELAY = 300;
-type ProgrammeOption = (typeof PROGRAMME_OPTIONS)[number];
+type ProgrammeOption = string;
 
 const normalizeProgramme = (
   value: unknown,

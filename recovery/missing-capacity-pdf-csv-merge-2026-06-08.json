@@ -1,0 +1,21 @@
+{
+  "capacityBuilding/CB-1777790824045": {
+    "reportId": "CB-1777790824045",
+    "recordType": "weeklyCapacityReport",
+    "topicTrained": "Testing ad",
+    "county": "N/A",
+    "subcounty": "N/A",
+    "location": "Todonyang",
+    "startDate": "05/03/2026",
+    "endDate": "05/03/2026",
+    "totalFarmers": 2,
+    "fieldOfficer": "Martin KM",
+    "username": "Martin KM",
+    "programme": "MTLDK",
+    "Programme": "MTLDK",
+    "pdfUrl": "https://firebasestorage.googleapis.com/v0/b/genco-company.firebasestorage.app/o/capacityBuilding%2FMartin_KM%2FCB-1777790824045.pdf?alt=media&token=793ef149-4c36-4b4b-8eab-9c057ef55f36",
+    "validationDocumentPdfUrl": "https://firebasestorage.googleapis.com/v0/b/genco-company.firebasestorage.app/o/capacityBuilding%2FMartin_KM%2FCB-1777790824045.pdf?alt=media&token=793ef149-4c36-4b4b-8eab-9c057ef55f36",
+    "createdAt": "2026-08-02T21:00:00.000Z",
+    "rawTimestamp": 1785704400000
+  }
+}

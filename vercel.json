@@ -17,6 +17,9 @@
     },
     "api/auth-verify.ts": {
       "maxDuration": 10
+    },
+    "api/programmes.ts": {
+      "maxDuration": 30
     }
   },
   "headers": [
@@ -25,7 +28,16 @@
       "headers": [
         {
           "key": "Cache-Control",
-          "value": "public, s-maxage=120, stale-while-revalidate=30"
+          "value": "public, s-maxage=300, stale-while-revalidate=60"
+        }
+      ]
+    },
+    {
+      "source": "/api/programmes(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, s-maxage=600, stale-while-revalidate=60"
         }
       ]
     },

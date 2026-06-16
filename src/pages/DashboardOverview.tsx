@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+﻿import { useEffect, useMemo, useRef, useState, useCallback, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Activity,
@@ -12,6 +12,7 @@ import {
   ShoppingCart,
   UsersRound,
 } from "lucide-react";
+import { fetchCollectionByProgrammes } from "@/lib/firebase";
 import {
   Area,
   AreaChart,
@@ -37,7 +38,7 @@ import { cacheKey, readCachedValue, writeCachedValue } from "@/lib/data-cache";
 import { getCurrentMonthDateRange } from "@/lib/date-range";
 import {
   ALL_PROGRAMMES_VALUE,
-  PROGRAMME_OPTIONS,
+  getAllProgrammes,
   isAllProgrammesSelection,
   normalizeProgramme,
   resolveAccessibleProgrammes,
@@ -206,7 +207,7 @@ const EMPTY_OVERVIEW_DATA: OverviewSummaryData = {
 };
 
 const OVERVIEW_CACHE_TTL_MS = 10 * 60 * 1000;
-const CANONICAL_PROGRAMME_SET = new Set<string>(PROGRAMME_OPTIONS);
+const CANONICAL_PROGRAMME_SET = new Set<string>(getAllProgrammes());
 
 const buildOverviewCacheKey = (
   userId: string | null | undefined,
@@ -1853,18 +1854,49 @@ const DashboardOverview = () => {
     });
   }, [overviewCacheStorageKey, overviewQuery.data, selectedProgramme]);
 
-  // -- Local fallback fetch ----------------------------------------------
-  const shouldFetchLocalOverview = false;
+  // -- Local fallback fetch via server proxy --------------------------------
+  const shouldFetchLocalOverview = true;
+  const [localCollections, setLocalCollections] = useState<OverviewCollections | null>(null);
 
   useEffect(() => {
-    if (!selectedProgramme) {
-      setLocalOverviewState({ key: "", data: null });
+    if (!selectedProgramme || !shouldFetchLocalOverview) {
+      if (!selectedProgramme) {
+        setLocalOverviewState({ key: "", data: null });
+      }
+      setLocalCollections(null);
       setLocalOverviewLoading(false);
       return;
     }
 
-    setLocalOverviewLoading(false);
-  }, [selectedProgramme]);
+    let cancelled = false;
+    setLocalOverviewLoading(true);
+
+    const programmes = isAllProgrammesSelection(selectedProgramme)
+      ? accessibleProgrammes
+      : [selectedProgramme].filter(Boolean);
+
+    Promise.all([
+      fetchCollectionByProgrammes("farmers", programmes),
+      fetchCollectionByProgrammes("capacityBuilding", programmes),
+      fetchCollectionByProgrammes("offtakes", programmes),
+      fetchCollectionByProgrammes("BoreholeStorage", programmes),
+      fetchCollectionByProgrammes("Recent Activities", programmes),
+    ]).then(([farmers, capacity, offtakes, boreholes, activities]) => {
+      if (cancelled) return;
+      const collections: OverviewCollections = { farmers, capacity, offtakes, boreholes, activities };
+      setLocalCollections(collections);
+      setLocalOverviewLoading(false);
+    }).catch(() => {
+      if (!cancelled) setLocalOverviewLoading(false);
+    });
+
+    return () => { cancelled = true; };
+  }, [selectedProgramme, accessibleProgrammes, shouldFetchLocalOverview]);
+
+  const locallyComputedSummary = useMemo(() => {
+    if (!localCollections) return null;
+    return buildOverviewSummaryFromRecords(localCollections);
+  }, [localCollections]);
 
   // -- Resolved overview data --------------------------------------------
   const overviewData = sanitizeOverviewSummary(
@@ -1888,7 +1920,7 @@ const DashboardOverview = () => {
     remoteOverviewEnabled &&
     !overviewQuery.isError &&
     overviewQuery.isLoading;
-  const isLoadingData = !hasOverviewData && (isLoadingRemoteOverview || localOverviewLoading || shouldFetchLocalOverview);
+  const isLoadingData = !hasOverviewData && (isLoadingRemoteOverview || localOverviewLoading);
 
   const [overviewHeroDate, setOverviewHeroDate] = useState(() => new Date());
 

@@ -1,0 +1,38 @@
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Default\IndexedDB
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Default\Local Storage\leveldb
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Guest Profile\Local Storage\leveldb
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 1\IndexedDB
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 1\Local Storage\leveldb
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 10\IndexedDB
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 10\Local Storage\leveldb
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 11\IndexedDB
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 11\Local Storage\leveldb
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 12\IndexedDB
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 12\Local Storage\leveldb
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 13\IndexedDB
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 13\Local Storage\leveldb
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 14\IndexedDB
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 14\Local Storage\leveldb
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 15\IndexedDB
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 15\Local Storage\leveldb
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 16\IndexedDB
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 16\Local Storage\leveldb
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 17\IndexedDB
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 17\Local Storage\leveldb
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 18\IndexedDB
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 18\Local Storage\leveldb
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 19\IndexedDB
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 19\Local Storage\leveldb
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 2\IndexedDB
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 2\Local Storage\leveldb
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 22\Local Storage\leveldb
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 5\IndexedDB
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 5\Local Storage\leveldb
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 6\IndexedDB
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 6\Local Storage\leveldb
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 8\IndexedDB
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 8\Local Storage\leveldb
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 9\IndexedDB
+C:\Users\Ezekiel Kirui\AppData\Local\Google\Chrome\User Data\Profile 9\Local Storage\leveldb
+C:\Users\Ezekiel Kirui\AppData\Local\Microsoft\Edge\User Data\Default\IndexedDB
+C:\Users\Ezekiel Kirui\AppData\Local\Microsoft\Edge\User Data\Default\Local Storage\leveldb

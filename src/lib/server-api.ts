@@ -1,7 +1,7 @@
 import { auth } from "@/lib/firebase";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
-const DEFAULT_TIMEOUT_MS = 60_000;
+const DEFAULT_TIMEOUT_MS = 120_000; // 2 minutes for heavy analysis requests
 
 const isAbortError = (error: unknown): boolean =>
   error instanceof DOMException && error.name === "AbortError";

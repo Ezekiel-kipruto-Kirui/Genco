@@ -18,8 +18,9 @@ import {
 } from "./_lib/firebase-admin";
 
 // --- In-memory cache (survives for the lifetime of a serverless instance) ---
-const CACHE_TTL_MS = 2 * 60 * 1000; // 2 minutes in-memory
-const EDGE_CACHE_TTL = 120; // 2 minutes edge cache
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes in-memory (reduced RTDB reads)
+const EDGE_CACHE_TTL = 300; // 5 minutes edge cache
+const CACHE_MAX_ENTRIES = 200;
 
 interface CacheEntry {
   version: number;
@@ -43,19 +44,53 @@ const snapshotToArray = (snapshot: any): any[] => {
 const normalizeProgramme = (value: string | undefined): string =>
   typeof value === "string" ? value.trim().toUpperCase() : "";
 
-const PROGRAMME_QUERY_VALUES: Record<string, string[]> = {
-  KPMD: ["KPMD", "Kpmd", "kpmd"],
-  RANGE: ["RANGE", "Range", "range"],
-  "KPMD 2": ["KPMD 2", "Kpmd 2", "kpmd 2", "KPMD2", "Kpmd2", "kpmd2"],
+/**
+ * Generates ALL known case/format variants for a programme string.
+ * Instead of a hardcoded map, this works for ANY programme —
+ * so new programmes added in the database work automatically.
+ */
+const generateQueryVariants = (programme: string): string[] => {
+  const base = programme;
+  const lower = base.toLowerCase();
+  const capitalized = base.charAt(0) + base.slice(1).toLowerCase();
+  const noSpace = base.replace(/\s+/g, "");
+  const noSpaceLower = noSpace.toLowerCase();
+  const hyphenated = base.replace(/\s+/g, "-");
+  const hyphenatedLower = hyphenated.toLowerCase();
+
+  // Deduplicate while preserving order
+  const variants = new Set<string>();
+  variants.add(base);
+  variants.add(lower);
+  variants.add(capitalized);
+  variants.add(noSpace);
+  variants.add(noSpaceLower);
+  variants.add(hyphenated);
+  variants.add(hyphenatedLower);
+
+  return Array.from(variants);
 };
 
 const getQueryValues = (programme: string): string[] =>
-  PROGRAMME_QUERY_VALUES[programme] || [programme];
+  generateQueryVariants(programme);
 
 // Fetch all records from a path (cached)
 const getAllRecords = async (collectionPath: string): Promise<{version: number; data: any[]}> => {
   const cacheKey = `all:${collectionPath}`;
   const now = Date.now();
+
+  // Evict expired entries to prevent memory bloat
+  if (collectionCache.size > CACHE_MAX_ENTRIES) {
+    for (const [key, entry] of collectionCache) {
+      if (entry.expiresAt <= now) collectionCache.delete(key);
+    }
+    if (collectionCache.size > CACHE_MAX_ENTRIES) {
+      const oldest = [...collectionCache.entries()].sort((a, b) => a[1].expiresAt - b[1].expiresAt);
+      for (let i = 0; i < collectionCache.size - CACHE_MAX_ENTRIES; i++) {
+        collectionCache.delete(oldest[i][0]);
+      }
+    }
+  }
 
   const cached = collectionCache.get(cacheKey);
   if (cached && cached.expiresAt > now) {
@@ -82,6 +117,7 @@ const filterByProgramme = (records: any[], programme: string): any[] => {
   const candidates = getQueryValues(normalized);
   return records.filter((record) => {
     const p = normalizeProgramme(record.programme || record.Programme);
+    if (!p) return true; // Include records with no programme field
     return candidates.includes(p);
   });
 };

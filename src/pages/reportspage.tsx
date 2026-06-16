@@ -52,7 +52,7 @@ import { toast } from "@/hooks/use-toast";
 import { fetchAnalysisSummary } from "@/lib/analysis";
 import {
   ALL_PROGRAMMES_VALUE,
-  PROGRAMME_OPTIONS,
+  getAllProgrammes,
   matchesProgrammeSelection,
   resolveAccessibleProgrammes,
 } from "@/lib/programme-access";
@@ -798,7 +798,7 @@ function computeLocalPerformanceReportData(
 
   return {
     scope: "performance-report",
-    resolvedProgrammes: includeAllProgrammes ? [...PROGRAMME_OPTIONS] : [requestedProgramme],
+    resolvedProgrammes: includeAllProgrammes ? [...getAllProgrammes()] : [requestedProgramme],
     totalFarmers: filteredFarmers.length,
     maleFarmers,
     femaleFarmers,

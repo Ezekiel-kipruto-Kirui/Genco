@@ -191,6 +191,20 @@ interface TrendSeriesMeta {
 }
 
 const cache = new Map<string, CacheEntry>();
+const CACHE_MAX_ENTRIES = 500;
+
+// Evict expired + oldest entries to prevent unbounded memory growth
+const evictCache = () => {
+  const now = Date.now();
+  for (const [key, entry] of cache) {
+    if (entry.expiresAt <= now) cache.delete(key);
+  }
+  if (cache.size > CACHE_MAX_ENTRIES) {
+    const entries = [...cache.entries()].sort((a, b) => a[1].expiresAt - b[1].expiresAt);
+    const toRemove = entries.slice(0, cache.size - CACHE_MAX_ENTRIES);
+    for (const [key] of toRemove) cache.delete(key);
+  }
+};
 
 const normalize = (value: unknown): string =>
   typeof value === "string" ? value.trim().toLowerCase() : "";
@@ -271,7 +285,8 @@ const toProgramme = (value: unknown): string => {
   const normalized = normalize(value);
   if (!normalized) return "";
   if (normalized === "all") return "ALL";
-  if (normalized === "KPMD 2" || normalized === "kpmd-2") return "KPMD 2";
+  // Handle "KPMD 2" with space, without space (KPMD2), and with hyphen (KPMD-2)
+  if (normalized === "KPMD 2" || normalized === "kpmd-2" || normalized === "kpmd2") return "KPMD 2";
   return normalized.toUpperCase();
 };
 
@@ -1206,10 +1221,14 @@ const fetchCollectionByProgrammes = async (
   if (uniqueProgrammes.length === 0) return [];
 
   if (uniqueProgrammes.length >= PROGRAMME_OPTIONS.length) {
+    // When fetching ALL programmes, include records even if programme field
+    // is missing or unparseable — these are still valid data.
+    // Only exclude records with a programme that is explicitly NOT in the list.
     const records = await getCollectionRecords(collectionPath);
     return records.filter((record) => {
       const programme = getRecordProgramme(record);
-      return Boolean(programme) && uniqueProgrammes.includes(programme);
+      if (!programme) return true; // Include records with no programme field
+      return uniqueProgrammes.includes(programme);
     });
   }
 
@@ -1231,7 +1250,8 @@ const fetchCollectionByProgrammes = async (
 
   return Array.from(mergedRecords.values()).filter((record) => {
     const programme = getRecordProgramme(record);
-    return Boolean(programme) && uniqueProgrammes.includes(programme);
+    if (!programme) return true; // Include records with no programme field
+    return uniqueProgrammes.includes(programme);
   });
 };
 
@@ -1359,6 +1379,7 @@ const getCached = (key: string): any | null => {
 };
 
 const setCached = (key: string, value: any): void => {
+  if (cache.size > CACHE_MAX_ENTRIES) evictCache();
   cache.set(key, {
     expiresAt: Date.now() + CACHE_TTL_MS,
     value,
@@ -1391,6 +1412,26 @@ const getCollectionRecordsByChildValue = async (
 
   if (childKey === "programme" || childKey === "Programme") {
     const programme = toProgramme(childValue);
+    // OPTIMIZATION: If we already have the full collection in memory or
+    // persistent cache, filter there instead of making another RTDB query.
+    const fullCollectionKey = collectionCacheKey(collectionPath);
+    const fullCached = getCached(fullCollectionKey);
+    if (fullCached) {
+      const records = (fullCached as any[]).filter(
+        (record) => getRecordProgramme(record) === programme,
+      );
+      setCached(key, records);
+      return records;
+    }
+    const persistentRecords = await readPersistentCollectionCache(collectionPath);
+    if (persistentRecords) {
+      const records = persistentRecords.filter(
+        (record) => getRecordProgramme(record) === programme,
+      );
+      setCached(key, records);
+      setCached(fullCollectionKey, persistentRecords);
+      return records;
+    }
     try {
       const snapshot = await getDatabase()
         .ref(collectionPath)
@@ -1404,10 +1445,11 @@ const getCollectionRecordsByChildValue = async (
       return records;
     } catch (error) {
       console.warn(
-        `[analytics] Falling back to cached full collection for /${collectionPath} ${childKey}=${childValue}:`,
+        `[analytics] Falling back to full collection for /${collectionPath} ${childKey}=${childValue}:`,
         error,
       );
-      const records = (await getCollectionRecords(collectionPath)).filter(
+      const fullRecords = await getCollectionRecords(collectionPath);
+      const records = fullRecords.filter(
         (record) => getRecordProgramme(record) === programme,
       );
       setCached(key, records);
@@ -1429,13 +1471,8 @@ const getCollectionRecordsByChildValue = async (
     .get();
   const records = snapshotToArray(snapshot);
 
-  const fullCollectionKey = collectionCacheKey(collectionPath);
-  const fullCollectionCached = getCached(fullCollectionKey);
-  if (!fullCollectionCached) {
-    const fullRecords = await getSourceCollectionRecords(collectionPath);
-    await writePersistentCollectionCache(collectionPath, fullRecords);
-    setCached(fullCollectionKey, fullRecords);
-  }
+  // OPTIMIZATION: Removed the redundant full collection re-fetch here.
+  // The next getCollectionRecords() call will hydrate the persistent cache.
 
   setCached(key, records);
   return records;

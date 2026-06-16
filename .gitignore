@@ -27,7 +27,8 @@ dist-ssr
 .vercel/
 
 # Local environment secrets
-.env
+.env 
+.env.local
 .env.*
 functions/.env
 functions/.env.*

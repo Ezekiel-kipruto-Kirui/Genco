@@ -268,9 +268,13 @@ export const fetchCollectionByProgrammes = async <T = Record<string, any>>(
   if (inFlight) return inFlight as Promise<DatabaseRecord<T>[]>;
 
   const request = (async () => {
-    // If requesting all programmes, use server proxy without programme filter (single read)
-    const allServerProgrammes = ["KPMD", "RANGE", "KPMD 2"];
-    const isAllProgrammes = allServerProgrammes.every((p) => normalizedProgrammes.includes(p));
+    // If requesting all known programmes, use server proxy without programme filter
+    // (single RTDB read instead of per-programme reads). Dynamic: uses whatever
+    // programmes the user has access to — no hardcoded list.
+    const { getDynamicProgrammes } = await import("@/lib/dynamic-programmes");
+    const allKnownProgrammes = getDynamicProgrammes();
+    const isAllProgrammes = allKnownProgrammes.length > 0 &&
+      allKnownProgrammes.every((p) => normalizedProgrammes.includes(p));
 
     if (isAllProgrammes) {
       const serverResult = await fetchFromServer(path);

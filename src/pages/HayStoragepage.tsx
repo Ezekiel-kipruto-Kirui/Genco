@@ -26,7 +26,7 @@ import { uploadDataWithValidation, formatValidationErrors, UploadResult } from "
 import { db, fetchCollectionByProgramme } from "@/lib/firebase";
 import { millify} from "millify";
 import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
-import { PROGRAMME_OPTIONS, normalizeProgramme as normalizeProgrammeValue, resolveAccessibleProgrammes } from "@/lib/programme-access";
+import { normalizeProgramme as normalizeProgrammeValue, resolveAccessibleProgrammes, getAllProgrammes } from "@/lib/programme-access";
 
 // --- Types ---
 
@@ -100,7 +100,7 @@ interface TableRowProps {
 const PAGE_LIMIT = 15;
 const SEARCH_DEBOUNCE_DELAY = 300;
 const UNASSIGNED_PROGRAMME = "UNASSIGNED" as const;
-type ProgrammeOption = (typeof PROGRAMME_OPTIONS)[number];
+type ProgrammeOption = string;
 type ProgrammeSelectValue = ProgrammeOption | typeof UNASSIGNED_PROGRAMME;
 
 const normalizeProgramme = (

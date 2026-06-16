@@ -237,7 +237,10 @@ interface FieldOfficerOption {
 
 const PAGE_LIMIT = 15;
 const ORDERS_CACHE_TTL_MS = 5 * 60 * 1000;
-const PROGRAMME_OPTIONS = ["KPMD", "RANGE", "KPMD 2"] as const;
+// Programmes are now dynamic — fetched from the database.
+// The getAllProgrammes() function returns the current list.
+// This local constant is only used for type narrowing in this file.
+const PROGRAMME_OPTIONS: string[] = []; // populated dynamically
 
 /* ------------------------------------------------------------------ */
 /* Pure utility functions (outside component)                          */

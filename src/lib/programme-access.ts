@@ -1,7 +1,20 @@
-export const PROGRAMME_OPTIONS = ["KPMD", "RANGE", "KPMD 2"] as const;
+/**
+ * Dynamic programme access utilities.
+ *
+ * CRITICAL CHANGE: Programmes are no longer hardcoded. They are fetched
+ * dynamically from the /api/programmes endpoint (which scans the database).
+ *
+ * The `normalizeProgramme` function now accepts ANY programme string (not just
+ * a fixed union type), so new programmes added in the mobile app will
+ * automatically work in the web dashboard without code changes.
+ */
+import { getDynamicProgrammes } from "@/lib/dynamic-programmes";
+
 export const ALL_PROGRAMMES_VALUE = "ALL" as const;
 
-export type ProgrammeOption = (typeof PROGRAMME_OPTIONS)[number];
+// Dynamic programme option type — no longer a fixed union.
+// Any string that comes from the database is valid.
+export type ProgrammeOption = string;
 export type ProgrammeSelection = ProgrammeOption | typeof ALL_PROGRAMMES_VALUE | "";
 
 // ---------------------------------------------------------------------------
@@ -20,19 +33,96 @@ export const hasAllProgrammeAccess = (role: string | null | undefined): boolean 
 // ---------------------------------------------------------------------------
 // Normalisation helpers
 // ---------------------------------------------------------------------------
-export const normalizeProgramme = (value: unknown): ProgrammeOption | "" => {
-  if (typeof value !== "string") return "";
-  const normalized = value.trim().toUpperCase();
-  if (normalized === "KPMD 2" || normalized === "KPMD 2" || normalized === "KPMD-2") return "KPMD 2";
-  if (normalized === "KPMD" || normalized === "RANGE") return normalized;
-  return "";
+
+/**
+ * The known-programmes set, used to validate normalised values.
+ * Populated lazily from the dynamic programmes API.
+ * Falls back to an empty set (accepts any non-empty string) before the API responds.
+ */
+const knownProgrammesCache: { set: Set<string>; expiresAt: number } = {
+  set: new Set(),
+  expiresAt: 0,
 };
 
+const refreshKnownProgrammes = (): Set<string> => {
+  const now = Date.now();
+  if (now < knownProgrammesCache.expiresAt) return knownProgrammesCache.set;
+
+  const dynamic = getDynamicProgrammes();
+  if (dynamic.length > 0) {
+    knownProgrammesCache.set = new Set(dynamic);
+    knownProgrammesCache.expiresAt = now + 5 * 60 * 1000; // 5 min
+  }
+
+  return knownProgrammesCache.set;
+};
+
+/**
+ * Normalizes a raw programme value to its canonical uppercase form.
+ *
+ * Unlike the old version that only accepted "KPMD", "RANGE", "KPMD 2",
+ * this now accepts ANY non-empty string after normalization.
+ *
+ * Handles spacing variants: "KPMD2" → "KPMD 2", "KPMD-2" → "KPMD 2"
+ */
+export const normalizeProgramme = (value: unknown): ProgrammeOption => {
+  if (typeof value !== "string") return "";
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+
+  // Normalize: replace hyphens/underscores with spaces, collapse multiple spaces, uppercase
+  let normalized = trimmed.replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim().toUpperCase();
+
+  // Validate against known programmes (if available)
+  const known = refreshKnownProgrammes();
+  if (known.size > 0 && !known.has(normalized)) {
+    // Try without spaces (e.g. "KPMD2" → check "KPMD 2")
+    const noSpace = normalized.replace(/\s+/g, "");
+    for (const knownProg of known) {
+      if (knownProg.replace(/\s+/g, "") === noSpace) {
+        return knownProg;
+      }
+    }
+    // Not in known list — still return it (new programme not yet cached)
+    // but only if it looks like a real value (at least 2 chars)
+    if (normalized.length >= 2) return normalized;
+    return "";
+  }
+
+  return normalized;
+};
+
+/**
+ * Generates ALL known case/format variants for a programme.
+ * This is critical for Firebase RTDB queries which are case-sensitive —
+ * a query for equalTo("KPMD") will miss records stored as "Kpmd".
+ *
+ * Instead of a hardcoded map, this now generates variants dynamically
+ * for any programme string.
+ */
 export const getProgrammeQueryValues = (programme: unknown): string[] => {
   const normalized = normalizeProgramme(programme);
   if (!normalized) return [];
-  if (normalized === "KPMD 2") return ["KPMD 2"];
-  return [normalized];
+
+  const base = normalized;
+  const lower = base.toLowerCase();
+  const capitalized = base.charAt(0) + base.slice(1).toLowerCase();
+  const noSpace = base.replace(/\s+/g, "");
+  const noSpaceLower = noSpace.toLowerCase();
+  const hyphenated = base.replace(/\s+/g, "-");
+  const hyphenatedLower = hyphenated.toLowerCase();
+
+  // Deduplicate while preserving order
+  const variants = new Set<string>();
+  variants.add(base);           // "KPMD 2"
+  variants.add(lower);          // "kpmd 2"
+  variants.add(capitalized);    // "Kpmd 2"
+  variants.add(noSpace);        // "KPMD2"
+  variants.add(noSpaceLower);   // "kpmd2"
+  variants.add(hyphenated);     // "KPMD-2"
+  variants.add(hyphenatedLower);// "kpmd-2"
+
+  return Array.from(variants);
 };
 
 export const normalizeProgrammeSelection = (value: unknown): ProgrammeSelection => {
@@ -58,13 +148,6 @@ export const isAllProgrammesSelection = (value: unknown): boolean =>
 
 /**
  * Matches a record's programme against the user's selection.
- *
- * For users with all-programme access (admin/admin), the record is
- * always included regardless of its programme — the selection filter is
- * purely a UI convenience for them.
- *
- * For restricted users (mobile), the record's programme MUST be in their
- * accessible set BEFORE the selection filter is applied.
  */
 export const matchesProgrammeSelection = (
   recordProgramme: unknown,
@@ -86,9 +169,6 @@ export const matchesProgrammeSelection = (
   }
 
   // Restricted user: gate on accessible programmes
-  // NOTE: caller MUST pass accessibleProgrammes separately to the higher-level
-  // helper `matchesProgrammeSelectionWithAccess`, or pre-filter records first
-  // using `filterByAccessibleProgrammes`.
   const normalizedRecord = normalizeProgramme(recordProgramme);
   if (!normalizedRecord) return false;
 
@@ -121,17 +201,28 @@ export const matchesProgrammeSelectionWithAccess = (
 };
 
 // ---------------------------------------------------------------------------
-// Resolving allowed / accessible programmes
+// Resolving allowed / accessible programmes (now fully dynamic)
 // ---------------------------------------------------------------------------
+
+/**
+ * Returns the list of all known programmes from the dynamic source.
+ * This replaces the old hardcoded PROGRAMME_OPTIONS array.
+ */
+export const getAllProgrammes = (): ProgrammeOption[] => {
+  return getDynamicProgrammes();
+};
+
 export const getAssignedProgrammes = (
   allowedProgrammes: Record<string, boolean> | null | undefined
-): ProgrammeOption[] =>
-  PROGRAMME_OPTIONS.filter((programme) => allowedProgrammes?.[programme] === true);
+): ProgrammeOption[] => {
+  const allProgrammes = getDynamicProgrammes();
+  return allProgrammes.filter((programme) => allowedProgrammes?.[programme] === true);
+};
 
 /**
  * Resolves which programmes a user can access.
  *
- * - admin / admin → ALL programmes (bypass).
+ * - admin / admin → ALL programmes (dynamic from DB).
  * - mobile → only programmes explicitly marked `true` in allowedProgrammes.
  */
 export const resolveAccessibleProgrammes = (
@@ -142,7 +233,7 @@ export const resolveAccessibleProgrammes = (
     roleOrCanViewAll === true ||
     (typeof roleOrCanViewAll === "string" && hasAllProgrammeAccess(roleOrCanViewAll))
   ) {
-    return [...PROGRAMME_OPTIONS];
+    return [...getDynamicProgrammes()];
   }
   return getAssignedProgrammes(allowedProgrammes);
 };
@@ -159,12 +250,6 @@ export const resolveActiveProgramme = (
 
 /**
  * Resolves the current programme selection for the UI.
- *
- * - `allowAll`:       lets the selection be "ALL" (meaningful for admins
- *                      who truly see all programmes, and for Field Officers
- *                      whose "ALL" means "all of my assigned programmes").
- * - `fallbackToAll`:  if the stored selection is no longer valid, fall back
- *                      to "ALL" instead of the first individual programme.
  */
 export const resolveProgrammeSelection = (
   currentSelection: string | null | undefined,
@@ -232,4 +317,3 @@ export const filterByAccessibleProgrammes = <T>(
   records.filter((record) =>
     canAccessProgrammeRecord(getProgramme(record), accessibleProgrammes, canViewAllProgrammeData)
   );
-

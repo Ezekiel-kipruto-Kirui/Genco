@@ -19,7 +19,7 @@ import { useSharedProgrammeSelection } from "@/hooks/use-shared-programme-select
 import { toast, useToast } from "@/hooks/use-toast";
 import { canViewAllProgrammes, isAdmin } from "@/contexts/authhelper";
 import { cacheKey, readCachedValue, removeCachedValue, writeCachedValue } from "@/lib/data-cache";
-import { matchesActiveProgramme, PROGRAMME_OPTIONS, resolveAccessibleProgrammes, resolveActiveProgramme } from "@/lib/programme-access";
+import { matchesActiveProgramme, resolveAccessibleProgrammes, resolveActiveProgramme, getAllProgrammes } from "@/lib/programme-access";
 
 // Types
 interface OfftakeData {

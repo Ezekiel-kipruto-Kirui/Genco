@@ -1,4 +1,7 @@
-import { PROGRAMME_OPTIONS } from "@/lib/programme-access";
+import { getAllProgrammes } from "@/lib/programme-access";
+
+/** Get all programmes dynamically (from DB cache) */
+const getProgrammeOptions = () => getAllProgrammes();
 
 const normalizeText = (value: string) => {
   const normalized = value
@@ -211,10 +214,11 @@ export const canViewAllProgrammes = (
   const principal = resolvePermissionPrincipal(userRole, userAttribute);
   if (isAdmin(principal) || isFullAccessAttribute(principal)) return true;
 
-  const assignedProgrammes = PROGRAMME_OPTIONS.filter(
+  const allProgrammes = getProgrammeOptions();
+  const assignedProgrammes = allProgrammes.filter(
     (programme) => allowedProgrammes?.[programme] === true
   );
-  return assignedProgrammes.length >= PROGRAMME_OPTIONS.length;
+  return allProgrammes.length > 0 && assignedProgrammes.length >= allProgrammes.length;
 };
 
 export const canAccessDashboard = (

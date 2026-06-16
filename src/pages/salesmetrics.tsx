@@ -44,7 +44,6 @@ import { millify } from "millify";
 import { fetchAnalysisSummary } from "@/lib/analysis";
 import {
   ALL_PROGRAMMES_VALUE,
-  PROGRAMME_OPTIONS,
   isAllProgrammesSelection,
   normalizeProgramme,
   resolveAccessibleProgrammes,
@@ -1252,6 +1251,16 @@ const SalesReport = () => {
 
   const availableYears = useMemo(() => {
     const years = new Set<string>([String(currentYear)]);
+
+    // When using remote analytics, local data arrays are empty.
+    // Include a reasonable historical range so the year dropdown shows
+    // all years that may have data in the database.
+    if (USE_REMOTE_ANALYTICS && offtakeData.length === 0) {
+      for (let y = 2024; y <= currentYear; y++) {
+        years.add(String(y));
+      }
+    }
+
     offtakeData.forEach((record) => {
       const year = parseDate(record.date)?.getFullYear();
       if (year) years.add(String(year));
@@ -1715,10 +1724,45 @@ const SalesReport = () => {
   // ---------------------------------------------------------------------------
 
   const handleDateRangeChange = useCallback(
-    (key: "startDate" | "endDate", value: string) =>
-      setDateRange((prev) => ({ ...prev, [key]: value })),
+    (key: "startDate" | "endDate", value: string) => {
+      setDateRange((prev) => ({ ...prev, [key]: value }));
+    },
     [],
   );
+
+  // Commit date only on blur (when user finishes picking) to avoid
+  // visual re-renders while navigating months in the native date picker.
+  const [pendingDateKey, setPendingDateKey] = useState<"startDate" | "endDate" | null>(null);
+  const [draftStartDate, setDraftStartDate] = useState(dateRange.startDate);
+  const [draftEndDate, setDraftEndDate] = useState(dateRange.endDate);
+
+  const handleDateInputFocus = useCallback((key: "startDate" | "endDate") => {
+    setPendingDateKey(key);
+    // Snapshot the current value so navigation arrows don't trigger premature commits
+    if (key === "startDate") setDraftStartDate(dateRange.startDate);
+    else setDraftEndDate(dateRange.endDate);
+  }, [dateRange.startDate, dateRange.endDate]);
+
+  const handleDateInputChange = useCallback(
+    (key: "startDate" | "endDate", value: string) => {
+      // Buffer the change locally — don't update dateRange until blur
+      if (key === "startDate") setDraftStartDate(value);
+      else setDraftEndDate(value);
+    },
+    [],
+  );
+
+  const handleDateInputBlur = useCallback(() => {
+    if (pendingDateKey) {
+      // Commit the buffered values to the actual date range
+      setDateRange((prev) => ({
+        ...prev,
+        startDate: draftStartDate,
+        endDate: draftEndDate,
+      }));
+    }
+    setPendingDateKey(null);
+  }, [pendingDateKey, draftStartDate, draftEndDate]);
 
   const handleYearChange = useCallback((year: string) => {
     setSelectedYear(year);
@@ -2041,24 +2085,32 @@ const SalesReport = () => {
                       )}
 
                       {/* Date inputs */}
-                      <Input
-                        id="startDate"
-                        type="date"
-                        value={dateRange.startDate}
-                        onChange={(e) =>
-                          handleDateRangeChange("startDate", e.target.value)
-                        }
-                        className="h-9 w-[150px] shrink-0 border-gray-200 pr-2 text-xs focus:border-blue-500"
-                      />
-                      <Input
-                        id="endDate"
-                        type="date"
-                        value={dateRange.endDate}
-                        onChange={(e) =>
-                          handleDateRangeChange("endDate", e.target.value)
-                        }
-                        className="h-9 w-[150px] shrink-0 border-gray-200 pr-2 text-xs focus:border-blue-500"
-                      />
+                      <div className="relative">
+                        <Input
+                          id="startDate"
+                          type="date"
+                          value={pendingDateKey === "startDate" ? draftStartDate : dateRange.startDate}
+                          onChange={(e) =>
+                            handleDateInputChange("startDate", e.target.value)
+                          }
+                          onFocus={() => handleDateInputFocus("startDate")}
+                          onBlur={handleDateInputBlur}
+                          className="h-9 w-[150px] shrink-0 border-gray-200 pr-2 text-xs focus:border-blue-500"
+                        />
+                        </div>
+                      <div className="relative">
+                        <Input
+                          id="endDate"
+                          type="date"
+                          value={pendingDateKey === "endDate" ? draftEndDate : dateRange.endDate}
+                          onChange={(e) =>
+                            handleDateInputChange("endDate", e.target.value)
+                          }
+                          onFocus={() => handleDateInputFocus("endDate")}
+                          onBlur={handleDateInputBlur}
+                          className="h-9 w-[150px] shrink-0 border-gray-200 pr-2 text-xs focus:border-blue-500"
+                        />
+                        </div>
 
                       {/* Quick-range buttons */}
                       <Button
